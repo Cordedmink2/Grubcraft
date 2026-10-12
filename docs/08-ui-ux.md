@@ -90,6 +90,7 @@ Structures use the same grid for production. Workers' build menu is one sub-page
 - **Ping wheel** (`G` + mouse direction): "Attack here", "Defend here", "Danger", "On my way", "Need help", "Good game". Pings show on the minimap and play a sound.
 - Text chat (`Enter`), team or all.
 - No in-game voice: friends already use Discord or FaceTime.
+- **AI allies use the same channels:** they treat your pings as requests, ping their own plans ("Attacking here", "Danger"), and send short chat lines in their personality's voice ([18 · AI](18-ai.md#ai-allies)).
 
 ## Settings
 
@@ -108,3 +109,17 @@ Structures use the same grid for production. Workers' build menu is one sub-page
 
 - Summary: winner, graphs (income, army value, supply over time), key battles list with "Watch" and "Restage this battle" buttons, MVP regiment (most kills), funniest stat ("Most Grub lost to raids").
 - Save replay (automatic).
+
+## AI players in the lobby (planned)
+
+- The host can fill any slot with an AI player, as an opponent or a teammate. The row shows a **difficulty** (Recruit, Veteran, General, Warlord) and a **personality** (each faction's two, or Random, the default), both chosen with one click.
+- Every slot, human or AI, has a **handicap** setting (income from 50% to 150%), shown on the row whenever it isn't 100%, so nobody is surprised.
+- Details in [18 · AI](18-ai.md#difficulty).
+
+## Parley (planned, M4)
+
+Dealing with hamlets, mercenary companies and, later, other peoples on the map uses one small panel, never a pop-up that pauses the game:
+
+- Select one of their units or buildings and the panel opens beside the command card. It shows their **stance**, and **liking** and **trust** as one bar each, with the top reasons underneath ("You traded with us", "You burned Millbrook").
+- At most four actions for that party (Trade, Hire, Rumours, Gift; later Request passage, Demand tribute), on the usual grid keys.
+- Every action shows its likely answer *before* you commit ("Likely to accept: they like you, you're asking a lot"), because the answer is a visible rule, not a dice roll. See [18 · AI](18-ai.md#deals-and-contracts).

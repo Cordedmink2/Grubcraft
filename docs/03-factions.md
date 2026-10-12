@@ -13,6 +13,8 @@ Tone: *whimsical-grim*. Warcraft III's bright, chunky, slightly comic world, wit
 - **Four playable factions** (below), each a different answer to "what do you do with a dead god?"
 - **The Grubfolk.** Small, stubborn, neutral farmers who live in hamlets around seeps. They trade, they hire out militia, and they hold grudges. See [07 · World and Maps](07-world-and-maps.md).
 - **Titan-spawn.** Feral creatures that grow from the corpse: gutworms, bile toads, marrow golems. They guard rich spots and drop loot (Warcraft-style creep camps).
+- **Mercenary companies** (planned). Bands of fighters with a captain and a price who camp at hamlets or wander between them, and serve whoever pays and keeps paying. See [18 · AI](18-ai.md#the-living-world-encounters).
+- **Other peoples** (later). Factions met while exploring the Reach, friendly, neutral or hostile, each with its own mind and memory of how you treated it.
 - **The Titan itself.** It is still slightly alive. Its tremors reshape matches (see *Titan Events* in [04 · Economy](04-economy.md)).
 
 ---

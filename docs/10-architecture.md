@@ -45,10 +45,11 @@ No general-purpose engine, no ECS framework, no async runtime, no scripting VM i
  └─────────────────────────────────────┘
 ```
 
-- About five threads total. No thread pool during play; match loading uses scoped threads to decode in parallel, then they exit.
+- About five threads total (six on a machine running AI players). No thread pool during play; match loading uses scoped threads to decode in parallel, then they exit.
 - The **main thread** must own the window on macOS. It runs input, UI, presentation and rendering.
 - The **sim thread** is single-threaded and deterministic. At the target scale a tick costs ~1 to 2 ms out of 50 ms, so parallelising the sim is unnecessary and would only add determinism risk.
 - Threads communicate through fixed-size lock-free ring buffers and a triple-buffered snapshot. No locks on hot paths.
+- An **AI thread** runs on the host (and in solo play) when the match has AI players or world parties with minds. It reads the latest snapshot and sends commands into the host's turn bundle exactly like a remote player, so it never slows the sim and cannot cause a desync; other machines don't run it. See [AI players and world parties](#ai-players-and-world-parties).
 - **Built so far (M1):** one thread. The sim ticks inside the main thread's frame loop (at most five ticks per frame) and the renderer interpolates between the last two ticks; the sim and net threads arrive with networking in M2.
 
 ## Workspace layout
@@ -58,6 +59,7 @@ grubcraft/
 ├─ crates/
 │  ├─ gc_fixed/      fixed-point math, angles, trig tables, isqrt (no_std)
 │  ├─ gc_sim/        deterministic simulation (no_std + alloc, no floats)
+│  ├─ gc_ai/         AI players and world-party minds; reads sim views, sends commands (later)
 │  ├─ gc_data/       unit/faction/ability definitions, compiled tables
 │  ├─ gc_net/        transport, lockstep turns, lobby protocol, discovery   (M2)
 │  ├─ gc_present/    interpolation, soldier puppets, effects triggers       (later)
@@ -71,6 +73,7 @@ grubcraft/
 │  ├─ gc_bake/       asset baker: glTF/Blender exports → packed formats
 │  ├─ gc_replay/     headless replay runner, determinism checker            (later)
 │  ├─ gc_bench/      performance benchmarks with budget gates
+│  ├─ gc_arena/      headless AI-against-AI ladders and tactical drills      (later)
 │  └─ gc_mapcheck/   map validator                                          (later)
 ├─ data/             RON definitions (factions, units, abilities, maps)
 ├─ assets-src/       source art and audio (or a pointer to where they live)
@@ -79,7 +82,7 @@ grubcraft/
 
 Crates marked *(later)* or *(M2)* don't exist yet. Until `gc_present` is needed, interpolation and the soldier puppets live in `gc_game` (`src/puppets.rs`).
 
-`gc_sim` depends on nothing platform-related. It cannot read the clock, open files, spawn threads or use floating point. This boundary is what makes lockstep, replays, rejoin, "Restage this battle" and future bots possible.
+`gc_sim` depends on nothing platform-related. It cannot read the clock, open files, spawn threads or use floating point. This boundary is what makes lockstep, replays, rejoin, "Restage this battle" and AI players possible (they read the sim's public views and send commands; see [18 · AI](18-ai.md)).
 
 ## The deterministic simulation
 
@@ -123,7 +126,7 @@ Crates marked *(later)* or *(M2)* don't exist yet. Until `gc_present` is needed,
 7. Combat: melee contact, volleys, damage, deaths, corpses.
 8. Morale and routing.
 9. Vision and fog of war.
-10. Titan events, hamlet and creep AI.
+10. Titan events and world-party rules: creep camps, hamlet garrisons, relations and contracts. (Choices made by AI players and other minds are not here: they arrive as commands in step 1.)
 11. Victory checks.
 12. State hash (every 10 ticks) and snapshot publish.
 
@@ -194,6 +197,15 @@ The **presentation layer** turns regiment state into believable soldiers:
 - Presentation never writes back to the sim, and it is allowed to be non-deterministic. Two players may see slightly different soldiers fall; they always see the same regiments with the same model counts.
 
 Cost: ~10,000 puppets updated with SIMD-friendly arrays on the main thread in about 0.5 ms. If needed, puppets move to a GPU compute pass later.
+
+## AI players and world parties
+
+Designed in [18 · AI](18-ai.md); summarised here for the engine's sake.
+
+- **Rules in the sim, minds outside it.** Anything that must be identical everywhere (regiment reflexes, creep and hamlet behaviour, the relations ledger, contracts and the rule that answers an offer) is ordinary deterministic sim code. Anything that makes choices (AI players, mercenary companies, factions) is a *mind* in `gc_ai` on the AI thread, which acts only through commands.
+- **Minds are players.** They use the public views (`RegimentView` and friends), filtered by their party's fog of war, and the same `Command`s as humans. Replays, saves and golden hashes never depend on AI code.
+- **Parties.** `PlayerId` names a *party*: players 0 to 3 and up to 28 world parties (hamlets, creep camps, companies, factions). Today two regiments are enemies whenever their owners differ; that test moves to a stance table filled from the lobby's teams (needed for 2v2 in M2), which later becomes the relations ledger. The full list of engine hooks is in [18 · AI](18-ai.md#engine-hooks).
+- **Lab mode.** In tests and the arena, the AI runs between ticks on the sim thread with fixed work budgets instead of time budgets, so AI-against-AI games are reproducible.
 
 ## Rendering
 
@@ -300,6 +312,8 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 | `gc_bake` | Asset and data baker |
 | Dev overlay (`` ` `` or `F11`) | Frame and tick timings, memory by tag, draw calls, network stats |
 | Sandbox *(M1 step 7)* | In-game unit placement, balance hot-reload, slow motion |
+| `gc_arena` *(later)* | Headless AI-against-AI ladders and tactical drills ([18 · AI](18-ai.md#testing-tuning-and-explaining)) |
+| AI lens *(later)* | Dev overlay view of each AI's intents, armies, battle plans, roles and influence maps |
 
 ## Testing strategy
 - **Unit tests** for fixed-point math, pathfinding, combat formulas, economy rules.
@@ -308,6 +322,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 - **Fuzzed soak test:** four scripted random-command players for 60 simulated minutes, headless, at maximum speed: no panics, memory plateaus, tick time within budget.
 - **Network chaos test:** four local clients over a loopback shim that injects latency, jitter, loss and reordering.
 - **Performance gates** (see [12 · Performance](12-performance.md#hill-climbing-process)).
+- **AI drills and arena:** tactical puzzles with expected outcomes run as tests, and nightly AI-against-AI ladders in `gc_arena` that check each difficulty beats the one below ([18 · AI](18-ai.md#testing-tuning-and-explaining)).
 
 **Built so far:** unit tests per crate (fixed-point maths, formations, group orders, combat, morale, pathfinding, data baking, puppets); a golden determinism test that runs a scripted 4-player drill (moves, group moves and fights) for 2,400 ticks, on an open plane and again on a ridged test map where most orders need routes, and compares state hashes on macOS, Windows and Linux CI; the no-float and no-allocation tests (the latter on the ridged map); and the `gc_bench` drill and pathing-storm benchmarks. Recorded golden replays arrive with replay recording in M2.
 

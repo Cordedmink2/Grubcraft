@@ -39,6 +39,7 @@ A thread lead spawns subagents for focused side tasks and gets back a summary, w
 | `screenshotter` (proposed) | Haiku | Launches the game headless (Xvfb + lavapipe), drives it with xdotool, captures the shots a PR needs | No |
 | `docs-sync` (proposed) | Haiku | Updates docs progress notes and links after a merge; checks docs against `data/` canonical values | Docs only |
 | `feature-builder` (proposed) | Sonnet | A bounded, non-sim feature inside an Opus thread, such as the sandbox's placement UI | Yes, outside sim crates |
+| `arena-runner` (proposed) | Haiku | Runs `gc_arena` AI-against-AI ladders and drills, tabulates win rates by difficulty, faction and personality, flags regressions | No |
 
 Subagents that write code in parallel run with **worktree isolation**, so two of them never edit the same checkout.
 
@@ -49,11 +50,14 @@ Subagents that write code in parallel run with **worktree isolation**, so two of
 3. **One writer per crate at a time.** Two threads can run in parallel only if their PRs touch different crates (or one only adds files). The coordinator checks this before starting a parallel thread.
 4. **Golden replay hashes change only on purpose**, re-recorded in the same PR, and only an Opus lead or reviewer signs that off.
 5. **Escalate on second failure.** A Haiku helper that fails the same task twice hands it back to its lead. A Sonnet thread that finds it needs a sim change stops and asks for an Opus change rather than working around it.
-6. **Mechanical backstops let cheaper models move faster.** The no-floats-in-sim lint, cross-platform golden replays and `gc_bench` budget gates catch the mistakes that matter most, so CI, not trust, is what makes a Sonnet or Haiku PR safe.
+6. **`gc_ai` is Opus-led but can't break the game.** AI minds only send commands, so a bad AI change makes a weaker opponent, never a desync. Opus owns the AI's architecture, the battle estimator and tactics; Sonnet may add behaviours, personalities, openings and the AI lens through its interfaces. The relations ledger and the rule that answers offers are hashed sim state, so they follow rule 1.
+7. **Mechanical backstops let cheaper models move faster.** The no-floats-in-sim lint, cross-platform golden replays and `gc_bench` budget gates catch the mistakes that matter most, so CI, not trust, is what makes a Sonnet or Haiku PR safe.
 
 ### Effort level
 
 Effort is set per thread, separately from the model. Default to the model's normal effort; ask for high or max effort only for desync hunts, the lockstep protocol, combat-formula tuning and performance investigations where the first answer is rarely right.
+
+The AI is the other place where effort pays: its design ran at extra-high effort (2026-10-12), and the battle tactics and estimator should too. Keep max effort for the diplomacy logic (the relations ledger and the rule that answers offers), where a subtle mistake makes every faction behave strangely.
 
 ## Milestone by milestone
 
@@ -97,6 +101,8 @@ The engine thread (currently running) stays Opus and builds the eight steps in o
 | Field Battle mode: army builder, deployment, victory conditions | Opus for victory rules and deployment in the sim | Sonnet for the army builder UI; Haiku `data-entry` for point costs | |
 | Two battle maps | Sonnet | Haiku validates with `gc_mapcheck` once it exists | |
 | Packaging: Mac `.app` (ad-hoc signed), Windows `.exe`, zips | **Sonnet** | Haiku writes the release checklist | Platform plumbing with a clear finish line |
+| Team stances: one hostility test reading a stance table (AI engine hook 1) | Opus engine thread | | Needed for the 2v2 exit anyway; it later becomes the relations ledger |
+| Battle AI (`gc_ai`, AI-1 and AI-2 in [18 · AI](18-ai.md#build-plan)) | **Opus, extra-high effort**, as a parallel thread | Haiku `test-writer` writes the drills; Sonnet `feature-builder` builds the AI lens overlay | Safe to run beside the engine thread: it adds a new crate and only reads the sim's public API. The rehearsal hooks (copy a battle area, spawn with state) go through the engine thread |
 | Exit: 2v2 over home Wi-Fi, zero desyncs | Opus reads desync reports | **Mario and friends** play it | |
 
 ### M3 · First Harvest: the first agent team
@@ -109,6 +115,7 @@ The sim's shape is settled after M2, so work splits into four parallel threads, 
 | **B · Factions and heroes** | Opus | Faction modules in `gc_sim`, `data/` faction files | Ember Clans economy and Honor; Brood veins, larvae, metamorphosis, Reclaimers; heroes, levelling, the effect-primitive ability system, items, altar revive. Starts after A lands the structure and production APIs; Haiku fills ability and item data |
 | **C · Conquest UI** | Sonnet | `gc_ui`, UI parts of `gc_render`, `gc_game` | Minimap, army tray, command grid, edge notifications, fog rendering, hero panel. Reads sim state through the presentation layer only |
 | **D · Maps and tools** | Sonnet | `tools/gc_mapcheck`, `data/maps/` | `gc_mapcheck` validator, Ribcage Pass (Duel), The Four Teeth (Warfield); Haiku runs fairness checks |
+| **E · Conquest AI** | Opus | `gc_ai`, `tools/gc_arena`, `data/ai/` | Strategy, economy and scouting layers, Clans and Brood economy modules, armies, AI allies answering pings (AI-3). Builds on A's and B's APIs as they merge; Sonnet writes openings and personalities as data; Haiku `arena-runner` runs the ladders |
 | Exit: full 4-player Conquest within 4 GB | Opus (thread A) | Haiku `bench-runner` across a 60-minute soak | |
 
 A and B both touch `gc_sim`, so they split by module and B starts once A's interfaces are merged. If they collide, B pauses rather than both editing the same file.
@@ -122,6 +129,7 @@ A and B both touch `gc_sim`, so they split by module and B starts once A's inter
 | **C · Audio** | Sonnet | `gc_audio`: unit voices, faction themes, battle ambience (the mixer, first sound set and adaptive music were built early, as a separate Sonnet thread). Haiku sources and licence-checks royalty-free audio |
 | **D · Maps and post-game** | Sonnet | Hollow Lung and Marrowfen, map validator improvements, post-game screen with graphs |
 | **Balance pass** | Opus | Haiku helpers run hundreds of headless matches through `gc_replay` with scripted players and tabulate win rates; Opus reads the numbers and proposes changes; **Mario** and friends confirm by playing |
+| **E · Relations and the living world** | Opus | The relations ledger, contracts and offer rule in `gc_sim` (with thread A, which owns hamlets and creeps), mercenary company minds and the Envoy in `gc_ai` (AI-4). Sonnet builds the parley panel; Haiku enters company rosters and relation events as data |
 | Exit: a newcomer learns and wins after the tutorial | | **A real newcomer** has to try it |
 
 ### M5 · Choir and Concord: two faction threads
@@ -132,6 +140,7 @@ A and B both touch `gc_sim`, so they split by module and B starts once A's inter
 | **B · The Carrion Concord** | Opus | Caravans and trade routes, Reliquaries and Tithe, raising the dead, crumbling undead. Haiku data entry |
 | **C · Primers and presentation** | Sonnet | Primers for both factions, faction UI, effects. Starts once A and B have playable units |
 | **Balance across all pairings** | Opus | Haiku batch-sims every pairing; Opus proposes changes against the "no faction above 60%" exit |
+| **D · Choir and Concord AI** | Opus | Their economy modules and doctrines in `gc_ai` (AI-5); starts once A and B have playable units. Haiku `arena-runner` checks each holds 40 to 60% |
 
 A and B both live in `gc_sim` but in separate faction modules; shared hooks they both need are added first, in one small Opus PR, before the two threads start.
 
@@ -151,7 +160,7 @@ A and B both live in `gc_sim` but in separate faction modules; shared hooks they
 
 | Feature | Lead | Notes |
 |---|---|---|
-| Bots | Opus designs the bot interface on the headless sim | Sonnet builds behaviours once the interface exists; Haiku runs bot-vs-bot ladders |
+| Exploration and diplomacy (AI-6) | Opus, max effort for diplomacy logic | Factions met while exploring are mostly content (rosters, personalities, homes) that Sonnet can add once the minds exist; Haiku runs the arena |
 | Host migration | Opus | Protocol work |
 | Internet join codes (hole punching, rendezvous service) | Sonnet | Opus security review of the rendezvous protocol |
 | Player map editor | Sonnet | Exposes the internal edit mode |
