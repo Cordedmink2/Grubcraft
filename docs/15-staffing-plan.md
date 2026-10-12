@@ -82,7 +82,7 @@ The engine thread (currently running) stays Opus and builds the eight steps in o
 | Golden replays and `field-8000pt-2v2` benchmark | Opus designs the scenario | Haiku records goldens, wires the bench into CI | |
 | Exit: 3,000-soldier sandbox at 60 fps | Opus investigates frame time | Haiku `bench-runner`; **Mario** judges the feel | "Feels like Shogun" is Mario's call |
 
-**Optional low-conflict side thread during M1:** a Haiku-helped Sonnet thread that writes `data/` entries for the Ember Clans and Brood prototype rosters from [03 · Factions](03-factions.md), in its own files only. Worth starting only if the engine thread ever waits on data.
+**Optional low-conflict side thread during M1:** a Haiku-helped Sonnet thread that writes `data/` entries for the Ember Clans and Brood prototype rosters from [03 · Factions](03-factions.md), in its own files only. Worth starting only if the engine thread ever waits on data. **Done for all four factions** during M1 (an Opus thread designing, Haiku helpers transcribing the Brood, Choir and Concord data): [17 · Unit Rosters](17-unit-rosters.md) and `data/rosters/`.
 
 ### M2 · LAN Battle: still one Opus engine thread, Sonnet joins late
 

@@ -45,6 +45,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 *Goal: the primary mode, with two factions.*
 - Workers, Grub seeps and Marrow veins, structures and construction, production queues, supply and upkeep, tech tiers.
 - Ember Clans economy and Honor; Brood veins, larvae, metamorphosis, Reclaimers.
+- Unit, hero and ability data for all four factions is already drafted in `data/rosters/` ([17 · Unit Rosters](17-unit-rosters.md)); M3 bakes it into the game.
 - Heroes: levelling, abilities from the effect-primitive system, items, altar revive.
 - Fog of war, minimap, army tray, command grid, edge notifications.
 - Annihilation and Titan's Heart victories.

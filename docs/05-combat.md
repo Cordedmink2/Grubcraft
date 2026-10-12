@@ -131,7 +131,7 @@ Warcraft III's best idea, kept:
 | Monster | Infantry, morale | Focused ranged, heroes |
 | Artillery | Blocks of infantry, structures | Everything that reaches it |
 
-Counters are multipliers between 0.7× and 1.5×, never hard immunities, so a well-positioned "wrong" army can still win.
+Counters are multipliers between 0.7× and 1.5×, never hard immunities, so a well-positioned "wrong" army can still win. The proposed class-by-class table is in [17 · Unit Rosters](17-unit-rosters.md#classes-and-counters).
 
 ## Structures in combat
 

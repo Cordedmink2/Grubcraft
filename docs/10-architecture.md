@@ -171,7 +171,7 @@ A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt increm
 - The renderer receives the local player's fog as a small texture and blurs it in the shader.
 
 ### Abilities as data
-Abilities are composed in data files from a fixed vocabulary of deterministic effect primitives: `Damage`, `Heal`, `ApplyStatus`, `ModifyMorale`, `Summon`, `Teleport`, `AreaPulse`, `SpawnVolley`, `Transform` (Brood metamorphosis), `RaiseCorpses`, and so on. Most of the 48 hero abilities and the faction-meter abilities need no new code. Faction-defining systems (veins, chords, caravans, tithe) are hand-written Rust inside `gc_sim`.
+Abilities are composed in data files from a fixed vocabulary of deterministic effect primitives: `Damage`, `Heal`, `ApplyStatus`, `ModifyMorale`, `Summon`, `Teleport`, `AreaPulse`, `SpawnVolley`, `Transform` (Brood metamorphosis), `RaiseCorpses`, and so on. Most of the 48 hero abilities and the faction-meter abilities need no new code. Faction-defining systems (veins, chords, caravans, tithe) are hand-written Rust inside `gc_sim`. Every ability in the game is drafted in `data/rosters/*.ron` with the primitives it needs; [17 · Unit Rosters](17-unit-rosters.md#schema-proposals) lists the extra primitives and record fields that implies.
 
 ### State hashing and snapshots
 - Every 10 ticks the sim hashes its full state (xxHash3 over the pools) for desync detection.
