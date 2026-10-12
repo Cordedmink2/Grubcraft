@@ -38,6 +38,8 @@ const CORPSE_SINK_SECONDS: f32 = 3.0;
 #[derive(Clone, Copy, Debug)]
 pub struct Block {
     pub handle: RegimentHandle,
+    /// Unit type, so the fallen keep their model.
+    pub unit: u16,
     pub centre: Vec2,
     /// Unit vector of the regiment's facing.
     pub facing: Vec2,
@@ -58,6 +60,12 @@ pub struct Block {
 pub struct Soldier {
     pub pos: Vec2,
     pub facing: Vec2,
+    /// How fast he moved this frame, in tiles per second.
+    pub speed: f32,
+    /// In a fighting front rank, striking at the enemy.
+    pub striking: bool,
+    /// A stable value in [0, 1) per soldier, to keep animations out of step.
+    pub phase: f32,
 }
 
 /// A soldier lying where he fell.
@@ -66,6 +74,9 @@ pub struct Corpse {
     pub pos: Vec2,
     pub facing: Vec2,
     pub owner: u8,
+    pub unit: u16,
+    /// Seconds since he fell.
+    pub age: f32,
     /// How far it has sunk into the ground, in tiles (0 while fresh).
     pub sink: f32,
 }
@@ -79,7 +90,7 @@ pub struct Puppets {
     pos: Vec<Vec2>,
     facing: Vec<Vec2>,
     /// Fallen soldiers, a ring buffer; the oldest are reused first.
-    corpses: Vec<(Vec2, Vec2, u8, f32)>,
+    corpses: Vec<(Vec2, Vec2, u8, u16, f32)>,
     corpse_capacity: usize,
     next_corpse: usize,
     time: f32,
@@ -97,6 +108,11 @@ impl Puppets {
             next_corpse: 0,
             time: 0.0,
         }
+    }
+
+    /// Game seconds since the puppets started (stops while paused).
+    pub fn time(&self) -> f32 {
+        self.time
     }
 
     /// Start a new frame `dt` seconds after the last one.
@@ -134,6 +150,7 @@ impl Puppets {
             ) * spread
                 + jitter(block.handle, k) * scatter;
             let target = block.centre + right * local.x + back * local.y;
+            let was = self.pos[i];
             if fresh {
                 self.pos[i] = target;
                 self.facing[i] = block.facing;
@@ -150,8 +167,14 @@ impl Puppets {
                 let want = if dist > 0.4 { to / dist } else { block.facing };
                 self.facing[i] = turn_toward(self.facing[i], want, TURN_RATE * dt);
             }
+            let speed = if fresh || dt <= 0.0 {
+                0.0
+            } else {
+                was.distance(self.pos[i]) / dt
+            };
             let mut pos = self.pos[i];
-            if block.engaged && (k as u16) < files * 2 {
+            let striking = block.engaged && (k as u16) < files * 2;
+            if striking {
                 let phase = unit_hash(block.handle, k, 4);
                 let swing = ((self.time * LUNGE_RATE + phase) * core::f32::consts::TAU).sin();
                 pos += self.facing[i] * LUNGE * swing.max(0.0);
@@ -159,6 +182,9 @@ impl Puppets {
             out(Soldier {
                 pos,
                 facing: self.facing[i],
+                speed,
+                striking,
+                phase: unit_hash(block.handle, k, 5),
             });
         }
     }
@@ -180,7 +206,13 @@ impl Puppets {
             };
             let pick = (unit_hash(block.handle, gone, self.time.to_bits()) * pool as f32) as usize;
             let (victim, last) = (r * SLOTS + pick.min(gone), r * SLOTS + gone);
-            let corpse = (self.pos[victim], self.facing[victim], owner, self.time);
+            let corpse = (
+                self.pos[victim],
+                self.facing[victim],
+                owner,
+                block.unit,
+                self.time,
+            );
             if self.corpses.len() < self.corpse_capacity {
                 self.corpses.push(corpse);
             } else {
@@ -196,13 +228,15 @@ impl Puppets {
     pub fn corpses(&self) -> impl Iterator<Item = Corpse> + '_ {
         self.corpses
             .iter()
-            .filter_map(move |&(pos, facing, owner, fell)| {
+            .filter_map(move |&(pos, facing, owner, unit, fell)| {
                 let age = self.time - fell;
                 let sink = (age - CORPSE_SECONDS) / CORPSE_SINK_SECONDS;
                 (sink < 1.0).then_some(Corpse {
                     pos,
                     facing,
                     owner,
+                    unit,
+                    age,
                     sink: sink.max(0.0),
                 })
             })
@@ -284,6 +318,7 @@ mod tests {
                 index: 2,
                 generation: 0,
             },
+            unit: 0,
             centre: Vec2::new(10.0, 10.0),
             facing: Vec2::NEG_Y,
             files: 4,
@@ -318,6 +353,7 @@ mod tests {
                 index: 0,
                 generation: 0,
             },
+            unit: 0,
             centre: Vec2::ZERO,
             facing: Vec2::NEG_Y,
             files: 4,

@@ -1,0 +1,67 @@
+// Soldier models, baked into assets/models.pak by tools/gc_artbake
+// (`cargo run -p gc_artbake --release`). `name` is the unit type each model
+// dresses, exactly as in data/units.ron. Sources marked `shared:` live in the
+// project's shared assets folder because their packs may not be
+// redistributed raw (docs/16-art-sourcing.md); `repo:` sources are in
+// assets-src/ here. Clip kinds: Idle, Walk, Run, Attack, Attack2, Hit, Die,
+// Cheer, Shoot.
+(
+    models: [
+        (
+            name: "Yari Ashigaru",
+            source: "shared:quaternius/ultimate-monsters/Big/glTF/Ninja.gltf",
+            height: 1.15,
+            team: ["#1d1d1d", "#1e1f22"],
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Weapon",
+                "Attack2": "Punch", "Hit": "HitReact", "Die": "Death", "Cheer": "Wave",
+            },
+            lod_triangles: (1400, 500),
+        ),
+        (
+            name: "Yumi Ashigaru",
+            source: "shared:quaternius/rpg-characters/glTF/Ranger.gltf",
+            height: 1.15,
+            team: [],
+            team_hue: Some((120.0, 210.0, 0.12)),
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Punch",
+                "Shoot": "Bow_Shoot", "Hit": "RecieveHit", "Die": "Death", "Cheer": "PickUp",
+            },
+            lod_triangles: (1400, 500),
+        ),
+        (
+            name: "Skitterlings",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 0.7,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: {
+                "Idle": "Idle", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001",
+            },
+            lod_triangles: (1200, 450),
+        ),
+        (
+            name: "Shardlings",
+            source: "shared:quaternius/ultimate-monsters/Big/glTF/Alien.gltf",
+            height: 1.1,
+            team: ["#542964"],
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Weapon",
+                "Attack2": "Punch", "Hit": "HitReact", "Die": "Death", "Cheer": "Yes",
+            },
+            lod_triangles: (1400, 500),
+        ),
+        (
+            name: "Bone Pikes",
+            source: "shared:quaternius/ultimate-monsters/Big/glTF/Orc_Skull.gltf",
+            height: 1.2,
+            team: ["#738636", "#8b3d5e", "#3b7942"],
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Weapon",
+                "Attack2": "Punch", "Hit": "HitReact", "Die": "Death", "Cheer": "Yes",
+            },
+            lod_triangles: (1400, 500),
+        ),
+    ],
+)

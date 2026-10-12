@@ -208,3 +208,84 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
     let c = shade(albedo, in.normal, in.world);
     return vec4<f32>(c + albedo * in.color.a * 0.8, 1.0);
 }
+
+// ---------------------------------------------------------------- soldiers
+//
+// Real soldier models (M1 step 8): each vertex is rigidly bound to one bone,
+// and the bone texture holds, per animation frame, a 3 × 4 matrix per bone
+// that moves the rest pose into that frame's pose. Each instance names two
+// frame rows and how far to blend between them.
+
+@group(1) @binding(0) var bones: texture_2d<f32>;
+
+struct SoldierOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec3<f32>,
+    @location(3) highlight: f32,
+};
+
+fn bone_texel(row: u32, bone: u32, r: u32) -> vec4<f32> {
+    return textureLoad(bones, vec2<i32>(i32(bone * 3u + r), i32(row)), 0);
+}
+
+@vertex
+fn vs_soldier(
+    // x, y, z in 1/4096 tiles; w packs the bone (low byte) and team weight.
+    @location(0) vpos: vec4<i32>,
+    @location(1) vnormal: vec4<f32>,
+    @location(2) vcolor: vec4<f32>,
+    @location(3) pos: vec2<f32>,
+    @location(4) facing: vec2<f32>,
+    @location(5) frames: vec2<u32>,
+    // x: blend toward frames.y, y: selection highlight, z: lies fallen
+    @location(6) flags: vec4<f32>,
+    @location(7) team_color: vec4<f32>,
+    @location(8) lift: f32,
+    @location(9) scale: f32,
+) -> SoldierOut {
+    let packed = bitcast<u32>(vpos.w);
+    let bone = packed & 0xffu;
+    let team = f32((packed >> 8u) & 0xffu) / 255.0;
+    let p = vec4<f32>(vec3<f32>(vpos.xyz) / 4096.0, 1.0);
+    let t = flags.x;
+    let r0 = mix(bone_texel(frames.x, bone, 0u), bone_texel(frames.y, bone, 0u), t);
+    let r1 = mix(bone_texel(frames.x, bone, 1u), bone_texel(frames.y, bone, 1u), t);
+    let r2 = mix(bone_texel(frames.x, bone, 2u), bone_texel(frames.y, bone, 2u), t);
+    var local = vec3<f32>(dot(r0, p), dot(r1, p), dot(r2, p)) * scale;
+    let n = vnormal.xyz;
+    var nl = vec3<f32>(dot(r0.xyz, n), dot(r1.xyz, n), dot(r2.xyz, n));
+    if flags.z > 0.5 {
+        // No death clip: lay the soldier on his back.
+        local = vec3<f32>(local.x, -local.z + 0.12 * scale, local.y);
+        nl = vec3<f32>(nl.x, -nl.z, nl.y);
+    }
+    // Model space is x to the soldier's left, y up, z forward (glTF's
+    // convention), so x maps to the left of the facing.
+    let fwd = facing;
+    let left = vec2<f32>(facing.y, -facing.x);
+    let xz = pos + left * local.x + fwd * local.z;
+    let ground = max(height_at(pos), g.misc.x - 0.05);
+    let world = vec3<f32>(xz.x, ground + lift + local.y, xz.y);
+    var out: SoldierOut;
+    out.clip = g.view_proj * vec4<f32>(world, 1.0);
+    out.world = world;
+    let nxz = left * nl.x + fwd * nl.z;
+    out.normal = normalize(vec3<f32>(nxz.x, nl.y, nxz.y) + vec3<f32>(0.0, 1e-4, 0.0));
+    // Team parts take the team colour, keeping the painted light and shade.
+    let shade_of = dot(vcolor.rgb, vec3<f32>(0.3, 0.59, 0.11));
+    let tinted = team_color.rgb * (0.45 + shade_of * 1.1);
+    out.color = mix(vcolor.rgb, tinted, team);
+    out.highlight = flags.y;
+    return out;
+}
+
+@fragment
+fn fs_soldier(in: SoldierOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let albedo = srgb_to_linear(in.color);
+    // Thin double-sided parts (cloaks, blades) light from whichever side shows.
+    let n = select(-in.normal, in.normal, front);
+    let c = shade(albedo, n, in.world);
+    return vec4<f32>(c + albedo * in.highlight * 0.8, 1.0);
+}

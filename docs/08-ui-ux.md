@@ -50,6 +50,7 @@ Structures use the same grid for production. Workers' build menu is one sub-page
 
 - **Bird's-eye view** at a fixed pitch (about 55°), with rotation limited to ±45° (reset with middle-click). Fixed pitch keeps the battlefield readable and the renderer cheap.
 - **Zoom** from close (individual soldiers fighting) to far. Past a threshold the view smoothly switches to **Commander View**: soldiers disappear and each regiment is drawn as a banner block with its facing and state, like Total War's tactical map. It is easier to command a big battle in, and much cheaper to render.
+- **Built so far (M1 step 8):** zooming out past a camera distance of 175 switches to Commander View (and back in below 160, so it doesn't flicker at the threshold). Each regiment becomes a block the size of its formation in its team colour, with a pale strip along its front and a flagpole whose flag grows with the zoom so it stays readable. `C` opens the credits screen (the authors and licences of the art in the game, read from `CREDITS.md`); `C` or `Esc` closes it.
 - Edge scroll, `WASD`-free arrow scroll (WASD is not used for camera, because the grid uses those keys), middle-drag pan.
 - **Mac trackpad:** two-finger pan, pinch zoom, two-finger rotate. Many friends will play on MacBooks without a mouse; this must feel native.
 

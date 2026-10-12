@@ -1,0 +1,810 @@
+//! Grubcraft art baker: turns rigged, animated glTF characters into the
+//! soldier model pack (`assets/models.pak`) the game embeds.
+//!
+//! Each model is listed in `assets-src/models.ron`: its glTF file, the unit
+//! type it dresses, its height, which colours take the team colour, and which
+//! of its animations play as idle, walk, attack and so on. For each model the
+//! baker:
+//!
+//! 1. Colours every vertex from the material's texture (the low-poly packs
+//!    paint flat colour swatches, so one sample per vertex keeps the look).
+//! 2. Binds every vertex rigidly to one bone (its heaviest skin weight, or
+//!    the bone a rigid prop such as a bow hangs from).
+//! 3. Welds, simplifies to two levels of detail and orders the triangles for
+//!    the GPU's vertex cache.
+//! 4. Samples each clip at a fixed rate into bone texture rows: for every
+//!    frame, a 3 × 4 matrix per bone that moves the rest pose to that pose.
+//!
+//! Raw files from some packs (Quaternius) may not be redistributed, so they
+//! live in the project's shared folder, not the repository; only the baked
+//! pack is committed (docs/16-art-sourcing.md).
+//!
+//! Usage: gc_artbake [--config assets-src/models.ron] [--shared DIR]
+//!                   [--out assets/models.pak] [--report]
+//! `--report` prints each model's most common colours, for choosing team colours.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use base64::Engine;
+use gc_assets::model::{
+    BONE_TEXELS_PER_ROW, ClipKind, ClipRecord, MAX_BONES, ModelRecord, ModelTables, ModelVertex,
+    NAME_BYTES, POSITION_SCALE, f16_bits,
+};
+use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
+use serde::Deserialize;
+
+/// Frames per second clips are sampled at. The shader blends between frames.
+const SAMPLE_FPS: f32 = 12.0;
+
+#[derive(Deserialize)]
+struct Config {
+    models: Vec<ModelConfig>,
+}
+
+#[derive(Deserialize)]
+struct ModelConfig {
+    /// The unit type this model dresses, exactly as named in data/units.ron.
+    name: String,
+    /// `shared:` + a path under the shared assets folder, or `repo:` + a
+    /// path under the repository's `assets-src/`.
+    source: String,
+    /// Height of the rest pose, in tiles.
+    height: f32,
+    /// Turn the model this many degrees about the vertical so it faces +z.
+    #[serde(default)]
+    turn: f32,
+    /// Colours (`#rrggbb`) that take the team colour, and how close a
+    /// vertex colour must be to count (0 to 441, RGB distance).
+    #[serde(default)]
+    team: Vec<String>,
+    #[serde(default = "default_team_tolerance")]
+    team_tolerance: f32,
+    /// Also take the team colour: every vertex whose hue (degrees) lies in
+    /// this range and whose saturation is at least the third value (0 to 1).
+    /// For painted textures with many shades of one cloth colour.
+    #[serde(default)]
+    team_hue: Option<(f32, f32, f32)>,
+    /// Clip kind (`Idle`, `Walk`, ...) to the glTF animation's name.
+    clips: HashMap<String, String>,
+    /// Triangle budgets for the full and the reduced level of detail.
+    lod_triangles: (usize, usize),
+}
+
+fn default_team_tolerance() -> f32 {
+    40.0
+}
+
+struct Options {
+    config: PathBuf,
+    shared: PathBuf,
+    repo_src: PathBuf,
+    out: PathBuf,
+    report: bool,
+}
+
+fn main() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut opts = Options {
+        config: root.join("assets-src/models.ron"),
+        shared: PathBuf::from("/mnt/project-files/assets-src"),
+        repo_src: root.join("assets-src"),
+        out: root.join("assets/models.pak"),
+        report: false,
+    };
+    let mut args = std::env::args().skip(1);
+    while let Some(flag) = args.next() {
+        if flag == "--report" {
+            opts.report = true;
+            continue;
+        }
+        let Some(value) = args.next() else { usage() };
+        match flag.as_str() {
+            "--config" => opts.config = value.into(),
+            "--shared" => opts.shared = value.into(),
+            "--out" => opts.out = value.into(),
+            _ => usage(),
+        }
+    }
+    if let Err(e) = run(&opts) {
+        eprintln!("gc_artbake: {e}");
+        std::process::exit(1);
+    }
+}
+
+fn usage() -> ! {
+    eprintln!("usage: gc_artbake [--config FILE] [--shared DIR] [--out FILE] [--report]");
+    std::process::exit(2);
+}
+
+fn run(opts: &Options) -> Result<(), String> {
+    let text = std::fs::read_to_string(&opts.config)
+        .map_err(|e| format!("{}: {e}", opts.config.display()))?;
+    let config: Config =
+        ron::from_str(&text).map_err(|e| format!("{}: {e}", opts.config.display()))?;
+    let mut tables = ModelTables::default();
+    for m in &config.models {
+        let path = if let Some(p) = m.source.strip_prefix("shared:") {
+            opts.shared.join(p)
+        } else if let Some(p) = m.source.strip_prefix("repo:") {
+            opts.repo_src.join(p)
+        } else {
+            return Err(format!(
+                "{}: source must start with shared: or repo:",
+                m.name
+            ));
+        };
+        let baked =
+            bake_model(m, &path).map_err(|e| format!("{} ({}): {e}", m.name, path.display()))?;
+        if opts.report {
+            report(&baked);
+        }
+        baked.append_to(&mut tables, &m.name)?;
+    }
+    let mut pack = gc_assets::PackWriter::new();
+    tables.write(&mut pack);
+    let bytes = pack.finish();
+    if let Some(dir) = opts.out.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    std::fs::write(&opts.out, &bytes).map_err(|e| format!("{}: {e}", opts.out.display()))?;
+    println!(
+        "wrote {} ({} KB): {} models, {} vertices, {} triangles at full detail, {} bone rows",
+        opts.out.display(),
+        bytes.len() / 1024,
+        tables.models.len(),
+        tables.vertices.len(),
+        tables.models.iter().map(|m| m.lods[0][1] / 3).sum::<u32>(),
+        tables.bones.len() / BONE_TEXELS_PER_ROW as usize,
+    );
+    Ok(())
+}
+
+/// A vertex before quantisation, in tiles.
+#[derive(Clone, Copy)]
+struct Vert {
+    pos: Vec3,
+    normal: Vec3,
+    color: [u8; 3],
+    bone: u8,
+}
+
+struct BakedModel {
+    verts: Vec<ModelVertex>,
+    lods: [Vec<u16>; 2],
+    height: f32,
+    bones: u32,
+    /// Clip kind, and its frames: per frame, `bones` matrices (rest to pose).
+    clips: Vec<(ClipKind, Vec<Vec<Mat4>>)>,
+    /// Most common colours and how many vertices have each.
+    palette: Vec<([u8; 3], usize, bool)>,
+}
+
+impl BakedModel {
+    fn append_to(&self, t: &mut ModelTables, name: &str) -> Result<(), String> {
+        if name.len() > NAME_BYTES {
+            return Err(format!("name {name:?} is longer than {NAME_BYTES} bytes"));
+        }
+        let mut name_bytes = [0; NAME_BYTES];
+        name_bytes[..name.len()].copy_from_slice(name.as_bytes());
+        let first_vertex = t.vertices.len() as u32;
+        t.vertices.extend_from_slice(&self.verts);
+        let mut lods = [[0; 2]; 2];
+        for (lod, indices) in self.lods.iter().enumerate() {
+            lods[lod] = [t.indices.len() as u32, indices.len() as u32];
+            t.indices.extend_from_slice(indices);
+        }
+        let first_clip = t.clips.len() as u32;
+        for (kind, frames) in &self.clips {
+            let first_row = (t.bones.len() / BONE_TEXELS_PER_ROW as usize) as u32;
+            for frame in frames {
+                let mut row = vec![[0u16; 4]; BONE_TEXELS_PER_ROW as usize];
+                for (b, m) in frame.iter().enumerate() {
+                    // Rows of the 3 × 4 matrix: row r is (m[0][r], m[1][r], m[2][r], m[3][r]).
+                    for r in 0..3 {
+                        let v = Vec4::new(m.x_axis[r], m.y_axis[r], m.z_axis[r], m.w_axis[r]);
+                        row[b * 3 + r] = v.to_array().map(f16_bits);
+                    }
+                }
+                t.bones.extend_from_slice(&row);
+            }
+            t.clips.push(ClipRecord {
+                kind: *kind as u8,
+                _pad: [0; 3],
+                first_row,
+                frames: frames.len() as u32,
+                fps: SAMPLE_FPS,
+            });
+        }
+        t.models.push(ModelRecord {
+            name: name_bytes,
+            first_vertex,
+            vertex_count: self.verts.len() as u32,
+            lods,
+            first_clip,
+            clip_count: self.clips.len() as u32,
+            height: self.height,
+            bones: self.bones,
+        });
+        Ok(())
+    }
+}
+
+fn report(m: &BakedModel) {
+    println!(
+        "  {} vertices, {} / {} triangles, {} bones, {} clips; colours (team marked *):",
+        m.verts.len(),
+        m.lods[0].len() / 3,
+        m.lods[1].len() / 3,
+        m.bones,
+        m.clips.len()
+    );
+    for (c, n, team) in m.palette.iter().take(12) {
+        println!(
+            "    #{:02x}{:02x}{:02x} {n:>5}{}",
+            c[0],
+            c[1],
+            c[2],
+            if *team { " *" } else { "" }
+        );
+    }
+}
+
+/// The glTF document with its buffers and decoded images.
+struct Source {
+    doc: gltf::Document,
+    buffers: Vec<Vec<u8>>,
+    images: Vec<Option<Image>>,
+}
+
+struct Image {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
+impl Image {
+    /// Nearest texel at a UV, wrapping.
+    fn sample(&self, uv: Vec2) -> [u8; 3] {
+        let x = (uv.x.rem_euclid(1.0) * self.width as f32) as u32 % self.width;
+        let y = (uv.y.rem_euclid(1.0) * self.height as f32) as u32 % self.height;
+        let i = ((y * self.width + x) * 4) as usize;
+        [self.rgba[i], self.rgba[i + 1], self.rgba[i + 2]]
+    }
+}
+
+fn load(path: &Path) -> Result<Source, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let gltf = gltf::Gltf::from_slice(&bytes).map_err(|e| e.to_string())?;
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let mut buffers = Vec::new();
+    for b in gltf.document.buffers() {
+        let data = match b.source() {
+            gltf::buffer::Source::Bin => gltf.blob.clone().ok_or("missing GLB binary chunk")?,
+            gltf::buffer::Source::Uri(uri) => read_uri(dir, uri)?,
+        };
+        buffers.push(data);
+    }
+    let mut images = Vec::new();
+    for img in gltf.document.images() {
+        let data = match img.source() {
+            gltf::image::Source::View { view, .. } => {
+                let buf = &buffers[view.buffer().index()];
+                buf[view.offset()..view.offset() + view.length()].to_vec()
+            }
+            gltf::image::Source::Uri { uri, .. } => read_uri(dir, uri)?,
+        };
+        images.push(decode_png(&data).ok());
+    }
+    Ok(Source {
+        doc: gltf.document,
+        buffers,
+        images,
+    })
+}
+
+fn read_uri(dir: &Path, uri: &str) -> Result<Vec<u8>, String> {
+    if let Some(rest) = uri.strip_prefix("data:") {
+        let (_, data) = rest.split_once(";base64,").ok_or("unsupported data URI")?;
+        base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|e| e.to_string())
+    } else {
+        let path = dir.join(uri.replace("%20", " "));
+        std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+}
+
+fn decode_png(data: &[u8]) -> Result<Image, String> {
+    let mut decoder = png::Decoder::new(data);
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
+    let px = (info.width * info.height) as usize;
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => buf[..px * 4].to_vec(),
+        png::ColorType::Rgb => buf[..px * 3]
+            .chunks(3)
+            .flat_map(|c| [c[0], c[1], c[2], 255])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => buf[..px * 2]
+            .chunks(2)
+            .flat_map(|c| [c[0], c[0], c[0], c[1]])
+            .collect(),
+        png::ColorType::Grayscale => buf[..px].iter().flat_map(|&g| [g, g, g, 255]).collect(),
+        png::ColorType::Indexed => return Err("indexed PNG not expanded".into()),
+    };
+    Ok(Image {
+        width: info.width,
+        height: info.height,
+        rgba,
+    })
+}
+
+/// A node's local transform as translation, rotation, scale.
+#[derive(Clone, Copy)]
+struct Trs {
+    t: Vec3,
+    r: Quat,
+    s: Vec3,
+}
+
+impl Trs {
+    fn matrix(&self) -> Mat4 {
+        Mat4::from_scale_rotation_translation(self.s, self.r, self.t)
+    }
+}
+
+/// The scene's nodes: parents, rest transforms and globals.
+struct Skeleton {
+    parent: Vec<Option<usize>>,
+    rest: Vec<Trs>,
+    /// Nodes in an order where every parent comes before its children.
+    order: Vec<usize>,
+}
+
+impl Skeleton {
+    fn new(doc: &gltf::Document) -> Skeleton {
+        let n = doc.nodes().count();
+        let mut parent = vec![None; n];
+        let mut rest = Vec::with_capacity(n);
+        for node in doc.nodes() {
+            for child in node.children() {
+                parent[child.index()] = Some(node.index());
+            }
+            let (t, r, s) = node.transform().decomposed();
+            rest.push(Trs {
+                t: Vec3::from(t),
+                r: Quat::from_array(r),
+                s: Vec3::from(s),
+            });
+        }
+        let mut order = Vec::with_capacity(n);
+        let mut stack: Vec<usize> = (0..n).filter(|&i| parent[i].is_none()).collect();
+        while let Some(i) = stack.pop() {
+            order.push(i);
+            stack.extend(doc.nodes().nth(i).unwrap().children().map(|c| c.index()));
+        }
+        Skeleton {
+            parent,
+            rest,
+            order,
+        }
+    }
+
+    fn globals(&self, local: &[Trs]) -> Vec<Mat4> {
+        let mut g = vec![Mat4::IDENTITY; local.len()];
+        for &i in &self.order {
+            let m = local[i].matrix();
+            g[i] = match self.parent[i] {
+                Some(p) => g[p] * m,
+                None => m,
+            };
+        }
+        g
+    }
+}
+
+fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
+    let src = load(path)?;
+    let doc = &src.doc;
+    let get = |b: gltf::Buffer<'_>| src.buffers.get(b.index()).map(|v| v.as_slice());
+    let skel = Skeleton::new(doc);
+    let rest_globals = skel.globals(&skel.rest);
+
+    let skin = doc
+        .skins()
+        .next()
+        .ok_or("no skin (the model is not rigged)")?;
+    let joints: Vec<usize> = skin.joints().map(|j| j.index()).collect();
+    if joints.len() > MAX_BONES as usize {
+        return Err(format!("{} bones, more than {MAX_BONES}", joints.len()));
+    }
+    let inverse_bind: Vec<Mat4> = match skin.reader(get).read_inverse_bind_matrices() {
+        Some(r) => r.map(|m| Mat4::from_cols_array_2d(&m)).collect(),
+        None => vec![Mat4::IDENTITY; joints.len()],
+    };
+    let joint_of_node: HashMap<usize, usize> =
+        joints.iter().enumerate().map(|(b, &n)| (n, b)).collect();
+    // Parts that hang from no bone use one extra bone that never moves.
+    let still_bone = joints.len();
+
+    // 1. Gather every triangle in the rest pose, bound rigidly to one bone.
+    let mut verts: Vec<Vert> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    for node in doc.nodes() {
+        let Some(mesh) = node.mesh() else { continue };
+        let skinned = node.skin().is_some();
+        // The bone a rigid part hangs from: the nearest ancestor joint.
+        let mut holder = None;
+        let mut at = Some(node.index());
+        while let Some(i) = at {
+            if let Some(&b) = joint_of_node.get(&i) {
+                holder = Some(b);
+                break;
+            }
+            at = skel.parent[i];
+        }
+        for prim in mesh.primitives() {
+            if prim.mode() != gltf::mesh::Mode::Triangles {
+                continue;
+            }
+            let reader = prim.reader(get);
+            let positions: Vec<Vec3> = reader
+                .read_positions()
+                .ok_or("primitive without positions")?
+                .map(Vec3::from)
+                .collect();
+            let normals: Vec<Vec3> = match reader.read_normals() {
+                Some(n) => n.map(Vec3::from).collect(),
+                None => vec![Vec3::Y; positions.len()],
+            };
+            let uvs: Vec<Vec2> = match reader.read_tex_coords(0) {
+                Some(t) => t.into_f32().map(Vec2::from).collect(),
+                None => vec![Vec2::ZERO; positions.len()],
+            };
+            let joints_attr: Option<Vec<[u16; 4]>> =
+                reader.read_joints(0).map(|j| j.into_u16().collect());
+            let weights_attr: Option<Vec<[f32; 4]>> =
+                reader.read_weights(0).map(|w| w.into_f32().collect());
+            let material = prim.material();
+            let pbr = material.pbr_metallic_roughness();
+            let factor = Vec4::from(pbr.base_color_factor());
+            let texture = pbr
+                .base_color_texture()
+                .and_then(|t| src.images.get(t.texture().source().index()))
+                .and_then(|i| i.as_ref());
+
+            let base = verts.len() as u32;
+            for k in 0..positions.len() {
+                let (bone, to_rest) = match (&joints_attr, &weights_attr) {
+                    (Some(j), Some(w)) if skinned => {
+                        let (slot, _) =
+                            w[k].iter().enumerate().fold((0, -1.0), |best, (s, &wt)| {
+                                if wt > best.1 { (s, wt) } else { best }
+                            });
+                        let b = j[k][slot] as usize;
+                        (b, rest_globals[joints[b]] * inverse_bind[b])
+                    }
+                    _ => (holder.unwrap_or(still_bone), rest_globals[node.index()]),
+                };
+                let mut color = Vec3::splat(255.0) * factor.truncate();
+                if let Some(img) = texture {
+                    let c = img.sample(uvs[k]);
+                    color *= Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32) / 255.0;
+                }
+                verts.push(Vert {
+                    pos: to_rest.transform_point3(positions[k]),
+                    normal: to_rest.transform_vector3(normals[k]).normalize_or(Vec3::Y),
+                    color: color.round().to_array().map(|c| c.clamp(0.0, 255.0) as u8),
+                    bone: bone as u8,
+                });
+            }
+            match reader.read_indices() {
+                Some(i) => indices.extend(i.into_u32().map(|i| base + i)),
+                None => indices.extend(base..verts.len() as u32),
+            }
+        }
+    }
+    if indices.is_empty() {
+        return Err("no triangles".into());
+    }
+
+    // 2. Into game space: face +z, feet on the ground, `height` tall.
+    let turn = Mat4::from_rotation_y(cfg.turn.to_radians());
+    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for v in &verts {
+        let p = turn.transform_point3(v.pos);
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    let scale = cfg.height / (hi.y - lo.y).max(1e-6);
+    let to_game = Mat4::from_scale(Vec3::splat(scale))
+        * Mat4::from_translation(Vec3::new(-(lo.x + hi.x) / 2.0, -lo.y, -(lo.z + hi.z) / 2.0))
+        * turn;
+    let from_game = to_game.inverse();
+    for v in &mut verts {
+        v.pos = to_game.transform_point3(v.pos);
+        v.normal = turn.transform_vector3(v.normal).normalize_or(Vec3::Y);
+    }
+
+    // 3. Quantise and weld identical vertices.
+    let team_colors: Vec<Vec3> = cfg
+        .team
+        .iter()
+        .map(|h| parse_hex(h))
+        .collect::<Result<_, _>>()?;
+    let mut welded: Vec<ModelVertex> = Vec::new();
+    let mut seen: HashMap<[u8; 16], u32> = HashMap::new();
+    let remap: Vec<u32> = verts
+        .iter()
+        .map(|v| {
+            let q = quantise(v, &team_colors, cfg.team_tolerance, cfg.team_hue);
+            let key: [u8; 16] = bytemuck::cast(q);
+            *seen.entry(key).or_insert_with(|| {
+                welded.push(q);
+                welded.len() as u32 - 1
+            })
+        })
+        .collect();
+    let indices: Vec<u32> = indices.iter().map(|&i| remap[i as usize]).collect();
+
+    // 4. Two levels of detail, each ordered for the vertex cache.
+    let positions: Vec<[f32; 3]> = welded
+        .iter()
+        .map(|v| v.pos.map(|c| c as f32 / POSITION_SCALE))
+        .collect();
+    let adapter = meshopt::VertexDataAdapter::new(bytemuck::cast_slice(&positions), 12, 0)
+        .map_err(|e| e.to_string())?;
+    let simplify = |indices: &[u32], tris: usize| -> Vec<u32> {
+        if indices.len() / 3 <= tris {
+            return indices.to_vec();
+        }
+        let mut out = meshopt::simplify(
+            indices,
+            &adapter,
+            tris * 3,
+            0.05,
+            meshopt::SimplifyOptions::Permissive,
+            None,
+        );
+        if out.len() / 3 > tris * 5 / 4 {
+            // Attribute seams can stop the careful simplifier early.
+            out = meshopt::simplify_sloppy(indices, &adapter, tris * 3, 0.1, None);
+        }
+        out
+    };
+    let lod0 =
+        meshopt::optimize_vertex_cache(&simplify(&indices, cfg.lod_triangles.0), welded.len());
+    let lod1 = meshopt::optimize_vertex_cache(&simplify(&lod0, cfg.lod_triangles.1), welded.len());
+    // Keep only vertices a level of detail uses, in first-use order.
+    let mut new_index = vec![u32::MAX; welded.len()];
+    let mut verts_out = Vec::new();
+    for &i in lod0.iter().chain(&lod1) {
+        if new_index[i as usize] == u32::MAX {
+            new_index[i as usize] = verts_out.len() as u32;
+            verts_out.push(welded[i as usize]);
+        }
+    }
+    if verts_out.len() > u16::MAX as usize + 1 {
+        return Err(format!("{} vertices, more than 65,536", verts_out.len()));
+    }
+    let lods = [&lod0, &lod1].map(|l| l.iter().map(|&i| new_index[i as usize] as u16).collect());
+
+    // 5. Sample the clips into bone matrices (in game space).
+    let mut clips = Vec::new();
+    for (kind_name, anim_name) in &cfg.clips {
+        let kind = ClipKind::ALL
+            .into_iter()
+            .find(|k| format!("{k:?}") == *kind_name)
+            .ok_or_else(|| format!("unknown clip kind {kind_name:?}"))?;
+        let anim = doc
+            .animations()
+            .find(|a| a.name() == Some(anim_name.as_str()))
+            .ok_or_else(|| format!("no animation named {anim_name:?}"))?;
+        let frames = sample_clip(&anim, kind, &skel, &rest_globals, &joints, get)?
+            .into_iter()
+            .map(|bones| {
+                let mut out: Vec<Mat4> = bones.iter().map(|m| to_game * *m * from_game).collect();
+                out.push(Mat4::IDENTITY);
+                out
+            })
+            .collect();
+        clips.push((kind, frames));
+    }
+    clips.sort_by_key(|(k, _)| *k as u8);
+
+    let mut counts: HashMap<([u8; 3], bool), usize> = HashMap::new();
+    for v in &verts_out {
+        *counts
+            .entry(([v.color[0], v.color[1], v.color[2]], v.team > 0))
+            .or_default() += 1;
+    }
+    let mut palette: Vec<_> = counts.into_iter().map(|((c, t), n)| (c, n, t)).collect();
+    palette.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+    Ok(BakedModel {
+        verts: verts_out,
+        lods,
+        height: cfg.height,
+        bones: joints.len() as u32 + 1,
+        clips,
+        palette,
+    })
+}
+
+fn quantise(
+    v: &Vert,
+    team: &[Vec3],
+    tolerance: f32,
+    team_hue: Option<(f32, f32, f32)>,
+) -> ModelVertex {
+    let q = |c: f32| {
+        (c * POSITION_SCALE)
+            .round()
+            .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+    };
+    let n = |c: f32| (c * 127.0).round().clamp(-127.0, 127.0) as i8;
+    let color = Vec3::new(v.color[0] as f32, v.color[1] as f32, v.color[2] as f32);
+    let (hue, saturation) = hue_saturation(color / 255.0);
+    let is_team = team.iter().any(|t| t.distance(color) <= tolerance)
+        || team_hue.is_some_and(|(lo, hi, sat)| hue >= lo && hue <= hi && saturation >= sat);
+    ModelVertex {
+        pos: [q(v.pos.x), q(v.pos.y), q(v.pos.z)],
+        bone: v.bone,
+        team: if is_team { 255 } else { 0 },
+        normal: [n(v.normal.x), n(v.normal.y), n(v.normal.z), 0],
+        color: [v.color[0], v.color[1], v.color[2], 255],
+    }
+}
+
+/// Hue in degrees (0 to 360) and HSV saturation (0 to 1) of an RGB colour.
+fn hue_saturation(c: Vec3) -> (f32, f32) {
+    let max = c.max_element();
+    let min = c.min_element();
+    let d = max - min;
+    if d <= 1e-6 {
+        return (0.0, 0.0);
+    }
+    let h = if max == c.x {
+        60.0 * ((c.y - c.z) / d).rem_euclid(6.0)
+    } else if max == c.y {
+        60.0 * ((c.z - c.x) / d + 2.0)
+    } else {
+        60.0 * ((c.x - c.y) / d + 4.0)
+    };
+    (h, d / max)
+}
+
+fn parse_hex(h: &str) -> Result<Vec3, String> {
+    let h = h.trim_start_matches('#');
+    let v = u32::from_str_radix(h, 16).map_err(|_| format!("bad colour {h:?}"))?;
+    if h.len() != 6 {
+        return Err(format!("bad colour {h:?}"));
+    }
+    Ok(Vec3::new(
+        (v >> 16) as f32,
+        ((v >> 8) & 0xff) as f32,
+        (v & 0xff) as f32,
+    ))
+}
+
+/// One animation channel's keys.
+enum Keys {
+    Translation(Vec<Vec3>),
+    Rotation(Vec<Quat>),
+    Scale(Vec<Vec3>),
+}
+
+struct Channel {
+    node: usize,
+    times: Vec<f32>,
+    keys: Keys,
+    step: bool,
+    cubic: bool,
+}
+
+impl Channel {
+    /// Index of the key before `t` and how far toward the next.
+    fn locate(&self, t: f32) -> (usize, usize, f32) {
+        let last = self.times.len() - 1;
+        if t <= self.times[0] {
+            return (0, 0, 0.0);
+        }
+        if t >= self.times[last] {
+            return (last, last, 0.0);
+        }
+        let k = self.times.partition_point(|&x| x <= t) - 1;
+        let span = (self.times[k + 1] - self.times[k]).max(1e-9);
+        let f = if self.step {
+            0.0
+        } else {
+            (t - self.times[k]) / span
+        };
+        (k, k + 1, f)
+    }
+
+    /// Key value `k`, skipping cubic-spline tangents.
+    fn key<T: Copy>(&self, values: &[T], k: usize) -> T {
+        if self.cubic {
+            values[k * 3 + 1]
+        } else {
+            values[k]
+        }
+    }
+}
+
+/// Bone matrices (rest pose to posed, in the source's space) for each frame.
+fn sample_clip<'a>(
+    anim: &gltf::Animation<'a>,
+    kind: ClipKind,
+    skel: &Skeleton,
+    rest_globals: &[Mat4],
+    joints: &[usize],
+    get: impl Clone + Fn(gltf::Buffer<'a>) -> Option<&'a [u8]>,
+) -> Result<Vec<Vec<Mat4>>, String> {
+    use gltf::animation::util::ReadOutputs;
+    let mut channels = Vec::new();
+    let mut duration: f32 = 0.0;
+    for ch in anim.channels() {
+        let reader = ch.reader(get.clone());
+        let times: Vec<f32> = reader
+            .read_inputs()
+            .ok_or("channel without times")?
+            .collect();
+        let keys = match reader.read_outputs().ok_or("channel without values")? {
+            ReadOutputs::Translations(t) => Keys::Translation(t.map(Vec3::from).collect()),
+            ReadOutputs::Rotations(r) => {
+                Keys::Rotation(r.into_f32().map(Quat::from_array).collect())
+            }
+            ReadOutputs::Scales(s) => Keys::Scale(s.map(Vec3::from).collect()),
+            ReadOutputs::MorphTargetWeights(_) => continue,
+        };
+        if times.is_empty() {
+            continue;
+        }
+        duration = duration.max(*times.last().unwrap());
+        let interp = ch.sampler().interpolation();
+        channels.push(Channel {
+            node: ch.target().node().index(),
+            times,
+            keys,
+            step: interp == gltf::animation::Interpolation::Step,
+            cubic: interp == gltf::animation::Interpolation::CubicSpline,
+        });
+    }
+    // Looping clips skip the last frame (it equals the first); one-shot clips
+    // end on it and hold.
+    let frames = if kind.loops() {
+        ((duration * SAMPLE_FPS).round() as usize).max(1)
+    } else {
+        (duration * SAMPLE_FPS).ceil() as usize + 1
+    };
+    let rest_inverse: Vec<Mat4> = joints.iter().map(|&n| rest_globals[n].inverse()).collect();
+    let mut out = Vec::with_capacity(frames);
+    for f in 0..frames {
+        let t = (f as f32 / SAMPLE_FPS).min(duration);
+        let mut local = skel.rest.clone();
+        for ch in &channels {
+            let (a, b, x) = ch.locate(t);
+            let trs = &mut local[ch.node];
+            match &ch.keys {
+                Keys::Translation(v) => trs.t = ch.key(v, a).lerp(ch.key(v, b), x),
+                Keys::Scale(v) => trs.s = ch.key(v, a).lerp(ch.key(v, b), x),
+                Keys::Rotation(v) => {
+                    trs.r = ch.key(v, a).normalize().slerp(ch.key(v, b).normalize(), x)
+                }
+            }
+        }
+        let globals = skel.globals(&local);
+        out.push(
+            joints
+                .iter()
+                .enumerate()
+                .map(|(b, &n)| globals[n] * rest_inverse[b])
+                .collect(),
+        );
+    }
+    Ok(out)
+}

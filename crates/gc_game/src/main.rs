@@ -11,7 +11,13 @@
 //! or speed it up to four times. T opens the stats panel for the chosen type:
 //! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
 //! and regiments on the field change at once. R reloads `data/units.ron`
-//! when the game runs from the repository. H hides the sandbox panel.
+//! when the game runs from the repository. H hides the sandbox panel; C
+//! shows the credits for the art.
+//!
+//! Soldiers are low-poly models (baked from free packs by `gc_artbake`) that
+//! walk, run, fight, shoot and fall with their own animations; parts of each
+//! take the team colour. Zoom far out and the Commander View replaces them
+//! with one block and banner per regiment.
 //!
 //! Orders: left-click one of your regiments to select it, or left-drag a box around
 //! several; Shift adds or removes. Right-click the ground to march the
@@ -41,7 +47,8 @@
 //! pinch zooms; Alt + middle-drag or two-finger rotate turns the view;
 //! middle-click or Home resets the rotation; ` (backquote) or F11 toggles the
 //! dev overlay and prints memory by subsystem;
-//! Esc leaves placing or the stats panel, and otherwise opens the menu.
+//! Esc leaves placing, the stats panel or the credits, and otherwise opens
+//! the menu.
 //!
 //! Flags: `--sandbox` starts on an empty field; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed; `--frames N` quits after N frames
@@ -53,7 +60,9 @@
 //! parts of the frame off to measure what they cost.
 
 mod camera;
+mod credits;
 mod data;
+mod models;
 mod profile;
 mod puppets;
 mod sandbox;
@@ -64,7 +73,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
-use gc_render::{BoxInstance, FrameParams, Renderer, RendererOptions, Terrain, UiQuad};
+use gc_render::{
+    BoxInstance, FrameParams, Renderer, RendererOptions, SoldierBatch, SoldierInstance, Terrain,
+    UiQuad,
+};
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
@@ -81,7 +93,8 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use camera::RtsCamera;
-use puppets::{Block, Puppets};
+use models::Action;
+use puppets::{Block, Puppets, Soldier};
 use terrain_gen::Heightmap;
 
 #[global_allocator]
@@ -98,8 +111,20 @@ const TEAM_COLORS: [[u8; 3]; 4] = [
     [214, 204, 170],
 ];
 const EDGE_SCROLL_PX: f64 = 6.0;
-/// Placeholder soldier height in tiles (real models come with M1 step 8).
+/// Height of a placeholder box soldier, for unit types without a model.
 const SOLDIER_HEIGHT: f32 = 0.95;
+/// Soldiers further than this from the camera, in tiles, use the reduced mesh.
+const LOD_DISTANCE: f32 = 70.0;
+/// Commander View: past this camera distance soldiers give way to one
+/// banner block per regiment, and come back below the second distance.
+const COMMANDER_IN: f32 = 175.0;
+const COMMANDER_OUT: f32 = 160.0;
+/// Commander View block height and banner, in tiles.
+const COMMANDER_BLOCK_HEIGHT: f32 = 0.6;
+const COMMANDER_POLE: [f32; 3] = [0.3, 5.0, 0.3];
+const COMMANDER_FLAG: [f32; 3] = [2.6, 1.8, 0.25];
+/// A regiment whose volley left this many ticks ago or less is shooting.
+const SHOOTING_TICKS: u32 = 24;
 /// Thickness of the ground plate drawn under a selected regiment.
 const PLATE_HEIGHT: f32 = 0.05;
 /// A right-drag shorter than this on the ground is a click.
@@ -114,7 +139,7 @@ const ATTACK_PICK_TILES: f32 = 1.5;
 const ATTACK_MARK: Duration = Duration::from_millis(700);
 /// Banner over a shaken regiment: wavering (blinking amber), routing (white)
 /// or shattered (grey). Height above the ground and size, in tiles.
-const BANNER_LIFT: f32 = SOLDIER_HEIGHT + 0.7;
+const BANNER_LIFT: f32 = 1.9;
 const BANNER_SIZE: [f32; 3] = [0.12, 0.8, 0.7];
 /// Fallen soldiers kept on the field at once.
 const MAX_CORPSES: usize = 8192;
@@ -254,6 +279,12 @@ struct Running {
     prev_positions: Vec<Option<(RegimentHandle, Vec2, Vec2)>>,
     instances: Vec<BoxInstance>,
     puppets: Puppets,
+    /// Soldier models; None if the embedded pack failed to load (boxes then).
+    art: Option<Art>,
+    /// Soldiers have given way to one banner block per regiment (zoomed out).
+    commander: bool,
+    /// Regiments that loosed a volley lately, by pool index.
+    shooting: Vec<bool>,
     /// The match's regiment types, as the simulation sees them, and their names.
     unit_stats: Vec<UnitStats>,
     unit_names: Vec<String>,
@@ -300,6 +331,43 @@ struct Running {
     sounds: Option<sounds::Sounds>,
 }
 
+/// Soldier models and the lists that draw them, rebuilt every frame.
+struct Art {
+    clips: models::Clips,
+    /// The model of each unit type, if it has one.
+    unit_model: Vec<Option<usize>>,
+    /// Instances per model and level of detail (model * 2 + lod).
+    buckets: Vec<Vec<SoldierInstance>>,
+    soldiers: Vec<SoldierInstance>,
+    batches: Vec<SoldierBatch>,
+}
+
+impl Art {
+    fn clear(&mut self) {
+        for b in &mut self.buckets {
+            b.clear();
+        }
+    }
+
+    /// Gather the buckets into one instance list with a batch per bucket.
+    fn finish(&mut self) {
+        self.soldiers.clear();
+        self.batches.clear();
+        for (k, b) in self.buckets.iter().enumerate() {
+            if b.is_empty() {
+                continue;
+            }
+            self.batches.push(SoldierBatch {
+                model: (k / 2) as u16,
+                lod: (k % 2) as u8,
+                first: self.soldiers.len() as u32,
+                count: b.len() as u32,
+            });
+            self.soldiers.extend_from_slice(b);
+        }
+    }
+}
+
 impl Sandbox {
     fn new(placing: bool) -> Sandbox {
         Sandbox {
@@ -309,9 +377,31 @@ impl Sandbox {
             tuning: false,
             row: 0,
             panel: true,
+            credits: false,
             message: None,
             dirty: true,
         }
+    }
+}
+
+/// What a soldier is doing, from his puppet and his regiment.
+fn soldier_action(s: &Soldier, block: &Block, shooting: bool) -> Action {
+    if block.routing {
+        Action::Run
+    } else if s.striking {
+        if s.phase < 0.5 {
+            Action::Attack
+        } else {
+            Action::Attack2
+        }
+    } else if s.speed > block.speed * 1.25 + 0.3 {
+        Action::Run
+    } else if s.speed > 0.25 {
+        Action::Walk
+    } else if shooting {
+        Action::Shoot
+    } else {
+        Action::Idle
     }
 }
 
@@ -328,6 +418,8 @@ struct Sandbox {
     row: usize,
     /// The sandbox panel is showing (H).
     panel: bool,
+    /// The credits are showing (C), in place of the panel.
+    credits: bool,
     message: Option<(String, Instant)>,
     /// The panel needs redrawing.
     dirty: bool,
@@ -427,6 +519,30 @@ impl App {
         self.memory_timeline.mark("map generated + uploaded");
 
         let game_data = data::load();
+        let art = match models::load() {
+            Ok(models) => match renderer.set_models(&models) {
+                Ok(()) => Some(Art {
+                    clips: models::Clips::new(&models),
+                    unit_model: game_data
+                        .units
+                        .iter()
+                        .map(|u| models.by_name(u.name()))
+                        .collect(),
+                    buckets: vec![Vec::new(); models.models.len() * 2],
+                    soldiers: Vec::with_capacity(gc_render::MAX_SOLDIER_INSTANCES),
+                    batches: Vec::with_capacity(models.models.len() * 2),
+                }),
+                Err(e) => {
+                    eprintln!("grubcraft: soldier models off: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                eprintln!("grubcraft: soldier models off: {e}");
+                None
+            }
+        };
+        self.memory_timeline.mark("models uploaded");
         let unit_stats: Vec<UnitStats> = game_data.units.iter().map(sandbox::stats_of).collect();
         let unit_names: Vec<String> = game_data
             .units
@@ -517,6 +633,9 @@ impl App {
             prev_positions,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
+            art,
+            commander: false,
+            shooting: vec![false; capacities.regiments as usize],
             unit_stats,
             unit_names,
             sandbox: Sandbox::new(opts.sandbox),
@@ -696,6 +815,10 @@ impl ApplicationHandler for App {
                             r.sandbox.dirty = true;
                         }
                         KeyCode::KeyR if down && !event.repeat => r.reload_data(),
+                        KeyCode::KeyC if down && !event.repeat => {
+                            r.sandbox.credits = !r.sandbox.credits;
+                            r.sandbox.dirty = true;
+                        }
                         KeyCode::KeyH if down && !event.repeat => {
                             r.sandbox.panel = !r.sandbox.panel;
                             r.sandbox.dirty = true;
@@ -713,9 +836,13 @@ impl ApplicationHandler for App {
                                 s.toggle_music();
                             }
                         }
-                        KeyCode::Escape if down && (r.sandbox.placing || r.sandbox.tuning) => {
+                        KeyCode::Escape
+                            if down
+                                && (r.sandbox.placing || r.sandbox.tuning || r.sandbox.credits) =>
+                        {
                             r.sandbox.placing = false;
                             r.sandbox.tuning = false;
+                            r.sandbox.credits = false;
                             r.sandbox.dirty = true;
                         }
                         KeyCode::Escape if down && !event.repeat => r.open_menu(),
@@ -1145,6 +1272,10 @@ impl Running {
             .attack_mark
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
             .map(|(h, _)| h);
+        if let Some(art) = &mut self.art {
+            art.clear();
+        }
+        self.mark_shooting();
         for r in self.world.regiments.iter() {
             let cur = from_fx_vec(r.position);
             let cur_facing = angle_vec(r.facing);
@@ -1167,7 +1298,8 @@ impl Running {
                     facing: facing.to_array(),
                     size: [fx_to_f32(width) + 0.3, PLATE_HEIGHT, fx_to_f32(depth) + 0.3],
                     color: if selected {
-                        [cr, cg, cb, 255]
+                        // Darker than the team colour so the soldiers on it stand out.
+                        [cr / 2 + 20, cg / 2 + 20, cb / 2 + 20, 255]
                     } else {
                         [255, 40, 20, 255]
                     },
@@ -1176,6 +1308,7 @@ impl Running {
             }
             let block = Block {
                 handle: r.handle,
+                unit: r.unit,
                 centre: pos,
                 facing,
                 files: r.files,
@@ -1193,6 +1326,53 @@ impl Running {
                 MoraleState::Routing => Some([245, 245, 240, 200]),
                 MoraleState::Shattered => Some([110, 110, 110, 120]),
             };
+            if self.commander {
+                // One block per regiment with a tall banner: the flag shows
+                // the team, or the morale colour when shaken.
+                let (width, depth) = stats.block_size(r.files, r.models);
+                let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
+                let shade = if selected { 255 } else { 210 };
+                let tint = |c: u8| (c as u32 * shade / 255) as u8;
+                self.instances.push(BoxInstance {
+                    pos: pos.to_array(),
+                    facing: facing.to_array(),
+                    size: [width, COMMANDER_BLOCK_HEIGHT, depth],
+                    color: [tint(cr), tint(cg), tint(cb), if selected { 90 } else { 0 }],
+                    lift: 0.0,
+                });
+                // A pale strip along the front edge shows which way it faces.
+                self.instances.push(BoxInstance {
+                    pos: (pos + facing * (depth / 2.0 - 0.3)).to_array(),
+                    facing: facing.to_array(),
+                    size: [width, COMMANDER_BLOCK_HEIGHT + 0.1, 0.6],
+                    color: [235, 230, 210, 0],
+                    lift: 0.0,
+                });
+                // Banners grow as the camera pulls back, so they stay readable.
+                let k = (self.camera.distance / COMMANDER_IN).max(1.0);
+                let side = Vec2::new(facing.y, -facing.x);
+                let pole = COMMANDER_POLE.map(|v| v * k);
+                let flag_size = COMMANDER_FLAG.map(|v| v * k);
+                self.instances.push(BoxInstance {
+                    pos: pos.to_array(),
+                    facing: facing.to_array(),
+                    size: pole,
+                    color: [60, 48, 36, 0],
+                    lift: 0.0,
+                });
+                let flag = banner.unwrap_or([cr, cg, cb, 0]);
+                self.instances.push(BoxInstance {
+                    pos: (pos + side * (flag_size[0] / 2.0)).to_array(),
+                    facing: facing.to_array(),
+                    size: flag_size,
+                    color: [flag[0], flag[1], flag[2], 0],
+                    lift: pole[1] - flag_size[1],
+                });
+                // Keep the puppets marching (and falling) out of sight.
+                self.puppets
+                    .update(&block, r.owner, game_dt.as_secs_f32(), |_| {});
+                continue;
+            }
             if let Some(color) = banner {
                 self.instances.push(BoxInstance {
                     pos: pos.to_array(),
@@ -1201,6 +1381,39 @@ impl Running {
                     color,
                     lift: BANNER_LIFT,
                 });
+            }
+            let model = self
+                .art
+                .as_ref()
+                .and_then(|a| a.unit_model.get(r.unit as usize).copied().flatten());
+            if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
+                let far = self.camera.eye().distance(glam::Vec3::new(
+                    pos.x,
+                    self.camera.focus_height,
+                    pos.y,
+                )) > LOD_DISTANCE;
+                let bucket = &mut art.buckets[model * 2 + far as usize];
+                let clips = &art.clips;
+                let shooting = self.shooting[r.handle.index as usize];
+                let time = self.puppets.time();
+                let highlight = if selected { 70 } else { 0 };
+                self.puppets
+                    .update(&block, r.owner, game_dt.as_secs_f32(), |s| {
+                        let action = soldier_action(&s, &block, shooting);
+                        let Some(pose) = clips.pose(model, action, time + s.phase * 4.0) else {
+                            return;
+                        };
+                        bucket.push(SoldierInstance {
+                            pos: s.pos.to_array(),
+                            facing: s.facing.to_array(),
+                            frames: pose.rows,
+                            flags: [(pose.blend * 255.0) as u8, highlight, 0, 0],
+                            color: [cr, cg, cb, 255],
+                            lift: 0.0,
+                            scale: 1.0,
+                        });
+                    });
+                continue;
             }
             let size = [
                 (file_spacing * 0.6).min(0.45),
@@ -1220,7 +1433,12 @@ impl Running {
                     });
                 });
         }
-        self.push_corpses();
+        if !self.commander {
+            self.push_corpses();
+        }
+        if let Some(art) = &mut self.art {
+            art.finish();
+        }
         self.push_arrows(alpha);
         self.push_routes();
         if self.show_blocked {
@@ -1241,7 +1459,12 @@ impl Running {
         {
             profile::zone!("render");
             tagged_alloc::scope(Tag::Render, || {
-                self.renderer.render(&frame, &self.instances)
+                let (soldiers, batches) = match &self.art {
+                    Some(a) => (a.soldiers.as_slice(), a.batches.as_slice()),
+                    None => (&[][..], &[][..]),
+                };
+                self.renderer
+                    .render(&frame, &self.instances, soldiers, batches)
             });
         }
         profile::frame_mark();
@@ -1274,6 +1497,34 @@ impl Running {
         }
     }
 
+    /// Note which regiments loosed a volley lately, so their soldiers play
+    /// the shooting animation.
+    fn mark_shooting(&mut self) {
+        self.shooting.fill(false);
+        let now = self.world.tick_count();
+        for v in self.world.volleys() {
+            if v.launch_tick + SHOOTING_TICKS < now {
+                continue;
+            }
+            let from = from_fx_vec(v.from);
+            let shooter = self
+                .world
+                .regiments
+                .iter()
+                .filter(|r| r.owner == v.owner)
+                .min_by(|a, b| {
+                    let da = from_fx_vec(a.position).distance_squared(from);
+                    let db = from_fx_vec(b.position).distance_squared(from);
+                    da.total_cmp(&db)
+                });
+            if let Some(r) = shooter
+                && from_fx_vec(r.position).distance(from) < 2.0
+            {
+                self.shooting[r.handle.index as usize] = true;
+            }
+        }
+    }
+
     /// UI pixels to physical pixels: the display's scale times the player's
     /// UI scale setting.
     fn ui_scale(&self) -> f32 {
@@ -1285,6 +1536,7 @@ impl Running {
             return;
         }
         self.menu_open = true;
+        self.sandbox.dirty = true;
         self.menu.show(Screen::Main);
         self.menu.set_in_match(self.match_started);
         self.ui.reset();
@@ -1360,6 +1612,7 @@ impl Running {
 
     fn close_menu(&mut self) {
         self.menu_open = false;
+        self.sandbox.dirty = true;
         self.renderer.clear_ui();
         self.input.left_down = None;
         self.input.right_down = None;
@@ -1449,6 +1702,35 @@ impl Running {
     fn push_corpses(&mut self) {
         for c in self.puppets.corpses() {
             let [r, g, b] = TEAM_COLORS[c.owner as usize % TEAM_COLORS.len()];
+            let model = self
+                .art
+                .as_ref()
+                .and_then(|a| a.unit_model.get(c.unit as usize).copied().flatten());
+            if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
+                // The death clip, held on its last frame; models without
+                // one lie down in their idle pose.
+                let (pose, fallen) = match art.clips.death(model, c.age) {
+                    Some(p) => (Some(p), 0),
+                    None => (art.clips.pose(model, Action::Idle, 0.0), 255),
+                };
+                if let Some(pose) = pose {
+                    let far = self.camera.eye().distance(glam::Vec3::new(
+                        c.pos.x,
+                        self.camera.focus_height,
+                        c.pos.y,
+                    )) > LOD_DISTANCE;
+                    art.buckets[model * 2 + far as usize].push(SoldierInstance {
+                        pos: c.pos.to_array(),
+                        facing: c.facing.to_array(),
+                        frames: pose.rows,
+                        flags: [(pose.blend * 255.0) as u8, 0, fallen, 0],
+                        color: [r, g, b, 255],
+                        lift: -0.5 * c.sink,
+                        scale: 1.0,
+                    });
+                    continue;
+                }
+            }
             self.instances.push(BoxInstance {
                 pos: c.pos.to_array(),
                 facing: c.facing.to_array(),
@@ -1528,6 +1810,15 @@ impl Running {
         if dx != 0.0 || dy != 0.0 {
             self.camera.pan(dx * dt * 1.2, dy * dt * 1.2);
         }
+        let commander = if self.commander {
+            self.camera.distance > COMMANDER_OUT
+        } else {
+            self.camera.distance > COMMANDER_IN
+        };
+        if commander != self.commander {
+            self.commander = commander;
+            self.sandbox.dirty = true;
+        }
         // Follow the ground smoothly so the view doesn't jolt over ridges.
         let ground = self
             .heightmap
@@ -1568,7 +1859,7 @@ impl Running {
              frame   {fps:5.0} fps   {frame_avg:6.2} ms avg   {:6.2} ms worst\n\
              sim     tick {:<7} {tick_avg:6.3} ms avg   {:6.3} ms worst\n\
              routes  {} portals   {} waiting\n\
-             render  {} draw calls   {}/{} chunks   {} boxes\n\
+             render  {} draw calls   {}/{} chunks   {} boxes   {} soldiers   {}k triangles\n\
              memory  process {process}   heap {:.1} MB   gpu {:.1} MB\n\
              heap    {}\n\
              data    {}\n\
@@ -1583,6 +1874,8 @@ impl Running {
             rs.chunks_drawn,
             rs.chunks_total,
             rs.boxes_drawn,
+            rs.soldiers_drawn,
+            rs.triangles / 1000,
             mb(tagged_alloc::total_live_bytes()),
             mb(self.renderer.gpu_bytes() as usize),
             heap_tags.join("  "),
@@ -1598,7 +1891,12 @@ impl Running {
 
     /// Put the sandbox panel, then `dev` (the dev overlay's text), on screen.
     fn show_overlay(&mut self, dev: Option<&str>) {
-        let mut text = if self.sandbox.panel {
+        // The menu covers the field, so the sandbox panel waits behind it.
+        let mut text = if self.menu_open {
+            String::new()
+        } else if self.sandbox.credits {
+            credits::lines().join("\n")
+        } else if self.sandbox.panel {
             self.sandbox_panel()
         } else {
             String::new()
@@ -1811,6 +2109,12 @@ impl Running {
             format!("game     {speed}   P: pause   - =: slower, faster"),
             "Delete: remove selected   Shift+Delete: clear field   T: tune stats   R: reload data"
                 .to_string(),
+            if self.commander {
+                "view     Commander View: one banner per regiment (zoom in for soldiers)   C: credits"
+                    .to_string()
+            } else {
+                "view     soldiers (zoom far out for the Commander View)   C: credits".to_string()
+            },
         ];
         if sb.tuning {
             let on_field = self

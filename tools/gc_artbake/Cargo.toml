@@ -1,0 +1,22 @@
+[package]
+name = "gc_artbake"
+description = "Grubcraft art baker: turns glTF characters into the soldier model pack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+base64 = "0.22"
+bytemuck.workspace = true
+gc_assets.workspace = true
+glam.workspace = true
+gltf = { version = "1.4", default-features = false, features = ["utils", "names"] }
+meshopt = "0.6"
+png = "0.17"
+ron.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

@@ -25,6 +25,15 @@ These run in `gc_bake` and in `gc_game`'s build script; none of them end up in t
 | `serde` 1 (`derive`) | Maps RON onto typed definitions with unknown-field errors; also saves the player's settings (`gc_ui`) | Proc-macro build cost only |
 | `blake3` 1 (`pure`) | Hash of all game data, compared by the lobby so every player runs identical data | `pure` feature: no C or assembly |
 
+`tools/gc_artbake` (the model baker) also uses these; none of them reach the game either:
+
+| Crate | Why | Cost and notes |
+|---|---|---|
+| `gltf` 1.4 (`utils`, `names`; default features off) | Reads the glTF and GLB model files | Pure Rust |
+| `meshopt` 0.6 | Simplifies meshes for the distant level of detail and orders triangles for the GPU cache | Builds meshoptimizer's C++ with `cc`, so the tool needs a C++ compiler |
+| `png` 0.17 | Decodes model textures so vertex colours can be sampled from them | Pure Rust |
+| `base64` 0.22 | Decodes glTF buffers embedded as data URIs | Pure Rust |
+
 ## Development only
 
 | Crate | Used by | Why |
@@ -35,6 +44,7 @@ These run in `gc_bake` and in `gc_game`'s build script; none of them end up in t
 
 | Asset | Used by | Licence |
 |---|---|---|
+| Soldier models (`assets/models.pak`) | Soldiers on the field | CC0: Quaternius (Ninja, Ranger, Alien, Orc Skull) and CDmir (Alien Bug); listed in `CREDITS.md` and on the in-game credits screen |
 | Sound effects and music loops (`assets/audio/sounds.gcsnd`) | Game audio | Synthesised by `tools/gc_sfx`; original work, no third-party licence |
 | Glyphs rasterised from DejaVu Sans Mono (`crates/gc_render/src/debug_font.rs`) | Dev overlay text | Bitstream Vera / DejaVu licence: free to use, modify and redistribute, including embedded; the fonts' names may not be reused for modified versions. Copyright (c) 2003 Bitstream, Inc. (Bitstream Vera); DejaVu changes are in the public domain |
 

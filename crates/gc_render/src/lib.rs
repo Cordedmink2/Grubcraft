@@ -1,7 +1,9 @@
 //! Grubcraft renderer: wgpu on Metal (macOS), DirectX 12 (Windows) and Vulkan.
 //!
-//! Current scope: heightmap terrain drawn in frustum-culled chunks, and
-//! soldiers drawn as instanced placeholder boxes. See `docs/10-architecture.md#rendering` for where
+//! Current scope: heightmap terrain drawn in frustum-culled chunks, soldier
+//! models animated from a bone texture (one instanced draw per model and
+//! level of detail), and instanced boxes for markers, arrows and unit types
+//! without a model. See `docs/10-architecture.md#rendering` for where
 //! this is heading (shadows, vertex-animated soldiers, Commander View, UI).
 //!
 //! The renderer knows nothing about windows or input: the caller hands it a
@@ -9,6 +11,7 @@
 
 mod debug_font;
 mod overlay;
+mod soldiers;
 
 use std::num::NonZeroU64;
 
@@ -24,6 +27,7 @@ pub const MAX_BOX_INSTANCES: usize = 65_536;
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
+pub use soldiers::{MAX_SOLDIER_INSTANCES, SoldierBatch, SoldierInstance};
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[derive(Debug)]
@@ -115,6 +119,8 @@ pub struct RenderStats {
     pub chunks_drawn: u32,
     pub chunks_total: u32,
     pub boxes_drawn: u32,
+    pub soldiers_drawn: u32,
+    pub triangles: u64,
 }
 
 #[repr(C)]
@@ -162,6 +168,7 @@ pub struct Renderer {
     /// Scratch list of visible chunk coordinates, reused every frame.
     visible_chunks: Vec<[u32; 2]>,
     overlay: OverlayGpu,
+    soldiers: soldiers::SoldiersGpu,
     /// Menu and lobby screens, drawn under the dev overlay.
     ui: OverlayGpu,
 }
@@ -313,6 +320,8 @@ impl Renderer {
             },
         );
 
+        let soldiers = soldiers::make(&device, &bind_group_layout, &shader, format, DEPTH_FORMAT);
+
         let chunk_indices = chunk_grid_indices(CHUNK_QUADS);
         let chunk_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chunk grid indices"),
@@ -347,6 +356,7 @@ impl Renderer {
         let static_gpu_bytes = size_of::<Globals>() as u64
             + chunk_index_buffer.size()
             + box_instances.size()
+            + soldiers.instances.size()
             + chunk_instances.size();
 
         Ok(Renderer {
@@ -373,6 +383,7 @@ impl Renderer {
             adapter_info,
             visible_chunks: Vec::new(),
             overlay,
+            soldiers,
             ui,
         })
     }
@@ -392,6 +403,25 @@ impl Renderer {
             + self.depth_bytes
             + self.overlay.gpu_bytes
             + self.ui.gpu_bytes
+            + self.soldiers.models.as_ref().map_or(0, |m| m.gpu_bytes)
+    }
+
+    /// Upload the soldier models and their bone animation texture.
+    pub fn set_models(&mut self, models: &gc_assets::model::Models<'_>) -> Result<(), String> {
+        let limit = self.device.limits().max_texture_dimension_2d;
+        if models.bone_rows() > limit {
+            return Err(format!(
+                "{} bone animation rows, more than this GPU's {limit}",
+                models.bone_rows()
+            ));
+        }
+        self.soldiers.models = Some(soldiers::upload(
+            &self.device,
+            &self.queue,
+            &self.soldiers.bones_layout,
+            models,
+        ));
+        Ok(())
     }
 
     /// Show `text` in the dev overlay (lines separated by `\n`), or hide it
@@ -529,7 +559,15 @@ impl Renderer {
         });
     }
 
-    pub fn render(&mut self, frame: &FrameParams, boxes: &[BoxInstance]) -> FrameOutcome {
+    /// Draw a frame: the terrain, `soldiers` drawn by `batches` (each names
+    /// a model and a run of `soldiers`), and `boxes`.
+    pub fn render(
+        &mut self,
+        frame: &FrameParams,
+        boxes: &[BoxInstance],
+        soldiers: &[SoldierInstance],
+        batches: &[SoldierBatch],
+    ) -> FrameOutcome {
         let Some(terrain) = &self.terrain else {
             return FrameOutcome::Skipped;
         };
@@ -608,6 +646,18 @@ impl Renderer {
             self.queue
                 .write_buffer(&self.box_instances, 0, bytemuck::cast_slice(boxes));
         }
+        let soldiers = match &self.soldiers.models {
+            Some(_) if self.options.draw_blocks => {
+                &soldiers[..soldiers.len().min(MAX_SOLDIER_INSTANCES)]
+            }
+            _ => &[],
+        };
+        if !soldiers.is_empty() {
+            self.queue
+                .write_buffer(&self.soldiers.instances, 0, bytemuck::cast_slice(soldiers));
+        }
+        let mut soldiers_drawn = 0;
+        let mut triangles = 0u64;
 
         // The overlay draws inside the main pass, which a bare frame skips.
         let overlay_visible = !bare && self.overlay.count > 0;
@@ -680,6 +730,27 @@ impl Renderer {
                 );
                 draw_calls += 1;
             }
+            if let (Some(models), false) = (&self.soldiers.models, soldiers.is_empty()) {
+                pass.set_pipeline(&self.soldiers.pipeline);
+                pass.set_bind_group(1, &models.bind_group, &[]);
+                pass.set_vertex_buffer(0, models.vertices.slice(..));
+                pass.set_vertex_buffer(1, self.soldiers.instances.slice(..));
+                pass.set_index_buffer(models.indices.slice(..), wgpu::IndexFormat::Uint16);
+                for b in batches {
+                    let Some(&(base, lods)) = models.ranges.get(b.model as usize) else {
+                        continue;
+                    };
+                    let [first, count] = lods[(b.lod as usize).min(1)];
+                    let end = (b.first + b.count).min(soldiers.len() as u32);
+                    if b.first >= end || count == 0 {
+                        continue;
+                    }
+                    pass.draw_indexed(first..first + count, base, b.first..end);
+                    draw_calls += 1;
+                    soldiers_drawn += end - b.first;
+                    triangles += (count / 3) as u64 * (end - b.first) as u64;
+                }
+            }
             if !boxes.is_empty() {
                 pass.set_pipeline(&self.block_pipeline);
                 pass.set_vertex_buffer(0, self.box_instances.slice(..));
@@ -712,6 +783,8 @@ impl Renderer {
             chunks_drawn: self.visible_chunks.len() as u32,
             chunks_total: n * n,
             boxes_drawn: boxes.len() as u32,
+            soldiers_drawn,
+            triangles,
         };
         FrameOutcome::Presented
     }
@@ -1062,5 +1135,6 @@ mod tests {
     #[test]
     fn regiment_instance_layout_is_stable() {
         assert_eq!(size_of::<BoxInstance>(), 36);
+        assert_eq!(size_of::<SoldierInstance>(), 36);
     }
 }

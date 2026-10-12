@@ -70,13 +70,16 @@ grubcraft/
 │  ├─ gc_platform/   per-OS glue: paths, local-network permission, memory stats
 │  └─ gc_game/       the application: states, input mapping, glue
 ├─ tools/
-│  ├─ gc_bake/       asset baker: glTF/Blender exports → packed formats
+│  ├─ gc_bake/       data baker: data/*.ron → compiled tables
+│  ├─ gc_artbake/    model baker: glTF → meshes, LODs, bone animation textures
+│  ├─ gc_sfx/        generates the prototype sound set
 │  ├─ gc_replay/     headless replay runner, determinism checker            (later)
 │  ├─ gc_bench/      performance benchmarks with budget gates
 │  ├─ gc_arena/      headless AI-against-AI ladders and tactical drills      (later)
 │  └─ gc_mapcheck/   map validator                                          (later)
 ├─ data/             RON definitions (factions, units, abilities, maps)
-├─ assets-src/       source art and audio (or a pointer to where they live)
+├─ assets/           baked packs embedded in the game (models.pak, audio)
+├─ assets-src/       model list for gc_artbake and small CC0 sources; big packs live in the shared project folder
 └─ docs/
 ```
 
@@ -226,11 +229,12 @@ Forward renderer on `wgpu`. Target **under 300 draw calls** per frame in the hea
 - Per-instance data is packed into **16 bytes**: quantised position (2 × `u16`), facing, animation id and frame, team colour row, flags. 10,000 soldiers is 160 KB of upload per frame.
 - Animation uses **bone animation textures**: each unit type's skeleton poses are baked per frame into a small texture, and vertices are rigidly bound to one bone (which suits the low-poly style). About 100 to 150 KB per unit type for all its animations, against several megabytes for per-vertex animation textures.
 - Meshes use 16-bit quantised positions, octahedral-encoded normals and a palette index per vertex: around 8 bytes per vertex.
-- **Built so far:** placeholder boxes. Everything on the field (soldiers, selection plates, order previews, arrows, the fallen) is one instanced draw of `BoxInstance` (36 bytes: position, facing, size, colour, lift above the ground) with up to 65,536 instances. The packed 16-byte instances, meshes and animation textures come with real art in M1 step 8.
+- **Built so far (M1 step 8):** soldiers are drawn from `assets/models.pak` (baked by `tools/gc_artbake`, format in `gc_assets::model`), with one instanced draw per model and level of detail. Vertices are 16 bytes (quantised position, bone index, team-colour flag, normal, colour sampled from the model's texture). Animation is a bone animation texture: one `Rgba16Float` row per frame holding a 3×4 matrix for each of up to 48 bones; the shader blends two frame rows. Instances are still 36 bytes (`SoldierInstance`: position, facing, two frame rows, blend, highlight, fallen flag, team colour, lift, scale) with up to 65,536 of them; packing them to 16 bytes is left until a profile shows upload cost matters. The five models plus all their clips are 612 KB. Selection plates, order previews, arrows and Commander View blocks are still `BoxInstance` boxes, and the game falls back to boxes for soldiers if the model pack fails to load.
 
 ### Level of detail and Commander View
 - Soldiers have two mesh LODs (full and ~40% triangles).
 - Beyond a zoom threshold the renderer switches to **Commander View**: soldiers are not drawn at all; each regiment is a single banner-block. Rendering cost at full zoom-out is *lower* than mid-zoom, the opposite of most engines.
+- **Built so far (M1 step 8):** the reduced mesh is drawn for soldiers more than 70 tiles from the camera (`gc_artbake` targets about 1,400 and 500 triangles per model with `meshopt`). Commander View switches on beyond a camera distance of 175 and off below 160. The soldier puppets keep moving while it is on, so zooming back in shows them where they should be.
 
 ### Frame pacing and power
 - Presets: **Battery** (30 or 60 fps cap, half-resolution shadows, no MSAA), **Balanced**, **High**.
@@ -311,7 +315,8 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 | `gc_replay` *(later)* | Run a replay headless at maximum speed; verify state hashes; dump state at a tick |
 | `gc_bench` | Fixed benchmark scenarios; reports tick time, frame time, memory by tag; enforces budgets |
 | `gc_mapcheck` *(later)* | Map fairness and validity checks |
-| `gc_bake` | Asset and data baker |
+| `gc_bake` | Data baker |
+| `gc_artbake` | Model baker: `cargo run -p gc_artbake --release` re-bakes `assets/models.pak` from `assets-src/models.ron`; `--report` prints each model's colours to help pick team-colour parts |
 | Dev overlay (`` ` `` or `F11`) | Frame and tick timings, memory by tag, draw calls, network stats |
 | Sandbox (`--sandbox`) | In-game unit placement for any side, live stat tuning and `data/units.ron` reload, pause and 0.1× to 4× speed |
 | `gc_arena` *(later)* | Headless AI-against-AI ladders and tactical drills ([18 · AI](18-ai.md#testing-tuning-and-explaining)) |

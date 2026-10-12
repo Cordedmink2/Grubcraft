@@ -40,7 +40,7 @@ The whole game stays under **4 GB** on the largest map with four players at maxi
 | Simulation (`sim`) | Entity pools, nav grid, flow-field cache, fog, snapshot buffer |
 | Map, CPU side (`map`) | Heightmap, tile layers, nav sectors, decals |
 | Textures, GPU (`tex`) | Terrain material arrays, palettes, splat, baked terrain lighting, particles, UI and font atlases |
-| Meshes and animation (`mesh`) | Quantised meshes, bone animation textures |
+| Meshes and animation (`mesh`) | Quantised meshes, bone animation textures (about 0.6 MB for the five M1 models) |
 | Render targets (`rt`) | Colour, depth, shadow map, post buffers |
 | Presentation (`present`) | Soldier puppets, instance buffers, interpolation |
 | Audio (`audio`) | Effects, music stream buffers, mixer |

@@ -100,6 +100,6 @@ Free CC0 art gets us **placeholder-grade fantasy soldiers, monsters, castles, te
 ## What to do next
 
 1. ~~Download and verify~~ Done for most picks (table above). Original note: on a machine with open network access (Mario's Mac, or a cloud environment that allows `quaternius.com`, `kenney.nl`, `poly.pizza`, `opengameart.org`, `ambientcg.com`, `polyhaven.com`, `kaylousberg.itch.io`). Record file hashes and the licence line in an `assets-src/MANIFEST.md`.
-2. **Import test:** one Quaternius character through `gc_bake` into a bone animation texture and onto screen, before choosing the whole set.
+2. ~~Import test~~ Done in M1 step 8, and further: `tools/gc_artbake` bakes five CC0 models (four Quaternius, one CDmir) as stand-ins for every unit type. Picking the real faction kits is still open.
 3. **Commission or model** the gaps: samurai kit parts (kabuto helmet, armour, sashimono banner), Japanese roofs, hive and cocoon pieces, siege carts.
-4. ~~Decision for Mario: credits screen for CC-BY art~~ Decided 2026-10-12: yes. The samurai and spider are downloaded. **Still to build:** the in-game credits screen that shows `CREDITS.md`.
+4. ~~Decision for Mario: credits screen for CC-BY art~~ Decided 2026-10-12: yes. The samurai and spider are downloaded. The in-game credits screen (`C`) shows `CREDITS.md`, built in M1 step 8.

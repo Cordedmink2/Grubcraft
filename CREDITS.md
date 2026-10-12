@@ -1,6 +1,20 @@
 # Credits
 
-Grubcraft uses free third-party art and audio. The in-game credits screen (still to build) must show every entry marked **credit required** below. Entries marked CC0 need no credit, but we list them anyway.
+Grubcraft uses free third-party art and audio. The in-game credits screen (`C` in the game) shows every entry below, and must always include those marked **credit required**. Entries marked CC0 need no credit, but we list them anyway.
+
+## In the game now
+
+The soldier models baked into `assets/models.pak` (see `assets-src/models.ron`). The game's credits screen (`C`) lists this file.
+
+| Model | Author | Licence | Dresses |
+|---|---|---|---|
+| Ninja (Ultimate Monsters) | Quaternius | CC0 | Yari Ashigaru |
+| Ranger (LowPoly RPG Characters) | Quaternius | CC0 | Yumi Ashigaru |
+| Alien (Ultimate Monsters) | Quaternius | CC0 | Shardlings (stand-in) |
+| Orc Skull (Ultimate Monsters) | Quaternius | CC0 | Bone Pikes (stand-in) |
+| Alien Bug | CDmir | CC0 | Skitterlings |
+
+All are simplified and recoloured by the baker (team colours, fewer triangles).
 
 ## Credit required (CC-BY)
 

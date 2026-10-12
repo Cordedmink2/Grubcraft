@@ -17,6 +17,7 @@
 
 extern crate alloc;
 
+pub mod model;
 mod table;
 mod writer;
 
