@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
-use crate::formation::{self, GroupMember};
+use crate::formation::{self, GroupMember, GroupOrder};
 use crate::{Command, PlayerCommand, PlayerId, RegimentHandle, UnitStats, World};
 
 /// Turn rate of `deg` degrees per second, in angle steps per second.
@@ -177,7 +177,9 @@ impl Drill {
                 handle: regiment,
                 position: FxVec2::ZERO,
                 facing: Angle::ZERO,
-                width: Fx::ZERO,
+                files: 0,
+                models: 0,
+                file_spacing: Fx::ZERO,
                 speed: Fx::ZERO,
             }; 3];
             let mut count = 0;
@@ -194,19 +196,21 @@ impl Drill {
                     handle,
                     position: r.position,
                     facing: r.facing,
-                    width: stats.block_size(r.files, r.models).0,
+                    files: r.files,
+                    models: r.models,
+                    file_spacing: stats.file_spacing,
                     speed: stats.speed,
                 };
                 count += 1;
             }
             let target = self.random_point();
             self.group_commands.clear();
-            formation::group_move(
-                &mut members[..count],
+            let order = GroupOrder {
                 target,
-                None,
-                &mut self.group_commands,
-            );
+                facing: None,
+                width: None,
+            };
+            formation::group_move(&mut members[..count], order, &mut self.group_commands);
             out.extend(
                 self.group_commands
                     .iter()

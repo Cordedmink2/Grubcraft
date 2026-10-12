@@ -1,9 +1,15 @@
-//! Grubcraft. M0: a rendered map with four players' regiments driven by the
-//! deterministic simulation. You command player 1 (red): left-click a red
-//! block to select it (Shift-click adds or removes more), right-click the
-//! ground to march them there side by side in formation.
+//! Grubcraft. M1 sandbox: a rendered map with four players' regiments driven
+//! by the deterministic simulation. You command player 1 (red).
 //!
-//! Controls: arrow keys / screen edges / two-finger scroll pan; mouse wheel or
+//! Orders: left-click a red regiment to select it, or left-drag a box around
+//! several; Shift adds or removes. Right-click the ground to march the
+//! selection there side by side, facing the way they travel; right-drag to
+//! draw the line they form instead (its length sets their frontage; they face
+//! away from the camera side of the line). Ctrl (or Cmd) + a number key saves
+//! the selection as a control group; the number recalls it (Shift adds it),
+//! and pressing it twice quickly centres the camera on it.
+//!
+//! Camera: arrow keys / screen edges / two-finger scroll pan; mouse wheel or
 //! pinch zooms; Alt + middle-drag or two-finger rotate turns the view;
 //! middle-click or Home resets the rotation; ` (backquote) or F11 toggles the
 //! dev overlay and prints memory by subsystem;
@@ -27,7 +33,7 @@ use std::time::{Duration, Instant};
 
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
 use gc_render::{BoxInstance, FrameParams, Renderer, RendererOptions, Terrain};
-use gc_sim::formation::{self, GroupMember};
+use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{Capacities, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, UnitStats, World};
 use glam::Vec2;
@@ -59,7 +65,13 @@ const EDGE_SCROLL_PX: f64 = 6.0;
 /// Placeholder soldier height in tiles (real models come with M1 step 8).
 const SOLDIER_HEIGHT: f32 = 0.95;
 /// Thickness of the ground plate drawn under a selected regiment.
-const PLATE_HEIGHT: f32 = 0.03;
+const PLATE_HEIGHT: f32 = 0.05;
+/// A right-drag shorter than this on the ground is a click.
+const MIN_LINE_TILES: f32 = 2.0;
+/// A left-drag shorter than this on screen is a click.
+const MIN_BOX_PIXELS: f32 = 6.0;
+/// Two presses of a control-group key within this time centre the camera.
+const DOUBLE_TAP: Duration = Duration::from_millis(350);
 
 const _: () = assert!(gc_data::MAX_MODELS == gc_sim::formation::MAX_MODELS);
 
@@ -151,6 +163,10 @@ struct Running {
     /// Scratch space for building group orders.
     group: Vec<GroupMember>,
     group_commands: Vec<gc_sim::Command>,
+    /// Regiments inside a box select, live while dragging.
+    boxed: Vec<RegimentHandle>,
+    control_groups: [Vec<RegimentHandle>; 10],
+    last_group_key: Option<(usize, Instant)>,
     sim_clock: Duration,
     last_frame: Instant,
     started: Instant,
@@ -196,7 +212,13 @@ struct Input {
     focused: bool,
     alt: bool,
     shift: bool,
+    /// Ctrl, or Cmd on a Mac.
+    command: bool,
     arrows: [bool; 4], // up, down, left, right
+    /// Where a left-drag (box select) started.
+    left_down: Option<PhysicalPosition<f64>>,
+    /// Where a right-drag (line order) started: the cursor and the ground under it.
+    right_down: Option<(PhysicalPosition<f64>, Vec2)>,
     middle_down: Option<PhysicalPosition<f64>>,
     middle_dragged: bool,
 }
@@ -330,6 +352,9 @@ impl App {
             selected: Vec::with_capacity(64),
             group: Vec::with_capacity(64),
             group_commands: Vec::with_capacity(64),
+            boxed: Vec::with_capacity(64),
+            control_groups: Default::default(),
+            last_group_key: None,
             sim_clock: Duration::ZERO,
             last_frame: now,
             started: now,
@@ -383,6 +408,7 @@ impl ApplicationHandler for App {
             WindowEvent::ModifiersChanged(m) => {
                 r.input.alt = m.state().alt_key();
                 r.input.shift = m.state().shift_key();
+                r.input.command = m.state().control_key() || m.state().super_key();
             }
             WindowEvent::CursorLeft { .. } => r.input.cursor = None,
             WindowEvent::CursorMoved { position, .. } => {
@@ -435,6 +461,9 @@ impl ApplicationHandler for App {
                             print_memory(&r.renderer);
                         }
                         KeyCode::Escape if down => event_loop.exit(),
+                        _ if down && !event.repeat && digit(code).is_some() => {
+                            r.control_group(digit(code).unwrap());
+                        }
                         _ => {}
                     }
                 }
@@ -482,13 +511,24 @@ impl Running {
                 self.input.middle_down = None;
             }
             (MouseButton::Left, ElementState::Pressed) => {
-                let hit = self
-                    .ground_under_cursor()
-                    .and_then(|p| self.nearest_own(p, 6.0));
+                self.input.left_down = self.input.cursor;
+            }
+            (MouseButton::Left, ElementState::Released) => {
                 if !self.input.shift {
                     self.selected.clear();
                 }
-                if let Some(h) = hit {
+                if let Some(rect) = self.selection_box() {
+                    self.regiments_in_box(rect);
+                    for i in 0..self.boxed.len() {
+                        let h = self.boxed[i];
+                        if !self.selected.contains(&h) {
+                            self.selected.push(h);
+                        }
+                    }
+                } else if let Some(h) = self
+                    .ground_under_cursor()
+                    .and_then(|p| self.nearest_own(p, 6.0))
+                {
                     match self.selected.iter().position(|&s| s == h) {
                         Some(i) => {
                             self.selected.swap_remove(i);
@@ -496,11 +536,27 @@ impl Running {
                         None => self.selected.push(h),
                     }
                 }
+                self.input.left_down = None;
             }
             (MouseButton::Right, ElementState::Pressed) => {
-                if let Some(p) = self.ground_under_cursor() {
-                    self.order_selected(gc_fixed::FxVec2::new(to_fx(p.x), to_fx(p.y)));
+                self.input.right_down = self.input.cursor.zip(self.ground_under_cursor());
+            }
+            (MouseButton::Right, ElementState::Released) => {
+                if let Some(order) = self.drag_order().or_else(|| {
+                    self.ground_under_cursor().map(|p| GroupOrder {
+                        target: fx_vec(p),
+                        facing: None,
+                        width: None,
+                    })
+                }) {
+                    self.plan_order(order);
+                    self.human_orders
+                        .extend(self.group_commands.iter().map(|&command| PlayerCommand {
+                            player: HUMAN,
+                            command,
+                        }));
                 }
+                self.input.right_down = None;
             }
             _ => {}
         }
@@ -548,9 +604,9 @@ impl Running {
         None
     }
 
-    /// March the selected regiments to `target`, side by side and facing the
-    /// way they travel.
-    fn order_selected(&mut self, target: gc_fixed::FxVec2) {
+    /// Expand a group order for the current selection into
+    /// `self.group_commands` (one move per regiment).
+    fn plan_order(&mut self, order: GroupOrder) {
         let regiments = &self.world.regiments;
         self.selected.retain(|&h| regiments.get(h).is_some());
         self.group.clear();
@@ -561,17 +617,131 @@ impl Running {
                 handle: h,
                 position: r.position,
                 facing: r.facing,
-                width: stats.block_size(r.files, r.models).0,
+                files: r.files,
+                models: r.models,
+                file_spacing: stats.file_spacing,
                 speed: stats.speed,
             });
         }
         self.group_commands.clear();
-        formation::group_move(&mut self.group, target, None, &mut self.group_commands);
-        self.human_orders
-            .extend(self.group_commands.iter().map(|&command| PlayerCommand {
-                player: HUMAN,
-                command,
-            }));
+        formation::group_move(&mut self.group, order, &mut self.group_commands);
+    }
+
+    /// Ghost plates where each regiment of a planned order will stand.
+    fn push_order_preview(&mut self) {
+        let [cr, cg, cb] = TEAM_COLORS[HUMAN as usize];
+        for c in &self.group_commands {
+            let gc_sim::Command::MoveTo {
+                regiment,
+                target,
+                facing,
+                files,
+                ..
+            } = *c
+            else {
+                continue;
+            };
+            let Some(r) = self.world.regiments.get(regiment) else {
+                continue;
+            };
+            let stats = &self.unit_stats[r.unit as usize];
+            let files = if files == 0 { r.files } else { files };
+            let (width, depth) = stats.block_size(files, r.models);
+            self.instances.push(BoxInstance {
+                pos: from_fx_vec(target).to_array(),
+                facing: angle_vec(facing.unwrap_or(r.facing)).to_array(),
+                size: [fx_to_f32(width), PLATE_HEIGHT, fx_to_f32(depth)],
+                color: [cr / 2, cg / 2, cb / 2, 160],
+            });
+        }
+    }
+
+    /// The line order a right-drag in progress describes, once it is long
+    /// enough to be a drag rather than a click.
+    fn drag_order(&self) -> Option<GroupOrder> {
+        let (_, start) = self.input.right_down?;
+        let end = self.ground_under_cursor()?;
+        let line = end - start;
+        if line.length() < MIN_LINE_TILES {
+            return None;
+        }
+        // Face away from the camera's side: dragging left to right faces up the screen.
+        let facing = Vec2::new(line.y, -line.x);
+        Some(GroupOrder {
+            target: fx_vec((start + end) * 0.5),
+            facing: Some(gc_fixed::Angle::of_vec(fx_vec(facing))),
+            width: Some(to_fx(line.length())),
+        })
+    }
+
+    /// The screen rectangle of a left-drag in progress (min, max), once the
+    /// mouse has moved far enough for it to be a drag.
+    fn selection_box(&self) -> Option<(Vec2, Vec2)> {
+        let a = self.input.left_down?;
+        let b = self.input.cursor?;
+        let (a, b) = (
+            Vec2::new(a.x as f32, a.y as f32),
+            Vec2::new(b.x as f32, b.y as f32),
+        );
+        let d = (a - b).abs();
+        (d.x.max(d.y) >= MIN_BOX_PIXELS).then(|| (a.min(b), a.max(b)))
+    }
+
+    /// Fill `self.boxed` with your regiments whose centres are inside a
+    /// screen rectangle.
+    fn regiments_in_box(&mut self, (lo, hi): (Vec2, Vec2)) {
+        self.boxed.clear();
+        let size = self.window.inner_size();
+        let view_proj = self.camera.view_proj();
+        for r in self.world.regiments.iter().filter(|r| r.owner == HUMAN) {
+            let p = from_fx_vec(r.position);
+            let ground = self.heightmap.height_at(p.x, p.y);
+            let clip = view_proj * glam::Vec4::new(p.x, ground + 0.5, p.y, 1.0);
+            if clip.w <= 0.0 {
+                continue;
+            }
+            let ndc = clip.truncate() / clip.w;
+            let screen = Vec2::new(
+                (ndc.x * 0.5 + 0.5) * size.width as f32,
+                (0.5 - ndc.y * 0.5) * size.height as f32,
+            );
+            if screen.cmpge(lo).all() && screen.cmple(hi).all() {
+                self.boxed.push(r.handle);
+            }
+        }
+    }
+
+    /// Number keys: Ctrl/Cmd + n saves the selection as group n, n recalls it
+    /// (Shift adds it), and n twice quickly centres the camera on it.
+    fn control_group(&mut self, n: usize) {
+        if self.input.command {
+            self.control_groups[n].clear();
+            self.control_groups[n].extend_from_slice(&self.selected);
+            return;
+        }
+        let regiments = &self.world.regiments;
+        self.control_groups[n].retain(|&h| regiments.get(h).is_some());
+        if !self.input.shift {
+            self.selected.clear();
+        }
+        for &h in &self.control_groups[n] {
+            if !self.selected.contains(&h) {
+                self.selected.push(h);
+            }
+        }
+        let now = Instant::now();
+        let double = matches!(self.last_group_key, Some((k, t)) if k == n && now - t < DOUBLE_TAP);
+        self.last_group_key = Some((n, now));
+        if double && !self.control_groups[n].is_empty() {
+            let sum: Vec2 = self.control_groups[n]
+                .iter()
+                .filter_map(|&h| self.world.regiments.position(h))
+                .map(from_fx_vec)
+                .sum();
+            let centre = sum / self.control_groups[n].len() as f32;
+            self.camera.focus = centre;
+            self.camera.focus_height = self.heightmap.height_at(centre.x, centre.y);
+        }
     }
 
     fn nearest_own(&self, p: Vec2, radius: f32) -> Option<RegimentHandle> {
@@ -619,6 +789,14 @@ impl Running {
         let alpha = self.sim_clock.as_secs_f32() / TICK.as_secs_f32();
 
         self.instances.clear();
+        self.boxed.clear();
+        if let Some(rect) = self.selection_box() {
+            self.regiments_in_box(rect);
+        }
+        if let Some(order) = self.drag_order() {
+            self.plan_order(order);
+            self.push_order_preview();
+        }
         for r in self.world.regiments.iter() {
             let cur = from_fx_vec(r.position);
             let cur_facing = angle_vec(r.facing);
@@ -630,7 +808,7 @@ impl Running {
                 _ => (cur, cur_facing),
             };
             let [cr, cg, cb] = TEAM_COLORS[r.owner as usize % TEAM_COLORS.len()];
-            let selected = self.selected.contains(&r.handle);
+            let selected = self.selected.contains(&r.handle) || self.boxed.contains(&r.handle);
             let stats = &self.unit_stats[r.unit as usize];
             let (file_spacing, rank_spacing) =
                 (fx_to_f32(stats.file_spacing), fx_to_f32(stats.rank_spacing));
@@ -843,6 +1021,27 @@ fn fx_to_f32(v: gc_fixed::Fx) -> f32 {
 
 fn from_fx_vec(v: gc_fixed::FxVec2) -> Vec2 {
     Vec2::new(fx_to_f32(v.x), fx_to_f32(v.y))
+}
+
+fn fx_vec(v: Vec2) -> gc_fixed::FxVec2 {
+    gc_fixed::FxVec2::new(to_fx(v.x), to_fx(v.y))
+}
+
+/// The number on a digit key, for control groups.
+fn digit(code: KeyCode) -> Option<usize> {
+    const DIGITS: [KeyCode; 10] = [
+        KeyCode::Digit0,
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
+    ];
+    DIGITS.iter().position(|&d| d == code)
 }
 
 /// Unit vector for a simulation angle (0 = +x, a quarter turn = +y).
