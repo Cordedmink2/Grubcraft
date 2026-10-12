@@ -46,6 +46,7 @@ The whole game stays under **4 GB** on the largest map with four players at maxi
 | Audio (`audio`) | Effects, music stream buffers, mixer |
 | UI (`ui`) | Layout scratch, text cache |
 | Network and replay (`net`) | Rings, turn buffers, replay writer |
+| AI (`ai`) | Host only: each AI's beliefs, influence maps, terrain analysis and scratch worlds for rehearsal (≤ 16 MB per AI player) |
 
 Each tag is tracked live by the tagged allocator and the renderer's GPU allocation wrapper. The simulation keeps its own tight limit (under 8 MB, gated in `gc_bench`) because snapshot size drives rejoin and desync recovery, not because of the memory budget.
 
@@ -72,6 +73,17 @@ Each tag is tracked live by the tagged allocator and the renderer's GPU allocati
 | Vision and fog | 0.2 ms |
 | Everything else, hashing | 0.2 ms |
 | **Total p99** | **≤ 2.0 ms** |
+
+World-party rules (creep camps, hamlet garrisons, the relations ledger) sit in "everything else" and cost well under 0.01 ms.
+
+### AI thread (host only)
+AI players think on their own thread, never inside the tick, so they have their own budget ([18 · AI](18-ai.md#performance-and-memory)):
+
+| Work | Budget |
+|---|---|
+| Each AI player | ≤ 2 ms average per 50 ms tick |
+| Rehearsal (top difficulty), all AIs together | ≤ 15 ms average per tick; spikes allowed, the sim never waits |
+| Each mercenary company or faction mind | ≤ 0.2 ms average per tick |
 
 ## The big ideas that make the numbers possible
 

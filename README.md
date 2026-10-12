@@ -8,7 +8,7 @@ A four-player LAN real-time strategy game where Warcraft III's base-building mee
 
 ## Status
 
-M0 (foundations) is done apart from a test run on a Windows PC. M1 (regiments on a field) is in progress: formations, soldiers on screen, controls, melee and arrows, morale and pathfinding are built, plus the menus and lobby screens; the sandbox and real art are next. See the [roadmap](docs/13-roadmap.md). Start with the [design documents](docs/README.md).
+M0 (foundations) is done apart from a test run on a Windows PC. M1 (regiments on a field) is in progress: formations, soldiers on screen, controls, melee and arrows, morale, pathfinding the sandbox and the menus and lobby screens are built; real art and the Commander View are next. See the [roadmap](docs/13-roadmap.md). Start with the [design documents](docs/README.md).
 
 ## Building and running
 
@@ -25,7 +25,7 @@ cargo run --release -p gc_game --features profile   # build with Tracy profiling
 
 **Menus:** the game opens on the main menu. **Sandbox** starts the battle below. **Play** lets you host a lobby (map, mode, tempo, up to four players; add AI players, pick faction, colour and team, then Start) or join one by address; joining other machines arrives with the netcode in M2, so today only a practice lobby with AI works. **Settings** holds your name, colour and faction, UI scale and the audio, graphics and accessibility choices (saved to a `settings.ron` file in your user config folder; only name, colour, faction and UI scale do anything yet).
 
-**Controls:** you are red. Left-click a red regiment to select it, or left-drag a box around several (Shift adds or removes). Right-click the ground to march the selection there side by side, facing the way they travel; right-drag to draw the line they should form instead (its length sets how wide they stand, and they face away from you). A big selection forms several lines. Right-click an enemy regiment to attack it. Your back two rows are Yumi archers, who shoot at enemies in range on their own; blocks that touch fight, and flank, rear and charging hits hurt more. Regiments that lose heart waver (a blinking amber banner), then rout (a white banner): they break ranks and run, ignoring orders, and rally once the enemy is gone; a regiment that routs twice is shattered (a grey banner) for good. Regiments find their own way around cliffs and deep water: a selected regiment shows its route as a dotted line, and **G** shows the ground no regiment can cross. Ctrl (Cmd on a Mac) + a number key saves the selection as a control group; the number recalls it (Shift adds it), and pressing it twice centres the camera on it. Pan with the arrow keys, screen edges or a two-finger trackpad scroll; zoom with the mouse wheel or a pinch; rotate with Alt + middle-drag or a two-finger twist; Home or a middle-click resets the rotation. **`** (backquote) or **F11** shows the dev overlay with frame, tick and memory stats (and prints memory to the terminal); **Esc** opens the menu (Resume, Play, Restart sandbox, Settings, Exit). Start with `--overlay` to show it from the first frame, or `--no-menu` to skip the main menu.
+**Controls:** you are red. Left-click a red regiment to select it, or left-drag a box around several (Shift adds or removes). Right-click the ground to march the selection there side by side, facing the way they travel; right-drag to draw the line they should form instead (its length sets how wide they stand, and they face away from you). A big selection forms several lines. Right-click an enemy regiment to attack it. Your back two rows are Yumi archers, who shoot at enemies in range on their own; blocks that touch fight, and flank, rear and charging hits hurt more. Regiments that lose heart waver (a blinking amber banner), then rout (a white banner): they break ranks and run, ignoring orders, and rally once the enemy is gone; a regiment that routs twice is shattered (a grey banner) for good. Regiments find their own way around cliffs and deep water: a selected regiment shows its route as a dotted line, and **G** shows the ground no regiment can cross. Ctrl (Cmd on a Mac) + a number key saves the selection as a control group; the number recalls it (Shift adds it), and pressing it twice centres the camera on it. Pan with the arrow keys, screen edges or a two-finger trackpad scroll; zoom with the mouse wheel or a pinch; rotate with Alt + middle-drag or a two-finger twist; Home or a middle-click resets the rotation. **`** (backquote) or **F11** shows the dev overlay with frame, tick and memory stats (and prints memory to the terminal); **Esc** opens the menu (Resume, Play, New sandbox, Settings, Exit). Start with `--overlay` to show it from the first frame, or `--no-menu` to skip the main menu.
 
 To measure memory on your machine: `cargo run --release -p gc_game -- --frames 600` runs for 600 frames and prints the numbers. Measurement flags: `--latency 1|2|3` (frames in flight), `--render-scale 0.25..1` (render fewer pixels than the window has) and `--draw all|terrain|blocks|none` (turn parts of the frame off).
 
@@ -37,11 +37,14 @@ To measure memory on your machine: `cargo run --release -p gc_game -- --frames 6
 | `crates/gc_assets` | Asset pack format: writer and zero-copy reader |
 | `crates/gc_data` | Game data tables (units, factions) as the game reads them |
 | `crates/gc_sim` | The deterministic simulation; runs identically on every machine |
+| `crates/gc_audio` | Sound: ADPCM bank, 32-voice mixer, lock-free command queue, `cpal` output |
 | `crates/gc_platform` | Memory accounting and OS process stats |
 | `crates/gc_render` | wgpu renderer (Metal, DirectX 12, Vulkan) |
 | `crates/gc_ui` | Menus, lobby and settings screens (immediate-mode UI, no GPU code) |
 | `crates/gc_game` | The game application |
 | `tools/gc_bake` | Baker: compiles `data/*.ron` (and later art and audio) into the asset pack |
+| `tools/gc_sfx` | Sound generator: synthesises every effect and music loop into `assets/audio/sounds.gcsnd` |
 | `tools/gc_bench` | Headless benchmarks with budget gates |
+| `assets/audio/` | The sound bank and its catalogue |
 | `data/` | Game data in RON: edit these to change units (rebuilt automatically) |
 | `docs/` | Design documents |

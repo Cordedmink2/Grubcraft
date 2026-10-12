@@ -13,6 +13,8 @@ Tone: *whimsical-grim*. Warcraft III's bright, chunky, slightly comic world, wit
 - **Four playable factions** (below), each a different answer to "what do you do with a dead god?"
 - **The Grubfolk.** Small, stubborn, neutral farmers who live in hamlets around seeps. They trade, they hire out militia, and they hold grudges. See [07 · World and Maps](07-world-and-maps.md).
 - **Titan-spawn.** Feral creatures that grow from the corpse: gutworms, bile toads, marrow golems. They guard rich spots and drop loot (Warcraft-style creep camps).
+- **Mercenary companies** (planned). Bands of fighters with a captain and a price who camp at hamlets or wander between them, and serve whoever pays and keeps paying. See [18 · AI](18-ai.md#the-living-world-encounters).
+- **Other peoples** (later). Factions met while exploring the Reach, friendly, neutral or hostile, each with its own mind and memory of how you treated it.
 - **The Titan itself.** It is still slightly alive. Its tremors reshape matches (see *Titan Events* in [04 · Economy](04-economy.md)).
 
 ---
@@ -30,7 +32,7 @@ All four factions share:
 
 What differs is *how you get Grub*, *what the meter does*, and *the signature rule* each faction bends.
 
-Regiment sizes and costs below are first-pass numbers for balance to start from. The canonical values will live in data files (`data/factions/*.ron`), not in these docs.
+Regiment sizes and costs below are first-pass numbers for balance to start from. Full rosters with every stat, ability, summon and hero, plus a few regiments added to fill gaps, are in [17 · Unit Rosters](17-unit-rosters.md); the canonical values live in `data/rosters/*.ron`, not in these docs.
 
 **Supply costs** (common to all factions): worker 1, light regiment 3, line regiment 4, elite or cavalry 5, artillery 4, air flight 3, monster 6, hero 5.
 
@@ -95,6 +97,7 @@ Clan regiments get +15% defence while in a tight formation and not moving, and t
 | Mounted Samurai | 2 | 8 | 180 / 40 | Shock cavalry, devastating charges |
 | Ember Rocket Cart | 2 | 4 | 150 / 60 | Long-range area artillery, inaccurate, terrifying |
 | War Kite | 2 | 4 | 140 / 40 | Air scout, drops fire pots |
+| Yabusame Riders | 2 | 8 | 170 / 40 | Horse archers that shoot on the move (added in 17) |
 | Oni-Bound | 3 | 1 | 250 / 150 | Bound demon monster, **Terror** aura shakes nearby enemy morale |
 
 ### Heroes
@@ -217,6 +220,7 @@ Choir beam weapons pass *through* allied crystal units and split. A Prism Lancer
 | Harmonic Walkers | 2 | 6 | 170 / 50 | Tanky tripods, **Sonic Pulse** knockback breaks enemy formations |
 | Skyglass | 2 | 4 | 130 / 40 | Fast fragile air, strong anti-air |
 | Conductor | 2 | 1 | 120 / 60 | Support, carries a **mobile Resonator** that can complete a chord |
+| Glass Striders | 2 | 6 | 175 / 45 | Crystal cavalry, **Phase Charge** blinks into contact (added in 17) |
 | Monolith | 3 | 1 | 280 / 160 | Slow siege monster, sonic beam shatters structures |
 
 ### Heroes
@@ -276,6 +280,7 @@ Concord undead regiments ignore morale entirely. Instead they **crumble**: they 
 | Caravan | 1 | 1 | 75 / 0 | Trade unit; no attack |
 | Bone Pikes | 1 | 20 | 90 / 0 | Undead pike line, cheap, never routs |
 | Crossbow Auditors | 1 | 12 | 140 / 0 | Living, armour-piercing ranged |
+| Gravewardens | 2 | 12 | 170 / 40 | Undead heavy infantry, shrugs off flank and rear hits (added in 17) |
 | Debt Collectors | 2 | 6 | 190 / 50 | Bone-horse heavy cavalry; hits on buildings steal Grub |
 | Lantern Wraiths | 2 | 4 | 140 / 40 | Air, drains enemy morale |
 | Mausoleum Engine | 3 | 1 | 240 / 120 | Mobile crypt siege, raises dead around it |

@@ -29,10 +29,11 @@ Optional:
 ### Teams
 - Allies share vision and can trade resources (with a 10% tax), and the Concord can run caravans to allied main buildings.
 - Allied victory: a team wins together.
+- Any slot can be an **AI player**, as an opponent or a teammate, with a difficulty and a personality. AI allies answer pings and ping back. See [18 · AI](18-ai.md).
 
 ### Surrender and leaving
 - Surrender is a vote in team games, instant in FFA. A surrendered player's structures crumble over 30 s (the Concord can still collect tithes from the collapse, of course).
-- A disconnected player's units hold position and defend themselves; their ally can take shared control. See [11 · Networking](11-networking.md#disconnects-and-rejoining) for rejoining.
+- A disconnected player's units hold position and defend themselves; their ally can take shared control, or (a later lobby option) an AI runs their army until they rejoin. See [11 · Networking](11-networking.md#disconnects-and-rejoining) for rejoining.
 
 ## Field Battle
 
@@ -52,7 +53,9 @@ The Total War experience in a 10-minute bite: two or more armies, one battlefiel
 ### Field Battle extras
 - **Pause** (team-voted in multiplayer, free in solo sandbox). Giving orders while paused is allowed only in solo.
 - **Slow-motion** in solo sandbox and replays, not in multiplayer.
-- **Sandbox mode** (solo): place any armies on any map for both sides and watch or play. This is the main balance-testing and learning tool, and the first thing we build.
+- **Sandbox mode** (solo): place any armies on any map for both sides and watch or play. This is the main balance-testing and learning tool, and the first thing we build. Once the battle AI exists, the other side can be handed to it.
+  - **Built so far (M1 step 7):** `grubcraft --sandbox` starts on an empty field. You can place regiments of any type for any of the four sides (`B`, then click; `[` and `]` choose the type), command any side (`Tab` switches), remove regiments (`Delete`) or clear the field (`Shift` + `Delete`), pause (`P`), run from 0.1× to 4× speed (`-` and `=`), tune a unit type's stats live (`T`), and reload `data/units.ron` from disk (`R`, when run from the repository). Without `--sandbox` the same tools work over the four-army demo. The main menu's Sandbox entry will open the empty field once the menus land.
+- **Versus AI:** any Field Battle slot can be an AI player that picks its army from its personality's presets, deploys and fights ([18 · AI](18-ai.md#captain-battle-tactics)).
 
 ### Restage this battle (the bridge between modes)
 After a Conquest match, the post-game screen lists its biggest battles (by models killed). Pick one and the exact armies that fought it, with their veterancy and heroes, are staged on a Field Battle map generated from the same patch of terrain. Rematch the fight that decided the game. Because both modes share one simulation and replays record everything, this is cheap to build: it is a snapshot of regiments at the moment the battle began, loaded into a battle map.
@@ -66,9 +69,10 @@ After a Conquest match, the post-game screen lists its biggest battles (by model
 
 ## Later modes (not in first release)
 
+AI players are no longer a later mode: they arrive in stages with Field Battle (M2) and Conquest (M3), as [18 · AI](18-ai.md#build-plan) describes.
+
 | Mode | Idea | Needs |
 |---|---|---|
-| **Versus AI** | Bots for Conquest and Field Battle | AI module (the headless deterministic sim makes this straightforward) |
 | **Co-op Siege** | Up to 4 players defend a hamlet against Titan-spawn waves | Wave scripting |
 | **Naval maps** | Water lanes, ships, coastal raids | Naval units, water pathing |
 | **King of the Corpse** | Short 4-player FFA where the Heart moves | A variant map script |

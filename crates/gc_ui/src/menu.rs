@@ -201,7 +201,7 @@ impl Menu {
             self.go(ui, Screen::Play);
         }
         let sandbox = if self.in_match {
-            "Restart sandbox"
+            "New sandbox"
         } else {
             "Sandbox"
         };

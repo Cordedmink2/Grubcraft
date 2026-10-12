@@ -12,6 +12,7 @@ Every third-party crate the game uses, why, and what it costs. Policy: see [10 Â
 | `bytemuck` 1 | `gc_render` | Safe casting of instance data to GPU bytes | Tiny |
 | `pollster` 1 | `gc_game` | Blocks on wgpu's async setup calls; avoids an async runtime | Tiny |
 | `xxhash-rust` 0.8 (`xxh3` only) | `gc_sim`, `gc_assets` | Fast, well-distributed per-tick state hashes for desync detection; asset ids | Pure Rust, `no_std` |
+| `cpal` 0.16 | `gc_audio` | Sound-card output: CoreAudio (Mac), WASAPI (Windows), ALSA (Linux) | Built with default features off, so no JACK or ASIO. On Linux the build needs the ALSA headers (`libasound2-dev`); CI installs them. Mixing, decoding and voice limits are ours |
 | `tracy-client` 0.18 | `gc_game` (`profile` feature only) | Frame and tick profiling with Tracy | Off by default; when on, builds Tracy's C++ client. Not in normal builds |
 
 ## Build time only (baker)
@@ -34,6 +35,7 @@ These run in `gc_bake` and in `gc_game`'s build script; none of them end up in t
 
 | Asset | Used by | Licence |
 |---|---|---|
+| Sound effects and music loops (`assets/audio/sounds.gcsnd`) | Game audio | Synthesised by `tools/gc_sfx`; original work, no third-party licence |
 | Glyphs rasterised from DejaVu Sans Mono (`crates/gc_render/src/debug_font.rs`) | Dev overlay text | Bitstream Vera / DejaVu licence: free to use, modify and redistribute, including embedded; the fonts' names may not be reused for modified versions. Copyright (c) 2003 Bitstream, Inc. (Bitstream Vera); DejaVu changes are in the public domain |
 
 ## Deliberately not used

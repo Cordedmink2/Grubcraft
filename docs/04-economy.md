@@ -113,7 +113,7 @@ Neutral **Grubfolk hamlets** sit near seeps across the map. Any faction can inte
 - **Rumours:** pay to reveal an area of the map for 30 s.
 - **Raiding:** destroy the hamlet's palisade and you loot its store (roughly 400 Grub, 100 Marrow). The hamlet burns for 5 minutes, then rebuilds *hostile to you*. Every other hamlet becomes **Wary** of you (prices +25%, no mercenaries). Raiding is a strong tempo play with a long memory.
 
-Reputation per hamlet per player: **Friendly → Wary → Hostile**. Visible on the hamlet's banner.
+Reputation per hamlet per player: **Friendly → Neutral → Wary → Hostile**. Visible on the hamlet's banner. It is one use of the relations ledger shared by every party in the game ([18 · AI](18-ai.md#relations)).
 
 ## Creep camps
 

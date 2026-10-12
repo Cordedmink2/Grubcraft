@@ -85,13 +85,14 @@ Structures use the same grid for production. Workers' build menu is one sub-page
 - **Lobby:** player rows (name, faction, colour, team, ready). Host sets map, mode, Tempo, victory conditions. A version check shows clearly if someone's build doesn't match ("Alex is on 0.4.1, host is on 0.4.2").
 - From double-clicking the app to being in a friend's lobby should take **under 15 seconds**.
 
-**Built so far (menus and lobby):** the main menu has Play, Sandbox, Settings and Exit (Resume and Restart sandbox appear when you press Esc during a match). Play is one screen: **Host a game** (map, mode, tempo, Host) beside **Join a game** (list of games found on the network, an address or join code box, Join). Hosting opens the lobby: four player rows (colour swatch, name, faction, team, ready or AI), the host's Add AI and Remove buttons, Start, and a line saying why the match can't start yet (alone, someone not ready, a version mismatch spelled out as "Alex is on 0.4.1, host is on 0.4.2", Conquest not playable yet). Settings has name, colour, faction, graphics preset, UI scale (75% to 150%), V-sync, frame cap, five audio sliders and the accessibility toggles; they save when you go Back. Working today: name, colour, faction and UI scale (Larger text adds 25% to the scale). Saved but not acted on yet: graphics preset, V-sync, frame cap, audio, colour-blind palette, high-contrast banners, reduced shake, hints. Not yet: discovery and joining (M2), join codes, the lobby password, Learn and Replays entries, key rebinding, the live memory readout, text chat. Enter presses the highlighted (orange) button and Esc goes back one screen.
+**Built so far (menus and lobby):** the main menu has Play, Sandbox, Settings and Exit (Resume and New sandbox appear when you press Esc during a match). Play is one screen: **Host a game** (map, mode, tempo, Host) beside **Join a game** (list of games found on the network, an address or join code box, Join). Hosting opens the lobby: four player rows (colour swatch, name, faction, team, ready or AI), the host's Add AI and Remove buttons, Start, and a line saying why the match can't start yet (alone, someone not ready, a version mismatch spelled out as "Alex is on 0.4.1, host is on 0.4.2", Conquest not playable yet). Settings has name, colour, faction, graphics preset, UI scale (75% to 150%), V-sync, frame cap, five audio sliders and the accessibility toggles; they save when you go Back. Working today: name, colour, faction and UI scale (Larger text adds 25% to the scale). Saved but not acted on yet: graphics preset, V-sync, frame cap, audio, colour-blind palette, high-contrast banners, reduced shake, hints. Not yet: discovery and joining (M2), join codes, the lobby password, Learn and Replays entries, key rebinding, the live memory readout, text chat. Enter presses the highlighted (orange) button and Esc goes back one screen.
 
 ## Communication
 
 - **Ping wheel** (`G` + mouse direction): "Attack here", "Defend here", "Danger", "On my way", "Need help", "Good game". Pings show on the minimap and play a sound.
 - Text chat (`Enter`), team or all.
 - No in-game voice: friends already use Discord or FaceTime.
+- **AI allies use the same channels:** they treat your pings as requests, ping their own plans ("Attacking here", "Danger"), and send short chat lines in their personality's voice ([18 · AI](18-ai.md#ai-allies)).
 
 ## Settings
 
@@ -105,8 +106,23 @@ Structures use the same grid for production. Workers' build menu is one sub-page
 
 - Multiplayer pause: any player can pause up to 3 times per match; unpausing has a 3-second countdown.
 - Game speed is fixed in multiplayer (lobby choice of Normal or Fast). Solo modes allow slow-motion and fast-forward.
+- **Built so far (M1 step 7):** `P` pauses, `-` and `=` step through 0.1×, 0.25×, 0.5×, 1×, 2× and 4×. The sandbox panel in the top-left corner shows the speed, the side you command, the type you are placing and the keys; `T` opens a stats panel for that type (Up and Down pick a stat, Left and Right change it, `Shift` for ten steps) and `H` hides the panel. It is drawn with the dev overlay's text for now and moves to the `gc_ui` widgets once the menus land.
 
 ## Post-game
 
 - Summary: winner, graphs (income, army value, supply over time), key battles list with "Watch" and "Restage this battle" buttons, MVP regiment (most kills), funniest stat ("Most Grub lost to raids").
 - Save replay (automatic).
+
+## AI players in the lobby (planned)
+
+- The host can fill any slot with an AI player, as an opponent or a teammate. The row shows a **difficulty** (Recruit, Veteran, General, Warlord) and a **personality** (each faction's two, or Random, the default), both chosen with one click.
+- Every slot, human or AI, has a **handicap** setting (income from 50% to 150%), shown on the row whenever it isn't 100%, so nobody is surprised.
+- Details in [18 · AI](18-ai.md#difficulty).
+
+## Parley (planned, M4)
+
+Dealing with hamlets, mercenary companies and, later, other peoples on the map uses one small panel, never a pop-up that pauses the game:
+
+- Select one of their units or buildings and the panel opens beside the command card. It shows their **stance**, and **liking** and **trust** as one bar each, with the top reasons underneath ("You traded with us", "You burned Millbrook").
+- At most four actions for that party (Trade, Hire, Rumours, Gift; later Request passage, Demand tribute), on the usual grid keys.
+- Every action shows its likely answer *before* you commit ("Likely to accept: they like you, you're asking a lot"), because the answer is a visible rule, not a dice roll. See [18 · AI](18-ai.md#deals-and-contracts).

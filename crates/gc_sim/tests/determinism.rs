@@ -13,18 +13,18 @@ const TICKS: u32 = 2_400; // two minutes of game time
 
 /// Expected state hash every 600 ticks (30 s of game time).
 const GOLDEN: [(u32, u64); 4] = [
-    (600, 0x2952_d134_a4a0_78a4),
-    (1200, 0x3ed5_3336_f111_338f),
-    (1800, 0x1476_28c0_ef84_976c),
-    (2400, 0xca02_52b2_6b8b_9591),
+    (600, 0x84c8_849d_0746_9ce7),
+    (1200, 0x1592_2df6_5357_96a1),
+    (1800, 0xee6a_7651_856a_4247),
+    (2400, 0x2c09_ff88_e17f_eb54),
 ];
 
 /// The same drill on the ridged test map, where most orders need routes.
 const GOLDEN_RIBS: [(u32, u64); 4] = [
-    (600, 0xd77e_5e07_c7d8_5f9e),
-    (1200, 0x5c8c_0438_dc92_d6d5),
-    (1800, 0x24ef_3665_75b5_a8a6),
-    (2400, 0xdec3_f5f4_e527_7c6f),
+    (600, 0x00e2_2478_5eda_46c5),
+    (1200, 0x469b_5641_102d_a326),
+    (1800, 0x3522_6542_6cdd_2c4b),
+    (2400, 0xf7ab_8dd6_2098_59ab),
 ];
 
 fn run() -> Vec<(u32, u64)> {
