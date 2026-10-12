@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  lint:
+    name: Format and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets
+
+  test:
+    # The determinism tests must produce identical hashes on every platform:
+    # this is what lets Mac and Windows players share a lockstep match.
+    name: Test (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS arm64, os: macos-14 }
+          - { name: Windows x64, os: windows-latest }
+          - { name: Linux x64, os: ubuntu-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - name: Determinism in release mode
+        run: cargo test --release -p gc_sim --test determinism
+      - name: Simulation benchmark and budgets
+        run: cargo run --release -p gc_bench
+
+  mac-app:
+    name: macOS universal app
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/bundle-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Grubcraft-macOS
+          path: target/Grubcraft-macOS.zip
+          retention-days: 14
+
+  windows-exe:
+    name: Windows build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p gc_game
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Grubcraft-Windows
+          path: target/release/grubcraft.exe
+          retention-days: 14

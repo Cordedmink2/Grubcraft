@@ -1,6 +1,6 @@
 # 10 · Technical Architecture
 
-This is the engineering plan for an RTS that is *absurdly* lightweight without looking or playing cheap. The engine choice and its rationale are in [ADR 0001](adr/0001-engine-and-language.md); budgets and measurement are in [12 · Performance](12-performance.md).
+This is the engineering plan for an RTS that is lightweight without looking or playing cheap. The engine choice and its rationale are in [ADR 0001](adr/0001-engine-and-language.md); budgets and measurement are in [12 · Performance](12-performance.md).
 
 ## Guiding principles
 

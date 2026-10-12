@@ -1,0 +1,20 @@
+[package]
+name = "gc_render"
+description = "Grubcraft renderer on wgpu (Metal, DirectX 12, Vulkan)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+glam.workspace = true
+wgpu.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# Validates shaders in CI, where there is no GPU.
+naga = { version = "30", features = ["wgsl-in"] }

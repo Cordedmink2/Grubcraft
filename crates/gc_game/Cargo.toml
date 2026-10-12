@@ -1,0 +1,24 @@
+[package]
+name = "gc_game"
+description = "The Grubcraft application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "grubcraft"
+path = "src/main.rs"
+
+[dependencies]
+gc_fixed.workspace = true
+gc_platform.workspace = true
+gc_render.workspace = true
+gc_sim.workspace = true
+glam.workspace = true
+pollster.workspace = true
+winit.workspace = true
+
+[lints]
+workspace = true

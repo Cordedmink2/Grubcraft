@@ -20,7 +20,7 @@ The consolidated, testable list of what Grubcraft must do. Each requirement has 
 
 | ID | Requirement | Pri | Milestone |
 |---|---|---|---|
-| PRF-1 | Peak memory ≤ 160 MB (hard ceiling 256 MB) in a 4-player 60-minute match on the largest map | M | M3 |
+| PRF-1 | Peak memory ≤ 4 GB in a 4-player 60-minute match on the largest map | M | M3 |
 | PRF-2 | 60 fps at 1080p on the low-tier reference machines during a large battle | M | M1 |
 | PRF-3 | Sim tick p99 ≤ 2 ms on low-tier hardware in a 4-player late game | M | M3 |
 | PRF-4 | Launch to main menu ≤ 1 s; lobby start to first match frame ≤ 3 s | M | M3 |

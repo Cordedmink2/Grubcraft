@@ -1,0 +1,11 @@
+[package]
+name = "gc_platform"
+description = "Per-OS glue: tagged memory accounting and process memory stats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

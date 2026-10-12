@@ -39,8 +39,8 @@ The iPad-game test: someone who has played a few games should be doing something
 ### 4. A living, edible world
 The map is not a static board. Grub seeps run dry and fall to "dregs", the Titan's corpse shudders and splits open new seeps mid-match, neutral hamlets will trade with you or remember that you burned them, and corpses on the battlefield are a resource for two factions. The world pushes players into each other.
 
-### 5. Absurdly lightweight, without looking cheap
-The engine is built from scratch around one hard question at every layer: *what is the least memory and CPU this can possibly cost?* The target is a full 4-player, 60-minute match with thousands of soldiers on screen at **≤ 160 MB of memory** (hard ceiling 256 MB), 60 fps on a base MacBook Air, and replay files measured in kilobytes. See [12 · Performance](12-performance.md). The art direction (stylized, low-poly, painted lighting) is chosen so that lean and beautiful are the same decision, not a trade-off.
+### 5. Lightweight, without looking cheap
+The engine is built from scratch to be lean at every layer: a full 4-player, 60-minute match with thousands of soldiers on screen within a **4 GB memory budget**, 60 fps on a base MacBook Air, and replay files measured in kilobytes. See [12 · Performance](12-performance.md). The art direction (stylized, low-poly, painted lighting) is chosen so that lean and beautiful are the same decision, not a trade-off.
 
 ## Who it's for
 
@@ -70,5 +70,5 @@ Mario and friends: 2 to 4 players on the same Wi-Fi network (with internet play 
 
 1. Four friends finish a 45-minute Conquest match on Wi-Fi, two on Mac and two on Windows, with zero desyncs and no one waiting on a loading screen longer than 3 seconds.
 2. A friend who has never seen the game wins a skirmish fight against another newcomer after a 10-minute tutorial.
-3. Peak memory on the largest map stays under 160 MB, measured automatically on every change.
+3. Peak memory on the largest map stays under 4 GB, measured automatically on every change.
 4. People ask to play it again next week.

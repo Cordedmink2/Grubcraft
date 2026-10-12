@@ -20,6 +20,7 @@ Read in order the first time; afterwards each document stands alone.
 | 14 | [Decisions Needed](14-decisions-needed.md) | Calls for Mario, each with a recommendation |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
+| — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |
 
 ## Conventions
 

@@ -15,7 +15,7 @@ If a friend's machine is older than the low tier, the Battery preset is the safe
 
 | Metric | Target | Hard ceiling | Stretch |
 |---|---|---|---|
-| Peak memory, 4-player Warfield, 60 min | **160 MB** | 256 MB | 128 MB |
+| Peak memory, 4-player Warfield, 60 min | **≤ 4 GB** | 4 GB | |
 | Frame rate, low tier, 1080p, big battle | 60 fps | 45 fps | 60 fps at High preset |
 | Frame rate, mid tier, 1440p | 144 fps | 90 fps | |
 | Sim tick, 4-player late game, low tier (p99) | **≤ 2 ms** of the 50 ms tick | 5 ms | 1 ms |
@@ -26,30 +26,28 @@ If a friend's machine is older than the low tier, the Battery preset is the safe
 | Network per client (busy) | ≤ 3 KB/s | 10 KB/s | |
 | Replay size per hour | ≤ 150 KB | 500 KB | |
 
-For scale: modern RTS and Total War titles routinely use several gigabytes of memory. Fitting a 4-player war with thousands of soldiers in 160 MB is roughly a ten- to twenty-fold reduction, which is the "absurdly lightweight" bar.
+**Memory budget decided 2026-10-12:** the original target was 160 MB. Measuring M0 on Mario's MacBook (Apple M4) gave about 190 MB, of which about 120 MB is what macOS and the GPU driver charge any Metal window at Retina resolution (measured with a bare Metal program that only clears its window) and about 50 MB is wgpu's own overhead. Mario was happy with that usage and set a 4 GB ceiling for the whole game instead.
 
 "Memory" means the process's physical footprint as the OS reports it (Activity Monitor on Mac, working set on Windows), **including GPU allocations** on Apple Silicon's unified memory. GPU driver overhead that we cannot control is measured and reported separately so it doesn't hide our own regressions.
 
 ## Memory budget
 
-Target total **160 MB** on the largest map with four players at maximum supply:
+The whole game stays under **4 GB** on the largest map with four players at maximum supply. There are no per-subsystem limits inside that ceiling; instead each subsystem is tracked so growth is visible:
 
-| Subsystem (tag) | Budget | Main contents |
-|---|---|---|
-| Code and static data | 15 MB | Executable, static tables |
-| Simulation (`sim`) | 8 MB | Entity pools (< 4 MB), nav grid, flow-field cache, fog, snapshot buffer |
-| Map, CPU side (`map`) | 12 MB | Heightmap, tile layers, nav sectors, decals |
-| Textures, GPU (`tex`) | 48 MB | Terrain material arrays, palettes, splat, baked terrain lighting, particles, UI and font atlases |
-| Meshes and animation (`mesh`) | 16 MB | Quantised meshes, bone animation textures |
-| Render targets (`rt`) | 32 MB | Colour, depth, shadow map, post buffers at 1440p |
-| Presentation (`present`) | 4 MB | Soldier puppets, instance buffers, interpolation |
-| Audio (`audio`) | 12 MB | ADPCM effects, music stream buffers, mixer |
-| UI (`ui`) | 4 MB | Layout scratch, text cache |
-| Network and replay (`net`) | 2 MB | Rings, turn buffers, replay writer |
-| Headroom | 7 MB | |
-| **Total** | **160 MB** | |
+| Subsystem (tag) | Main contents |
+|---|---|
+| Code and static data | Executable, static tables |
+| Simulation (`sim`) | Entity pools, nav grid, flow-field cache, fog, snapshot buffer |
+| Map, CPU side (`map`) | Heightmap, tile layers, nav sectors, decals |
+| Textures, GPU (`tex`) | Terrain material arrays, palettes, splat, baked terrain lighting, particles, UI and font atlases |
+| Meshes and animation (`mesh`) | Quantised meshes, bone animation textures |
+| Render targets (`rt`) | Colour, depth, shadow map, post buffers |
+| Presentation (`present`) | Soldier puppets, instance buffers, interpolation |
+| Audio (`audio`) | Effects, music stream buffers, mixer |
+| UI (`ui`) | Layout scratch, text cache |
+| Network and replay (`net`) | Rings, turn buffers, replay writer |
 
-Each tag is tracked live by the tagged allocator and the renderer's GPU allocation wrapper.
+Each tag is tracked live by the tagged allocator and the renderer's GPU allocation wrapper. The simulation keeps its own tight limit (under 8 MB, gated in `gc_bench`) because snapshot size drives rejoin and desync recovery, not because of the memory budget.
 
 ## Time budget
 

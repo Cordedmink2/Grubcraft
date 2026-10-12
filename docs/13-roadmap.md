@@ -16,7 +16,8 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Asset pack format and baker skeleton; data files compiled from RON.
 - Tagged allocator, dev overlay, Tracy hook.
 - CI: build and test on macOS (arm64) and Windows (x64); universal Mac app bundle.
-- **Exit:** the app opens to a rendered map on Mario's Mac and a Windows PC at under 64 MB memory footprint; the cross-platform hash test passes on an empty sim.
+- **Exit:** the app opens to a rendered map on Mario's Mac and a Windows PC within the 4 GB memory budget; the cross-platform hash test passes on an empty sim.
+- **Progress (2026-10-12):** first slice landed: workspace, `gc_fixed`, `gc_sim` skeleton with golden determinism, zero-allocation and no-float tests, tagged allocator and OS memory stats, wgpu terrain and regiment-block renderer, RTS camera with trackpad gestures, select-and-move on a scripted 4-player drill, `gc_bench` budget gates, CI on macOS/Windows/Linux, universal Mac app script. Remaining: asset pack and baker skeleton, RON data compilation, on-screen dev overlay (stats are in the window title for now), Tracy hook, and a Windows PC run. Measured on Mario's M4: about 190 MB, well inside the 4 GB budget Mario set on 2026-10-12.
 
 ### M1 · Regiments on a field (solo sandbox)
 *Goal: moving and fighting regiments feel great.*
@@ -47,7 +48,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Fog of war, minimap, army tray, command grid, edge notifications.
 - Annihilation and Titan's Heart victories.
 - One Duel map (Ribcage Pass) and one Warfield map (The Four Teeth).
-- **Exit:** a full 4-player Conquest game finishes inside the 160 MB budget.
+- **Exit:** a full 4-player Conquest game finishes inside the 4 GB memory budget.
 
 ### M4 · The Reach Lives
 *Goal: the world feels alive and the game is learnable.*

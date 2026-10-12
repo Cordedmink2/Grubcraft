@@ -1,0 +1,15 @@
+[package]
+name = "gc_bench"
+description = "Headless Grubcraft benchmarks with budget gates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gc_platform.workspace = true
+gc_sim.workspace = true
+
+[lints]
+workspace = true

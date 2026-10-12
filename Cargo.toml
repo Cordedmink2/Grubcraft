@@ -1,0 +1,48 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/gc_fixed",
+    "crates/gc_sim",
+    "crates/gc_platform",
+    "crates/gc_render",
+    "crates/gc_game",
+    "tools/gc_bench",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "LicenseRef-Private"
+publish = false
+rust-version = "1.88"
+
+[workspace.dependencies]
+gc_fixed = { path = "crates/gc_fixed" }
+gc_sim = { path = "crates/gc_sim" }
+gc_platform = { path = "crates/gc_platform" }
+gc_render = { path = "crates/gc_render" }
+
+bytemuck = { version = "1.25", features = ["derive"] }
+glam = "0.34"
+pollster = "1.0"
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "dx12", "vulkan"] }
+winit = "0.30"
+xxhash-rust = { version = "0.8", default-features = false, features = ["xxh3"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+# Fast dev builds of our code, optimised dependencies (wgpu is slow unoptimised).
+[profile.dev.package."*"]
+opt-level = 2
