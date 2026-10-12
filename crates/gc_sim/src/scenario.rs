@@ -5,30 +5,64 @@
 
 use alloc::vec::Vec;
 
-use gc_fixed::{Fx, FxVec2, Pcg32};
+use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
-use crate::{Command, PlayerCommand, PlayerId, UnitStats, World};
+use crate::formation::{self, GroupMember};
+use crate::{Command, PlayerCommand, PlayerId, RegimentHandle, UnitStats, World};
+
+/// Turn rate of `deg` degrees per second, in angle steps per second.
+const fn degrees_per_second(deg: u32) -> u32 {
+    deg * 65_536 / 360
+}
 
 /// Fixed regiment types for tests and benchmarks (one per player), so their
 /// golden hashes don't change when `data/units.ron` is tuned.
 pub const DRILL_UNITS: [UnitStats; 4] = [
     UnitStats {
         speed: Fx::from_int(3),
+        turn_rate: degrees_per_second(60),
+        models: 24,
+        hp_per_model: 10,
+        files: 8,
+        file_spacing: Fx::from_ratio(3, 4),
+        rank_spacing: Fx::from_ratio(17, 20),
     },
     UnitStats {
         speed: Fx::from_int(4),
+        turn_rate: degrees_per_second(120),
+        models: 24,
+        hp_per_model: 6,
+        files: 6,
+        file_spacing: Fx::from_ratio(4, 5),
+        rank_spacing: Fx::from_ratio(4, 5),
     },
     UnitStats {
         speed: Fx::from_ratio(13, 4),
+        turn_rate: degrees_per_second(80),
+        models: 12,
+        hp_per_model: 9,
+        files: 6,
+        file_spacing: Fx::from_ratio(7, 10),
+        rank_spacing: Fx::from_ratio(9, 10),
     },
     UnitStats {
         speed: Fx::from_ratio(5, 2),
+        turn_rate: degrees_per_second(45),
+        models: 20,
+        hp_per_model: 8,
+        files: 10,
+        file_spacing: Fx::from_ratio(11, 20),
+        rank_spacing: Fx::from_ratio(9, 10),
     },
 ];
 
-/// Four players each spawn a block of regiments, then keep ordering random
-/// regiments to random points on the map. Player `p` fields unit type
-/// `p % units` from the world's unit table.
+/// Regiments face north (up the map) when spawned by the drill.
+pub const NORTH: Angle = Angle(0xC000);
+
+/// Four players each spawn a block of regiments, then keep ordering them about
+/// the map: a plain move, a move with a new facing and frontage, and a group
+/// move of three regiments. Player `p` fields unit type `p % units` from the
+/// world's unit table.
 pub struct Drill {
     rng: Pcg32,
     pub players: u8,
@@ -39,6 +73,8 @@ pub struct Drill {
     pub order_interval: u32,
     /// A player the drill spawns but never orders (left to a human).
     pub skip_player: Option<PlayerId>,
+    /// Scratch space for expanding group orders.
+    group_commands: Vec<Command>,
 }
 
 impl Drill {
@@ -50,6 +86,7 @@ impl Drill {
             map_tiles: 256,
             order_interval: 10,
             skip_player: None,
+            group_commands: Vec::with_capacity(8),
         }
     }
 
@@ -88,6 +125,7 @@ impl Drill {
                         command: Command::SpawnRegiment {
                             unit: (player as usize % unit_types) as u16,
                             position,
+                            facing: NORTH,
                         },
                     });
                 }
@@ -101,21 +139,83 @@ impl Drill {
             if self.skip_player == Some(player) {
                 continue;
             }
-            // Order a few of this player's regiments, picked by stepping through the pool.
-            for _ in 0..3 {
-                let Some(regiment) = self.pick_regiment(world, player) else {
-                    break;
-                };
+            let Some(regiment) = self.pick_regiment(world, player) else {
+                continue;
+            };
+            // A plain move: face the way it walks, keep its frontage.
+            let target = self.random_point();
+            out.push(PlayerCommand {
+                player,
+                command: Command::MoveTo {
+                    regiment,
+                    target,
+                    facing: None,
+                    files: 0,
+                    pace: Fx::ZERO,
+                },
+            });
+
+            // A move with a chosen facing and frontage (0 keeps the frontage).
+            if let Some(regiment) = self.pick_regiment(world, player) {
                 let target = self.random_point();
+                let facing = Some(Angle(self.rng.next_u32() as u16));
+                let files = self.rng.below(13) as u16;
                 out.push(PlayerCommand {
                     player,
-                    command: Command::MoveTo { regiment, target },
+                    command: Command::MoveTo {
+                        regiment,
+                        target,
+                        facing,
+                        files,
+                        pace: Fx::ZERO,
+                    },
                 });
             }
+
+            // A group move of up to three different regiments.
+            let mut members = [GroupMember {
+                handle: regiment,
+                position: FxVec2::ZERO,
+                facing: Angle::ZERO,
+                width: Fx::ZERO,
+                speed: Fx::ZERO,
+            }; 3];
+            let mut count = 0;
+            for _ in 0..members.len() {
+                let Some(handle) = self.pick_regiment(world, player) else {
+                    break;
+                };
+                if members[..count].iter().any(|m| m.handle == handle) {
+                    continue;
+                }
+                let r = world.regiments.get(handle).unwrap();
+                let stats = &world.units()[r.unit as usize];
+                members[count] = GroupMember {
+                    handle,
+                    position: r.position,
+                    facing: r.facing,
+                    width: stats.block_size(r.files, r.models).0,
+                    speed: stats.speed,
+                };
+                count += 1;
+            }
+            let target = self.random_point();
+            self.group_commands.clear();
+            formation::group_move(
+                &mut members[..count],
+                target,
+                None,
+                &mut self.group_commands,
+            );
+            out.extend(
+                self.group_commands
+                    .iter()
+                    .map(|&command| PlayerCommand { player, command }),
+            );
         }
     }
 
-    fn pick_regiment(&mut self, world: &World, player: PlayerId) -> Option<crate::RegimentHandle> {
+    fn pick_regiment(&mut self, world: &World, player: PlayerId) -> Option<RegimentHandle> {
         let owned = world.regiments.iter().filter(|r| r.owner == player).count() as u32;
         if owned == 0 {
             return None;

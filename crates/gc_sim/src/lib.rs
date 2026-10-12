@@ -13,14 +13,16 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+pub mod formation;
 mod hash;
 mod regiments;
 pub mod scenario;
 
 pub use hash::StateHasher;
-pub use regiments::{RegimentHandle, RegimentView, Regiments};
+pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 
-use gc_fixed::{Fx, FxVec2, Pcg32};
+use formation::MAX_MODELS;
+use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -49,8 +51,42 @@ pub type UnitId = u16;
 /// hand so golden hashes don't move when balance numbers are tuned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnitStats {
-    /// Tiles per second.
+    /// Marching speed, tiles per second.
     pub speed: Fx,
+    /// Turning speed, in [`Angle`] steps per second (65,536 is a full turn).
+    pub turn_rate: u32,
+    /// Soldiers at full strength, at most [`MAX_MODELS`].
+    pub models: u16,
+    pub hp_per_model: u16,
+    /// Soldiers per rank when the regiment is raised.
+    pub files: u16,
+    /// Distance between neighbouring soldiers in a rank, in tiles.
+    pub file_spacing: Fx,
+    /// Distance between ranks, in tiles.
+    pub rank_spacing: Fx,
+}
+
+impl UnitStats {
+    /// The same stats forced into the ranges the simulation relies on. The
+    /// data baker already rejects anything outside them; this keeps the sim
+    /// safe whatever it is handed.
+    pub fn sanitized(self) -> UnitStats {
+        let models = self.models.clamp(1, MAX_MODELS);
+        UnitStats {
+            speed: self.speed.max(Fx::ZERO),
+            turn_rate: self.turn_rate.max(TICKS_PER_SECOND),
+            models,
+            hp_per_model: self.hp_per_model.max(1),
+            files: self.files.clamp(1, models),
+            file_spacing: self.file_spacing.max(Fx::from_raw(1)),
+            rank_spacing: self.rank_spacing.max(Fx::from_raw(1)),
+        }
+    }
+
+    /// Size of a block of `models` soldiers in `files` files: (width, depth).
+    pub fn block_size(&self, files: u16, models: u16) -> (Fx, Fx) {
+        formation::block_size(files, models, self.file_spacing, self.rank_spacing)
+    }
 }
 
 /// Everything needed to start a match identically on every machine.
@@ -64,11 +100,23 @@ pub struct MatchSetup<'a> {
 /// A player's order. The only way anything outside the sim changes the sim.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
-    /// Debug/sandbox: create a regiment. Real production comes with M3.
-    SpawnRegiment { unit: UnitId, position: FxVec2 },
+    /// Debug/sandbox: create a full-strength regiment. Real production comes with M3.
+    SpawnRegiment {
+        unit: UnitId,
+        position: FxVec2,
+        facing: Angle,
+    },
+    /// March the block's centre to `target`. Group orders are expanded into
+    /// one of these per regiment by [`formation::group_move`].
     MoveTo {
         regiment: RegimentHandle,
         target: FxVec2,
+        /// Facing on arrival; `None` keeps the direction of travel.
+        facing: Option<Angle>,
+        /// New frontage in soldiers; 0 keeps the current one.
+        files: u16,
+        /// Tiles per second; zero means the regiment's own speed.
+        pace: Fx,
     },
 }
 
@@ -98,7 +146,7 @@ impl World {
         World {
             tick: 0,
             rng: Pcg32::new(setup.seed, streams::WORLD),
-            units: setup.units.to_vec(),
+            units: setup.units.iter().map(|u| u.sanitized()).collect(),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
@@ -134,21 +182,36 @@ impl World {
 
     fn apply(&mut self, pc: &PlayerCommand) -> bool {
         match pc.command {
-            Command::SpawnRegiment { unit, position } => {
+            Command::SpawnRegiment {
+                unit,
+                position,
+                facing,
+            } => {
                 let Some(stats) = self.units.get(unit as usize) else {
                     return false;
                 };
-                let per_tick = Fx::from_raw(stats.speed.raw() / TICKS_PER_SECOND as i32);
                 self.regiments
-                    .spawn(pc.player, unit, position, per_tick)
+                    .spawn(pc.player, unit, position, facing, stats)
                     .is_some()
             }
-            Command::MoveTo { regiment, target } => {
+            Command::MoveTo {
+                regiment,
+                target,
+                facing,
+                files,
+                pace,
+            } => {
                 // Players may only order their own regiments.
                 match self.regiments.owner(regiment) {
-                    Some(owner) if owner == pc.player => {
-                        self.regiments.set_target(regiment, target)
-                    }
+                    Some(owner) if owner == pc.player => self.regiments.order(
+                        regiment,
+                        Order {
+                            target,
+                            facing,
+                            files,
+                            pace,
+                        },
+                    ),
                     _ => false,
                 }
             }

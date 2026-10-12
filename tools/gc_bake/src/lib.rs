@@ -8,7 +8,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use gc_assets::{Kind, PackWriter, table_bytes};
-use gc_data::{Faction, MANIFEST_PATH, NAME_BYTES, UNIT_SCHEMA, UNITS_PATH, UnitRecord};
+use gc_data::{
+    ANGLE_STEPS_PER_TURN, Faction, MANIFEST_PATH, NAME_BYTES, UNIT_SCHEMA, UNITS_PATH, UnitRecord,
+};
 use gc_fixed::Fx;
 use serde::Deserialize;
 
@@ -49,9 +51,12 @@ struct UnitDef {
     faction: FactionDef,
     models: u16,
     hp_per_model: u16,
+    files: u16,
     speed: f64,
-    frontage: f64,
-    depth: f64,
+    /// Degrees per second.
+    turn_rate: f64,
+    file_spacing: f64,
+    rank_spacing: f64,
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -140,13 +145,17 @@ fn bake_units(file: &Path) -> Result<Vec<UnitRecord>, BakeError> {
         let record = UnitRecord {
             name,
             speed: to_fx(def.speed).map_err(|why| invalid(&def.name, format!("speed {why}")))?,
-            frontage: to_fx(def.frontage)
-                .map_err(|why| invalid(&def.name, format!("frontage {why}")))?,
-            depth: to_fx(def.depth).map_err(|why| invalid(&def.name, format!("depth {why}")))?,
+            file_spacing: to_fx(def.file_spacing)
+                .map_err(|why| invalid(&def.name, format!("file_spacing {why}")))?,
+            rank_spacing: to_fx(def.rank_spacing)
+                .map_err(|why| invalid(&def.name, format!("rank_spacing {why}")))?,
+            turn_rate: to_angle_rate(def.turn_rate)
+                .map_err(|why| invalid(&def.name, format!("turn_rate {why}")))?,
             models: def.models,
             hp_per_model: def.hp_per_model,
+            files: def.files,
             faction: Faction::from(def.faction) as u8,
-            _pad: [0; 3],
+            _pad: 0,
         };
         gc_data::validate_unit(&record).map_err(|why| invalid(&def.name, why.into()))?;
         records.push(record);
@@ -175,6 +184,19 @@ fn to_fx(v: f64) -> Result<i32, &'static str> {
     let raw = raw as i32;
     debug_assert!(Fx::from_raw(raw).raw() == raw);
     Ok(raw)
+}
+
+/// Convert degrees per second to angle steps per second. Like [`to_fx`], the
+/// scaling is correctly rounded, so every platform gets the same integer.
+fn to_angle_rate(degrees: f64) -> Result<u32, &'static str> {
+    if !degrees.is_finite() || degrees <= 0.0 {
+        return Err("must be a positive number of degrees per second");
+    }
+    let steps = (degrees * ANGLE_STEPS_PER_TURN as f64 / 360.0).round();
+    if steps > u32::MAX as f64 {
+        return Err("is out of range");
+    }
+    Ok(steps as u32)
 }
 
 #[cfg(test)]
@@ -206,7 +228,8 @@ mod tests {
     }
 
     const ONE: &str = r#"[(name: "Test Spears", faction: EmberClans, models: 24,
-        hp_per_model: 10, speed: 3.0, frontage: 6.0, depth: 2.5)]"#;
+        hp_per_model: 10, files: 8, speed: 3.0, turn_rate: 60.0, file_spacing: 0.75,
+        rank_spacing: 0.85)]"#;
 
     #[test]
     fn bakes_and_reads_back() {
@@ -221,7 +244,10 @@ mod tests {
         assert_eq!(u.name(), "Test Spears");
         assert_eq!(u.faction(), Faction::EmberClans);
         assert_eq!(u.speed(), Fx::from_int(3));
-        assert_eq!(u.depth(), Fx::from_ratio(5, 2));
+        assert_eq!(u.file_spacing(), Fx::from_ratio(3, 4));
+        assert_eq!(u.files, 8);
+        // 60 degrees per second is a sixth of a turn: 10922.67 steps.
+        assert_eq!(u.turn_rate, 10_923);
     }
 
     /// Baking must give the same bytes on every platform, or Mac and Windows
@@ -232,7 +258,7 @@ mod tests {
         let hex: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,
-            "3b98a5d249a4ddfeb3cd2d6611764bba84f96576d80e9c668ac3d88e57541436"
+            "30dea818a3c35b55ac111ec4ab167b5a612b78cdbfbe7b45312dc3eec5d91645"
         );
     }
 
@@ -253,17 +279,25 @@ mod tests {
     #[test]
     fn rejects_bad_definitions() {
         let dup = r#"[
-            (name: "A", faction: Brood, models: 1, hp_per_model: 1, speed: 1.0, frontage: 1.0, depth: 1.0),
-            (name: "A", faction: Brood, models: 1, hp_per_model: 1, speed: 1.0, frontage: 1.0, depth: 1.0),
+            (name: "A", faction: Brood, models: 1, hp_per_model: 1, files: 1, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0),
+            (name: "A", faction: Brood, models: 1, hp_per_model: 1, files: 1, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0),
         ]"#;
         let err = bake(&temp_data(dup)).err().unwrap().to_string();
         assert!(err.contains("defined twice"), "{err}");
 
-        let slow = r#"[(name: "B", faction: Choir, models: 1, hp_per_model: 1, speed: 0.0, frontage: 1.0, depth: 1.0)]"#;
+        let slow = r#"[(name: "B", faction: Choir, models: 1, hp_per_model: 1, files: 1, speed: 0.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0)]"#;
         let err = bake(&temp_data(slow)).err().unwrap().to_string();
         assert!(err.contains("speed"), "{err}");
 
-        let typo = r#"[(name: "C", faction: Choir, models: 1, hp_per_model: 1, sped: 1.0, frontage: 1.0, depth: 1.0)]"#;
+        let wide = r#"[(name: "D", faction: Choir, models: 4, hp_per_model: 1, files: 5, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0)]"#;
+        let err = bake(&temp_data(wide)).err().unwrap().to_string();
+        assert!(err.contains("files"), "{err}");
+
+        let big = r#"[(name: "E", faction: Brood, models: 33, hp_per_model: 1, files: 8, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0)]"#;
+        let err = bake(&temp_data(big)).err().unwrap().to_string();
+        assert!(err.contains("32 models"), "{err}");
+
+        let typo = r#"[(name: "C", faction: Choir, models: 1, hp_per_model: 1, files: 1, sped: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0)]"#;
         assert!(matches!(bake(&temp_data(typo)), Err(BakeError::Parse(..))));
     }
 }

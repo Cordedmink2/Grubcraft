@@ -29,6 +29,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Sandbox: place armies for both sides, slow motion, hot-reload unit stats.
 - Golden replay tests and `field-8000pt-2v2` benchmark.
 - **Exit:** a 1v1 sandbox battle of ~3,000 soldiers looks and feels like Shogun, at 60 fps on the low tier.
+- **Progress (2026-10-12):** M1 is built in eight steps: formations in the sim, soldiers on screen, controls, melee and arrows, morale, pathfinding, sandbox, real art. Step 1 (formations: files, ranks, facing, per-soldier hit points, turning, group moves in line, unit data schema 2) is in review.
 
 ### M2 · LAN Battle (first game night)
 *Goal: Mario and friends play Field Battle together over Wi-Fi.*

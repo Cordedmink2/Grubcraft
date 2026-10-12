@@ -134,7 +134,8 @@ A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt increm
 - A per-tick path budget smooths spikes when 40 regiments are ordered at once.
 
 ### Formations and combat
-- A regiment's formation is its anchor position, facing, frontage width and depth, plus a slot mask of which models are alive. The sim never tracks individual soldier positions.
+- A regiment's formation is its centre, facing and number of files (soldiers per rank); the ranks follow from how many soldiers are standing, and the block's width and depth from the unit's file and rank spacing. Hit points are kept per soldier by formation slot (rank 0 is the front). The sim never tracks individual soldier positions; `gc_sim::formation` gives each slot's place in the block for the renderer and for combat.
+- Regiments turn on the spot before marching when the destination is more than 45° off their facing, and shuffle (step while turning toward the final facing) for short adjustments. Group orders are expanded by the ordering player's machine into one move per regiment (`formation::group_move`: side by side, at the slowest member's pace), so the lockstep turn only ever carries single-regiment moves.
 - **Melee:** when two formations' fronts (or a front and a flank/rear) touch, a contact segment forms. Damage is resolved per file along the segment, using attacker and defender stats, facing multipliers, charge bonus, terrain and veterancy. Casualties remove models from the back ranks first (the "front rank steps up").
 - **Ranged:** each volley is one entity. On impact it rolls hits against the target formation's footprint and density with the combat RNG substream, so a tight block suffers more than a loose screen.
 - **Morale** is an integer per regiment updated from events (casualties, flank hits, nearby routs, heroes, terror) with decay toward a baseline.

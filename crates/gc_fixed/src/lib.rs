@@ -290,6 +290,60 @@ impl Angle {
     pub fn wrapping_add(self, rhs: Angle) -> Angle {
         Angle(self.0.wrapping_add(rhs.0))
     }
+
+    /// Direction of `v` (integer `atan2`), or [`Angle::ZERO`] for a zero vector.
+    /// Exact to one step of the sine table's interpolation.
+    pub fn of_vec(v: FxVec2) -> Angle {
+        let x = (v.x.0 as i64).abs();
+        let y = (v.y.0 as i64).abs();
+        if x == 0 && y == 0 {
+            return Angle::ZERO;
+        }
+        // First quadrant: find the smallest a in [0, quarter] with
+        // sin(a) * x >= cos(a) * y. The left side minus the right rises with a.
+        let (mut lo, mut hi) = (0u32, Angle::QUARTER.0 as u32);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let a = Angle(mid as u16);
+            if a.sin().0 as i64 * x >= a.cos().0 as i64 * y {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        let a = lo as u16;
+        Angle(match (v.x.0 < 0, v.y.0 < 0) {
+            (false, false) => a,
+            (true, false) => Angle::HALF.0 - a,
+            (true, true) => Angle::HALF.0.wrapping_add(a),
+            (false, true) => a.wrapping_neg(),
+        })
+    }
+
+    /// The shortest signed turn from `self` to `to`: positive turns toward
+    /// +y from +x. A half turn reports as negative.
+    #[inline]
+    pub fn delta_to(self, to: Angle) -> i16 {
+        to.0.wrapping_sub(self.0) as i16
+    }
+
+    /// Turn toward `to` by at most `max_step`, never overshooting.
+    pub fn turn_toward(self, to: Angle, max_step: u16) -> Angle {
+        let d = self.delta_to(to) as i32;
+        let step = max_step as i32;
+        if d.abs() <= step {
+            to
+        } else {
+            Angle(self.0.wrapping_add(if d > 0 { step } else { -step } as u16))
+        }
+    }
+
+    /// The rotation of `v` by this angle.
+    #[inline]
+    pub fn rotate(self, v: FxVec2) -> FxVec2 {
+        let (c, s) = (self.cos(), self.sin());
+        FxVec2::new(v.x * c - v.y * s, v.x * s + v.y * c)
+    }
 }
 
 /// PCG32 (XSH RR) random number generator: small, fast, fully deterministic.
@@ -386,6 +440,57 @@ mod tests {
         }
         assert_eq!(Angle::ZERO.cos(), Fx::ONE);
         assert_eq!(Angle::QUARTER.sin(), Fx::ONE);
+    }
+
+    #[test]
+    fn angle_of_vec_matches_atan2() {
+        let mut rng = Pcg32::new(9, 9);
+        for i in 0..20_000 {
+            let v = if i < 8 {
+                // Axes and diagonals.
+                let d = [
+                    (1, 0),
+                    (1, 1),
+                    (0, 1),
+                    (-1, 1),
+                    (-1, 0),
+                    (-1, -1),
+                    (0, -1),
+                    (1, -1),
+                ][i];
+                FxVec2::from_ints(d.0 * 3, d.1 * 3)
+            } else {
+                FxVec2::new(
+                    Fx(rng.next_u32() as i32 >> (rng.below(16))),
+                    Fx(rng.next_u32() as i32 >> (rng.below(16))),
+                )
+            };
+            if v == FxVec2::ZERO {
+                continue;
+            }
+            let a = Angle::of_vec(v);
+            let expected = (v.y.0 as f64).atan2(v.x.0 as f64) / core::f64::consts::TAU * 65536.0;
+            let err = (a.0 as f64 - expected).rem_euclid(65536.0);
+            let err = err.min(65536.0 - err);
+            assert!(err <= 4.0, "{v:?}: got {} expected {expected}", a.0);
+        }
+        assert_eq!(Angle::of_vec(FxVec2::ZERO), Angle::ZERO);
+        assert_eq!(Angle::of_vec(FxVec2::from_ints(0, -1)), Angle(0xC000));
+        assert_eq!(Angle::of_vec(FxVec2::from_ints(-2, 0)), Angle::HALF);
+        // Extreme inputs must not overflow.
+        let _ = Angle::of_vec(FxVec2::new(Fx::MIN, Fx::MIN));
+    }
+
+    #[test]
+    fn angle_turning() {
+        assert_eq!(Angle(10).delta_to(Angle(30)), 20);
+        assert_eq!(Angle(30).delta_to(Angle(10)), -20);
+        assert_eq!(Angle(0xFFF0).delta_to(Angle(0x10)), 0x20);
+        assert_eq!(Angle(0).turn_toward(Angle(100), 30), Angle(30));
+        assert_eq!(Angle(0).turn_toward(Angle(100), 300), Angle(100));
+        assert_eq!(Angle(0).turn_toward(Angle(0xFF00), 0x40), Angle(0xFFC0));
+        let r = Angle::QUARTER.rotate(FxVec2::from_ints(1, 0));
+        assert_eq!(r, FxVec2::from_ints(0, 1));
     }
 
     #[test]

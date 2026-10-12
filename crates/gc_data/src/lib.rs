@@ -18,9 +18,14 @@ pub const UNITS_PATH: &str = "data/units";
 /// Pack path of the data manifest (the data hash).
 pub const MANIFEST_PATH: &str = "data/manifest";
 /// Bump whenever [`UnitRecord`]'s layout or meaning changes.
-pub const UNIT_SCHEMA: u32 = 1;
+pub const UNIT_SCHEMA: u32 = 2;
 /// Longest unit name, in UTF-8 bytes.
 pub const NAME_BYTES: usize = 32;
+/// Most soldiers in one regiment. Must equal `gc_sim::formation::MAX_MODELS`
+/// (the game checks this at compile time).
+pub const MAX_MODELS: u16 = 32;
+/// Angle steps in a full turn (`gc_fixed::Angle`).
+pub const ANGLE_STEPS_PER_TURN: u32 = 65_536;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -53,25 +58,30 @@ impl Faction {
     }
 }
 
-/// One regiment type. Lengths and speeds are `Fx` raw values (Q16.16), so the
-/// simulation reads them without any floating point.
+/// One regiment type. Lengths and speeds are `Fx` raw values (Q16.16) and
+/// turn rates are angle steps, so the simulation reads them without any
+/// floating point.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
 pub struct UnitRecord {
     /// UTF-8, zero-padded.
     pub name: [u8; NAME_BYTES],
-    /// Tiles per second.
+    /// Marching speed, tiles per second.
     pub speed: i32,
-    /// Width of the regiment's block in tiles.
-    pub frontage: i32,
-    /// Depth of the regiment's block in tiles.
-    pub depth: i32,
+    /// Distance between neighbouring soldiers in a rank, in tiles.
+    pub file_spacing: i32,
+    /// Distance between ranks, in tiles.
+    pub rank_spacing: i32,
+    /// Turning speed in angle steps per second ([`ANGLE_STEPS_PER_TURN`] per turn).
+    pub turn_rate: u32,
     /// Soldiers in a full-strength regiment.
     pub models: u16,
     pub hp_per_model: u16,
+    /// Soldiers per rank when the regiment is raised.
+    pub files: u16,
     /// A [`Faction`] as `u8`.
     pub faction: u8,
-    pub _pad: [u8; 3],
+    pub _pad: u8,
 }
 
 impl UnitRecord {
@@ -84,12 +94,12 @@ impl UnitRecord {
         Fx::from_raw(self.speed)
     }
 
-    pub fn frontage(&self) -> Fx {
-        Fx::from_raw(self.frontage)
+    pub fn file_spacing(&self) -> Fx {
+        Fx::from_raw(self.file_spacing)
     }
 
-    pub fn depth(&self) -> Fx {
-        Fx::from_raw(self.depth)
+    pub fn rank_spacing(&self) -> Fx {
+        Fx::from_raw(self.rank_spacing)
     }
 
     pub fn faction(&self) -> Faction {
@@ -195,20 +205,23 @@ pub fn validate_unit(u: &UnitRecord) -> Result<(), &'static str> {
     if u.speed <= 0 || u.speed > Fx::from_int(20).raw() {
         return Err("speed must be above 0 and at most 20 tiles per second");
     }
-    if u.frontage <= 0
-        || u.depth <= 0
-        || u.frontage > Fx::from_int(32).raw()
-        || u.depth > Fx::from_int(32).raw()
-    {
-        return Err("frontage and depth must be above 0 and at most 32 tiles");
+    let spacing = 1..=Fx::from_int(4).raw();
+    if !spacing.contains(&u.file_spacing) || !spacing.contains(&u.rank_spacing) {
+        return Err("file and rank spacing must be above 0 and at most 4 tiles");
     }
-    if u.models == 0 {
-        return Err("a regiment needs at least one model");
+    if u.turn_rate == 0 || u.turn_rate > 2 * ANGLE_STEPS_PER_TURN {
+        return Err("turn rate must be above 0 and at most 720 degrees per second");
+    }
+    if u.models == 0 || u.models > MAX_MODELS {
+        return Err("a regiment needs between 1 and 32 models");
+    }
+    if u.files == 0 || u.files > u.models {
+        return Err("files must be at least 1 and at most the number of models");
     }
     if u.hp_per_model == 0 {
         return Err("hp per model must be above 0");
     }
-    if u._pad != [0; 3] {
+    if u._pad != 0 {
         return Err("padding must be zero");
     }
     Ok(())
@@ -221,7 +234,7 @@ mod tests {
     #[test]
     fn record_layout_is_stable() {
         // Changing this means bumping UNIT_SCHEMA.
-        assert_eq!(size_of::<UnitRecord>(), 52);
+        assert_eq!(size_of::<UnitRecord>(), 56);
         assert_eq!(align_of::<UnitRecord>(), 4);
     }
 }

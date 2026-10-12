@@ -1,43 +1,54 @@
 // Regiment types. Compiled into the asset pack by gc_bake; the game never
 // reads this file directly.
 //
-// speed: tiles per second. frontage, depth: size of the regiment's block in
-// tiles. Numbers are first-pass and will be tuned in M1.
+// models: soldiers at full strength (at most 32). files: soldiers per rank
+// when raised; ranks follow from models / files. speed: tiles per second.
+// turn_rate: degrees per second. file_spacing, rank_spacing: tiles between
+// neighbouring soldiers across and front to back. Numbers are first-pass and
+// will be tuned in M1.
 [
     (
         name: "Yari Ashigaru",
         faction: EmberClans,
         models: 24,
         hp_per_model: 10,
+        files: 8,
         speed: 3.0,
-        frontage: 6.0,
-        depth: 2.5,
+        turn_rate: 60.0,
+        file_spacing: 0.75,
+        rank_spacing: 0.85,
     ),
     (
         name: "Skitterlings",
         faction: Brood,
         models: 24,
         hp_per_model: 6,
+        files: 6,
         speed: 4.0,
-        frontage: 5.0,
-        depth: 3.0,
+        turn_rate: 120.0,
+        file_spacing: 0.8,
+        rank_spacing: 0.8,
     ),
     (
         name: "Shardlings",
         faction: Choir,
         models: 12,
         hp_per_model: 9,
+        files: 6,
         speed: 3.25,
-        frontage: 4.0,
-        depth: 2.0,
+        turn_rate: 80.0,
+        file_spacing: 0.7,
+        rank_spacing: 0.9,
     ),
     (
         name: "Bone Pikes",
         faction: CarrionConcord,
         models: 20,
         hp_per_model: 8,
+        files: 10,
         speed: 2.5,
-        frontage: 5.5,
-        depth: 2.5,
+        turn_rate: 45.0,
+        file_spacing: 0.55,
+        rank_spacing: 0.9,
     ),
 ]

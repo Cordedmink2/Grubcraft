@@ -1,6 +1,7 @@
 //! Grubcraft. M0: a rendered map with four players' regiments driven by the
 //! deterministic simulation. You command player 1 (red): left-click a red
-//! block to select it, right-click the ground to move it.
+//! block to select it (Shift-click adds or removes more), right-click the
+//! ground to march them there side by side in formation.
 //!
 //! Controls: arrow keys / screen edges / two-finger scroll pan; mouse wheel or
 //! pinch zooms; Alt + middle-drag or two-finger rotate turns the view;
@@ -25,10 +26,9 @@ use std::time::{Duration, Instant};
 
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
 use gc_render::{FrameParams, RegimentInstance, Renderer, RendererOptions, Terrain};
+use gc_sim::formation::{self, GroupMember};
 use gc_sim::scenario::Drill;
-use gc_sim::{
-    Capacities, Command, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, UnitStats, World,
-};
+use gc_sim::{Capacities, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, UnitStats, World};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
@@ -54,6 +54,10 @@ const TEAM_COLORS: [[u8; 3]; 4] = [
     [214, 204, 170],
 ];
 const EDGE_SCROLL_PX: f64 = 6.0;
+/// Height of a regiment block until soldiers are drawn individually.
+const BLOCK_HEIGHT: f32 = 0.8;
+
+const _: () = assert!(gc_data::MAX_MODELS == gc_sim::formation::MAX_MODELS);
 
 struct Options {
     seed: u64,
@@ -133,12 +137,15 @@ struct Running {
     /// Commands collected for the next tick (from the drill and the human).
     pending: Vec<PlayerCommand>,
     human_orders: Vec<PlayerCommand>,
-    /// Positions at the previous tick, by pool index, for interpolation.
-    prev_positions: Vec<Option<(RegimentHandle, Vec2)>>,
+    /// Position and facing at the previous tick, by pool index, for interpolation.
+    prev_positions: Vec<Option<(RegimentHandle, Vec2, Vec2)>>,
     instances: Vec<RegimentInstance>,
-    /// Block size (frontage, height, depth) in tiles per unit type.
-    unit_sizes: Vec<[f32; 3]>,
-    selected: Option<RegimentHandle>,
+    /// The match's regiment types, as the simulation sees them.
+    unit_stats: Vec<UnitStats>,
+    selected: Vec<RegimentHandle>,
+    /// Scratch space for building group orders.
+    group: Vec<GroupMember>,
+    group_commands: Vec<gc_sim::Command>,
     sim_clock: Duration,
     last_frame: Instant,
     started: Instant,
@@ -183,6 +190,7 @@ struct Input {
     cursor: Option<PhysicalPosition<f64>>,
     focused: bool,
     alt: bool,
+    shift: bool,
     arrows: [bool; 4], // up, down, left, right
     middle_down: Option<PhysicalPosition<f64>>,
     middle_dragged: bool,
@@ -241,12 +249,15 @@ impl App {
         let unit_stats: Vec<UnitStats> = game_data
             .units
             .iter()
-            .map(|u| UnitStats { speed: u.speed() })
-            .collect();
-        let unit_sizes = game_data
-            .units
-            .iter()
-            .map(|u| [fx_to_f32(u.frontage()), 0.8, fx_to_f32(u.depth())])
+            .map(|u| UnitStats {
+                speed: u.speed(),
+                turn_rate: u.turn_rate,
+                models: u.models,
+                hp_per_model: u.hp_per_model,
+                files: u.files,
+                file_spacing: u.file_spacing(),
+                rank_spacing: u.rank_spacing(),
+            })
             .collect();
         let capacities = Capacities::default();
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
@@ -309,8 +320,10 @@ impl App {
             human_orders: Vec::with_capacity(64),
             prev_positions,
             instances: Vec::with_capacity(gc_render::MAX_REGIMENT_INSTANCES),
-            unit_sizes,
-            selected: None,
+            unit_stats,
+            selected: Vec::with_capacity(64),
+            group: Vec::with_capacity(64),
+            group_commands: Vec::with_capacity(64),
             sim_clock: Duration::ZERO,
             last_frame: now,
             started: now,
@@ -361,7 +374,10 @@ impl ApplicationHandler for App {
                 r.camera.aspect = r.renderer.aspect_ratio();
             }
             WindowEvent::Focused(f) => r.input.focused = f,
-            WindowEvent::ModifiersChanged(m) => r.input.alt = m.state().alt_key(),
+            WindowEvent::ModifiersChanged(m) => {
+                r.input.alt = m.state().alt_key();
+                r.input.shift = m.state().shift_key();
+            }
             WindowEvent::CursorLeft { .. } => r.input.cursor = None,
             WindowEvent::CursorMoved { position, .. } => {
                 if let (Some(prev), Some(_)) = (r.input.cursor, r.input.middle_down) {
@@ -460,17 +476,24 @@ impl Running {
                 self.input.middle_down = None;
             }
             (MouseButton::Left, ElementState::Pressed) => {
-                self.selected = self
+                let hit = self
                     .ground_under_cursor()
                     .and_then(|p| self.nearest_own(p, 6.0));
+                if !self.input.shift {
+                    self.selected.clear();
+                }
+                if let Some(h) = hit {
+                    match self.selected.iter().position(|&s| s == h) {
+                        Some(i) => {
+                            self.selected.swap_remove(i);
+                        }
+                        None => self.selected.push(h),
+                    }
+                }
             }
             (MouseButton::Right, ElementState::Pressed) => {
-                if let (Some(regiment), Some(p)) = (self.selected, self.ground_under_cursor()) {
-                    let target = gc_fixed::FxVec2::new(to_fx(p.x), to_fx(p.y));
-                    self.human_orders.push(PlayerCommand {
-                        player: HUMAN,
-                        command: Command::MoveTo { regiment, target },
-                    });
+                if let Some(p) = self.ground_under_cursor() {
+                    self.order_selected(gc_fixed::FxVec2::new(to_fx(p.x), to_fx(p.y)));
                 }
             }
             _ => {}
@@ -519,6 +542,32 @@ impl Running {
         None
     }
 
+    /// March the selected regiments to `target`, side by side and facing the
+    /// way they travel.
+    fn order_selected(&mut self, target: gc_fixed::FxVec2) {
+        let regiments = &self.world.regiments;
+        self.selected.retain(|&h| regiments.get(h).is_some());
+        self.group.clear();
+        for &h in &self.selected {
+            let r = self.world.regiments.get(h).unwrap();
+            let stats = &self.world.units()[r.unit as usize];
+            self.group.push(GroupMember {
+                handle: h,
+                position: r.position,
+                facing: r.facing,
+                width: stats.block_size(r.files, r.models).0,
+                speed: stats.speed,
+            });
+        }
+        self.group_commands.clear();
+        formation::group_move(&mut self.group, target, None, &mut self.group_commands);
+        self.human_orders
+            .extend(self.group_commands.iter().map(|&command| PlayerCommand {
+                player: HUMAN,
+                command,
+            }));
+    }
+
     fn nearest_own(&self, p: Vec2, radius: f32) -> Option<RegimentHandle> {
         self.world
             .regiments
@@ -549,7 +598,7 @@ impl Running {
             ticks_this_frame += 1;
             for r in self.world.regiments.iter() {
                 self.prev_positions[r.handle.index as usize] =
-                    Some((r.handle, from_fx_vec(r.position)));
+                    Some((r.handle, from_fx_vec(r.position), angle_vec(r.facing)));
             }
             self.drill.commands_for(&self.world, &mut self.pending);
             self.pending.append(&mut self.human_orders);
@@ -566,20 +615,25 @@ impl Running {
         self.instances.clear();
         for r in self.world.regiments.iter() {
             let cur = from_fx_vec(r.position);
-            let pos = match self.prev_positions[r.handle.index as usize] {
-                Some((h, prev)) if h == r.handle => prev.lerp(cur, alpha),
-                _ => cur,
+            let cur_facing = angle_vec(r.facing);
+            let (pos, facing) = match self.prev_positions[r.handle.index as usize] {
+                Some((h, prev, prev_facing)) if h == r.handle => (
+                    prev.lerp(cur, alpha),
+                    prev_facing.lerp(cur_facing, alpha).normalize_or(cur_facing),
+                ),
+                _ => (cur, cur_facing),
             };
             let [cr, cg, cb] = TEAM_COLORS[r.owner as usize % TEAM_COLORS.len()];
-            let highlight = if self.selected == Some(r.handle) {
+            let highlight = if self.selected.contains(&r.handle) {
                 255
             } else {
                 0
             };
+            let (width, depth) = self.unit_stats[r.unit as usize].block_size(r.files, r.models);
             self.instances.push(RegimentInstance {
                 pos: pos.to_array(),
-                facing: from_fx_vec(r.facing).normalize_or(Vec2::Y).to_array(),
-                size: self.unit_sizes[r.unit as usize],
+                facing: facing.to_array(),
+                size: [fx_to_f32(width), BLOCK_HEIGHT, fx_to_f32(depth)],
                 color: [cr, cg, cb, highlight],
             });
         }
@@ -757,6 +811,11 @@ fn fx_to_f32(v: gc_fixed::Fx) -> f32 {
 
 fn from_fx_vec(v: gc_fixed::FxVec2) -> Vec2 {
     Vec2::new(fx_to_f32(v.x), fx_to_f32(v.y))
+}
+
+/// Unit vector for a simulation angle (0 = +x, a quarter turn = +y).
+fn angle_vec(a: gc_fixed::Angle) -> Vec2 {
+    Vec2::from_angle(a.0 as f32 / 65536.0 * std::f32::consts::TAU)
 }
 
 fn main() {

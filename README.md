@@ -23,7 +23,7 @@ cargo run --release -p gc_game --features profile   # build with Tracy profiling
 ./scripts/bundle-macos.sh               # macOS: build Grubcraft.app (universal) and zip it
 ```
 
-**M0 controls:** you are red. Left-click a red block to select it, right-click the ground to move it. Pan with the arrow keys, screen edges or a two-finger trackpad scroll; zoom with the mouse wheel or a pinch; rotate with Alt + middle-drag or a two-finger twist; Home or a middle-click resets the rotation. **`** (backquote) or **F11** shows the dev overlay with frame, tick and memory stats (and prints memory to the terminal); **Esc** quits. Start with `--overlay` to show it from the first frame.
+**Controls:** you are red. Left-click a red block to select it (Shift-click adds or removes more), right-click the ground to march the selection there side by side, facing the way they travel. Pan with the arrow keys, screen edges or a two-finger trackpad scroll; zoom with the mouse wheel or a pinch; rotate with Alt + middle-drag or a two-finger twist; Home or a middle-click resets the rotation. **`** (backquote) or **F11** shows the dev overlay with frame, tick and memory stats (and prints memory to the terminal); **Esc** quits. Start with `--overlay` to show it from the first frame.
 
 To measure memory on your machine: `cargo run --release -p gc_game -- --frames 600` runs for 600 frames and prints the numbers. Measurement flags: `--latency 1|2|3` (frames in flight), `--render-scale 0.25..1` (render fewer pixels than the window has) and `--draw all|terrain|blocks|none` (turn parts of the frame off).
 
