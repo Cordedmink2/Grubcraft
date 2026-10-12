@@ -1,0 +1,43 @@
+// Regiment types. Compiled into the asset pack by gc_bake; the game never
+// reads this file directly.
+//
+// speed: tiles per second. frontage, depth: size of the regiment's block in
+// tiles. Numbers are first-pass and will be tuned in M1.
+[
+    (
+        name: "Yari Ashigaru",
+        faction: EmberClans,
+        models: 24,
+        hp_per_model: 10,
+        speed: 3.0,
+        frontage: 6.0,
+        depth: 2.5,
+    ),
+    (
+        name: "Skitterlings",
+        faction: Brood,
+        models: 24,
+        hp_per_model: 6,
+        speed: 4.0,
+        frontage: 5.0,
+        depth: 3.0,
+    ),
+    (
+        name: "Shardlings",
+        faction: Choir,
+        models: 12,
+        hp_per_model: 9,
+        speed: 3.25,
+        frontage: 4.0,
+        depth: 2.0,
+    ),
+    (
+        name: "Bone Pikes",
+        faction: CarrionConcord,
+        models: 20,
+        hp_per_model: 8,
+        speed: 2.5,
+        frontage: 5.5,
+        depth: 2.5,
+    ),
+]

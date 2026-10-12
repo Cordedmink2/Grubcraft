@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Fx, FxVec2};
 
-use crate::{PlayerId, StateHasher};
+use crate::{PlayerId, StateHasher, UnitId};
 
 /// Generational handle to a regiment. Stale handles (to a slot that has since
 /// been freed and reused) are detected and rejected.
@@ -21,6 +21,7 @@ pub struct Regiments {
     alive: Vec<bool>,
     generation: Vec<u16>,
     owner: Vec<PlayerId>,
+    unit: Vec<UnitId>,
     position: Vec<FxVec2>,
     /// Unit vector the regiment is facing (new regiments face north, -y).
     facing: Vec<FxVec2>,
@@ -38,6 +39,7 @@ impl Regiments {
             alive: vec![false; n],
             generation: vec![0; n],
             owner: vec![0; n],
+            unit: vec![0; n],
             position: vec![FxVec2::ZERO; n],
             facing: vec![FxVec2::new(Fx::ZERO, -Fx::ONE); n],
             speed: vec![Fx::ZERO; n],
@@ -61,6 +63,7 @@ impl Regiments {
     pub fn spawn(
         &mut self,
         owner: PlayerId,
+        unit: UnitId,
         position: FxVec2,
         speed: Fx,
     ) -> Option<RegimentHandle> {
@@ -68,6 +71,7 @@ impl Regiments {
         let i = index as usize;
         self.alive[i] = true;
         self.owner[i] = owner;
+        self.unit[i] = unit;
         self.position[i] = position;
         self.facing[i] = FxVec2::new(Fx::ZERO, -Fx::ONE);
         self.speed[i] = speed;
@@ -121,6 +125,7 @@ impl Regiments {
                     generation: self.generation[i],
                 },
                 owner: self.owner[i],
+                unit: self.unit[i],
                 position: self.position[i],
                 facing: self.facing[i],
             })
@@ -157,6 +162,7 @@ impl Regiments {
                 continue;
             }
             h.u8(self.owner[i]);
+            h.u16(self.unit[i]);
             h.i32(self.position[i].x.raw());
             h.i32(self.position[i].y.raw());
             h.i32(self.facing[i].x.raw());
@@ -179,6 +185,7 @@ impl Regiments {
 pub struct RegimentView {
     pub handle: RegimentHandle,
     pub owner: PlayerId,
+    pub unit: UnitId,
     pub position: FxVec2,
     pub facing: FxVec2,
 }

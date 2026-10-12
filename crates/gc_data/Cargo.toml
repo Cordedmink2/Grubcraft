@@ -1,0 +1,16 @@
+[package]
+name = "gc_data"
+description = "Grubcraft game data: compiled unit and faction tables, read from the asset pack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+gc_assets.workspace = true
+gc_fixed.workspace = true
+
+[lints]
+workspace = true

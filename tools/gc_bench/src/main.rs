@@ -9,7 +9,7 @@
 use std::time::Instant;
 
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
-use gc_sim::scenario::Drill;
+use gc_sim::scenario::{DRILL_UNITS, Drill};
 use gc_sim::{Capacities, MatchSetup, World};
 
 #[global_allocator]
@@ -42,7 +42,13 @@ fn main() {
     let capacities = Capacities {
         regiments: (per_player * 4).max(Capacities::default().regiments),
     };
-    let mut world = tagged_alloc::scope(Tag::Sim, || World::new(&MatchSetup { seed, capacities }));
+    let mut world = tagged_alloc::scope(Tag::Sim, || {
+        World::new(&MatchSetup {
+            seed,
+            capacities,
+            units: &DRILL_UNITS,
+        })
+    });
     let mut drill = Drill::new(seed);
     drill.regiments_per_player = per_player;
     let mut commands = Vec::with_capacity(4096);

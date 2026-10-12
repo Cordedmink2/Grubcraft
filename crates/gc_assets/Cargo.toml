@@ -1,0 +1,15 @@
+[package]
+name = "gc_assets"
+description = "Grubcraft asset pack format: writer, validating zero-copy reader, asset ids"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+xxhash-rust.workspace = true
+
+[lints]
+workspace = true

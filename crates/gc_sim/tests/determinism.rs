@@ -5,7 +5,7 @@
 //! If a change intentionally alters simulation behaviour, update the golden
 //! values in the same pull request and say why in its description.
 
-use gc_sim::scenario::Drill;
+use gc_sim::scenario::{DRILL_UNITS, Drill};
 use gc_sim::{Capacities, MatchSetup, World};
 
 const SEED: u64 = 0x6772_7562; // "grub"
@@ -13,16 +13,17 @@ const TICKS: u32 = 2_400; // two minutes of game time
 
 /// Expected state hash every 600 ticks (30 s of game time).
 const GOLDEN: [(u32, u64); 4] = [
-    (600, 0xd233_f735_d16d_96f8),
-    (1200, 0x1997_5547_52bf_78aa),
-    (1800, 0xc58a_c3bd_d4b5_5a74),
-    (2400, 0xb952_fefc_62dc_99c6),
+    (600, 0x5798_dc7b_2245_59df),
+    (1200, 0x0796_9097_aee3_dc6c),
+    (1800, 0xed38_41f7_ead6_4c69),
+    (2400, 0x5f63_5a8d_5b04_b743),
 ];
 
 fn run() -> Vec<(u32, u64)> {
     let mut world = World::new(&MatchSetup {
         seed: SEED,
         capacities: Capacities::default(),
+        units: &DRILL_UNITS,
     });
     let mut drill = Drill::new(SEED);
     let mut commands = Vec::with_capacity(512);
@@ -59,10 +60,12 @@ fn different_seed_different_hash() {
     let mut a = World::new(&MatchSetup {
         seed: 1,
         capacities: Capacities::default(),
+        units: &DRILL_UNITS,
     });
     let b = World::new(&MatchSetup {
         seed: 2,
         capacities: Capacities::default(),
+        units: &DRILL_UNITS,
     });
     assert_ne!(a.state_hash(), b.state_hash());
     a.tick(&[]);

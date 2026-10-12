@@ -11,7 +11,14 @@ rust-version.workspace = true
 name = "grubcraft"
 path = "src/main.rs"
 
+[features]
+# Frame and tick profiling with Tracy (https://github.com/wolfpld/tracy).
+# Off by default: zero cost unless built with `--features profile`.
+profile = ["dep:tracy-client"]
+
 [dependencies]
+gc_assets.workspace = true
+gc_data.workspace = true
 gc_fixed.workspace = true
 gc_platform.workspace = true
 gc_render.workspace = true
@@ -19,6 +26,10 @@ gc_sim.workspace = true
 glam.workspace = true
 pollster.workspace = true
 winit.workspace = true
+tracy-client = { version = "0.18", optional = true }
+
+[build-dependencies]
+gc_bake.workspace = true
 
 [lints]
 workspace = true

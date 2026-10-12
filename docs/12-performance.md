@@ -95,7 +95,7 @@ Collected here so they're easy to find; detailed in [10 · Architecture](10-arch
 Performance work is continuous, measured and recorded.
 
 ### Instruments
-- **Dev overlay (`F11`):** frame time breakdown, sim tick time, memory per tag, GPU memory, draw calls, instance counts, network RTT/jitter/delay.
+- **Dev overlay (`` ` `` or `F11`):** frame time breakdown, sim tick time, memory per tag, GPU memory, draw calls, instance counts, network RTT/jitter/delay.
 - **Tracy** profiling in instrumented builds.
 - **Tagged allocator** and **GPU allocation wrapper** for exact memory attribution.
 - **Allocation-in-tick tripwire:** debug builds abort if the sim allocates during a tick.

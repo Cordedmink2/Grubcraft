@@ -4,16 +4,20 @@
 //!
 //! Controls: arrow keys / screen edges / two-finger scroll pan; mouse wheel or
 //! pinch zooms; Alt + middle-drag or two-finger rotate turns the view;
-//! middle-click or Home resets the rotation; F11 prints memory by subsystem;
+//! middle-click or Home resets the rotation; ` (backquote) or F11 toggles the
+//! dev overlay and prints memory by subsystem;
 //! Esc quits.
 //!
 //! Flags: `--seed N` picks the match seed; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
-//! `--latency 1|2|3` sets frames in flight; `--render-scale F` renders at a
+//! `--overlay` starts with the dev overlay shown; `--latency 1|2|3` sets
+//! frames in flight; `--render-scale F` renders at a
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
 //! parts of the frame off to measure what they cost.
 
 mod camera;
+mod data;
+mod profile;
 mod terrain_gen;
 
 use std::sync::Arc;
@@ -22,7 +26,9 @@ use std::time::{Duration, Instant};
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
 use gc_render::{FrameParams, RegimentInstance, Renderer, RendererOptions, Terrain};
 use gc_sim::scenario::Drill;
-use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, World};
+use gc_sim::{
+    Capacities, Command, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, UnitStats, World,
+};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
@@ -52,6 +58,7 @@ const EDGE_SCROLL_PX: f64 = 6.0;
 struct Options {
     seed: u64,
     frames: Option<u64>,
+    overlay: bool,
     render: RendererOptions,
 }
 
@@ -59,10 +66,15 @@ fn parse_args() -> Options {
     let mut opts = Options {
         seed: 0x6772_7562,
         frames: None,
+        overlay: false,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
+        if flag == "--overlay" {
+            opts.overlay = true;
+            continue;
+        }
         let value = args.next().unwrap_or_default();
         let ok = match flag.as_str() {
             "--seed" => value.parse().map(|v| opts.seed = v).is_ok(),
@@ -104,7 +116,7 @@ fn parse_args() -> Options {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--seed N] [--frames N] [--latency 1|2|3] \
+        "usage: grubcraft [--seed N] [--frames N] [--overlay] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
     );
     std::process::exit(2);
@@ -124,6 +136,8 @@ struct Running {
     /// Positions at the previous tick, by pool index, for interpolation.
     prev_positions: Vec<Option<(RegimentHandle, Vec2)>>,
     instances: Vec<RegimentInstance>,
+    /// Block size (frontage, height, depth) in tiles per unit type.
+    unit_sizes: Vec<[f32; 3]>,
     selected: Option<RegimentHandle>,
     sim_clock: Duration,
     last_frame: Instant,
@@ -131,6 +145,10 @@ struct Running {
     input: Input,
     stats: Stats,
     memory_timeline: MemoryTimeline,
+    /// Whether the dev overlay is showing.
+    overlay: bool,
+    /// Data hash and size, for the overlay.
+    data_label: String,
 }
 
 /// Process memory recorded at startup milestones, to see what each costs.
@@ -174,7 +192,10 @@ struct Stats {
     frames: u64,
     window_frames: u32,
     window_start: Instant,
+    /// Longest gap between frames in the current window.
+    frame_max: Duration,
     tick_time: Duration,
+    tick_max: Duration,
     ticks: u32,
 }
 
@@ -216,12 +237,24 @@ impl App {
         });
         self.memory_timeline.mark("map generated + uploaded");
 
+        let game_data = data::load();
+        let unit_stats: Vec<UnitStats> = game_data
+            .units
+            .iter()
+            .map(|u| UnitStats { speed: u.speed() })
+            .collect();
+        let unit_sizes = game_data
+            .units
+            .iter()
+            .map(|u| [fx_to_f32(u.frontage()), 0.8, fx_to_f32(u.depth())])
+            .collect();
         let capacities = Capacities::default();
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
             (
                 World::new(&MatchSetup {
                     seed: opts.seed,
                     capacities,
+                    units: &unit_stats,
                 }),
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
@@ -252,6 +285,17 @@ impl App {
                 (false, false) => "none",
             }
         );
+        eprintln!(
+            "grubcraft: game data {:016x}, {} unit types ({})",
+            game_data.short_hash(),
+            game_data.units.len(),
+            game_data
+                .units
+                .iter()
+                .map(|u| u.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
 
         let now = Instant::now();
         self.running = Some(Running {
@@ -265,6 +309,7 @@ impl App {
             human_orders: Vec::with_capacity(64),
             prev_positions,
             instances: Vec::with_capacity(gc_render::MAX_REGIMENT_INSTANCES),
+            unit_sizes,
             selected: None,
             sim_clock: Duration::ZERO,
             last_frame: now,
@@ -277,9 +322,17 @@ impl App {
                 frames: 0,
                 window_frames: 0,
                 window_start: now,
+                frame_max: Duration::ZERO,
                 tick_time: Duration::ZERO,
+                tick_max: Duration::ZERO,
                 ticks: 0,
             },
+            overlay: opts.overlay,
+            data_label: format!(
+                "{:016x}   {} unit types",
+                game_data.short_hash(),
+                game_data.units.len()
+            ),
             memory_timeline: std::mem::take(&mut self.memory_timeline),
         });
         Ok(())
@@ -348,7 +401,14 @@ impl ApplicationHandler for App {
                         KeyCode::ArrowLeft => r.input.arrows[2] = down,
                         KeyCode::ArrowRight => r.input.arrows[3] = down,
                         KeyCode::Home if down => r.camera.reset_rotation(),
-                        KeyCode::F11 if down && !event.repeat => {
+                        KeyCode::F11 | KeyCode::Backquote if down && !event.repeat => {
+                            r.overlay = !r.overlay;
+                            if r.overlay {
+                                r.refresh_overlay();
+                            } else {
+                                let scale = r.window.scale_factor() as f32;
+                                r.renderer.set_overlay(None, scale);
+                            }
                             r.memory_timeline.print();
                             print_memory(&r.renderer);
                         }
@@ -471,8 +531,13 @@ impl Running {
     }
 
     fn frame(&mut self) {
+        profile::zone!("frame");
         let now = Instant::now();
-        let dt = (now - self.last_frame).min(Duration::from_millis(250));
+        let gap = now - self.last_frame;
+        if self.stats.frames > 0 {
+            self.stats.frame_max = self.stats.frame_max.max(gap);
+        }
+        let dt = gap.min(Duration::from_millis(250));
         self.last_frame = now;
         self.update_camera(dt.as_secs_f32());
 
@@ -489,8 +554,11 @@ impl Running {
             self.drill.commands_for(&self.world, &mut self.pending);
             self.pending.append(&mut self.human_orders);
             let t0 = Instant::now();
+            profile::zone!("sim tick");
             tagged_alloc::scope(Tag::Sim, || self.world.tick(&self.pending));
-            self.stats.tick_time += t0.elapsed();
+            let took = t0.elapsed();
+            self.stats.tick_time += took;
+            self.stats.tick_max = self.stats.tick_max.max(took);
             self.stats.ticks += 1;
         }
         let alpha = self.sim_clock.as_secs_f32() / TICK.as_secs_f32();
@@ -511,7 +579,7 @@ impl Running {
             self.instances.push(RegimentInstance {
                 pos: pos.to_array(),
                 facing: from_fx_vec(r.facing).normalize_or(Vec2::Y).to_array(),
-                size: [5.0, 0.8, 2.4],
+                size: self.unit_sizes[r.unit as usize],
                 color: [cr, cg, cb, highlight],
             });
         }
@@ -521,17 +589,26 @@ impl Running {
             camera_pos: self.camera.eye(),
             time_seconds: self.started.elapsed().as_secs_f32(),
         };
-        tagged_alloc::scope(Tag::Render, || {
-            self.renderer.render(&frame, &self.instances)
-        });
+        {
+            profile::zone!("render");
+            tagged_alloc::scope(Tag::Render, || {
+                self.renderer.render(&frame, &self.instances)
+            });
+        }
+        profile::frame_mark();
 
         self.stats.frames += 1;
         self.stats.window_frames += 1;
         if self.stats.window_start.elapsed() >= Duration::from_millis(500) {
             self.window.set_title(&self.stats_line());
+            if self.overlay {
+                self.refresh_overlay();
+            }
             self.stats.window_frames = 0;
             self.stats.window_start = Instant::now();
+            self.stats.frame_max = Duration::ZERO;
             self.stats.tick_time = Duration::ZERO;
+            self.stats.tick_max = Duration::ZERO;
             self.stats.ticks = 0;
         }
     }
@@ -576,6 +653,55 @@ impl Running {
             .height_at(self.camera.focus.x, self.camera.focus.y);
         let k = 1.0 - (-dt * 6.0).exp();
         self.camera.focus_height += (ground - self.camera.focus_height) * k;
+    }
+
+    /// Rebuild the dev overlay's text from the current stats window.
+    fn refresh_overlay(&mut self) {
+        let secs = self.stats.window_start.elapsed().as_secs_f32().max(1e-3);
+        let frames = self.stats.window_frames.max(1);
+        let fps = self.stats.window_frames as f32 / secs;
+        let frame_avg = secs * 1000.0 / frames as f32;
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        let tick_avg = if self.stats.ticks > 0 {
+            ms(self.stats.tick_time) / self.stats.ticks as f64
+        } else {
+            0.0
+        };
+        let rs = self.renderer.stats();
+        let process = gc_platform::memory::process_memory()
+            .current
+            .map_or("?".to_string(), |b| format!("{:.1} MB", mb(b as usize)));
+        let heap_tags: Vec<String> = Tag::ALL
+            .iter()
+            .filter(|&&t| tagged_alloc::live_bytes(t) > 0)
+            .map(|&t| format!("{} {:.2}", t.name(), mb(tagged_alloc::live_bytes(t))))
+            .collect();
+        let info = self.renderer.adapter_info();
+        let text = format!(
+            "GRUBCRAFT DEV OVERLAY                          ` or F11 hides\n\
+             frame   {fps:5.0} fps   {frame_avg:6.2} ms avg   {:6.2} ms worst\n\
+             sim     tick {:<7} {tick_avg:6.3} ms avg   {:6.3} ms worst\n\
+             render  {} draw calls   {}/{} chunks   {} regiments\n\
+             memory  process {process}   heap {:.1} MB   gpu {:.1} MB\n\
+             heap    {}\n\
+             data    {}\n\
+             gpu     {} via {:?}",
+            ms(self.stats.frame_max),
+            self.world.tick_count(),
+            ms(self.stats.tick_max),
+            rs.draw_calls,
+            rs.chunks_drawn,
+            rs.chunks_total,
+            rs.regiments_drawn,
+            mb(tagged_alloc::total_live_bytes()),
+            mb(self.renderer.gpu_bytes() as usize),
+            heap_tags.join("  "),
+            self.data_label,
+            info.name,
+            info.backend,
+        );
+        let scale = self.window.scale_factor() as f32;
+        self.renderer.set_overlay(Some(&text), scale);
     }
 
     fn stats_line(&self) -> String {
@@ -625,12 +751,17 @@ fn to_fx(v: f32) -> gc_fixed::Fx {
     gc_fixed::Fx::from_raw((v * 65536.0) as i32)
 }
 
+fn fx_to_f32(v: gc_fixed::Fx) -> f32 {
+    v.raw() as f32 / 65536.0
+}
+
 fn from_fx_vec(v: gc_fixed::FxVec2) -> Vec2 {
-    Vec2::new(v.x.raw() as f32 / 65536.0, v.y.raw() as f32 / 65536.0)
+    Vec2::new(fx_to_f32(v.x), fx_to_f32(v.y))
 }
 
 fn main() {
     let opts = parse_args();
+    profile::start();
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
         Err(e) => {

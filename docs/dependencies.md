@@ -11,13 +11,30 @@ Every third-party crate the game uses, why, and what it costs. Policy: see [10 Â
 | `glam` 0.34 | `gc_render`, `gc_game` | Vector/matrix maths for rendering and camera (floats, never in the sim) | Small, SIMD |
 | `bytemuck` 1 | `gc_render` | Safe casting of instance data to GPU bytes | Tiny |
 | `pollster` 1 | `gc_game` | Blocks on wgpu's async setup calls; avoids an async runtime | Tiny |
-| `xxhash-rust` 0.8 (`xxh3` only) | `gc_sim` | Fast, well-distributed per-tick state hashes for desync detection | Pure Rust, `no_std` |
+| `xxhash-rust` 0.8 (`xxh3` only) | `gc_sim`, `gc_assets` | Fast, well-distributed per-tick state hashes for desync detection; asset ids | Pure Rust, `no_std` |
+| `tracy-client` 0.18 | `gc_game` (`profile` feature only) | Frame and tick profiling with Tracy | Off by default; when on, builds Tracy's C++ client. Not in normal builds |
+
+## Build time only (baker)
+
+These run in `gc_bake` and in `gc_game`'s build script; none of them end up in the game executable.
+
+| Crate | Why | Cost and notes |
+|---|---|---|
+| `ron` 0.10 | Parses the human-edited game data in `data/*.ron` | Small |
+| `serde` 1 (`derive`) | Maps RON onto typed definitions with unknown-field errors | Proc-macro build cost only |
+| `blake3` 1 (`pure`) | Hash of all game data, compared by the lobby so every player runs identical data | `pure` feature: no C or assembly |
 
 ## Development only
 
 | Crate | Used by | Why |
 |---|---|---|
 | `naga` 30 (`wgsl-in`) | `gc_render` tests | Validates shaders in CI, where there is no GPU |
+
+## Bundled assets
+
+| Asset | Used by | Licence |
+|---|---|---|
+| Glyphs rasterised from DejaVu Sans Mono (`crates/gc_render/src/debug_font.rs`) | Dev overlay text | Bitstream Vera / DejaVu licence: free to use, modify and redistribute, including embedded; the fonts' names may not be reused for modified versions. Copyright (c) 2003 Bitstream, Inc. (Bitstream Vera); DejaVu changes are in the public domain |
 
 ## Deliberately not used
 

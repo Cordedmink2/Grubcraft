@@ -7,6 +7,9 @@
 //! The renderer knows nothing about windows or input: the caller hands it a
 //! surface target and per-frame camera and instance data.
 
+mod debug_font;
+mod overlay;
+
 use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
@@ -18,6 +21,7 @@ pub const CHUNK_TILES: u32 = 32;
 const CHUNK_QUADS: u32 = 64;
 /// Fixed capacity of the regiment instance buffer; never reallocated.
 pub const MAX_REGIMENT_INSTANCES: usize = 2048;
+pub use overlay::MAX_OVERLAY_CHARS;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[derive(Debug)]
@@ -152,6 +156,18 @@ pub struct Renderer {
     adapter_info: wgpu::AdapterInfo,
     /// Scratch list of visible chunk coordinates, reused every frame.
     visible_chunks: Vec<[u32; 2]>,
+    overlay: OverlayGpu,
+}
+
+struct OverlayGpu {
+    pipeline: wgpu::RenderPipeline,
+    bind_group: wgpu::BindGroup,
+    globals: wgpu::Buffer,
+    instances: wgpu::Buffer,
+    glyphs: Vec<overlay::GlyphInstance>,
+    count: u32,
+    scale: f32,
+    gpu_bytes: u64,
 }
 
 impl Renderer {
@@ -312,6 +328,7 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
+        let overlay = make_overlay(&device, &queue, format);
         let adapter_info = adapter.get_info();
         let (depth_view, depth_bytes) = make_depth(
             &device,
@@ -346,6 +363,7 @@ impl Renderer {
             stats: RenderStats::default(),
             adapter_info,
             visible_chunks: Vec::new(),
+            overlay,
         })
     }
 
@@ -359,7 +377,26 @@ impl Renderer {
 
     /// GPU memory allocated by the renderer itself, in bytes.
     pub fn gpu_bytes(&self) -> u64 {
-        self.static_gpu_bytes + self.terrain_gpu_bytes + self.depth_bytes
+        self.static_gpu_bytes + self.terrain_gpu_bytes + self.depth_bytes + self.overlay.gpu_bytes
+    }
+
+    /// Show `text` in the dev overlay (lines separated by `\n`), or hide it
+    /// with `None`. `scale` is the pixel size of one font texel, usually the
+    /// display's scale factor. Call when the text changes, not every frame.
+    pub fn set_overlay(&mut self, text: Option<&str>, scale: f32) {
+        let o = &mut self.overlay;
+        o.scale = (scale * self.options.render_scale).round().max(1.0);
+        match text {
+            Some(text) => {
+                overlay::layout(text, &mut o.glyphs);
+                o.count = o.glyphs.len() as u32;
+                if o.count > 0 {
+                    self.queue
+                        .write_buffer(&o.instances, 0, bytemuck::cast_slice(&o.glyphs));
+                }
+            }
+            None => o.count = 0,
+        }
     }
 
     /// Follow a window resize; sizes are the window's, in physical pixels.
@@ -540,6 +577,19 @@ impl Renderer {
                 .write_buffer(&self.regiment_instances, 0, bytemuck::cast_slice(regiments));
         }
 
+        // The overlay draws inside the main pass, which a bare frame skips.
+        let overlay_visible = !bare && self.overlay.count > 0;
+        if overlay_visible {
+            let screen = [
+                self.config.width as f32,
+                self.config.height as f32,
+                self.overlay.scale,
+                0.0,
+            ];
+            self.queue
+                .write_buffer(&self.overlay.globals, 0, bytemuck::bytes_of(&screen));
+        }
+
         let view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -599,6 +649,13 @@ impl Renderer {
                 pass.set_pipeline(&self.block_pipeline);
                 pass.set_vertex_buffer(0, self.regiment_instances.slice(..));
                 pass.draw(0..30, 0..regiments.len() as u32);
+                draw_calls += 1;
+            }
+            if overlay_visible {
+                pass.set_pipeline(&self.overlay.pipeline);
+                pass.set_bind_group(0, &self.overlay.bind_group, &[]);
+                pass.set_vertex_buffer(0, self.overlay.instances.slice(..));
+                pass.draw(0..4, 0..self.overlay.count);
                 draw_calls += 1;
             }
         }
@@ -667,6 +724,157 @@ fn make_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+fn make_overlay(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    format: wgpu::TextureFormat,
+) -> OverlayGpu {
+    let font_size = wgpu::Extent3d {
+        width: overlay::font_width(),
+        height: debug_font::GLYPH_HEIGHT,
+        depth_or_array_layers: 1,
+    };
+    let font = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("overlay font"),
+        size: font_size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let texels = overlay::font_texels();
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &font,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &texels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(font_size.width),
+            rows_per_image: Some(font_size.height),
+        },
+        font_size,
+    );
+    let globals = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("overlay globals"),
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let instances = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("overlay glyphs"),
+        size: (MAX_OVERLAY_CHARS * size_of::<overlay::GlyphInstance>()) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("overlay"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(16),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+    let font_view = font.create_view(&wgpu::TextureViewDescriptor::default());
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("overlay"),
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: globals.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&font_view),
+            },
+        ],
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("overlay"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("overlay.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/overlay.wgsl").into()),
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("overlay"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_glyph"),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: size_of::<overlay::GlyphInstance>() as u64,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &wgpu::vertex_attr_array![
+                    0 => Uint16x2, 1 => Uint16x2, 2 => Uint32, 3 => Unorm8x4
+                ],
+            })],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            cull_mode: None,
+            ..Default::default()
+        },
+        // Drawn last in the main pass: ignores and leaves the depth buffer.
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_glyph"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    OverlayGpu {
+        pipeline,
+        bind_group,
+        gpu_bytes: texels.len() as u64 + globals.size() + instances.size(),
+        globals,
+        instances,
+        glyphs: Vec::with_capacity(MAX_OVERLAY_CHARS),
+        count: 0,
+        scale: 1.0,
+    }
 }
 
 fn make_depth(
@@ -784,15 +992,24 @@ mod tests {
 
     #[test]
     fn shaders_validate() {
-        let src = include_str!("shaders/world.wgsl");
-        let module = naga::front::wgsl::parse_str(src)
+        for src in [
+            include_str!("shaders/world.wgsl"),
+            include_str!("shaders/overlay.wgsl"),
+        ] {
+            let module = naga::front::wgsl::parse_str(src)
+                .unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::empty(),
+            )
+            .validate(&module)
             .unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::empty(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+        }
+    }
+
+    #[test]
+    fn overlay_instance_layout_is_stable() {
+        assert_eq!(size_of::<overlay::GlyphInstance>(), 16);
     }
 
     #[test]

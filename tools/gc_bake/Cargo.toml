@@ -1,0 +1,29 @@
+[package]
+name = "gc_bake"
+description = "Grubcraft baker: compiles RON game data (and later art and audio) into the asset pack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "gc_bake"
+path = "src/main.rs"
+
+[dependencies]
+blake3.workspace = true
+gc_assets.workspace = true
+gc_data.workspace = true
+gc_fixed.workspace = true
+ron.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+bytemuck.workspace = true
+
+[lints]
+workspace = true

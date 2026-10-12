@@ -11,6 +11,8 @@
 
 extern crate alloc;
 
+use alloc::vec::Vec;
+
 mod hash;
 mod regiments;
 pub mod scenario;
@@ -39,18 +41,31 @@ impl Default for Capacities {
     }
 }
 
+/// Index of a regiment type in the match's unit table.
+pub type UnitId = u16;
+
+/// What the simulation needs from a regiment type's definition. The game
+/// builds these from the baked data tables (`gc_data`); tests build them by
+/// hand so golden hashes don't move when balance numbers are tuned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnitStats {
+    /// Tiles per second.
+    pub speed: Fx,
+}
+
 /// Everything needed to start a match identically on every machine.
 #[derive(Clone, Copy, Debug)]
-pub struct MatchSetup {
+pub struct MatchSetup<'a> {
     pub seed: u64,
     pub capacities: Capacities,
+    pub units: &'a [UnitStats],
 }
 
 /// A player's order. The only way anything outside the sim changes the sim.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     /// Debug/sandbox: create a regiment. Real production comes with M3.
-    SpawnRegiment { position: FxVec2 },
+    SpawnRegiment { unit: UnitId, position: FxVec2 },
     MoveTo {
         regiment: RegimentHandle,
         target: FxVec2,
@@ -74,6 +89,7 @@ pub struct TickStats {
 pub struct World {
     tick: u32,
     rng: Pcg32,
+    units: Vec<UnitStats>,
     pub regiments: Regiments,
 }
 
@@ -82,8 +98,14 @@ impl World {
         World {
             tick: 0,
             rng: Pcg32::new(setup.seed, streams::WORLD),
+            units: setup.units.to_vec(),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
+    }
+
+    /// The match's regiment types, indexed by [`UnitId`].
+    pub fn units(&self) -> &[UnitStats] {
+        &self.units
     }
 
     /// Number of ticks simulated so far.
@@ -112,10 +134,15 @@ impl World {
 
     fn apply(&mut self, pc: &PlayerCommand) -> bool {
         match pc.command {
-            Command::SpawnRegiment { position } => self
-                .regiments
-                .spawn(pc.player, position, Fx::from_ratio(3, 20))
-                .is_some(),
+            Command::SpawnRegiment { unit, position } => {
+                let Some(stats) = self.units.get(unit as usize) else {
+                    return false;
+                };
+                let per_tick = Fx::from_raw(stats.speed.raw() / TICKS_PER_SECOND as i32);
+                self.regiments
+                    .spawn(pc.player, unit, position, per_tick)
+                    .is_some()
+            }
             Command::MoveTo { regiment, target } => {
                 // Players may only order their own regiments.
                 match self.regiments.owner(regiment) {

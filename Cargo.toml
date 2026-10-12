@@ -2,10 +2,13 @@
 resolver = "3"
 members = [
     "crates/gc_fixed",
+    "crates/gc_assets",
+    "crates/gc_data",
     "crates/gc_sim",
     "crates/gc_platform",
     "crates/gc_render",
     "crates/gc_game",
+    "tools/gc_bake",
     "tools/gc_bench",
 ]
 
@@ -18,13 +21,19 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 gc_fixed = { path = "crates/gc_fixed" }
+gc_assets = { path = "crates/gc_assets" }
+gc_data = { path = "crates/gc_data" }
 gc_sim = { path = "crates/gc_sim" }
 gc_platform = { path = "crates/gc_platform" }
 gc_render = { path = "crates/gc_render" }
+gc_bake = { path = "tools/gc_bake" }
 
+blake3 = { version = "1", default-features = false, features = ["pure"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 glam = "0.34"
 pollster = "1.0"
+ron = "0.10"
+serde = { version = "1", features = ["derive"] }
 wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "dx12", "vulkan"] }
 winit = "0.30"
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh3"] }

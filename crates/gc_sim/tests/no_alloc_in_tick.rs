@@ -7,7 +7,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use gc_sim::scenario::Drill;
+use gc_sim::scenario::{DRILL_UNITS, Drill};
 use gc_sim::{Capacities, MatchSetup, World};
 
 struct Counting;
@@ -49,6 +49,7 @@ fn ticking_never_allocates() {
     let mut world = World::new(&MatchSetup {
         seed: 7,
         capacities: Capacities::default(),
+        units: &DRILL_UNITS,
     });
     let mut drill = Drill::new(7);
     let mut commands = Vec::with_capacity(512);

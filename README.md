@@ -18,10 +18,12 @@ You need [Rust](https://rustup.rs) (stable). Then, from this folder:
 cargo run --release -p gc_game          # play the M0 build
 cargo test --workspace                  # all tests, including determinism
 cargo run --release -p gc_bench         # simulation benchmark with budget checks
+cargo run -p gc_bake                    # check data/*.ron and bake target/grubcraft.pak
+cargo run --release -p gc_game --features profile   # build with Tracy profiling
 ./scripts/bundle-macos.sh               # macOS: build Grubcraft.app (universal) and zip it
 ```
 
-**M0 controls:** you are red. Left-click a red block to select it, right-click the ground to move it. Pan with the arrow keys, screen edges or a two-finger trackpad scroll; zoom with the mouse wheel or a pinch; rotate with Alt + middle-drag or a two-finger twist; Home or a middle-click resets the rotation. **F11** prints memory by subsystem; **Esc** quits. The window title shows frame rate, simulation tick time and memory.
+**M0 controls:** you are red. Left-click a red block to select it, right-click the ground to move it. Pan with the arrow keys, screen edges or a two-finger trackpad scroll; zoom with the mouse wheel or a pinch; rotate with Alt + middle-drag or a two-finger twist; Home or a middle-click resets the rotation. **`** (backquote) or **F11** shows the dev overlay with frame, tick and memory stats (and prints memory to the terminal); **Esc** quits. Start with `--overlay` to show it from the first frame.
 
 To measure memory on your machine: `cargo run --release -p gc_game -- --frames 600` runs for 600 frames and prints the numbers. Measurement flags: `--latency 1|2|3` (frames in flight), `--render-scale 0.25..1` (render fewer pixels than the window has) and `--draw all|terrain|blocks|none` (turn parts of the frame off).
 
@@ -30,9 +32,13 @@ To measure memory on your machine: `cargo run --release -p gc_game -- --frames 6
 | Path | What |
 |---|---|
 | `crates/gc_fixed` | Deterministic fixed-point maths (no floats) |
+| `crates/gc_assets` | Asset pack format: writer and zero-copy reader |
+| `crates/gc_data` | Game data tables (units, factions) as the game reads them |
 | `crates/gc_sim` | The deterministic simulation; runs identically on every machine |
 | `crates/gc_platform` | Memory accounting and OS process stats |
 | `crates/gc_render` | wgpu renderer (Metal, DirectX 12, Vulkan) |
 | `crates/gc_game` | The game application |
+| `tools/gc_bake` | Baker: compiles `data/*.ron` (and later art and audio) into the asset pack |
 | `tools/gc_bench` | Headless benchmarks with budget gates |
+| `data/` | Game data in RON: edit these to change units (rebuilt automatically) |
 | `docs/` | Design documents |

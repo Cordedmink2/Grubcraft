@@ -7,10 +7,28 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Fx, FxVec2, Pcg32};
 
-use crate::{Command, PlayerCommand, PlayerId, World};
+use crate::{Command, PlayerCommand, PlayerId, UnitStats, World};
+
+/// Fixed regiment types for tests and benchmarks (one per player), so their
+/// golden hashes don't change when `data/units.ron` is tuned.
+pub const DRILL_UNITS: [UnitStats; 4] = [
+    UnitStats {
+        speed: Fx::from_int(3),
+    },
+    UnitStats {
+        speed: Fx::from_int(4),
+    },
+    UnitStats {
+        speed: Fx::from_ratio(13, 4),
+    },
+    UnitStats {
+        speed: Fx::from_ratio(5, 2),
+    },
+];
 
 /// Four players each spawn a block of regiments, then keep ordering random
-/// regiments to random points on the map.
+/// regiments to random points on the map. Player `p` fields unit type
+/// `p % units` from the world's unit table.
 pub struct Drill {
     rng: Pcg32,
     pub players: u8,
@@ -50,6 +68,7 @@ impl Drill {
         if tick == 0 {
             // Each player's block of regiments starts in its own corner.
             let quarter = self.map_tiles / 4;
+            let unit_types = world.units().len().max(1);
             for player in 0..self.players {
                 let cx = if player & 1 == 0 {
                     quarter
@@ -66,7 +85,10 @@ impl Drill {
                         FxVec2::from_ints(cx + (k % 10) * 7 - 32, cy + (k / 10) * 5 - 14);
                     out.push(PlayerCommand {
                         player,
-                        command: Command::SpawnRegiment { position },
+                        command: Command::SpawnRegiment {
+                            unit: (player as usize % unit_types) as u16,
+                            position,
+                        },
                     });
                 }
             }

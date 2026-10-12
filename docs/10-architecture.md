@@ -228,6 +228,7 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 
 ### Game data
 - Factions, units, abilities, upgrades and maps are defined in RON under `data/`, compiled by `gc_bake` into binary tables.
+- The game's build script bakes `data/` and embeds the resulting data pack in the executable, so a build can never run with stale or mismatched data. Art and audio (from M1) go in a separate pack that is memory-mapped, as above.
 - The compiled data has a **BLAKE3 hash**. The lobby refuses to start unless every player has the same game build hash and data hash, which rules out the most common cause of desyncs.
 - In solo sandbox, RON files hot-reload for balance tuning.
 
@@ -270,7 +271,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 | `gc_bench` | Fixed benchmark scenarios; reports tick time, frame time, memory by tag; enforces budgets |
 | `gc_mapcheck` | Map fairness and validity checks |
 | `gc_bake` | Asset and data baker |
-| Dev overlay (`F11`) | Frame and tick timings, memory by tag, draw calls, network stats |
+| Dev overlay (`` ` `` or `F11`) | Frame and tick timings, memory by tag, draw calls, network stats |
 | Sandbox | In-game unit placement, balance hot-reload, slow motion |
 
 ## Testing strategy
