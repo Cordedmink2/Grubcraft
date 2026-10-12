@@ -17,8 +17,10 @@ path = "src/main.rs"
 profile = ["dep:tracy-client"]
 
 [dependencies]
+bytemuck.workspace = true
 gc_assets.workspace = true
 gc_audio.workspace = true
+gc_bake.workspace = true
 gc_data.workspace = true
 gc_fixed.workspace = true
 gc_platform.workspace = true

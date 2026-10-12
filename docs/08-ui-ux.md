@@ -104,6 +104,7 @@ Structures use the same grid for production. Workers' build menu is one sub-page
 
 - Multiplayer pause: any player can pause up to 3 times per match; unpausing has a 3-second countdown.
 - Game speed is fixed in multiplayer (lobby choice of Normal or Fast). Solo modes allow slow-motion and fast-forward.
+- **Built so far (M1 step 7):** `P` pauses, `-` and `=` step through 0.1×, 0.25×, 0.5×, 1×, 2× and 4×. The sandbox panel in the top-left corner shows the speed, the side you command, the type you are placing and the keys; `T` opens a stats panel for that type (Up and Down pick a stat, Left and Right change it, `Shift` for ten steps) and `H` hides the panel. It is drawn with the dev overlay's text for now and moves to the `gc_ui` widgets once the menus land.
 
 ## Post-game
 

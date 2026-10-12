@@ -1,7 +1,19 @@
 //! Grubcraft. M1 sandbox: a rendered map with four players' regiments driven
-//! by the deterministic simulation. You command player 1 (red).
+//! by the deterministic simulation. You command player 1 (red) to start
+//! with; the other three wander the map on their own (`--sandbox` starts on
+//! an empty field instead, with nobody moving unless you order it).
 //!
-//! Orders: left-click a red regiment to select it, or left-drag a box around
+//! Sandbox: Tab switches which side you command (all four can be ordered).
+//! B turns placing on and off: left-click puts down a regiment of the chosen
+//! type for that side, facing away from the camera, and [ and ] choose the
+//! type. Delete (or Backspace) takes the selected regiments off the field;
+//! Shift + Delete clears it. P pauses; - and = slow the game down to a tenth
+//! or speed it up to four times. T opens the stats panel for the chosen type:
+//! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
+//! and regiments on the field change at once. R reloads `data/units.ron`
+//! when the game runs from the repository. H hides the sandbox panel.
+//!
+//! Orders: left-click one of your regiments to select it, or left-drag a box around
 //! several; Shift adds or removes. Right-click the ground to march the
 //! selection there side by side, facing the way they travel; right-drag to
 //! draw the line they form instead (its length sets their frontage; they face
@@ -24,9 +36,9 @@
 //! pinch zooms; Alt + middle-drag or two-finger rotate turns the view;
 //! middle-click or Home resets the rotation; ` (backquote) or F11 toggles the
 //! dev overlay and prints memory by subsystem;
-//! Esc quits.
+//! Esc leaves placing or the stats panel, and otherwise quits.
 //!
-//! Flags: `--seed N` picks the match seed; `--frames N` quits after N frames
+//! Flags: `--sandbox` starts on an empty field; `--seed N` picks the match seed; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
 //! `--overlay` starts with the dev overlay shown; `--no-audio` never opens
 //! the sound card; `--latency 1|2|3` sets
@@ -38,6 +50,7 @@ mod camera;
 mod data;
 mod profile;
 mod puppets;
+mod sandbox;
 mod sounds;
 mod terrain_gen;
 
@@ -116,10 +129,24 @@ const ARROW_HEIGHT: f32 = 0.9;
 /// Peak of an arrow's arc as a fraction of the distance it flies.
 const ARROW_ARC: f32 = 0.22;
 
+/// Game speeds the sandbox steps through with - and =, and the normal one.
+const SPEEDS: [f32; 6] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0];
+const NORMAL_SPEED: usize = 3;
+/// How long a sandbox message (such as the result of reloading data) shows.
+const MESSAGE_TIME: Duration = Duration::from_secs(5);
+/// Players in a match; Tab cycles through them.
+const PLAYERS: u8 = 4;
+const TEAM_NAMES: [&str; 4] = ["red", "violet", "cyan", "bone"];
+/// Most ticks run in one frame, so a slow frame can't snowball (4x speed at
+/// 30 fps needs about 3).
+const MAX_TICKS_PER_FRAME: u32 = 8;
+
 const _: () = assert!(gc_data::MAX_MODELS == gc_sim::formation::MAX_MODELS);
 
 struct Options {
     seed: u64,
+    /// Start on an empty field with nobody moving on their own.
+    sandbox: bool,
     frames: Option<u64>,
     overlay: bool,
     audio: bool,
@@ -129,6 +156,7 @@ struct Options {
 fn parse_args() -> Options {
     let mut opts = Options {
         seed: 0x6772_7562,
+        sandbox: false,
         frames: None,
         overlay: false,
         audio: true,
@@ -138,6 +166,10 @@ fn parse_args() -> Options {
     while let Some(flag) = args.next() {
         if flag == "--overlay" {
             opts.overlay = true;
+            continue;
+        }
+        if flag == "--sandbox" {
+            opts.sandbox = true;
             continue;
         }
         if flag == "--no-audio" {
@@ -185,7 +217,7 @@ fn parse_args() -> Options {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--seed N] [--frames N] [--overlay] [--no-audio] [--latency 1|2|3] \
+        "usage: grubcraft [--sandbox] [--seed N] [--frames N] [--overlay] [--no-audio] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
     );
     std::process::exit(2);
@@ -198,7 +230,8 @@ struct Running {
     camera: RtsCamera,
     heightmap: Heightmap,
     world: World,
-    drill: Drill,
+    /// Orders the other sides about; None in an empty-field sandbox.
+    drill: Option<Drill>,
     /// Commands collected for the next tick (from the drill and the human).
     pending: Vec<PlayerCommand>,
     human_orders: Vec<PlayerCommand>,
@@ -206,8 +239,10 @@ struct Running {
     prev_positions: Vec<Option<(RegimentHandle, Vec2, Vec2)>>,
     instances: Vec<BoxInstance>,
     puppets: Puppets,
-    /// The match's regiment types, as the simulation sees them.
+    /// The match's regiment types, as the simulation sees them, and their names.
     unit_stats: Vec<UnitStats>,
+    unit_names: Vec<String>,
+    sandbox: Sandbox,
     selected: Vec<RegimentHandle>,
     /// Scratch space for building group orders.
     group: Vec<GroupMember>,
@@ -219,6 +254,9 @@ struct Running {
     /// The enemy regiment last ordered attacked, marked on the ground briefly.
     attack_mark: Option<(RegimentHandle, Instant)>,
     sim_clock: Duration,
+    /// Game speed, an index into `SPEEDS`, and whether the game is paused (P).
+    speed: usize,
+    paused: bool,
     last_frame: Instant,
     started: Instant,
     input: Input,
@@ -233,6 +271,24 @@ struct Running {
     data_label: String,
     /// None with `--no-audio` or when there is no sound output.
     sounds: Option<sounds::Sounds>,
+}
+
+/// What the sandbox tools are doing.
+struct Sandbox {
+    /// The side you select and order (Tab).
+    side: PlayerId,
+    /// Left-click places regiments of `unit` instead of selecting (B).
+    placing: bool,
+    /// The type placed and tuned ([ and ]).
+    unit: UnitId,
+    /// The stats panel is open (T), with this row chosen.
+    tuning: bool,
+    row: usize,
+    /// The sandbox panel is showing (H).
+    panel: bool,
+    message: Option<(String, Instant)>,
+    /// The panel needs redrawing.
+    dirty: bool,
 }
 
 /// Process memory recorded at startup milestones, to see what each costs.
@@ -329,27 +385,11 @@ impl App {
         self.memory_timeline.mark("map generated + uploaded");
 
         let game_data = data::load();
-        let unit_stats: Vec<UnitStats> = game_data
+        let unit_stats: Vec<UnitStats> = game_data.units.iter().map(sandbox::stats_of).collect();
+        let unit_names: Vec<String> = game_data
             .units
             .iter()
-            .map(|u| UnitStats {
-                speed: u.speed(),
-                turn_rate: u.turn_rate,
-                models: u.models,
-                hp_per_model: u.hp_per_model,
-                files: u.files,
-                file_spacing: u.file_spacing(),
-                rank_spacing: u.rank_spacing(),
-                melee_attack: u.melee_attack,
-                melee_defence: u.melee_defence,
-                melee_damage: u.melee_damage,
-                charge_bonus: u.charge_bonus,
-                range: u.range(),
-                missile_damage: u.missile_damage,
-                reload_ticks: u.reload_ticks,
-                accuracy: u.accuracy,
-                morale: u.morale,
-            })
+            .map(|u| u.name().to_string())
             .collect();
         let capacities = Capacities::default();
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
@@ -377,6 +417,7 @@ impl App {
                 (player as usize % (types - 1).max(1)) as UnitId
             }
         };
+        let drill = (!opts.sandbox).then_some(drill);
 
         let start = Vec2::splat(MAP_TILES as f32 * 0.25);
         let mut camera = RtsCamera::new(MAP_TILES as f32, start + Vec2::new(10.0, 20.0));
@@ -434,6 +475,17 @@ impl App {
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
             unit_stats,
+            unit_names,
+            sandbox: Sandbox {
+                side: HUMAN,
+                placing: opts.sandbox,
+                unit: 0,
+                tuning: false,
+                row: 0,
+                panel: true,
+                message: None,
+                dirty: true,
+            },
             selected: Vec::with_capacity(64),
             group: Vec::with_capacity(64),
             group_commands: Vec::with_capacity(64),
@@ -442,6 +494,8 @@ impl App {
             last_group_key: None,
             attack_mark: None,
             sim_clock: Duration::ZERO,
+            speed: NORMAL_SPEED,
+            paused: false,
             last_frame: now,
             started: now,
             input: Input {
@@ -532,6 +586,9 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 let down = event.state == ElementState::Pressed;
                 if let PhysicalKey::Code(code) = event.physical_key {
+                    if r.sandbox.tuning && down && r.tune_key(code) {
+                        return;
+                    }
                     match code {
                         KeyCode::ArrowUp => r.input.arrows[0] = down,
                         KeyCode::ArrowDown => r.input.arrows[1] = down,
@@ -540,14 +597,41 @@ impl ApplicationHandler for App {
                         KeyCode::Home if down => r.camera.reset_rotation(),
                         KeyCode::F11 | KeyCode::Backquote if down && !event.repeat => {
                             r.overlay = !r.overlay;
-                            if r.overlay {
-                                r.refresh_overlay();
-                            } else {
-                                let scale = r.window.scale_factor() as f32;
-                                r.renderer.set_overlay(None, scale);
-                            }
+                            r.refresh_overlay();
                             r.memory_timeline.print();
                             print_memory(&r.renderer);
+                        }
+                        KeyCode::KeyP | KeyCode::Pause if down && !event.repeat => {
+                            r.paused = !r.paused;
+                            r.sandbox.dirty = true;
+                        }
+                        KeyCode::Minus | KeyCode::NumpadSubtract if down => {
+                            r.speed = r.speed.saturating_sub(1);
+                            r.sandbox.dirty = true;
+                        }
+                        KeyCode::Equal | KeyCode::NumpadAdd if down => {
+                            r.speed = (r.speed + 1).min(SPEEDS.len() - 1);
+                            r.sandbox.dirty = true;
+                        }
+                        KeyCode::Tab if down && !event.repeat => r.switch_side(),
+                        KeyCode::KeyB if down && !event.repeat => {
+                            r.sandbox.placing = !r.sandbox.placing;
+                            r.sandbox.dirty = true;
+                        }
+                        KeyCode::BracketLeft if down => r.choose_unit(-1),
+                        KeyCode::BracketRight if down => r.choose_unit(1),
+                        KeyCode::Delete | KeyCode::Backspace if down && !event.repeat => {
+                            r.remove_regiments(r.input.shift);
+                        }
+                        KeyCode::KeyT if down && !event.repeat => {
+                            r.sandbox.tuning = !r.sandbox.tuning;
+                            r.input.arrows = [false; 4];
+                            r.sandbox.dirty = true;
+                        }
+                        KeyCode::KeyR if down && !event.repeat => r.reload_data(),
+                        KeyCode::KeyH if down && !event.repeat => {
+                            r.sandbox.panel = !r.sandbox.panel;
+                            r.sandbox.dirty = true;
                         }
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
@@ -561,6 +645,11 @@ impl ApplicationHandler for App {
                             if let Some(s) = &mut r.sounds {
                                 s.toggle_music();
                             }
+                        }
+                        KeyCode::Escape if down && (r.sandbox.placing || r.sandbox.tuning) => {
+                            r.sandbox.placing = false;
+                            r.sandbox.tuning = false;
+                            r.sandbox.dirty = true;
                         }
                         KeyCode::Escape if down => event_loop.exit(),
                         _ if down && !event.repeat && digit(code).is_some() => {
@@ -615,6 +704,10 @@ impl Running {
             (MouseButton::Left, ElementState::Pressed) => {
                 self.input.left_down = self.input.cursor;
             }
+            (MouseButton::Left, ElementState::Released) if self.sandbox.placing => {
+                self.place_regiment();
+                self.input.left_down = None;
+            }
             (MouseButton::Left, ElementState::Released) => {
                 if !self.input.shift {
                     self.selected.clear();
@@ -660,7 +753,7 @@ impl Running {
                     }
                     self.human_orders
                         .extend(self.selected.iter().map(|&regiment| PlayerCommand {
-                            player: HUMAN,
+                            player: self.sandbox.side,
                             command: gc_sim::Command::Attack { regiment, target },
                         }));
                 } else if let Some(order) = drag.or_else(|| {
@@ -676,7 +769,7 @@ impl Running {
                     }
                     self.human_orders
                         .extend(self.group_commands.iter().map(|&command| PlayerCommand {
-                            player: HUMAN,
+                            player: self.sandbox.side,
                             command,
                         }));
                 }
@@ -760,7 +853,7 @@ impl Running {
 
     /// Ghost plates where each regiment of a planned order will stand.
     fn push_order_preview(&mut self) {
-        let [cr, cg, cb] = TEAM_COLORS[HUMAN as usize];
+        let [cr, cg, cb] = TEAM_COLORS[self.sandbox.side as usize % TEAM_COLORS.len()];
         for c in &self.group_commands {
             let gc_sim::Command::MoveTo {
                 regiment,
@@ -825,7 +918,12 @@ impl Running {
         self.boxed.clear();
         let size = self.window.inner_size();
         let view_proj = self.camera.view_proj();
-        for r in self.world.regiments.iter().filter(|r| r.owner == HUMAN) {
+        for r in self
+            .world
+            .regiments
+            .iter()
+            .filter(|r| r.owner == self.sandbox.side)
+        {
             let p = from_fx_vec(r.position);
             let ground = self.heightmap.height_at(p.x, p.y);
             let clip = view_proj * glam::Vec4::new(p.x, ground + 0.5, p.y, 1.0);
@@ -851,8 +949,8 @@ impl Running {
             self.control_groups[n].extend_from_slice(&self.selected);
             return;
         }
-        let regiments = &self.world.regiments;
-        self.control_groups[n].retain(|&h| regiments.get(h).is_some());
+        let (regiments, side) = (&self.world.regiments, self.sandbox.side);
+        self.control_groups[n].retain(|&h| regiments.get(h).is_some_and(|r| r.owner == side));
         if !self.input.shift {
             self.selected.clear();
         }
@@ -884,7 +982,7 @@ impl Running {
         self.world
             .regiments
             .iter()
-            .filter(|r| r.owner != HUMAN)
+            .filter(|r| r.owner != self.sandbox.side)
             .filter_map(|r| {
                 let stats = &self.unit_stats[r.unit as usize];
                 let (width, depth) = stats.block_size(r.files, r.models);
@@ -903,7 +1001,7 @@ impl Running {
         self.world
             .regiments
             .iter()
-            .filter(|r| r.owner == HUMAN)
+            .filter(|r| r.owner == self.sandbox.side)
             .map(|r| (r.handle, from_fx_vec(r.position).distance(p)))
             .filter(|(_, d)| *d <= radius)
             .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -921,17 +1019,26 @@ impl Running {
         self.last_frame = now;
         self.update_camera(dt.as_secs_f32());
 
-        // Fixed-rate simulation; render interpolates between the last two ticks.
-        self.sim_clock += dt;
+        // Fixed-rate simulation; render interpolates between the last two
+        // ticks. Pause and slow motion scale game time, not the camera.
+        let game_dt = if self.paused {
+            Duration::ZERO
+        } else {
+            dt.mul_f32(SPEEDS[self.speed])
+        };
+        self.sim_clock += game_dt;
         let mut ticks_this_frame = 0;
-        while self.sim_clock >= TICK && ticks_this_frame < 5 {
+        while self.sim_clock >= TICK && ticks_this_frame < MAX_TICKS_PER_FRAME {
             self.sim_clock -= TICK;
             ticks_this_frame += 1;
             for r in self.world.regiments.iter() {
                 self.prev_positions[r.handle.index as usize] =
                     Some((r.handle, from_fx_vec(r.position), angle_vec(r.facing)));
             }
-            self.drill.commands_for(&self.world, &mut self.pending);
+            match &mut self.drill {
+                Some(drill) => drill.commands_for(&self.world, &mut self.pending),
+                None => self.pending.clear(),
+            }
             self.pending.append(&mut self.human_orders);
             let t0 = Instant::now();
             profile::zone!("sim tick");
@@ -944,6 +1051,10 @@ impl Running {
             self.stats.tick_max = self.stats.tick_max.max(took);
             self.stats.ticks += 1;
         }
+        if ticks_this_frame > 0 {
+            // Tuned stats take effect in the tick after they are sent.
+            self.unit_stats.clone_from_slice(self.world.units());
+        }
         let alpha = self.sim_clock.as_secs_f32() / TICK.as_secs_f32();
 
         self.instances.clear();
@@ -955,7 +1066,8 @@ impl Running {
             self.plan_order(order);
             self.push_order_preview();
         }
-        self.puppets.advance(dt.as_secs_f32());
+        self.push_placement_ghost();
+        self.puppets.advance(game_dt.as_secs_f32());
         let marked = self
             .attack_mark
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
@@ -1024,15 +1136,16 @@ impl Running {
             ];
             let color = [cr, cg, cb, if selected { 70 } else { 0 }];
             let instances = &mut self.instances;
-            self.puppets.update(&block, r.owner, dt.as_secs_f32(), |s| {
-                instances.push(BoxInstance {
-                    pos: s.pos.to_array(),
-                    facing: s.facing.to_array(),
-                    size,
-                    color,
-                    lift: 0.0,
+            self.puppets
+                .update(&block, r.owner, game_dt.as_secs_f32(), |s| {
+                    instances.push(BoxInstance {
+                        pos: s.pos.to_array(),
+                        facing: s.facing.to_array(),
+                        size,
+                        color,
+                        lift: 0.0,
+                    });
                 });
-            });
         }
         self.push_corpses();
         self.push_arrows(alpha);
@@ -1053,12 +1166,24 @@ impl Running {
             });
         }
         profile::frame_mark();
+        if self.sandbox.dirty {
+            self.refresh_overlay();
+        }
 
         self.stats.frames += 1;
         self.stats.window_frames += 1;
         if self.stats.window_start.elapsed() >= Duration::from_millis(500) {
             self.window.set_title(&self.stats_line());
-            if self.overlay {
+            if self
+                .sandbox
+                .message
+                .as_ref()
+                .is_some_and(|(_, at)| at.elapsed() > MESSAGE_TIME)
+            {
+                self.sandbox.message = None;
+                self.sandbox.dirty = true;
+            }
+            if self.overlay || self.sandbox.dirty {
                 self.refresh_overlay();
             }
             self.stats.window_frames = 0;
@@ -1196,8 +1321,13 @@ impl Running {
         self.camera.focus_height += (ground - self.camera.focus_height) * k;
     }
 
-    /// Rebuild the dev overlay's text from the current stats window.
+    /// Rebuild the overlay: the sandbox panel, and the dev overlay's text
+    /// from the current stats window when it is on.
     fn refresh_overlay(&mut self) {
+        if !self.overlay {
+            self.show_overlay(None);
+            return;
+        }
         let secs = self.stats.window_start.elapsed().as_secs_f32().max(1e-3);
         let frames = self.stats.window_frames.max(1);
         let fps = self.stats.window_frames as f32 / secs;
@@ -1248,8 +1378,258 @@ impl Running {
             info.name,
             info.backend,
         );
+        self.show_overlay(Some(&text));
+    }
+
+    /// Put the sandbox panel, then `dev` (the dev overlay's text), on screen.
+    fn show_overlay(&mut self, dev: Option<&str>) {
+        let mut text = if self.sandbox.panel {
+            self.sandbox_panel()
+        } else {
+            String::new()
+        };
+        if let Some(dev) = dev {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(dev);
+        }
         let scale = self.window.scale_factor() as f32;
-        self.renderer.set_overlay(Some(&text), scale);
+        self.renderer
+            .set_overlay((!text.is_empty()).then_some(text.as_str()), scale);
+        self.sandbox.dirty = false;
+    }
+
+    /// Tab: command the next side. The selection belongs to the old side,
+    /// so it is dropped; with the drill running, it leaves the new side alone.
+    fn switch_side(&mut self) {
+        self.sandbox.side = (self.sandbox.side + 1) % PLAYERS;
+        self.selected.clear();
+        if let Some(drill) = &mut self.drill {
+            drill.skip_player = Some(self.sandbox.side);
+        }
+        self.sandbox.dirty = true;
+    }
+
+    /// [ and ]: the previous or next unit type, for placing and tuning.
+    fn choose_unit(&mut self, step: i32) {
+        let types = self.unit_stats.len() as i32;
+        self.sandbox.unit = (self.sandbox.unit as i32 + step).rem_euclid(types.max(1)) as UnitId;
+        self.sandbox.dirty = true;
+    }
+
+    /// Where a regiment placed now would stand, and its facing: under the
+    /// cursor, facing away from the camera.
+    fn placement(&self) -> Option<(Vec2, Vec2)> {
+        let at = self.ground_under_cursor()?;
+        let eye = self.camera.eye();
+        let facing = (self.camera.focus - Vec2::new(eye.x, eye.z)).normalize_or(Vec2::NEG_Y);
+        Some((at, facing))
+    }
+
+    fn place_regiment(&mut self) {
+        let Some((at, facing)) = self.placement() else {
+            return;
+        };
+        if !self.world.nav().walkable(fx_vec(at)) {
+            self.say("No regiment can stand there.".into());
+            return;
+        }
+        self.human_orders.push(PlayerCommand {
+            player: self.sandbox.side,
+            command: gc_sim::Command::SpawnRegiment {
+                unit: self.sandbox.unit,
+                position: fx_vec(at),
+                facing: gc_fixed::Angle::of_vec(fx_vec(facing)),
+            },
+        });
+        self.ui_sound(sounds::UiSound::Move);
+    }
+
+    /// A plate under the cursor the size of the regiment B would place.
+    fn push_placement_ghost(&mut self) {
+        if !self.sandbox.placing {
+            return;
+        }
+        let Some((at, facing)) = self.placement() else {
+            return;
+        };
+        let stats = &self.unit_stats[self.sandbox.unit as usize];
+        let (width, depth) = stats.block_size(stats.files, stats.models);
+        let [cr, cg, cb] = TEAM_COLORS[self.sandbox.side as usize % TEAM_COLORS.len()];
+        let color = if self.world.nav().walkable(fx_vec(at)) {
+            [cr, cg, cb, 200]
+        } else {
+            BLOCKED_COLOR
+        };
+        self.instances.push(BoxInstance {
+            pos: at.to_array(),
+            facing: facing.to_array(),
+            size: [fx_to_f32(width), PLATE_HEIGHT, fx_to_f32(depth)],
+            color,
+            lift: 0.0,
+        });
+    }
+
+    /// Delete: take the selected regiments off the field, or with `all`
+    /// every regiment of every side.
+    fn remove_regiments(&mut self, all: bool) {
+        let side = self.sandbox.side;
+        let doomed: Vec<RegimentHandle> = if all {
+            self.world.regiments.iter().map(|r| r.handle).collect()
+        } else {
+            std::mem::take(&mut self.selected)
+        };
+        self.human_orders
+            .extend(doomed.into_iter().map(|regiment| PlayerCommand {
+                player: side,
+                command: gc_sim::Command::RemoveRegiment { regiment },
+            }));
+        self.selected.clear();
+    }
+
+    /// Up and Down pick a stat, Left and Right change it (Shift: ten steps).
+    /// Returns whether the key was used.
+    fn tune_key(&mut self, code: KeyCode) -> bool {
+        let rows = sandbox::TUNABLES.len();
+        let step = match code {
+            KeyCode::ArrowUp => {
+                self.sandbox.row = (self.sandbox.row + rows - 1) % rows;
+                0
+            }
+            KeyCode::ArrowDown => {
+                self.sandbox.row = (self.sandbox.row + 1) % rows;
+                0
+            }
+            KeyCode::ArrowLeft => -1,
+            KeyCode::ArrowRight => 1,
+            _ => return false,
+        };
+        if step != 0 {
+            let unit = self.sandbox.unit;
+            let mut stats = self.unit_stats[unit as usize];
+            let steps = if self.input.shift { step * 10 } else { step };
+            (sandbox::TUNABLES[self.sandbox.row].nudge)(&mut stats, steps);
+            self.tune(unit, stats.sanitized());
+        }
+        self.sandbox.dirty = true;
+        true
+    }
+
+    /// Send new stats for a unit type, and show them straight away.
+    fn tune(&mut self, unit: UnitId, stats: UnitStats) {
+        self.unit_stats[unit as usize] = stats;
+        self.human_orders.push(PlayerCommand {
+            player: self.sandbox.side,
+            command: gc_sim::Command::TuneUnit { unit, stats },
+        });
+    }
+
+    /// R: read `data/units.ron` again and tune every type that changed.
+    fn reload_data(&mut self) {
+        let Some(dir) = sandbox::data_dir() else {
+            self.say(
+                "R reloads data/units.ron, but there is none here (run from the repository)."
+                    .into(),
+            );
+            return;
+        };
+        let (names, stats) = match sandbox::reload(&dir) {
+            Ok(fresh) => fresh,
+            Err(e) => {
+                eprintln!("grubcraft: reloading data: {e}");
+                self.say(format!("data/units.ron has a problem: {e}"));
+                return;
+            }
+        };
+        let mut changed = 0;
+        for (unit, new) in stats.iter().enumerate().take(self.unit_stats.len()) {
+            let new = new.sanitized();
+            if new != self.unit_stats[unit] {
+                self.tune(unit as UnitId, new);
+                changed += 1;
+            }
+        }
+        for (old, new) in self.unit_names.iter_mut().zip(names) {
+            *old = new;
+        }
+        let mut message = format!("Reloaded data/units.ron: {changed} unit types changed.");
+        if stats.len() != self.unit_stats.len() {
+            message += &format!(
+                " It now has {} types; restart to add or remove types.",
+                stats.len()
+            );
+        }
+        self.say(message);
+    }
+
+    /// Show a line in the sandbox panel for a few seconds.
+    fn say(&mut self, message: String) {
+        eprintln!("grubcraft: {message}");
+        self.sandbox.message = Some((message, Instant::now()));
+        self.sandbox.dirty = true;
+    }
+
+    /// The sandbox panel's text.
+    fn sandbox_panel(&self) -> String {
+        let sb = &self.sandbox;
+        let unit = sb.unit as usize;
+        let name = &self.unit_names[unit];
+        let speed = if self.paused {
+            "paused".to_string()
+        } else if self.speed == NORMAL_SPEED {
+            "normal speed".to_string()
+        } else {
+            format!("{}x speed", SPEEDS[self.speed])
+        };
+        let mut lines = vec![
+            format!(
+                "SANDBOX  commanding {} (player {})   Tab: next side   H: hide",
+                TEAM_NAMES[sb.side as usize % TEAM_NAMES.len()],
+                sb.side + 1
+            ),
+            if sb.placing {
+                format!("placing  {name}   [ ]: type   click: place   B: stop")
+            } else {
+                format!("B: place regiments   [ ]: type ({name})")
+            },
+            format!("game     {speed}   P: pause   - =: slower, faster"),
+            "Delete: remove selected   Shift+Delete: clear field   T: tune stats   R: reload data"
+                .to_string(),
+        ];
+        if sb.tuning {
+            let on_field = self
+                .world
+                .regiments
+                .iter()
+                .filter(|r| r.unit == sb.unit)
+                .count();
+            lines.push(String::new());
+            lines.push(format!(
+                "TUNE {name} ({on_field} on the field)   Up/Down: pick   Left/Right: change   T: close"
+            ));
+            let stats = &self.unit_stats[unit];
+            for (k, t) in sandbox::TUNABLES.iter().enumerate() {
+                let mark = if k == sb.row { '>' } else { ' ' };
+                lines.push(format!("{mark} {:<15} {}", t.label, (t.show)(stats)));
+            }
+        }
+        if let Some((message, _)) = &sb.message {
+            lines.push(String::new());
+            lines.push(message.clone());
+        }
+        lines.join("\n")
+    }
+
+    /// " · paused" or " · speed 0.25x"; empty at normal speed.
+    fn speed_label(&self) -> String {
+        if self.paused {
+            " · paused".into()
+        } else if self.speed != NORMAL_SPEED {
+            format!(" · speed {}x", SPEEDS[self.speed])
+        } else {
+            String::new()
+        }
     }
 
     fn stats_line(&self) -> String {
@@ -1263,7 +1643,8 @@ impl Running {
         let mem = gc_platform::memory::process_memory();
         let rs = self.renderer.stats();
         format!(
-            "Grubcraft · {fps:.0} fps · sim {tick_ms:.3} ms/tick · {} regiments · {}/{} chunks · {} MB process · {} MB heap · {} MB gpu",
+            "Grubcraft{} · {fps:.0} fps · sim {tick_ms:.3} ms/tick · {} regiments · {}/{} chunks · {} MB process · {} MB heap · {} MB gpu",
+            self.speed_label(),
             self.world.regiments.len(),
             rs.chunks_drawn,
             rs.chunks_total,

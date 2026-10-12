@@ -50,7 +50,7 @@ No general-purpose engine, no ECS framework, no async runtime, no scripting VM i
 - The **sim thread** is single-threaded and deterministic. At the target scale a tick costs ~1 to 2 ms out of 50 ms, so parallelising the sim is unnecessary and would only add determinism risk.
 - Threads communicate through fixed-size lock-free ring buffers and a triple-buffered snapshot. No locks on hot paths.
 - An **AI thread** runs on the host (and in solo play) when the match has AI players or world parties with minds. It reads the latest snapshot and sends commands into the host's turn bundle exactly like a remote player, so it never slows the sim and cannot cause a desync; other machines don't run it. See [AI players and world parties](#ai-players-and-world-parties).
-- **Built so far (M1):** one thread. The sim ticks inside the main thread's frame loop (at most five ticks per frame) and the renderer interpolates between the last two ticks; the sim and net threads arrive with networking in M2.
+- **Built so far (M1):** one thread. The sim ticks inside the main thread's frame loop (at most eight ticks per frame, so 4× speed keeps up at 30 fps) and the renderer interpolates between the last two ticks; the sim and net threads arrive with networking in M2.
 
 ## Workspace layout
 
@@ -130,7 +130,7 @@ Crates marked *(later)* or *(M2)* don't exist yet. Until `gc_present` is needed,
 11. Victory checks.
 12. State hash (every 10 ticks) and snapshot publish.
 
-**Built so far:** commands, then combat's contact, charge and chase checks, then route planning (budgeted searches), then movement and turning along the routes, then melee blows and volleys, then morale. The state hash is computed on request (the determinism test checks it every 600 ticks); snapshots come with M2.
+**Built so far:** commands (including the sandbox's `RemoveRegiment` and `TuneUnit`), then combat's contact, charge and chase checks, then route planning (budgeted searches), then movement and turning along the routes, then melee blows and volleys, then morale. The state hash is computed on request (the determinism test checks it every 600 ticks); snapshots come with M2.
 
 ### Spatial partitioning
 A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt incrementally (entities move bucket only when they cross a boundary). Used for collision, targeting, vision and area effects.
@@ -268,7 +268,7 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 - Factions, units, abilities, upgrades and maps are defined in RON under `data/`, compiled by `gc_bake` into binary tables.
 - The game's build script bakes `data/` and embeds the resulting data pack in the executable, so a build can never run with stale or mismatched data. Art and audio (from M1) go in a separate pack that is memory-mapped, as above.
 - The compiled data has a **BLAKE3 hash**. The lobby refuses to start unless every player has the same game build hash and data hash, which rules out the most common cause of desyncs.
-- In solo sandbox, RON files hot-reload for balance tuning.
+- In solo sandbox, RON files hot-reload for balance tuning. **Built so far (M1 step 7):** `R` re-bakes `data/units.ron` with `gc_bake` (the same checks as the build) and sends a `TuneUnit` command for each type that changed; the stats panel sends the same command. Tuning goes through the command stream like any order, so it is deterministic and will replay. The unit table is part of the state hash. Adding or removing unit types still needs a restart.
 
 ## Maps
 - Heightmap (`u16`), tile types (`u8`), water depth layer (reserved for naval), object list, Bloodseep sites and a small event-script block.
@@ -311,7 +311,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 | `gc_mapcheck` *(later)* | Map fairness and validity checks |
 | `gc_bake` | Asset and data baker |
 | Dev overlay (`` ` `` or `F11`) | Frame and tick timings, memory by tag, draw calls, network stats |
-| Sandbox *(M1 step 7)* | In-game unit placement, balance hot-reload, slow motion |
+| Sandbox (`--sandbox`) | In-game unit placement for any side, live stat tuning and `data/units.ron` reload, pause and 0.1× to 4× speed |
 | `gc_arena` *(later)* | Headless AI-against-AI ladders and tactical drills ([18 · AI](18-ai.md#testing-tuning-and-explaining)) |
 | AI lens *(later)* | Dev overlay view of each AI's intents, armies, battle plans, roles and influence maps |
 

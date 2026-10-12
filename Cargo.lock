@@ -622,6 +622,7 @@ version = "0.1.0"
 name = "gc_game"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "gc_assets",
  "gc_audio",
  "gc_bake",

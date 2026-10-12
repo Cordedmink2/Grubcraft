@@ -181,6 +181,26 @@ impl Regiments {
         })
     }
 
+    /// Give every living regiment of type `unit` its new speed and turn rate
+    /// (the rest of its stats are read from the unit table as needed).
+    pub(crate) fn retune(&mut self, unit: UnitId, stats: &UnitStats) {
+        for i in 0..self.alive.len() {
+            if !self.alive[i] || self.unit[i] != unit {
+                continue;
+            }
+            let old_speed = self.speed[i];
+            self.speed[i] = Fx::from_raw(stats.speed.raw() / TICKS_PER_SECOND as i32);
+            self.turn[i] = (stats.turn_rate / TICKS_PER_SECOND).clamp(1, u16::MAX as u32) as u16;
+            // A regiment marching at full speed keeps doing so; a slower
+            // ordered pace is kept, but never above the new top speed.
+            self.pace[i] = if self.pace[i] == old_speed {
+                self.speed[i]
+            } else {
+                self.pace[i].min(self.speed[i])
+            };
+        }
+    }
+
     pub fn despawn(&mut self, h: RegimentHandle) -> bool {
         let Some(i) = self.resolve(h) else {
             return false;

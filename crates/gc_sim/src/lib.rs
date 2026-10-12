@@ -114,6 +114,25 @@ impl UnitStats {
         }
     }
 
+    fn hash_into(&self, h: &mut StateHasher) {
+        h.i32(self.speed.raw());
+        h.u32(self.turn_rate);
+        h.u16(self.models);
+        h.u16(self.hp_per_model);
+        h.u16(self.files);
+        h.i32(self.file_spacing.raw());
+        h.i32(self.rank_spacing.raw());
+        h.u8(self.melee_attack);
+        h.u8(self.melee_defence);
+        h.u16(self.melee_damage);
+        h.u8(self.charge_bonus);
+        h.i32(self.range.raw());
+        h.u16(self.missile_damage);
+        h.u16(self.reload_ticks);
+        h.u8(self.accuracy);
+        h.u8(self.morale);
+    }
+
     /// Size of a block of `models` soldiers in `files` files: (width, depth).
     pub fn block_size(&self, files: u16, models: u16) -> (Fx, Fx) {
         formation::block_size(files, models, self.file_spacing, self.rank_spacing)
@@ -162,6 +181,12 @@ pub enum Command {
         regiment: RegimentHandle,
         target: RegimentHandle,
     },
+    /// Sandbox: take a regiment off the field (any player's).
+    RemoveRegiment { regiment: RegimentHandle },
+    /// Sandbox: change a regiment type's stats mid-match. Regiments already
+    /// on the field take the new speed, turn rate and fighting stats at once;
+    /// their soldiers keep the hit points they have.
+    TuneUnit { unit: UnitId, stats: UnitStats },
 }
 
 /// A command tagged with who issued it. Turn bundles carry these.
@@ -290,6 +315,15 @@ impl World {
                 Some(owner) if owner == pc.player => self.regiments.attack(regiment, target),
                 _ => false,
             },
+            Command::RemoveRegiment { regiment } => self.regiments.despawn(regiment),
+            Command::TuneUnit { unit, stats } => {
+                let Some(slot) = self.units.get_mut(unit as usize) else {
+                    return false;
+                };
+                *slot = stats.sanitized();
+                self.regiments.retune(unit, slot);
+                true
+            }
         }
     }
 
@@ -322,6 +356,10 @@ impl World {
         let (state, inc) = self.combat_rng.raw_state();
         h.u64(state);
         h.u64(inc);
+        h.u32(self.units.len() as u32);
+        for u in &self.units {
+            u.hash_into(&mut h);
+        }
         self.regiments.hash_into(&mut h);
         self.combat.hash_into(&mut h);
         self.nav.hash_into(&mut h);
