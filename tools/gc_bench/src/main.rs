@@ -112,6 +112,7 @@ fn new_world(seed: u64, regiments: u32, nav: &[u8]) -> World {
             units: &DRILL_UNITS,
             map_tiles: MAP_TILES,
             nav,
+            teams: &[],
         })
     })
 }

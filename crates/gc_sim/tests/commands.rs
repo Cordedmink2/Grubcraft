@@ -11,6 +11,7 @@ fn world() -> World {
         units: &DRILL_UNITS,
         map_tiles: 256,
         nav: &[],
+        teams: &[],
     })
 }
 

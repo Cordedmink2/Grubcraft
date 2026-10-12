@@ -98,6 +98,12 @@ impl Tempo {
     }
 }
 
+/// How well an AI player plays (docs/18-ai.md, "Difficulty"), easiest
+/// first. A slot's `ai_level` indexes this.
+pub const AI_LEVELS: [&str; 3] = ["Recruit", "Veteran", "General"];
+/// The level a newly added AI starts at.
+pub const DEFAULT_AI_LEVEL: u8 = 1;
+
 /// Maps the lobby offers. Only the placeholder map exists so far.
 pub const MAPS: [&str; 1] = ["Proving Ground"];
 
@@ -137,6 +143,8 @@ pub struct Slot {
     pub ready: bool,
     /// Build version of this player's game, for the version gate.
     pub version: String,
+    /// For an AI player: its difficulty, an index into [`AI_LEVELS`].
+    pub ai_level: u8,
 }
 
 impl Slot {
@@ -149,6 +157,7 @@ impl Slot {
             team: index as u8,
             ready: false,
             version: String::new(),
+            ai_level: DEFAULT_AI_LEVEL,
         }
     }
 
@@ -230,6 +239,8 @@ pub enum SlotEdit {
     Ready(bool),
     /// Host only: open a slot, or fill it with an AI player.
     Kind(SlotKind),
+    /// Host only: an AI player's difficulty (index into [`AI_LEVELS`]).
+    AiLevel(u8),
 }
 
 /// The setup a started match runs with.
@@ -321,6 +332,7 @@ impl Network for LocalNetwork {
             team: 0,
             ready: true,
             version: me.version.clone(),
+            ai_level: DEFAULT_AI_LEVEL,
         };
         self.lobby = Some(LobbyState {
             slots,
@@ -358,6 +370,7 @@ impl Network for LocalNetwork {
         let is_ai = lobby.slots[slot].kind == SlotKind::Ai;
         let allowed = match &edit {
             SlotEdit::Kind(_) => lobby.is_host && !local,
+            SlotEdit::AiLevel(_) => lobby.is_host && is_ai,
             _ => local || (lobby.is_host && is_ai),
         };
         if !allowed {
@@ -377,6 +390,9 @@ impl Network for LocalNetwork {
             }
             SlotEdit::Team(t) => lobby.slots[slot].team = t % MAX_PLAYERS as u8,
             SlotEdit::Ready(r) => lobby.slots[slot].ready = r,
+            SlotEdit::AiLevel(level) => {
+                lobby.slots[slot].ai_level = level % AI_LEVELS.len() as u8;
+            }
             SlotEdit::Kind(kind) => match kind {
                 SlotKind::Ai => {
                     let version = lobby.host_version.clone();
@@ -489,6 +505,20 @@ mod tests {
         assert_eq!(start.players.len(), 2);
         assert_eq!(start.local_player, 0);
         assert_eq!(start.players[1].name, "AI 2");
+    }
+
+    #[test]
+    fn the_host_sets_an_ais_level() {
+        let mut n = hosted();
+        n.edit_slot(1, SlotEdit::Kind(SlotKind::Ai));
+        assert_eq!(n.lobby().unwrap().slots[1].ai_level, DEFAULT_AI_LEVEL);
+        n.edit_slot(1, SlotEdit::AiLevel(2));
+        assert_eq!(n.lobby().unwrap().slots[1].ai_level, 2);
+        // Humans have no level to set.
+        n.edit_slot(0, SlotEdit::AiLevel(2));
+        assert_eq!(n.lobby().unwrap().slots[0].ai_level, DEFAULT_AI_LEVEL);
+        let start = n.start_match().unwrap();
+        assert_eq!(AI_LEVELS[start.players[1].ai_level as usize], "General");
     }
 
     #[test]

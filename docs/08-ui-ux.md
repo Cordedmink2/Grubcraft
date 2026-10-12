@@ -114,11 +114,13 @@ Structures use the same grid for production. Workers' build menu is one sub-page
 - Summary: winner, graphs (income, army value, supply over time), key battles list with "Watch" and "Restage this battle" buttons, MVP regiment (most kills), funniest stat ("Most Grub lost to raids").
 - Save replay (automatic).
 
-## AI players in the lobby (planned)
+## AI players in the lobby
 
 - The host can fill any slot with an AI player, as an opponent or a teammate. The row shows a **difficulty** (Recruit, Veteran, General, Warlord) and a **personality** (each faction's two, or Random, the default), both chosen with one click.
 - Every slot, human or AI, has a **handicap** setting (income from 50% to 150%), shown on the row whenever it isn't 100%, so nobody is surprised.
 - Details in [18 · AI](18-ai.md#difficulty).
+- **Built so far (AI-1 step 1):** an AI row has a level button (Recruit, Veteran or General; click to step through them, Veteran to start) beside Remove; other players see the level as text. The personality is picked at random from the faction's two each match and named in the sandbox panel once the battle starts. Not yet: the Warlord level (AI-2), choosing the personality, handicap.
+- **In the battle,** the sandbox panel lists each computer player's personality, level, battle plan, posture and expected result, and `I` hands the side you command to the computer (Recruit, then Veteran, then General, then back to you).
 
 ## Parley (planned, M4)
 

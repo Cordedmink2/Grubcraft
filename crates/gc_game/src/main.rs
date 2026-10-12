@@ -12,7 +12,9 @@
 //! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
 //! and regiments on the field change at once. R reloads `data/units.ron`
 //! when the game runs from the repository. H hides the sandbox panel; C
-//! shows the credits for the art.
+//! shows the credits for the art. I hands the side you command to the
+//! battle AI (Recruit, then Veteran, then General, then back to you); the
+//! panel shows what each computer player is doing and expects.
 //!
 //! Soldiers are low-poly models (baked from free packs by `gc_artbake`) that
 //! walk, run, fight, shoot and fall with their own animations; parts of each
@@ -37,7 +39,10 @@
 //! The game opens on the main menu (Play, Sandbox, Settings); Esc brings it
 //! back during a match. Play hosts or joins a lobby (joining other machines
 //! arrives with the netcode in M2; today you can host a practice lobby with
-//! AI players).
+//! AI players at Recruit, Veteran or General). Starting it opens a Field
+//! Battle (`battle.rs`): ten regiments a side on the start plateaus, the
+//! computer players commanding theirs, and VICTORY or DEFEAT once one side
+//! is left holding the field.
 //
 //! Sound: effects and music play through the default output device; they
 //! follow the camera (quieter and panned by distance). M mutes everything, N
@@ -50,7 +55,8 @@
 //! Esc leaves placing, the stats panel or the credits, and otherwise opens
 //! the menu.
 //!
-//! Flags: `--sandbox` starts on an empty field; `--no-menu` skips the main menu
+//! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general`
+//! starts a Field Battle against one computer player of that level; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
 //! `--overlay` starts with the dev overlay shown; `--no-audio` never opens
@@ -59,6 +65,7 @@
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
 //! parts of the frame off to measure what they cost.
 
+mod battle;
 mod camera;
 mod credits;
 mod data;
@@ -72,6 +79,8 @@ mod terrain_gen;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use battle::{Battle, Party, party_name};
+use gc_ai::{Difficulty, Mind, MindConfig, Minds};
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
 use gc_render::{
     BoxInstance, FrameParams, Renderer, RendererOptions, SoldierBatch, SoldierInstance, Terrain,
@@ -83,6 +92,7 @@ use gc_sim::{
     Capacities, MatchSetup, MoraleState, PlayerCommand, PlayerId, RegimentHandle, UnitId,
     UnitStats, World,
 };
+use gc_ui::lobby::MatchStart;
 use gc_ui::{LocalNetwork, Menu, MenuAction, Screen, Settings, Ui, UiInput};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
@@ -166,7 +176,7 @@ const SPEEDS: [f32; 6] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0];
 const NORMAL_SPEED: usize = 3;
 /// How long a sandbox message (such as the result of reloading data) shows.
 const MESSAGE_TIME: Duration = Duration::from_secs(5);
-/// Players in a match; Tab cycles through them.
+/// Sides in the sandbox and the drill; Tab cycles through them.
 const PLAYERS: u8 = 4;
 const TEAM_NAMES: [&str; 4] = ["red", "violet", "cyan", "bone"];
 /// Most ticks run in one frame, so a slow frame can't snowball (4x speed at
@@ -185,6 +195,8 @@ struct Options {
     /// `--frames` runs, which measure the sandbox itself.
     menu: Option<bool>,
     audio: bool,
+    /// Start straight into a Field Battle against one AI of this level.
+    battle: Option<u8>,
     render: RendererOptions,
 }
 
@@ -196,6 +208,7 @@ fn parse_args() -> Options {
         overlay: false,
         menu: None,
         audio: true,
+        battle: None,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -220,6 +233,12 @@ fn parse_args() -> Options {
         let ok = match flag.as_str() {
             "--seed" => value.parse().map(|v| opts.seed = v).is_ok(),
             "--frames" => value.parse().map(|v| opts.frames = Some(v)).is_ok(),
+            "--battle" => {
+                let level = gc_ui::lobby::AI_LEVELS
+                    .iter()
+                    .position(|l| l.eq_ignore_ascii_case(&value));
+                level.map(|l| opts.battle = Some(l as u8)).is_some()
+            }
             "--latency" => match value.parse() {
                 Ok(v @ 1..=3) => {
                     opts.render.frame_latency = v;
@@ -257,7 +276,7 @@ fn parse_args() -> Options {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--seed N] [--frames N] [--overlay] [--no-audio] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general] [--seed N] [--frames N] [--overlay] [--no-audio] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
     );
     std::process::exit(2);
@@ -270,10 +289,21 @@ struct Running {
     camera: RtsCamera,
     heightmap: Heightmap,
     world: World,
-    /// Orders the other sides about; None in an empty-field sandbox.
+    /// Orders the other sides about; None in an empty-field sandbox or a
+    /// lobby battle.
     drill: Option<Drill>,
-    /// Commands collected for the next tick (from the drill and the human).
+    /// The computer players (lobby AI slots, and sides handed over with I).
+    minds: Minds,
+    /// Who plays each side, by party id.
+    parties: Vec<Party>,
+    /// A lobby Field Battle under way; None in the sandbox and the drill.
+    battle: Option<Battle>,
+    /// Matches started this run, so each gets its own AI personalities.
+    matches: u64,
+    /// Commands collected for the next tick (from the drill, the minds and
+    /// the human).
     pending: Vec<PlayerCommand>,
+    /// Orders from this machine's player, and a new match's deployment.
     human_orders: Vec<PlayerCommand>,
     /// Position and facing at the previous tick, by pool index, for interpolation.
     prev_positions: Vec<Option<(RegimentHandle, Vec2, Vec2)>>,
@@ -288,6 +318,8 @@ struct Running {
     /// The match's regiment types, as the simulation sees them, and their names.
     unit_stats: Vec<UnitStats>,
     unit_names: Vec<String>,
+    /// Each regiment type's faction, as the AI names them.
+    unit_factions: Vec<gc_ai::Faction>,
     sandbox: Sandbox,
     selected: Vec<RegimentHandle>,
     /// Scratch space for building group orders.
@@ -425,6 +457,33 @@ struct Sandbox {
     dirty: bool,
 }
 
+/// The sandbox's and the drill's four sides, named by colour.
+fn sandbox_parties() -> Vec<Party> {
+    (0..PLAYERS as usize)
+        .map(|p| Party {
+            name: TEAM_NAMES[p].to_string(),
+            color: TEAM_COLORS[p],
+            faction: None,
+        })
+        .collect()
+}
+
+/// A side's colour (a side past the party list borrows a team colour).
+fn color_of(parties: &[Party], owner: PlayerId) -> [u8; 3] {
+    parties
+        .get(owner as usize)
+        .map_or(TEAM_COLORS[owner as usize % TEAM_COLORS.len()], |p| p.color)
+}
+
+/// What kind of match to start from the menu. (The scripted four-army
+/// drill runs only when the game starts straight into a match.)
+enum MatchKind {
+    /// An empty field, nobody moving unless ordered.
+    Sandbox,
+    /// A Field Battle from the lobby.
+    Battle(MatchStart),
+}
+
 /// Process memory recorded at startup milestones, to see what each costs.
 #[derive(Default)]
 struct MemoryTimeline(Vec<(&'static str, Option<u64>)>);
@@ -478,6 +537,8 @@ struct Stats {
     tick_time: Duration,
     tick_max: Duration,
     ticks: u32,
+    /// Time the computer players spent thinking in this window.
+    ai_time: Duration,
 }
 
 #[derive(Default)]
@@ -549,6 +610,11 @@ impl App {
             .iter()
             .map(|u| u.name().to_string())
             .collect();
+        let unit_factions: Vec<gc_ai::Faction> = game_data
+            .units
+            .iter()
+            .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
+            .collect();
         let capacities = Capacities::default();
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
         let blocked_marks = blocked_marks(&nav, MAP_TILES);
@@ -560,12 +626,15 @@ impl App {
                     units: &unit_stats,
                     map_tiles: MAP_TILES,
                     nav: &nav,
+                    teams: &[],
                 }),
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
             )
         });
         let drill = (!opts.sandbox).then(|| make_drill(opts.seed));
+        let minds =
+            tagged_alloc::scope(Tag::Ai, || Minds::new(gc_ai::Terrain::new(&nav, MAP_TILES)));
 
         let start = Vec2::splat(MAP_TILES as f32 * 0.25);
         let mut camera = RtsCamera::new(MAP_TILES as f32, start + Vec2::new(10.0, 20.0));
@@ -611,7 +680,9 @@ impl App {
             settings_path,
             env!("CARGO_PKG_VERSION"),
         );
-        let show_menu = opts.menu.unwrap_or(opts.frames.is_none());
+        let show_menu = opts
+            .menu
+            .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
         let sounds = if opts.audio {
             tagged_alloc::scope(Tag::Audio, || {
                 sounds::Sounds::start(capacities.regiments as usize)
@@ -628,6 +699,10 @@ impl App {
             heightmap,
             world,
             drill,
+            minds,
+            parties: sandbox_parties(),
+            battle: None,
+            matches: 0,
             pending,
             human_orders: Vec::with_capacity(64),
             prev_positions,
@@ -638,6 +713,7 @@ impl App {
             shooting: vec![false; capacities.regiments as usize],
             unit_stats,
             unit_names,
+            unit_factions,
             sandbox: Sandbox::new(opts.sandbox),
             selected: Vec::with_capacity(64),
             group: Vec::with_capacity(64),
@@ -663,6 +739,7 @@ impl App {
                 tick_time: Duration::ZERO,
                 tick_max: Duration::ZERO,
                 ticks: 0,
+                ai_time: Duration::ZERO,
             },
             overlay: opts.overlay,
             blocked_marks,
@@ -686,6 +763,10 @@ impl App {
         });
         if let Some(r) = self.running.as_mut() {
             r.menu.set_in_match(r.match_started);
+            if let Some(level) = opts.battle {
+                let setup = battle::quick_battle(level, r.menu.settings());
+                r.start_match(MatchKind::Battle(setup));
+            }
         }
         Ok(())
     }
@@ -800,6 +881,7 @@ impl ApplicationHandler for App {
                             r.sandbox.dirty = true;
                         }
                         KeyCode::Tab if down && !event.repeat => r.switch_side(),
+                        KeyCode::KeyI if down && !event.repeat => r.cycle_mind(),
                         KeyCode::KeyB if down && !event.repeat => {
                             r.sandbox.placing = !r.sandbox.placing;
                             r.sandbox.dirty = true;
@@ -1050,7 +1132,7 @@ impl Running {
 
     /// Ghost plates where each regiment of a planned order will stand.
     fn push_order_preview(&mut self) {
-        let [cr, cg, cb] = TEAM_COLORS[self.sandbox.side as usize % TEAM_COLORS.len()];
+        let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
         for c in &self.group_commands {
             let gc_sim::Command::MoveTo {
                 regiment,
@@ -1235,10 +1317,19 @@ impl Running {
                 self.prev_positions[r.handle.index as usize] =
                     Some((r.handle, from_fx_vec(r.position), angle_vec(r.facing)));
             }
-            match &mut self.drill {
-                Some(drill) => drill.commands_for(&self.world, &mut self.pending),
-                None => self.pending.clear(),
+            self.pending.clear();
+            if let Some(drill) = &mut self.drill {
+                drill.commands_for(&self.world, &mut self.pending);
+                // A side the computer plays takes its orders from its mind.
+                let minds = &self.minds;
+                self.pending.retain(|c| {
+                    matches!(c.command, gc_sim::Command::SpawnRegiment { .. })
+                        || minds.get(c.player).is_none()
+                });
             }
+            let t_ai = Instant::now();
+            tagged_alloc::scope(Tag::Ai, || self.minds.tick(&self.world, &mut self.pending));
+            self.stats.ai_time += t_ai.elapsed();
             self.pending.append(&mut self.human_orders);
             let t0 = Instant::now();
             profile::zone!("sim tick");
@@ -1254,6 +1345,7 @@ impl Running {
         if ticks_this_frame > 0 {
             // Tuned stats take effect in the tick after they are sent.
             self.unit_stats.clone_from_slice(self.world.units());
+            self.judge_battle();
         }
         let alpha = self.sim_clock.as_secs_f32() / TICK.as_secs_f32();
 
@@ -1286,7 +1378,7 @@ impl Running {
                 ),
                 _ => (cur, cur_facing),
             };
-            let [cr, cg, cb] = TEAM_COLORS[r.owner as usize % TEAM_COLORS.len()];
+            let [cr, cg, cb] = color_of(&self.parties, r.owner);
             let selected = self.selected.contains(&r.handle) || self.boxed.contains(&r.handle);
             let stats = &self.unit_stats[r.unit as usize];
             let (file_spacing, rank_spacing) =
@@ -1485,6 +1577,10 @@ impl Running {
                 self.sandbox.message = None;
                 self.sandbox.dirty = true;
             }
+            // What the minds are thinking changes as the battle goes.
+            if !self.minds.is_empty() || self.battle.is_some() {
+                self.sandbox.dirty = true;
+            }
             if self.overlay || self.sandbox.dirty {
                 self.refresh_overlay();
             }
@@ -1494,6 +1590,7 @@ impl Running {
             self.stats.tick_time = Duration::ZERO;
             self.stats.tick_max = Duration::ZERO;
             self.stats.ticks = 0;
+            self.stats.ai_time = Duration::ZERO;
         }
     }
 
@@ -1594,18 +1691,15 @@ impl Running {
             MenuAction::None | MenuAction::SettingsChanged => {}
             MenuAction::Resume => self.close_menu(),
             MenuAction::Quit => self.quit = true,
-            MenuAction::StartSandbox => self.start_match(true),
+            MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox),
             MenuAction::StartMatch(setup) => {
-                // The lobby's choices are not consumed yet: a lobby match
-                // always runs the scripted four-army battle (the netcode in
-                // M2 will build the match from `setup`).
                 eprintln!(
-                    "grubcraft: starting {} on {} with {} players (scripted armies for now)",
+                    "grubcraft: starting {} on {} with {} players",
                     setup.settings.mode.name(),
                     gc_ui::lobby::MAPS[setup.settings.map],
                     setup.players.len()
                 );
-                self.start_match(false);
+                self.start_match(MatchKind::Battle(setup));
             }
         }
     }
@@ -1618,18 +1712,22 @@ impl Running {
         self.input.right_down = None;
     }
 
-    /// Begin a match from a fresh world: the empty-field sandbox, or the
-    /// scripted four-army battle.
-    fn start_match(&mut self, sandbox: bool) {
-        self.restart_match(sandbox);
+    /// Begin a match from a fresh world: the empty-field sandbox or a Field
+    /// Battle from the lobby.
+    fn start_match(&mut self, kind: MatchKind) {
+        self.camera.reset_rotation();
+        self.restart_match(kind);
         self.match_started = true;
         self.menu.set_in_match(true);
-        self.camera.reset_rotation();
         self.close_menu();
     }
 
-    fn restart_match(&mut self, sandbox: bool) {
+    fn restart_match(&mut self, kind: MatchKind) {
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
+        let teams: Vec<u8> = match &kind {
+            MatchKind::Battle(setup) => setup.players.iter().map(|s| s.team).collect(),
+            _ => Vec::new(),
+        };
         self.world = tagged_alloc::scope(Tag::Sim, || {
             World::new(&MatchSetup {
                 seed: self.seed,
@@ -1637,10 +1735,16 @@ impl Running {
                 units: &self.unit_stats,
                 map_tiles: MAP_TILES,
                 nav: &nav,
+                teams: &teams,
             })
         });
-        self.drill = (!sandbox).then(|| make_drill(self.seed));
-        self.sandbox = Sandbox::new(sandbox);
+        self.minds =
+            tagged_alloc::scope(Tag::Ai, || Minds::new(gc_ai::Terrain::new(&nav, MAP_TILES)));
+        self.matches += 1;
+        self.drill = None;
+        self.sandbox = Sandbox::new(matches!(kind, MatchKind::Sandbox));
+        self.parties = sandbox_parties();
+        self.battle = None;
         self.speed = NORMAL_SPEED;
         self.paused = false;
         self.prev_positions.iter_mut().for_each(|p| *p = None);
@@ -1653,6 +1757,59 @@ impl Running {
         self.attack_mark = None;
         self.sim_clock = Duration::ZERO;
         self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
+        if let MatchKind::Battle(setup) = kind {
+            self.set_out_battle(&setup);
+        }
+    }
+
+    /// Raise and deploy every side's army for a lobby Field Battle, and put
+    /// a mind in charge of each AI player. Armies are a fixed mix from the
+    /// faction's roster until production arrives (docs/06-game-modes.md).
+    fn set_out_battle(&mut self, setup: &MatchStart) {
+        let set = tagged_alloc::scope(Tag::Ai, || {
+            battle::set_out(
+                setup,
+                &self.unit_stats,
+                &self.unit_factions,
+                terrain_gen::start_positions(MAP_TILES),
+                self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                &mut self.minds,
+                &mut self.human_orders,
+            )
+        });
+        for m in self.minds.iter() {
+            eprintln!(
+                "grubcraft: {} plays {}",
+                m.summary(),
+                party_name(&set.parties, m.party())
+            );
+        }
+        self.parties = set.parties;
+        self.sandbox.side = set.me;
+        self.battle = Some(Battle::new(set.me));
+        // Look over your army towards the enemy.
+        let focus = set.my_start + set.my_forward * 18.0;
+        self.camera.focus = focus;
+        self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
+        self.camera.distance = 120.0;
+    }
+
+    /// How the battle ended, once it has.
+    fn battle_outcome(&self) -> Option<&str> {
+        self.battle.as_ref()?.outcome.as_deref()
+    }
+
+    /// Once one side alone has held the field long enough, say who won.
+    fn judge_battle(&mut self) {
+        let Some(battle) = &mut self.battle else {
+            return;
+        };
+        if battle.judge(&self.world, &self.parties) {
+            if let Some(outcome) = &battle.outcome {
+                eprintln!("grubcraft: {outcome}");
+            }
+            self.sandbox.dirty = true;
+        }
     }
 
     /// Dotted lines along the routes of the selected regiments, with a plate
@@ -1663,7 +1820,7 @@ impl Running {
             let Some(r) = self.world.regiments.get(h) else {
                 continue;
             };
-            let [cr, cg, cb] = TEAM_COLORS[r.owner as usize % TEAM_COLORS.len()];
+            let [cr, cg, cb] = color_of(&self.parties, r.owner);
             let color = [cr, cg, cb, 160];
             let mut from = from_fx_vec(r.position);
             let route = self.world.route(h);
@@ -1701,7 +1858,7 @@ impl Running {
     /// Fallen soldiers lie flat in a darker shade of their team's colour.
     fn push_corpses(&mut self) {
         for c in self.puppets.corpses() {
-            let [r, g, b] = TEAM_COLORS[c.owner as usize % TEAM_COLORS.len()];
+            let [r, g, b] = color_of(&self.parties, c.owner);
             let model = self
                 .art
                 .as_ref()
@@ -1844,6 +2001,11 @@ impl Running {
         } else {
             0.0
         };
+        let ai_avg = if self.stats.ticks > 0 {
+            ms(self.stats.ai_time) / self.stats.ticks as f64
+        } else {
+            0.0
+        };
         let rs = self.renderer.stats();
         let process = gc_platform::memory::process_memory()
             .current
@@ -1859,6 +2021,7 @@ impl Running {
              frame   {fps:5.0} fps   {frame_avg:6.2} ms avg   {:6.2} ms worst\n\
              sim     tick {:<7} {tick_avg:6.3} ms avg   {:6.3} ms worst\n\
              routes  {} portals   {} waiting\n\
+             ai      {} computer players   {ai_avg:6.3} ms a tick\n\
              render  {} draw calls   {}/{} chunks   {} boxes   {} soldiers   {}k triangles\n\
              memory  process {process}   heap {:.1} MB   gpu {:.1} MB\n\
              heap    {}\n\
@@ -1870,6 +2033,7 @@ impl Running {
             ms(self.stats.tick_max),
             self.world.nav().portal_count(),
             self.world.nav().queued(),
+            self.minds.iter().count(),
             rs.draw_calls,
             rs.chunks_drawn,
             rs.chunks_total,
@@ -1899,7 +2063,7 @@ impl Running {
         } else if self.sandbox.panel {
             self.sandbox_panel()
         } else {
-            String::new()
+            self.battle_outcome().unwrap_or_default().to_string()
         };
         if let Some(dev) = dev {
             if !text.is_empty() {
@@ -1916,12 +2080,72 @@ impl Running {
     /// Tab: command the next side. The selection belongs to the old side,
     /// so it is dropped; with the drill running, it leaves the new side alone.
     fn switch_side(&mut self) {
-        self.sandbox.side = (self.sandbox.side + 1) % PLAYERS;
+        let sides = self.parties.len().max(1) as PlayerId;
+        self.sandbox.side = (self.sandbox.side + 1) % sides;
         self.selected.clear();
         if let Some(drill) = &mut self.drill {
             drill.skip_player = Some(self.sandbox.side);
         }
         self.sandbox.dirty = true;
+    }
+
+    /// I: hand the side you command to the computer, raise its level
+    /// (Recruit, Veteran, General), or take the side back.
+    fn cycle_mind(&mut self) {
+        let side = self.sandbox.side;
+        let name = party_name(&self.parties, side);
+        let (next, persona) = match self.minds.get(side) {
+            None => (Some(Difficulty::Recruit), None),
+            Some(m) => {
+                let i = m.difficulty().index() + 1;
+                let persona = gc_ai::personality::find(&m.personality().name);
+                (
+                    (i < Difficulty::ALL.len()).then(|| Difficulty::from_index(i)),
+                    persona,
+                )
+            }
+        };
+        let Some(level) = next else {
+            self.minds.remove(side);
+            self.say(format!("You command {name} again."));
+            return;
+        };
+        let faction = self.faction_of(side);
+        let personality = persona.unwrap_or_else(|| {
+            gc_ai::personality::pick(faction, self.world.tick_count() ^ side as u32)
+        });
+        let mind = Mind::new(MindConfig {
+            party: side,
+            difficulty: level,
+            personality,
+            seed: self.seed ^ (self.matches << 8) ^ side as u64,
+        });
+        let who = mind.personality().name.clone();
+        tagged_alloc::scope(Tag::Ai, || self.minds.add(mind));
+        self.say(format!(
+            "The computer ({}, {who}) now plays {name}. I: next level.",
+            level.name()
+        ));
+    }
+
+    /// A side's faction: the lobby's choice, else what most of its
+    /// regiments are.
+    fn faction_of(&self, side: PlayerId) -> gc_ai::Faction {
+        if let Some(f) = self.parties.get(side as usize).and_then(|p| p.faction) {
+            return f;
+        }
+        let mut counts = [0u32; 4];
+        for r in self.world.regiments.iter().filter(|r| r.owner == side) {
+            if let Some(f) = self.unit_factions.get(r.unit as usize) {
+                counts[f.index() as usize] += 1;
+            }
+        }
+        let best = (0..4).max_by_key(|&f| (counts[f], 4 - f)).unwrap_or(0);
+        if counts[best] == 0 {
+            gc_ai::Faction::from_index(side)
+        } else {
+            gc_ai::Faction::from_index(best as u8)
+        }
     }
 
     /// [ and ]: the previous or next unit type, for placing and tuning.
@@ -1969,7 +2193,7 @@ impl Running {
         };
         let stats = &self.unit_stats[self.sandbox.unit as usize];
         let (width, depth) = stats.block_size(stats.files, stats.models);
-        let [cr, cg, cb] = TEAM_COLORS[self.sandbox.side as usize % TEAM_COLORS.len()];
+        let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
         let color = if self.world.nav().walkable(fx_vec(at)) {
             [cr, cg, cb, 200]
         } else {
@@ -2095,12 +2319,43 @@ impl Running {
         } else {
             format!("{}x speed", SPEEDS[self.speed])
         };
-        let mut lines = vec![
-            format!(
-                "SANDBOX  commanding {} (player {})   Tab: next side   H: hide",
-                TEAM_NAMES[sb.side as usize % TEAM_NAMES.len()],
-                sb.side + 1
-            ),
+        let mut lines = Vec::new();
+        if let Some(outcome) = self.battle_outcome() {
+            lines.push(outcome.to_string());
+            lines.push(String::new());
+        }
+        let mode = if self.battle.is_some() {
+            "FIELD BATTLE"
+        } else {
+            "SANDBOX"
+        };
+        lines.push(format!(
+            "{mode}  commanding {} (player {})   Tab: next side   H: hide",
+            party_name(&self.parties, sb.side),
+            sb.side + 1
+        ));
+        // The computer players, and what the one on this side has in mind.
+        for m in self.minds.iter() {
+            lines.push(format!(
+                "  {}: {}",
+                party_name(&self.parties, m.party()),
+                m.summary()
+            ));
+        }
+        lines.push(match self.minds.get(sb.side) {
+            None => "I: hand this side to the computer".to_string(),
+            Some(m) => {
+                let next = Difficulty::ALL
+                    .get(m.difficulty().index() + 1)
+                    .map_or("take it back", |d| d.name());
+                let thinking = m
+                    .journal()
+                    .latest()
+                    .map_or(String::new(), |e| format!(": {}", e.text));
+                format!("I: {next}   the computer plays this side{thinking}")
+            }
+        });
+        lines.extend([
             if sb.placing {
                 format!("placing  {name}   [ ]: type   click: place   B: stop")
             } else {
@@ -2115,7 +2370,7 @@ impl Running {
             } else {
                 "view     soldiers (zoom far out for the Commander View)   C: credits".to_string()
             },
-        ];
+        ]);
         if sb.tuning {
             let on_field = self
                 .world

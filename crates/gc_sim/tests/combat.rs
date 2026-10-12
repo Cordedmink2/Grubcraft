@@ -24,6 +24,7 @@ fn world() -> World {
         units: &fearless(),
         map_tiles: 256,
         nav: &[],
+        teams: &[],
     })
 }
 
@@ -141,6 +142,7 @@ fn charges_hit_harder_than_standing_fights() {
             units: &units,
             map_tiles: 256,
             nav: &[],
+            teams: &[],
         })
     };
     // Charge in from 14 tiles away, then fight for 3 s.

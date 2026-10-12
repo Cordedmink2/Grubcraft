@@ -1,0 +1,18 @@
+[package]
+name = "gc_ai"
+description = "Grubcraft's computer players: minds that read the simulation's public views and send ordinary commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gc_fixed.workspace = true
+gc_sim.workspace = true
+glam.workspace = true
+ron.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

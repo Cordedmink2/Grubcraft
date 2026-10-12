@@ -31,6 +31,7 @@ fn world_on(tiles: u32, nav: &[u8], units: &[UnitStats]) -> World {
         units,
         map_tiles: tiles,
         nav,
+        teams: &[],
     })
 }
 

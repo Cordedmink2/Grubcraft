@@ -1,0 +1,217 @@
+//! The ground as a mind knows it: worked out once when the match loads,
+//! from the same walkable-ground grid the simulation routes on.
+//!
+//! For now this answers "can a regiment stand here?" and "how slow is the
+//! going?", so formations aren't laid out over cliffs or into lakes. Flank
+//! anchors, chokepoints and fords join it with the terrain drills
+//! (docs/18-ai.md, "Spymaster: perception and belief").
+
+use gc_sim::nav::{BLOCKED, CELLS_PER_TILE, CLEARANCE};
+use glam::Vec2;
+
+pub struct Terrain {
+    map_tiles: u32,
+    /// Cells per side; zero on an open plane.
+    side: i32,
+    cost: Vec<u8>,
+    /// Chessboard distance from each cell to blocked ground, as the sim
+    /// measures it: a regiment's centre needs [`CLEARANCE`].
+    clear: Vec<u8>,
+}
+
+impl Terrain {
+    /// An open plane `map_tiles` across (zero: unbounded), as tests use.
+    pub fn open(map_tiles: u32) -> Terrain {
+        Terrain {
+            map_tiles,
+            side: 0,
+            cost: Vec::new(),
+            clear: Vec::new(),
+        }
+    }
+
+    /// From the match's nav costs (`MatchSetup::nav`); empty means open.
+    pub fn new(nav: &[u8], map_tiles: u32) -> Terrain {
+        let side = map_tiles as i32 * CELLS_PER_TILE;
+        if nav.is_empty() || nav.len() != (side * side) as usize {
+            return Terrain::open(map_tiles);
+        }
+        let mut t = Terrain {
+            map_tiles,
+            side,
+            cost: nav.to_vec(),
+            clear: vec![0; nav.len()],
+        };
+        t.measure_clearance();
+        t
+    }
+
+    pub fn map_tiles(&self) -> u32 {
+        self.map_tiles
+    }
+
+    fn cell(&self, p: Vec2) -> Option<usize> {
+        if self.side == 0 {
+            return None;
+        }
+        let x = (p.x * CELLS_PER_TILE as f32).floor() as i32;
+        let y = (p.y * CELLS_PER_TILE as f32).floor() as i32;
+        let (x, y) = (x.clamp(0, self.side - 1), y.clamp(0, self.side - 1));
+        Some((y * self.side + x) as usize)
+    }
+
+    /// Whether a regiment's centre can stand at `p`.
+    pub fn walkable(&self, p: Vec2) -> bool {
+        if !self.inside(p, 0.0) {
+            return false;
+        }
+        self.cell(p).is_none_or(|c| self.clear[c] >= CLEARANCE)
+    }
+
+    /// Ground cost at `p`: 1 open, higher slow, 0 blocked.
+    pub fn cost(&self, p: Vec2) -> u8 {
+        self.cell(p).map_or(1, |c| self.cost[c])
+    }
+
+    /// Whether `p` is on the map with `margin` tiles to spare.
+    pub fn inside(&self, p: Vec2, margin: f32) -> bool {
+        if self.map_tiles == 0 {
+            return true;
+        }
+        let hi = self.map_tiles as f32 - margin;
+        p.x >= margin && p.y >= margin && p.x <= hi && p.y <= hi
+    }
+
+    /// `p` moved onto the map, `margin` tiles in from the edge.
+    pub fn clamp(&self, p: Vec2, margin: f32) -> Vec2 {
+        if self.map_tiles == 0 {
+            return p;
+        }
+        let hi = self.map_tiles as f32 - margin;
+        Vec2::new(p.x.clamp(margin, hi), p.y.clamp(margin, hi))
+    }
+
+    /// The nearest place within `reach` tiles of `p` where a regiment can
+    /// stand, searching outward in rings half a tile apart.
+    pub fn nearest_walkable(&self, p: Vec2, reach: f32) -> Option<Vec2> {
+        let p = self.clamp(p, 2.0);
+        if self.walkable(p) {
+            return Some(p);
+        }
+        let rings = (reach * 2.0) as i32;
+        for ring in 1..=rings {
+            let r = ring as f32 * 0.5;
+            // Points around the ring about half a tile apart.
+            let steps = (r * 12.0) as i32;
+            for k in 0..steps {
+                let a = k as f32 / steps as f32;
+                // A square ring, walked without trigonometry so every
+                // platform finds the same point.
+                let q = Vec2::from(square_ring(a)) * r;
+                let c = p + q;
+                if self.walkable(c) {
+                    return Some(c);
+                }
+            }
+        }
+        None
+    }
+
+    fn measure_clearance(&mut self) {
+        let side = self.side;
+        let at = |clear: &[u8], x: i32, y: i32| -> u16 {
+            if x < 0 || y < 0 || x >= side || y >= side {
+                0
+            } else {
+                clear[(y * side + x) as usize] as u16
+            }
+        };
+        for y in 0..side {
+            for x in 0..side {
+                let i = (y * side + x) as usize;
+                if self.cost[i] == BLOCKED {
+                    continue;
+                }
+                let c = &self.clear;
+                let d = at(c, x - 1, y)
+                    .min(at(c, x - 1, y - 1))
+                    .min(at(c, x, y - 1))
+                    .min(at(c, x + 1, y - 1));
+                self.clear[i] = (d + 1).min(255) as u8;
+            }
+        }
+        for y in (0..side).rev() {
+            for x in (0..side).rev() {
+                let i = (y * side + x) as usize;
+                if self.clear[i] == 0 {
+                    continue;
+                }
+                let c = &self.clear;
+                let d = at(c, x + 1, y)
+                    .min(at(c, x + 1, y + 1))
+                    .min(at(c, x, y + 1))
+                    .min(at(c, x - 1, y + 1));
+                self.clear[i] = self.clear[i].min((d + 1).min(255) as u8);
+            }
+        }
+    }
+}
+
+/// A point on the unit square's outline (corners at ±1), `a` of the way round.
+fn square_ring(a: f32) -> [f32; 2] {
+    let t = a * 8.0;
+    match t as i32 {
+        0 | 7 => [1.0, if t < 1.0 { t } else { t - 8.0 }],
+        1 | 2 => [1.0 - (t - 1.0), 1.0],
+        3 | 4 => [-1.0, 1.0 - (t - 3.0)],
+        _ => [-1.0 + (t - 5.0), -1.0],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_the_sims_idea_of_walkable() {
+        use gc_fixed::FxVec2;
+        use gc_sim::scenario::{DRILL_UNITS, ribs_map};
+        use gc_sim::{Capacities, MatchSetup, World};
+        let nav = ribs_map(256);
+        let world = World::new(&MatchSetup {
+            seed: 1,
+            capacities: Capacities { regiments: 8 },
+            units: &DRILL_UNITS,
+            map_tiles: 256,
+            nav: &nav,
+            teams: &[],
+        });
+        let t = Terrain::new(&nav, 256);
+        for y in (3..253).step_by(3) {
+            for x in (3..253).step_by(3) {
+                let p = Vec2::new(x as f32 + 0.25, y as f32 + 0.25);
+                let sim = world.nav().walkable(FxVec2::new(
+                    gc_fixed::Fx::from_raw((p.x * 65536.0) as i32),
+                    gc_fixed::Fx::from_raw((p.y * 65536.0) as i32),
+                ));
+                assert_eq!(t.walkable(p), sim, "at {p}");
+            }
+        }
+        // The lake in the middle is not; somewhere near its shore is.
+        let centre = Vec2::splat(128.0);
+        assert!(!t.walkable(centre));
+        let shore = t.nearest_walkable(centre, 30.0).unwrap();
+        assert!(t.walkable(shore));
+        assert!(shore.distance(centre) > 10.0);
+    }
+
+    #[test]
+    fn square_ring_goes_all_the_way_round() {
+        let pts: Vec<[f32; 2]> = (0..16).map(|k| square_ring(k as f32 / 16.0)).collect();
+        assert!(
+            pts.iter().all(|p| p[0].abs().max(p[1].abs()) == 1.0),
+            "{pts:?}"
+        );
+        assert!(pts.iter().any(|p| p[0] < 0.0) && pts.iter().any(|p| p[1] < 0.0));
+    }
+}

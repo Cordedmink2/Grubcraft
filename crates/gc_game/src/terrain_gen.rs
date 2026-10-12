@@ -8,6 +8,18 @@
 
 use glam::Vec2;
 
+/// Centres of the four start plateaus: north-west, north-east, south-west,
+/// south-east (north is towards smaller z, where the camera looks).
+pub fn start_positions(tiles: u32) -> [Vec2; 4] {
+    let n = tiles as f32;
+    [
+        Vec2::new(n * 0.25, n * 0.25),
+        Vec2::new(n * 0.75, n * 0.25),
+        Vec2::new(n * 0.25, n * 0.75),
+        Vec2::new(n * 0.75, n * 0.75),
+    ]
+}
+
 pub struct Heightmap {
     pub samples_per_tile: u32,
     /// Samples per side: `tiles * samples_per_tile + 1`.
@@ -24,12 +36,7 @@ impl Heightmap {
         let max_height = 14.0;
         let noise = Noise { seed: seed as u32 };
         let n = tiles as f32;
-        let starts = [
-            Vec2::new(n * 0.25, n * 0.25),
-            Vec2::new(n * 0.75, n * 0.25),
-            Vec2::new(n * 0.25, n * 0.75),
-            Vec2::new(n * 0.75, n * 0.75),
-        ];
+        let starts = start_positions(tiles);
         let centre = Vec2::splat(n * 0.5);
 
         let mut heights = Vec::with_capacity((size * size) as usize);

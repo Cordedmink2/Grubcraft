@@ -8,16 +8,17 @@ Every third-party crate the game uses, why, and what it costs. Policy: see [10 Â
 |---|---|---|---|
 | `wgpu` 30 | `gc_render` | One GPU API over Metal (Mac), DirectX 12 (Windows) and Vulkan | The largest dependency. Built with only the `metal`, `dx12`, `vulkan`, `wgsl` backends/frontends; GL and WebGPU are off |
 | `winit` 0.30 | `gc_game` | Windows, input, Mac trackpad gestures | 0.31 is still in beta; move when it's stable |
-| `glam` 0.34 | `gc_render`, `gc_game` | Vector/matrix maths for rendering and camera (floats, never in the sim) | Small, SIMD |
+| `glam` 0.34 | `gc_render`, `gc_game`, `gc_ai` | Vector/matrix maths for rendering, the camera and the computer players' tactics (floats, never in the sim) | Small, SIMD |
 | `bytemuck` 1 | `gc_render` | Safe casting of instance data to GPU bytes | Tiny |
 | `pollster` 1 | `gc_game` | Blocks on wgpu's async setup calls; avoids an async runtime | Tiny |
 | `xxhash-rust` 0.8 (`xxh3` only) | `gc_sim`, `gc_assets` | Fast, well-distributed per-tick state hashes for desync detection; asset ids | Pure Rust, `no_std` |
 | `cpal` 0.16 | `gc_audio` | Sound-card output: CoreAudio (Mac), WASAPI (Windows), ALSA (Linux) | Built with default features off, so no JACK or ASIO. On Linux the build needs the ALSA headers (`libasound2-dev`); CI installs them. Mixing, decoding and voice limits are ours |
+| `ron` 0.10, `serde` 1 | `gc_ui`, `gc_ai` | Read and write the player's settings file; read the computer players' personalities (`data/ai/personalities.ron`, embedded in the executable and parsed once) | Small; also used at build time, below |
 | `tracy-client` 0.18 | `gc_game` (`profile` feature only) | Frame and tick profiling with Tracy | Off by default; when on, builds Tracy's C++ client. Not in normal builds |
 
 ## Build time only (baker)
 
-These run in `gc_bake` and in `gc_game`'s build script; none of them end up in the game executable.
+These run in `gc_bake` and in `gc_game`'s build script. `blake3` never reaches the game executable; `ron` and `serde` do, for the settings file and the AI personalities (above).
 
 | Crate | Why | Cost and notes |
 |---|---|---|

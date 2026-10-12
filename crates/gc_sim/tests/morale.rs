@@ -19,6 +19,7 @@ fn world_with(units: &[UnitStats]) -> World {
         units,
         map_tiles: 256,
         nav: &[],
+        teams: &[],
     })
 }
 

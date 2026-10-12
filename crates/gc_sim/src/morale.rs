@@ -24,7 +24,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 
 use crate::combat::{Combat, Placement, Whose};
 use crate::regiments::Regiments;
-use crate::{RegimentHandle, TICKS_PER_SECOND, UnitStats};
+use crate::{RegimentHandle, Stances, TICKS_PER_SECOND, UnitStats};
 
 /// Morale is kept in tenths of a point.
 pub const SCALE: i16 = 10;
@@ -96,11 +96,12 @@ pub(crate) fn fresh(stats: &UnitStats) -> i16 {
 
 /// Borrow where everyone is without borrowing the rest of the pool.
 macro_rules! placement {
-    ($regs:expr) => {
+    ($regs:expr, $stances:expr) => {
         Placement {
             alive: &$regs.alive,
             owner: &$regs.owner,
             position: &$regs.position,
+            stances: $stances,
         }
     };
 }
@@ -110,6 +111,7 @@ pub(crate) fn update(
     regs: &mut Regiments,
     combat: &Combat,
     units: &[UnitStats],
+    stances: &Stances,
     tick: u32,
     map_tiles: u32,
 ) {
@@ -122,9 +124,9 @@ pub(crate) fn update(
         let stats = &units[regs.unit[i] as usize];
         if stats.morale != 0 {
             if regs.morale_state[i].broken() {
-                flee(regs, combat, i, map_tiles);
+                flee(regs, combat, stances, i, map_tiles);
             } else {
-                check(regs, combat, stats, i, tick, map_tiles);
+                check(regs, combat, stances, stats, i, tick, map_tiles);
             }
         }
         regs.losses[i] = 0;
@@ -136,6 +138,7 @@ pub(crate) fn update(
 fn check(
     regs: &mut Regiments,
     combat: &Combat,
+    stances: &Stances,
     stats: &UnitStats,
     i: usize,
     tick: u32,
@@ -152,7 +155,7 @@ fn check(
         if (regs.models[i] as i32) * 2 < full {
             tenths -= (HALF_STRENGTH_DRAIN * SCALE) as i32;
         }
-        let (friends, enemies) = local_strength(regs, combat, i);
+        let (friends, enemies) = local_strength(regs, combat, stances, i);
         if enemies >= friends.max(1) * 3 {
             tenths -= (OUTNUMBERED_3 * SCALE) as i32;
         } else if enemies >= friends.max(1) * 2 {
@@ -169,7 +172,7 @@ fn check(
     if morale > 0 {
         regs.morale_state[i] = steady_or_wavering(morale);
     } else {
-        rout(regs, combat, i, tick, map_tiles);
+        rout(regs, combat, stances, i, tick, map_tiles);
     }
 }
 
@@ -182,8 +185,8 @@ fn steady_or_wavering(morale: i16) -> MoraleState {
 }
 
 /// Soldiers still fighting near regiment `i`: (its side's, the enemy's).
-fn local_strength(regs: &Regiments, combat: &Combat, i: usize) -> (u32, u32) {
-    let at = placement!(regs);
+fn local_strength(regs: &Regiments, combat: &Combat, stances: &Stances, i: usize) -> (u32, u32) {
+    let at = placement!(regs, stances);
     let (p, owner, local) = (regs.position[i], regs.owner[i], Fx::from_int(LOCAL_TILES));
     let (mut friends, mut enemies) = (0u32, 0u32);
     combat.each_near(&at, p, local, Whose::Friends(owner), |j| {
@@ -200,7 +203,14 @@ fn local_strength(regs: &Regiments, combat: &Combat, i: usize) -> (u32, u32) {
 }
 
 /// Regiment `i` breaks and runs.
-fn rout(regs: &mut Regiments, combat: &Combat, i: usize, tick: u32, map_tiles: u32) {
+fn rout(
+    regs: &mut Regiments,
+    combat: &Combat,
+    stances: &Stances,
+    i: usize,
+    tick: u32,
+    map_tiles: u32,
+) {
     let again = regs.last_rout[i] != 0
         && tick + 1 - regs.last_rout[i] <= SHATTER_SECONDS * TICKS_PER_SECOND;
     regs.morale_state[i] = if again {
@@ -228,7 +238,7 @@ fn rout(regs: &mut Regiments, combat: &Combat, i: usize, tick: u32, map_tiles: u
         regs.owner[i],
         Fx::from_int(ROUT_SHOCK_TILES),
     );
-    let at = placement!(regs);
+    let at = placement!(regs, stances);
     let morale = &mut regs.morale;
     let state = &mut regs.morale_state;
     combat.each_near(&at, p, near, Whose::Friends(owner), |j| {
@@ -245,15 +255,15 @@ fn rout(regs: &mut Regiments, combat: &Combat, i: usize, tick: u32, map_tiles: u
             state[j] = steady_or_wavering(morale[j]);
         }
     });
-    flee(regs, combat, i, map_tiles);
+    flee(regs, combat, stances, i, map_tiles);
 }
 
 /// Steer a routing regiment away from the enemy, and rally (or, shattered,
 /// stand) once the enemy has been gone long enough.
-fn flee(regs: &mut Regiments, combat: &Combat, i: usize, map_tiles: u32) {
+fn flee(regs: &mut Regiments, combat: &Combat, stances: &Stances, i: usize, map_tiles: u32) {
     let p = regs.position[i];
     let owner = regs.owner[i];
-    let at = placement!(regs);
+    let at = placement!(regs, stances);
     let mut away = (0i64, 0i64);
     let mut near = false;
     combat.each_near(

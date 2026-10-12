@@ -20,10 +20,12 @@ pub mod morale;
 pub mod nav;
 mod regiments;
 pub mod scenario;
+pub mod stances;
 
 pub use hash::StateHasher;
 pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
+pub use stances::Stances;
 
 use combat::Combat;
 use formation::MAX_MODELS;
@@ -152,6 +154,9 @@ pub struct MatchSetup<'a> {
     /// blocked, 1 open, higher is slow going routes avoid. Empty means an
     /// open plane where regiments walk in straight lines.
     pub nav: &'a [u8],
+    /// Each party's team (see [`Stances`]): allies share a number. Empty
+    /// means every party fights every other.
+    pub teams: &'a [u8],
 }
 
 /// A player's order. The only way anything outside the sim changes the sim.
@@ -211,6 +216,7 @@ pub struct World {
     units: Vec<UnitStats>,
     map_tiles: u32,
     nav: Nav,
+    stances: Stances,
     pub regiments: Regiments,
 }
 
@@ -228,6 +234,7 @@ impl World {
                 setup.map_tiles,
                 setup.capacities.regiments as usize,
             ),
+            stances: Stances::from_teams(setup.teams),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
@@ -256,12 +263,14 @@ impl World {
                 stats.commands_rejected += 1;
             }
         }
-        self.combat.before_move(&mut self.regiments, &self.units);
+        self.combat
+            .before_move(&mut self.regiments, &self.units, &self.stances);
         self.nav.plan(&mut self.regiments);
         self.regiments.step_movement(&mut self.nav);
         self.combat.after_move(
             &mut self.regiments,
             &self.units,
+            &self.stances,
             self.tick,
             &mut self.combat_rng,
         );
@@ -269,6 +278,7 @@ impl World {
             &mut self.regiments,
             &self.combat,
             &self.units,
+            &self.stances,
             self.tick,
             self.map_tiles,
         );
@@ -311,10 +321,16 @@ impl World {
                     _ => false,
                 }
             }
-            Command::Attack { regiment, target } => match self.regiments.owner(regiment) {
-                Some(owner) if owner == pc.player => self.regiments.attack(regiment, target),
-                _ => false,
-            },
+            Command::Attack { regiment, target } => {
+                match (self.regiments.owner(regiment), self.regiments.owner(target)) {
+                    (Some(owner), Some(enemy))
+                        if owner == pc.player && self.stances.hostile(owner, enemy) =>
+                    {
+                        self.regiments.attack(regiment, target)
+                    }
+                    _ => false,
+                }
+            }
             Command::RemoveRegiment { regiment } => self.regiments.despawn(regiment),
             Command::TuneUnit { unit, stats } => {
                 let Some(slot) = self.units.get_mut(unit as usize) else {
@@ -325,6 +341,16 @@ impl World {
                 true
             }
         }
+    }
+
+    /// Who fights whom.
+    pub fn stances(&self) -> &Stances {
+        &self.stances
+    }
+
+    /// Whether `a`'s regiments fight `b`'s (see [`Stances::hostile`]).
+    pub fn hostile(&self, a: PlayerId, b: PlayerId) -> bool {
+        self.stances.hostile(a, b)
     }
 
     /// The walkable ground and the route searches in progress.

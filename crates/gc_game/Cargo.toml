@@ -18,6 +18,7 @@ profile = ["dep:tracy-client"]
 
 [dependencies]
 bytemuck.workspace = true
+gc_ai.workspace = true
 gc_assets.workspace = true
 gc_audio.workspace = true
 gc_bake.workspace = true

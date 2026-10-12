@@ -29,10 +29,11 @@ pub enum Tag {
     Ui,
     Net,
     Assets,
+    Ai,
 }
 
 impl Tag {
-    pub const ALL: [Tag; 9] = [
+    pub const ALL: [Tag; 10] = [
         Tag::Other,
         Tag::Sim,
         Tag::Map,
@@ -42,6 +43,7 @@ impl Tag {
         Tag::Ui,
         Tag::Net,
         Tag::Assets,
+        Tag::Ai,
     ];
 
     pub fn name(self) -> &'static str {
@@ -55,6 +57,7 @@ impl Tag {
             Tag::Ui => "ui",
             Tag::Net => "net",
             Tag::Assets => "assets",
+            Tag::Ai => "ai",
         }
     }
 }

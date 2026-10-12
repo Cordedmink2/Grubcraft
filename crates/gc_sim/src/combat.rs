@@ -22,7 +22,7 @@ use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
 use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_REAR, WAVERING_DAMAGE_PERCENT};
 use crate::regiments::{RegimentHandle, Regiments, hash_handle};
-use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
+use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
 
 /// Ticks between a regiment's melee blows.
 pub const STRIKE_INTERVAL: u32 = TICKS_PER_SECOND;
@@ -43,7 +43,8 @@ const CELL_TILES: i32 = 16;
 const BUCKETS: usize = 1024;
 const EMPTY: u32 = u32::MAX;
 /// The grid keeps each owner's regiments apart (by `owner % OWNER_SLOTS`) so a
-/// search for enemies skips crowds of friends.
+/// search for enemies skips crowds of its own regiments, and a search for
+/// friends only visits its own and its allies'.
 const OWNER_SLOTS: usize = 8;
 /// Grid cells one regiment may occupy before it is checked by everyone instead.
 const MAX_CELLS_PER_REGIMENT: usize = 9;
@@ -160,6 +161,7 @@ pub(crate) struct Placement<'a> {
     pub alive: &'a [bool],
     pub owner: &'a [PlayerId],
     pub position: &'a [FxVec2],
+    pub stances: &'a Stances,
 }
 
 /// Whose regiments a search around a point visits.
@@ -297,7 +299,8 @@ impl Combat {
 
     /// Call `f` for every live regiment not owned by `friend` whose footprint
     /// may come within `range` of `p` (a superset: callers check the real
-    /// distance and owner). A regiment can be visited more than once.
+    /// distance and whether it is hostile). A regiment can be visited more
+    /// than once.
     fn near_enemies(&self, p: FxVec2, range: Fx, friend: PlayerId, mut f: impl FnMut(usize)) {
         let (x0, y0, x1, y1) = Self::cells(p, range);
         let skip = friend as usize % OWNER_SLOTS;
@@ -319,7 +322,8 @@ impl Combat {
     }
 
     /// Call `f` once for every live regiment of `whose` whose centre is within
-    /// `range` of `p`, as the grid saw them at the start of this tick.
+    /// `range` of `p`, as the grid saw them at the start of this tick. Friends
+    /// are the party's own regiments and its allies'.
     pub(crate) fn each_near(
         &self,
         regs: &Placement,
@@ -339,14 +343,20 @@ impl Combat {
             Whose::Enemies(owner) => (owner, false),
             Whose::Friends(owner) => (owner, true),
         };
-        let wanted = owner as usize % OWNER_SLOTS;
+        // Enemies can be in any slot but the party's own; friends only in
+        // the slots of the party and its allies.
+        let slots = if friends {
+            regs.stances.friend_slots(owner, OWNER_SLOTS)
+        } else {
+            !(1 << (owner as usize % OWNER_SLOTS))
+        };
         let range_sq = range.raw() as i64 * range.raw() as i64;
         let mut visit = |j: usize| {
             if self.seen[j].get() == search || !regs.alive[j] {
                 return;
             }
             self.seen[j].set(search);
-            if (regs.owner[j] == owner) != friends {
+            if regs.stances.hostile(owner, regs.owner[j]) == friends {
                 return;
             }
             if ((regs.position[j] - p).length_sq_raw() as i64) <= range_sq {
@@ -357,7 +367,7 @@ impl Combat {
             for x in x0..=x1 {
                 let b = Self::bucket_of(x, y) * OWNER_SLOTS;
                 for slot in 0..OWNER_SLOTS {
-                    if (slot == wanted) != friends {
+                    if slots & (1 << slot) == 0 {
                         continue;
                     }
                     let mut e = self.head[b + slot];
@@ -374,7 +384,12 @@ impl Combat {
     }
 
     /// Contacts, charges and chasing, before anyone moves this tick.
-    pub(crate) fn before_move(&mut self, regs: &mut Regiments, units: &[UnitStats]) {
+    pub(crate) fn before_move(
+        &mut self,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        stances: &Stances,
+    ) {
         self.build_grid(regs, units);
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
@@ -390,7 +405,7 @@ impl Combat {
             let blocks = &self.blocks;
             let radius = &self.radius;
             self.near_enemies(me.centre, radius[i], regs.owner[i], |j| {
-                if regs.owner[j] == regs.owner[i] || !regs.alive[j] {
+                if !stances.hostile(regs.owner[i], regs.owner[j]) || !regs.alive[j] {
                     return;
                 }
                 let them = &blocks[j];
@@ -462,6 +477,7 @@ impl Combat {
         &mut self,
         regs: &mut Regiments,
         units: &[UnitStats],
+        stances: &Stances,
         tick: u32,
         rng: &mut Pcg32,
     ) {
@@ -519,7 +535,7 @@ impl Combat {
             {
                 continue;
             }
-            let Some(j) = self.pick_target(regs, i, stats.range) else {
+            let Some(j) = self.pick_target(regs, stances, i, stats.range) else {
                 continue;
             };
             let to = regs.position[j] - regs.position[i];
@@ -592,7 +608,13 @@ impl Combat {
         }
     }
 
-    fn pick_target(&self, regs: &Regiments, i: usize, range: Fx) -> Option<usize> {
+    fn pick_target(
+        &self,
+        regs: &Regiments,
+        stances: &Stances,
+        i: usize,
+        range: Fx,
+    ) -> Option<usize> {
         let me = regs.position[i];
         if let Some(j) = regs.attack_target[i].and_then(|t| regs.resolve(t))
             && (regs.position[j] - me).length() <= range
@@ -602,7 +624,7 @@ impl Combat {
         let mut best: Option<(u64, usize)> = None;
         let range_sq = (range.raw() as i64 * range.raw() as i64) as u64;
         self.near_enemies(me, range, regs.owner[i], |j| {
-            if !regs.alive[j] || regs.owner[j] == regs.owner[i] {
+            if !regs.alive[j] || !stances.hostile(regs.owner[i], regs.owner[j]) {
                 return;
             }
             let d = (regs.position[j] - me).length_sq_raw();

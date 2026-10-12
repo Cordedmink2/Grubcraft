@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use crate::draw::{Rect, fit};
 use crate::lobby::{
-    Faction, GameMode, LobbySettings, MAPS, MatchStart, NetEvent, Network, PLAYER_COLORS, Profile,
-    SlotEdit, SlotKind, Tempo,
+    AI_LEVELS, Faction, GameMode, LobbySettings, MAPS, MatchStart, NetEvent, Network,
+    PLAYER_COLORS, Profile, SlotEdit, SlotKind, Tempo,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -514,8 +514,8 @@ impl Menu {
                 &fit(&format!("{}{you}", slot.name), 17),
             );
             let ctl_h = row_h - 16;
-            let faction_r = Rect::new(row.x + 250, row.y + 8, 230, ctl_h);
-            let team_r = Rect::new(faction_r.right() + 8, row.y + 8, 130, ctl_h);
+            let faction_r = Rect::new(row.x + 250, row.y + 8, 200, ctl_h);
+            let team_r = Rect::new(faction_r.right() + 8, row.y + 8, 120, ctl_h);
             let status_r = Rect::new(
                 team_r.right() + 8,
                 row.y + 8,
@@ -539,7 +539,17 @@ impl Menu {
             }
             match slot.kind {
                 SlotKind::Ai if lobby.is_host => {
-                    if ui.button(status_r, "Remove", ButtonStyle::Normal, true) {
+                    // How well it plays, and a way to send it home.
+                    let remove_w = 80;
+                    let level_r =
+                        Rect::new(status_r.x, status_r.y, status_r.w - remove_w - 8, ctl_h);
+                    let remove_r =
+                        Rect::new(status_r.right() - remove_w, status_r.y, remove_w, ctl_h);
+                    let mut level = slot.ai_level as usize;
+                    if ui.stepper(level_r, "", &mut level, &AI_LEVELS) {
+                        self.net.edit_slot(i, SlotEdit::AiLevel(level as u8));
+                    }
+                    if ui.button(remove_r, "Remove", ButtonStyle::Normal, true) {
                         self.net.edit_slot(i, SlotEdit::Kind(SlotKind::Open));
                     }
                 }
@@ -553,7 +563,10 @@ impl Menu {
                     let (text, color) = if slot.kind == SlotKind::Human && is_me && lobby.is_host {
                         ("Host", theme::ACCENT)
                     } else if slot.kind == SlotKind::Ai {
-                        ("AI", theme::MUTED)
+                        (
+                            AI_LEVELS[slot.ai_level as usize % AI_LEVELS.len()],
+                            theme::MUTED,
+                        )
                     } else if slot.ready {
                         ("Ready", theme::GOOD)
                     } else {
@@ -948,6 +961,10 @@ mod tests {
         h.click("Add AI");
         assert!(h.has("AI 2"));
         assert!(h.has("Everyone is ready."));
+        // The AI starts as a Veteran; the host can make it a General.
+        assert!(h.has("Veteran"));
+        h.click("Veteran");
+        assert!(h.has("General"));
         let (x, y) = h.text_pos("Start");
         h.frame(UiInput {
             mouse: (x, y),
@@ -959,6 +976,7 @@ mod tests {
             MenuAction::StartMatch(m) => {
                 assert_eq!(m.players.len(), 2);
                 assert_eq!(m.local_player, 0);
+                assert_eq!(AI_LEVELS[m.players[1].ai_level as usize], "General");
             }
             other => panic!("expected StartMatch, got {other:?}"),
         }

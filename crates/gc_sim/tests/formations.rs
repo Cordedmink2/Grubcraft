@@ -19,6 +19,7 @@ fn one_regiment() -> (World, RegimentHandle) {
         units: &DRILL_UNITS,
         map_tiles: 256,
         nav: &[],
+        teams: &[],
     });
     w.tick(&[PlayerCommand {
         player: 0,
