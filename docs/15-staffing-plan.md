@@ -119,7 +119,7 @@ A and B both touch `gc_sim`, so they split by module and B starts once A's inter
 |---|---|---|
 | **A · World systems** | Opus | Grubfolk hamlets (market, mercenaries, rumours, raiding, reputation), creep camps and items, Shrines, Titan Events (Tremors and Bloodseeps, Marrow Bloom, Heartbeat), "Restage this battle" (snapshot and re-seed) |
 | **B · Learnability** | Sonnet | Tutorial "First Harvest", Clans and Brood primers, contextual hints, codex. Opus reviews any tutorial scripting hook added to the sim; Haiku drafts codex entries from the design docs |
-| **C · Audio** | Sonnet | `gc_audio`: mixer, adaptive music layers, unit voices, battle ambience. Haiku sources and licence-checks royalty-free audio |
+| **C · Audio** | Sonnet | `gc_audio`: unit voices, faction themes, battle ambience (the mixer, first sound set and adaptive music were built early, as a separate Sonnet thread). Haiku sources and licence-checks royalty-free audio |
 | **D · Maps and post-game** | Sonnet | Hollow Lung and Marrowfen, map validator improvements, post-game screen with graphs |
 | **Balance pass** | Opus | Haiku helpers run hundreds of headless matches through `gc_replay` with scripted players and tabulate win rates; Opus reads the numbers and proposes changes; **Mario** and friends confirm by playing |
 | Exit: a newcomer learns and wins after the tutorial | | **A real newcomer** has to try it |

@@ -63,7 +63,7 @@ grubcraft/
 │  ├─ gc_present/    interpolation, soldier puppets, effects triggers       (later)
 │  ├─ gc_render/     wgpu renderer: terrain, instancing, VAT, fog, UI batch
 │  ├─ gc_ui/         game UI (immediate mode, MSDF text)                     (later)
-│  ├─ gc_audio/      mixer, voices, decoders, music layers                   (later)
+│  ├─ gc_audio/      mixer, voices, ADPCM decoder, music layers, cpal output
 │  ├─ gc_assets/     pack format, mmap loader, asset ids
 │  ├─ gc_platform/   per-OS glue: paths, local-network permission, memory stats
 │  └─ gc_game/       the application: states, input mapping, glue
@@ -272,6 +272,7 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 - Effects stored as IMA ADPCM (4:1, decoded per sample while mixing, so they stay compressed in memory).
 - Music streamed from the pack in small chunks, decoded on the fly; adaptive layers crossfade on battle intensity.
 - The main thread sends play/stop/parameter events through a lock-free queue; the audio thread never allocates.
+- **Built so far:** `gc_audio` has the ADPCM codec, the sound bank format, the lock-free queue (a ring of atomics holding one packed command per slot, no `unsafe`), the mixer (32 effect voices, at most 8 of any one sound, lowest priority then quietest voice stolen first; two music layers crossfaded by battle intensity; soft clipping) and `cpal` output (`f32` or `i16` devices, any channel count). The mixer has no device code and is unit-tested without a sound card. Music is held as ADPCM in the embedded bank and looped, not streamed from disk yet (two 19-second loops are about 300 KB); streamed Ogg comes with real recorded music. `gc_sim` knows nothing about audio: `gc_game/src/sounds.rs` reads the same public views the renderer reads (regiments, volleys in flight) after each tick and plays a sound for each change, positioned by distance and side relative to the camera. If there is no output device the game runs silently. Unit voices and per-faction music come later.
 
 ## Platform specifics
 

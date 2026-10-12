@@ -18,6 +18,7 @@ profile = ["dep:tracy-client"]
 
 [dependencies]
 gc_assets.workspace = true
+gc_audio.workspace = true
 gc_data.workspace = true
 gc_fixed.workspace = true
 gc_platform.workspace = true

@@ -16,6 +16,10 @@
 //! number recalls it (Shift adds it), and pressing it twice quickly centres
 //! the camera on it.
 //!
+//! Sound: effects and music play through the default output device; they
+//! follow the camera (quieter and panned by distance). M mutes everything, N
+//! turns the music off or on. Battle music fades in as regiments engage.
+//!
 //! Camera: arrow keys / screen edges / two-finger scroll pan; mouse wheel or
 //! pinch zooms; Alt + middle-drag or two-finger rotate turns the view;
 //! middle-click or Home resets the rotation; ` (backquote) or F11 toggles the
@@ -24,7 +28,8 @@
 //!
 //! Flags: `--seed N` picks the match seed; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
-//! `--overlay` starts with the dev overlay shown; `--latency 1|2|3` sets
+//! `--overlay` starts with the dev overlay shown; `--no-audio` never opens
+//! the sound card; `--latency 1|2|3` sets
 //! frames in flight; `--render-scale F` renders at a
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
 //! parts of the frame off to measure what they cost.
@@ -33,6 +38,7 @@ mod camera;
 mod data;
 mod profile;
 mod puppets;
+mod sounds;
 mod terrain_gen;
 
 use std::sync::Arc;
@@ -116,6 +122,7 @@ struct Options {
     seed: u64,
     frames: Option<u64>,
     overlay: bool,
+    audio: bool,
     render: RendererOptions,
 }
 
@@ -124,12 +131,17 @@ fn parse_args() -> Options {
         seed: 0x6772_7562,
         frames: None,
         overlay: false,
+        audio: true,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         if flag == "--overlay" {
             opts.overlay = true;
+            continue;
+        }
+        if flag == "--no-audio" {
+            opts.audio = false;
             continue;
         }
         let value = args.next().unwrap_or_default();
@@ -173,7 +185,7 @@ fn parse_args() -> Options {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--seed N] [--frames N] [--overlay] [--latency 1|2|3] \
+        "usage: grubcraft [--seed N] [--frames N] [--overlay] [--no-audio] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
     );
     std::process::exit(2);
@@ -219,6 +231,8 @@ struct Running {
     show_blocked: bool,
     /// Data hash and size, for the overlay.
     data_label: String,
+    /// None with `--no-audio` or when there is no sound output.
+    sounds: Option<sounds::Sounds>,
 }
 
 /// Process memory recorded at startup milestones, to see what each costs.
@@ -398,6 +412,14 @@ impl App {
                 .join(", ")
         );
 
+        let sounds = if opts.audio {
+            tagged_alloc::scope(Tag::Audio, || {
+                sounds::Sounds::start(capacities.regiments as usize)
+            })
+        } else {
+            None
+        };
+
         let now = Instant::now();
         self.running = Some(Running {
             window,
@@ -444,6 +466,7 @@ impl App {
                 game_data.units.len()
             ),
             memory_timeline: std::mem::take(&mut self.memory_timeline),
+            sounds,
         });
         Ok(())
     }
@@ -529,6 +552,16 @@ impl ApplicationHandler for App {
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
                         }
+                        KeyCode::KeyM if down && !event.repeat => {
+                            if let Some(s) = &mut r.sounds {
+                                s.toggle_mute();
+                            }
+                        }
+                        KeyCode::KeyN if down && !event.repeat => {
+                            if let Some(s) = &mut r.sounds {
+                                s.toggle_music();
+                            }
+                        }
                         KeyCode::Escape if down => event_loop.exit(),
                         _ if down && !event.repeat && digit(code).is_some() => {
                             r.control_group(digit(code).unwrap());
@@ -605,6 +638,9 @@ impl Running {
                         None => self.selected.push(h),
                     }
                 }
+                if !self.selected.is_empty() {
+                    self.ui_sound(sounds::UiSound::Select);
+                }
                 self.input.left_down = None;
             }
             (MouseButton::Right, ElementState::Pressed) => {
@@ -620,6 +656,7 @@ impl Running {
                 if let Some(target) = enemy {
                     if !self.selected.is_empty() {
                         self.attack_mark = Some((target, Instant::now()));
+                        self.ui_sound(sounds::UiSound::Attack);
                     }
                     self.human_orders
                         .extend(self.selected.iter().map(|&regiment| PlayerCommand {
@@ -634,6 +671,9 @@ impl Running {
                     })
                 }) {
                     self.plan_order(order);
+                    if !self.group_commands.is_empty() {
+                        self.ui_sound(sounds::UiSound::Move);
+                    }
                     self.human_orders
                         .extend(self.group_commands.iter().map(|&command| PlayerCommand {
                             player: HUMAN,
@@ -643,6 +683,12 @@ impl Running {
                 self.input.right_down = None;
             }
             _ => {}
+        }
+    }
+
+    fn ui_sound(&self, sound: sounds::UiSound) {
+        if let Some(s) = &self.sounds {
+            s.ui(sound);
         }
     }
 
@@ -815,6 +861,9 @@ impl Running {
                 self.selected.push(h);
             }
         }
+        if !self.selected.is_empty() {
+            self.ui_sound(sounds::UiSound::Select);
+        }
         let now = Instant::now();
         let double = matches!(self.last_group_key, Some((k, t)) if k == n && now - t < DOUBLE_TAP);
         self.last_group_key = Some((n, now));
@@ -887,6 +936,9 @@ impl Running {
             let t0 = Instant::now();
             profile::zone!("sim tick");
             tagged_alloc::scope(Tag::Sim, || self.world.tick(&self.pending));
+            if let Some(sounds) = &mut self.sounds {
+                tagged_alloc::scope(Tag::Audio, || sounds.observe(&self.world, &self.camera));
+            }
             let took = t0.elapsed();
             self.stats.tick_time += took;
             self.stats.tick_max = self.stats.tick_max.max(took);
@@ -1175,6 +1227,7 @@ impl Running {
              memory  process {process}   heap {:.1} MB   gpu {:.1} MB\n\
              heap    {}\n\
              data    {}\n\
+             audio   {}\n\
              gpu     {} via {:?}",
             ms(self.stats.frame_max),
             self.world.tick_count(),
@@ -1189,6 +1242,9 @@ impl Running {
             mb(self.renderer.gpu_bytes() as usize),
             heap_tags.join("  "),
             self.data_label,
+            self.sounds
+                .as_ref()
+                .map_or("off".to_string(), |s| s.overlay_line()),
             info.name,
             info.backend,
         );

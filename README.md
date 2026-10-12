@@ -35,10 +35,13 @@ To measure memory on your machine: `cargo run --release -p gc_game -- --frames 6
 | `crates/gc_assets` | Asset pack format: writer and zero-copy reader |
 | `crates/gc_data` | Game data tables (units, factions) as the game reads them |
 | `crates/gc_sim` | The deterministic simulation; runs identically on every machine |
+| `crates/gc_audio` | Sound: ADPCM bank, 32-voice mixer, lock-free command queue, `cpal` output |
 | `crates/gc_platform` | Memory accounting and OS process stats |
 | `crates/gc_render` | wgpu renderer (Metal, DirectX 12, Vulkan) |
 | `crates/gc_game` | The game application |
 | `tools/gc_bake` | Baker: compiles `data/*.ron` (and later art and audio) into the asset pack |
+| `tools/gc_sfx` | Sound generator: synthesises every effect and music loop into `assets/audio/sounds.gcsnd` |
 | `tools/gc_bench` | Headless benchmarks with budget gates |
+| `assets/audio/` | The sound bank and its catalogue |
 | `data/` | Game data in RON: edit these to change units (rebuilt automatically) |
 | `docs/` | Design documents |

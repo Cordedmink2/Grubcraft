@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/gc_fixed",
     "crates/gc_assets",
+    "crates/gc_audio",
     "crates/gc_data",
     "crates/gc_sim",
     "crates/gc_platform",
@@ -10,6 +11,7 @@ members = [
     "crates/gc_game",
     "tools/gc_bake",
     "tools/gc_bench",
+    "tools/gc_sfx",
 ]
 
 [workspace.package]
@@ -22,6 +24,7 @@ rust-version = "1.88"
 [workspace.dependencies]
 gc_fixed = { path = "crates/gc_fixed" }
 gc_assets = { path = "crates/gc_assets" }
+gc_audio = { path = "crates/gc_audio" }
 gc_data = { path = "crates/gc_data" }
 gc_sim = { path = "crates/gc_sim" }
 gc_platform = { path = "crates/gc_platform" }
@@ -30,6 +33,7 @@ gc_bake = { path = "tools/gc_bake" }
 
 blake3 = { version = "1", default-features = false, features = ["pure"] }
 bytemuck = { version = "1.25", features = ["derive"] }
+cpal = { version = "0.16", default-features = false }
 glam = "0.34"
 pollster = "1.0"
 ron = "0.10"

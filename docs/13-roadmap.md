@@ -29,7 +29,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Sandbox: place armies for both sides, slow motion, hot-reload unit stats.
 - Golden replay tests and `field-8000pt-2v2` benchmark.
 - **Exit:** a 1v1 sandbox battle of ~3,000 soldiers looks and feels like Shogun, at 60 fps on the low tier.
-- **Progress (2026-10-12):** M1 is built in eight steps: formations in the sim, soldiers on screen, controls, melee and arrows, morale, pathfinding, sandbox, real art. Step 1 (formations: files, ranks, facing, per-soldier hit points, turning, group moves in line, unit data schema 2) is merged. Step 2 (each soldier drawn as a placeholder puppet that steps into its formation slot) is merged. Step 3 (box select, right-drag lines that set frontage and facing, control groups) is merged. Step 4 (melee with flank, rear and charge bonuses; arrow volleys; right-click an enemy to attack; soldiers fall where they fight; unit data schema 3) is merged. Step 5 (morale: wavering, routing, rallying and shattering; banners over shaken regiments; unit data schema 4 with a morale stat) is merged. Step 6 (pathfinding: a walkable-ground grid from the map, portal search across sectors, smoothed waypoint routes, a per-tick search budget; dotted routes for selected regiments and a view of blocked ground) is in review.
+- **Progress (2026-10-12):** M1 is built in eight steps: formations in the sim, soldiers on screen, controls, melee and arrows, morale, pathfinding, sandbox, real art. Step 1 (formations: files, ranks, facing, per-soldier hit points, turning, group moves in line, unit data schema 2) is merged. Step 2 (each soldier drawn as a placeholder puppet that steps into its formation slot) is merged. Step 3 (box select, right-drag lines that set frontage and facing, control groups) is merged. Step 4 (melee with flank, rear and charge bonuses; arrow volleys; right-click an enemy to attack; soldiers fall where they fight; unit data schema 3) is merged. Step 5 (morale: wavering, routing, rallying and shattering; banners over shaken regiments; unit data schema 4 with a morale stat) is merged. Step 6 (pathfinding: a walkable-ground grid from the map, portal search across sectors, smoothed waypoint routes, a per-tick search budget; dotted routes for selected regiments and a view of blocked ground) is in review. Outside the eight steps, a first audio pass is built: the `gc_audio` mixer and `cpal` output, a generated sound set and two adaptive music loops, wired to volleys, melee and morale.
 
 ### M2 · LAN Battle (first game night)
 *Goal: Mario and friends play Field Battle together over Wi-Fi.*
@@ -56,7 +56,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Grubfolk hamlets (market, mercenaries, rumours, raiding, reputation), creep camps and items, Shrines.
 - Titan Events (Tremors and Bloodseeps, Marrow Bloom, Heartbeat).
 - Tutorial "First Harvest" and faction primers for Clans and Brood; contextual hints; codex.
-- Audio: mixer, adaptive music, unit voices, battle ambience.
+- Audio: unit voices, faction themes, battle-ambience layers (the mixer, a first sound set and adaptive calm/battle music are already built; see [09](09-art-and-audio.md#built-so-far)).
 - Remaining launch maps (Hollow Lung, Marrowfen), map validator.
 - Post-game screen with graphs and "Restage this battle".
 - **Exit:** a newcomer can learn and win a game after the tutorial; first full balance pass.
