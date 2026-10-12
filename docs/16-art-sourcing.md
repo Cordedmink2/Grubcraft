@@ -2,7 +2,25 @@
 
 Candidate free assets for the Ember Clans and the Brood, ready for M1 step 8 (real art). Companion to [09 · Art and Audio](09-art-and-audio.md#where-art-comes-from-practical).
 
-**How this was vetted.** Pages were read on 2026-10-12 (licence lines, formats, contents). The build container's network blocks the asset sites, so **nothing has been downloaded or opened yet**: formats, animation clip names and poly counts below are what the pages say, not what the files contain. Every item needs a quick check at download time (licence line still reads the same, files import into Blender). Keep a copy of each licence page alongside the files in `assets-src/`.
+**How this was vetted.** Pages were read on 2026-10-12 (licence lines, formats, contents). The same day, with open network access, the picks marked **downloaded** below were fetched and their licence lines re-read on the download pages (see the status table next). Animation clip names, rigs and poly counts in the tables are still what the pages say: nothing has been opened in Blender or put through `gc_bake` yet.
+
+## Download status (2026-10-12)
+
+Licence evidence, file lists and SHA-256 hashes are in [`assets-src/MANIFEST.md`](../assets-src/MANIFEST.md); who to credit is in [`CREDITS.md`](../CREDITS.md).
+
+| Set | Status | Where it lives |
+|---|---|---|
+| Kenney Castle Kit, Fantasy Town Kit (GLB + textures) | Downloaded, CC0 confirmed by the pack's `License.txt` | In the repo, `assets-src/kenney/` |
+| Kenney Impact Sounds, RPG Audio, Interface Sounds | Downloaded, CC0 confirmed | In the repo, `assets-src/kenney/` |
+| Kenney Nature Kit | Downloaded, CC0 confirmed | Shared project folder only (10 MB, not needed yet) |
+| Samurai (null-painter-error), Spider (PantherOne) | Downloaded, **CC-BY, credit required** | In the repo, `assets-src/cc-by/` |
+| Ant (mujtaba-io), Alien Bug (CDmir) | Downloaded, CC0 | In the repo, `assets-src/cc0/` |
+| Quaternius: Ultimate Monsters, Ultimate Modular Men, Easy Enemy, RPG Characters | Downloaded, pack pages say CC0 | **Shared project folder only**, never the repo (rule below) |
+| ambientCG Ground 054, Grass 001, Rock 035 (1K JPG) | Downloaded, CC0 | Shared project folder only (29 MB of PBR maps; the bake will keep a subset) |
+| Beetle Golem | **Not downloaded**: CC-BY-**SA** 3.0. Share-alike could pull the game's own models under SA, which is more than a credit | Still rejected |
+| Poly Pizza models, KayKit, Poly Haven | Not downloaded: Poly Pizza blocks the container (403), KayKit needs an itch.io click-through. Not needed for the first import test | Open |
+
+The "shared project folder" is the project's `assets-src/` folder outside the repo.
 
 ## Findings in one paragraph
 
@@ -11,7 +29,8 @@ Free CC0 art gets us **placeholder-grade fantasy soldiers, monsters, castles, te
 ## Licence rules we follow
 
 - **CC0** (Kenney, KayKit, Poly Haven, ambientCG, OpenGameArt items marked CC0): no credit needed, usable commercially, can be modified and shipped inside the game.
-- **Never accept** CC-BY, CC-BY-SA, "free for personal use", or pages with no licence line, even if the model is perfect. Several good samurai, spider and beetle models were rejected for this (list below).
+- **CC-BY** (credit the author): accepted since Mario's decision on 2026-10-12, as long as the game has a credits screen and the author is listed in [`CREDITS.md`](../CREDITS.md).
+- **Never accept** CC-BY-SA, "free for personal use", non-commercial, or pages with no licence line, even if the model is perfect.
 - **Quaternius caveat.** Each Quaternius pack page says CC0, but quaternius.com/license.html now describes a "Quaternius Asset License v1.0" (updated 2026-08-28) that allows free commercial use without credit but **forbids redistributing the raw assets**. Newer packs (for example the Bestiary kit) are explicitly under it; older packs say CC0 on their own page. Either way, shipping them inside a game is fine. The only real difference is that we must not publish the raw files by themselves. **Rule: the repo keeps only the baked game pack and a manifest, never the raw Quaternius files.** This also holds for the Universal Animation Library (QAL, not CC0) and for Mixamo (see below).
 
 ## Ember Clans (samurai)
@@ -67,14 +86,12 @@ Free CC0 art gets us **placeholder-grade fantasy soldiers, monsters, castles, te
 - **Quaternius Universal Animation Library** is a good retarget source but is under the Quaternius licence, not CC0 (repo rule above applies).
 - **Mixamo** (Adobe) allows royalty-free use in games, but not redistributing the raw files, and it is a download-only service with an Adobe login. Usable as a source for baked clips; keep raw FBX out of the repo.
 
-## Rejected (not CC0)
+## Rejected
 
 | Asset | Why |
 |---|---|
-| [3D Lowpoly Samurai with Animations](https://opengameart.org/content/3d-lowpoly-samurai-with-animations-fbx-format) (null-painter-error) | CC-BY 4.0. Best samurai found; could be used with credit if Mario accepts a credits screen, or ask the author for a CC0 / paid licence |
 | Beetle Golem [Animated] | CC-BY-SA 3.0 |
-| Spider [Animated] (PantherOne) | CC-BY 3.0 |
-| Pagoda (Poly by Google), Torii (Hattie Stroud), Shrine (Aidan K McLaughlin) | CC-BY 3.0 |
+| Pagoda (Poly by Google), Torii (Hattie Stroud), Shrine (Aidan K McLaughlin) | CC-BY 3.0: now allowed, not yet downloaded (Poly Pizza is blocked); fetch when needed |
 | Ant on itch.io (GameIdea Studio), Rigged Alien, Alien Hive | No licence named |
 | Moth-ify Me! | Non-commercial, credit required |
 | Poly Pizza / Sketchfab bulk searches | Licence varies per model; accept only after reading each model page |
@@ -82,7 +99,7 @@ Free CC0 art gets us **placeholder-grade fantasy soldiers, monsters, castles, te
 
 ## What to do next
 
-1. **Download and verify** on a machine with open network access (Mario's Mac, or a cloud environment that allows `quaternius.com`, `kenney.nl`, `poly.pizza`, `opengameart.org`, `ambientcg.com`, `polyhaven.com`, `kaylousberg.itch.io`). Record file hashes and the licence line in an `assets-src/MANIFEST.md`.
+1. ~~Download and verify~~ Done for most picks (table above). Original note: on a machine with open network access (Mario's Mac, or a cloud environment that allows `quaternius.com`, `kenney.nl`, `poly.pizza`, `opengameart.org`, `ambientcg.com`, `polyhaven.com`, `kaylousberg.itch.io`). Record file hashes and the licence line in an `assets-src/MANIFEST.md`.
 2. **Import test:** one Quaternius character through `gc_bake` into a bone animation texture and onto screen, before choosing the whole set.
 3. **Commission or model** the gaps: samurai kit parts (kabuto helmet, armour, sashimono banner), Japanese roofs, hive and cocoon pieces, siege carts.
-4. **Decision for Mario:** accept a credits screen for CC-BY art (opens up the best samurai model), or stay strictly CC0.
+4. ~~Decision for Mario: credits screen for CC-BY art~~ Decided 2026-10-12: yes. The samurai and spider are downloaded. **Still to build:** the in-game credits screen that shows `CREDITS.md`.
