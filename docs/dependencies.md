@@ -22,7 +22,7 @@ These run in `gc_bake` and in `gc_game`'s build script; none of them end up in t
 | Crate | Why | Cost and notes |
 |---|---|---|
 | `ron` 0.10 | Parses the human-edited game data in `data/*.ron` | Small |
-| `serde` 1 (`derive`) | Maps RON onto typed definitions with unknown-field errors | Proc-macro build cost only |
+| `serde` 1 (`derive`) | Maps RON onto typed definitions with unknown-field errors; also saves the player's settings (`gc_ui`) | Proc-macro build cost only |
 | `blake3` 1 (`pure`) | Hash of all game data, compared by the lobby so every player runs identical data | `pure` feature: no C or assembly |
 
 ## Development only

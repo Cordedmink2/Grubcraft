@@ -97,7 +97,7 @@ The engine thread (currently running) stays Opus and builds the eight steps in o
 | Desync detection and report files | **Opus alone**, high effort | | Debugging a desync is the archetypal Opus task |
 | Cross-platform determinism CI on golden replays | Opus decides what's hashed | Sonnet writes the macOS/Windows CI jobs; Haiku `ci-triage` | |
 | Replays: record and play back | Opus (format is versioned and hashed) | Haiku tests for round-trip | |
-| LAN discovery, Host/Join screens, lobby, version gate | Opus defines the lobby protocol | **Sonnet** builds the screens, as a `feature-builder` subagent or a second thread once the protocol is frozen | First point where a parallel Sonnet thread is reasonable: it only touches `gc_ui` and `gc_game` |
+| LAN discovery, Host/Join screens, lobby, version gate | Opus defines the lobby protocol | **Sonnet** builds the screens, as a `feature-builder` subagent or a second thread once the protocol is frozen | First point where a parallel Sonnet thread is reasonable: it only touches `gc_ui` and `gc_game`. **Started early (2026-10-12):** a Sonnet thread built the screens against a stub `Network` trait; `gc_net` still has to implement it |
 | Field Battle mode: army builder, deployment, victory conditions | Opus for victory rules and deployment in the sim | Sonnet for the army builder UI; Haiku `data-entry` for point costs | |
 | Two battle maps | Sonnet | Haiku validates with `gc_mapcheck` once it exists | |
 | Packaging: Mac `.app` (ad-hoc signed), Windows `.exe`, zips | **Sonnet** | Haiku writes the release checklist | Platform plumbing with a clear finish line |

@@ -45,6 +45,8 @@ The host's own commands go through the same delay, so hosting gives no advantage
 
 Commands are compact binary (a move order for a 12-regiment selection is ~40 bytes: type, regiment ids as delta varints, quantised target, facing, frontage).
 
+**Built so far:** none of the network; the lobby screens exist ahead of it (see [08 · UI and UX](08-ui-ux.md#menus-and-lobby)). `gc_ui::lobby::Network` is the interface they call (`host`, `join`, `discovered`, `lobby`, `edit_slot`, `edit_settings`, `start_match`, `leave`, `poll`), and `LocalNetwork` is a stand-in that hosts a practice lobby on one machine. `gc_net` implements the trait; the lobby model (slots with name, faction, colour, team, ready, build version) is where the version gate reads each player's build.
+
 ## Session flow
 
 ```

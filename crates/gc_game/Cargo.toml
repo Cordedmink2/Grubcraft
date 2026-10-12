@@ -26,6 +26,7 @@ gc_fixed.workspace = true
 gc_platform.workspace = true
 gc_render.workspace = true
 gc_sim.workspace = true
+gc_ui.workspace = true
 glam.workspace = true
 pollster.workspace = true
 winit.workspace = true
