@@ -58,7 +58,24 @@ The consolidated, testable list of what Grubcraft must do. Each requirement has 
 | MOD-6 | Solo sandbox with free unit placement and slow motion | M | M1 |
 | MOD-7 | "Restage this battle" from a Conquest result into Field Battle | S | M4 |
 | MOD-8 | Regicide and Score victory options | C | — |
-| MOD-9 | Bots | C | — |
+| MOD-9 | AI players in Field Battle and Conquest (see the AI section below) | S | M2/M3 |
+
+## AI and relations (see [18 · AI](18-ai.md))
+
+| ID | Requirement | Pri | Milestone |
+|---|---|---|---|
+| AI-1 | Battle AI for Field Battle and the sandbox: picks an army, deploys, forms a line, flanks, plays the morale game, decides to engage or withdraw | S | M2 |
+| AI-2 | AI plays fair: sees only what its player sees, same rules and command delay, no cheats at any difficulty | M | M2 |
+| AI-3 | AI runs as a player issuing commands on the host; it can never desync a match or change replays and golden hashes | M | M2 |
+| AI-4 | Four difficulties (Recruit, Veteran, General, Warlord) and a handicap (income 50% to 150%) for any slot | S | M2 |
+| AI-5 | Personalities (two per faction), shown in the lobby | S | M2/M3 |
+| AI-6 | Conquest AI for Ember Clans and Brood; AI allies answer pings | S | M3 |
+| AI-7 | Relations ledger (stance, liking, trust, fading memories) between all parties; hamlet reputation built on it | M | M4 |
+| AI-8 | Mercenary companies: hire, serve, desert, word of mouth; parley panel with previewable answers | S | M4 |
+| AI-9 | Conquest AI for Choir and Carrion Concord | S | M5 |
+| AI-10 | AI takes over a disconnected player (lobby option) | C | M6 |
+| AI-11 | Factions met while exploring; diplomacy between players as a lobby option | C | — |
+| AI-12 | Headless AI arena: each difficulty beats the one below at least 70% of the time | S | M3 |
 
 ## Factions, units and combat (see [03 · Factions](03-factions.md), [05 · Combat](05-combat.md))
 

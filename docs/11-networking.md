@@ -76,9 +76,9 @@ Determinism is engineered and tested ([10 · Architecture](10-architecture.md#te
 ## Disconnects and rejoining
 
 - A client silent for 3 s is marked disconnected. Lobby option: **Pause and wait** (default, up to 90 s) or **Continue**.
-- A disconnected player's units do nothing new but still defend themselves by simulation rules. In team games, an ally can take control.
+- A disconnected player's units do nothing new but still defend themselves by simulation rules. In team games, an ally can take control; a later lobby option lets an AI run their army until they return ([18 · AI](18-ai.md#ai-allies)).
 - **Rejoin:** the player relaunches and joins the same host. The host sends the latest snapshot and the commands since; the client fast-forwards. A tick costs 1 to 2 ms, so catching up on a minute of play takes about 2 to 3 seconds.
-- **Host leaves:** at launch the game ends (with an automatic save so it can be resumed). **Host migration** is planned: since every client holds the full state, the client with the best connection becomes the new sequencer from the last turn everyone had, and the others reconnect to it.
+- **Host leaves:** at launch the game ends (with an automatic save so it can be resumed). **Host migration** is planned: since every client holds the full state, the client with the best connection becomes the new sequencer from the last turn everyone had, and the others reconnect to it. AI players move with it: their minds keep nothing that can't be rebuilt from the sim, so the new host restarts them and they re-scout.
 
 ## Save, load and replays
 
@@ -99,4 +99,5 @@ In order of effort:
 
 - **Map hacking is possible** in lockstep, because every machine holds the full state. Among friends this is acceptable; we do not build anti-cheat.
 - **Everyone runs the full simulation**, so the slowest machine sets the ceiling. That is why the simulation budget is tiny ([12 · Performance](12-performance.md)).
+- **AI players run on the host only.** Each is a player whose commands the host puts in the turn bundles, tagged with the AI's slot like anyone's, so they cost the other machines nothing and replays record them like human orders ([18 · AI](18-ai.md#the-big-decision-rules-in-the-simulation-minds-outside-it)). The host pays for their thinking, on its own thread.
 - **One build for everyone:** players must update together. The version gate makes this obvious rather than mysterious.

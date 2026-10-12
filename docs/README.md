@@ -21,6 +21,7 @@ Read in order the first time; afterwards each document stands alone.
 | 15 | [Staffing Plan](15-staffing-plan.md) | Which work goes to Opus, Sonnet, Haiku, parallel threads and subagents, milestone by milestone |
 | 16 | [Art Sourcing](16-art-sourcing.md) | Vetted free (CC0) models, textures and sounds for the Ember Clans and the Brood, with licences and gaps |
 | 17 | [Unit Rosters](17-unit-rosters.md) | Every unit, summon and hero for all four factions: stats, costs, abilities, counters, and the data schema they need |
+| 18 | [AI](18-ai.md) | Computer opponents and allies, battle tactics, difficulty and personalities; the relations system (stance, liking, trust, memories) and the minds of hamlets, mercenaries and factions met while exploring |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |

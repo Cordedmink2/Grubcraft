@@ -55,7 +55,7 @@ Grubfolk are small, round, hard-working neutral farmers who live by seeps and ha
 | Bazaar (1 per map, centre-ish) | Best prices, rare items | Exotic mercenaries (titan-spawn tamers) | Heavy, walls |
 
 ### Reputation
-Each hamlet tracks a reputation per player: **Friendly**, **Wary** or **Hostile**.
+Each hamlet tracks a reputation per player: **Friendly**, **Neutral**, **Wary** or **Hostile** (Neutral is where every hamlet starts). Reputation is the hamlet's entry in the relations ledger that every party shares, built from fading memories of what you did ([18 · AI](18-ai.md#relations)), so the hamlet's banner tooltip can always say why it feels the way it does.
 - Trading regularly nudges a hamlet towards Friendly (better prices).
 - Attacking a hamlet's units, raiding it, or razing it makes it Hostile to you and every other hamlet Wary of you for 10 minutes.
 - Hostile hamlets shoot at your units in range and will not trade.
@@ -75,6 +75,12 @@ Destroy the palisade (or the town hall for villages) and you loot its store: rou
 | The Old Mouth (boss) | One per Warfield map | Huge; drops a powerful item and reveals the map briefly |
 
 Creeps sleep at night on maps with a night lighting preset (purely as a scouting cue, no day/night cycle).
+
+Creep behaviour is a handful of simulation rules, not an AI: a camp wakes when an enemy comes within its aggro radius, chases up to a leash distance, then walks home and heals. Titan-spawn are hostile to everyone but territorial, so they never go hunting ([18 · AI](18-ai.md#the-living-world-encounters)).
+
+## Mercenary companies (planned, M4)
+
+Besides the militia hamlets hire out, a few **mercenary companies** roam each map: a Grubfolk free company, a band of Titan-spawn tamers, a crew of disgraced ronin. Each has a captain, a personality, a small roster and a price. They camp at a hamlet or wander between them; you meet them, see their price and their opinion of you, and hire them for a fee plus upkeep. They fight for you while paid, may sell out to a higher bidder if their honour is low, and tell other companies who pays and who cheats. Their minds and contracts are described in [18 · AI](18-ai.md#deals-and-contracts).
 
 ## Map format and tooling
 

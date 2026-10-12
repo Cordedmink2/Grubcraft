@@ -19,8 +19,21 @@ The calls only Mario can make. Each has a recommendation; work proceeds on the r
 | 11 | **Mac code signing** | Ad-hoc signing; friends approve first launch once | Notarisation needs a paid Apple developer account |
 | 12 | **Who tests on Windows** | Mario's or a friend's Windows PC for each milestone's game night, plus CI runners | CI has no real GPU; frame budgets need real hardware |
 
+## AI and the living world (proposed 2026-10-12)
+
+From the [AI design](18-ai.md). Work proceeds on these recommendations unless Mario says otherwise.
+
+| # | Decision | Recommendation | Why it matters |
+|---|---|---|---|
+| 13 | **Bring AI players forward** from "after 1.0" | Yes: a battle AI with Field Battle (M2), a Conquest AI with Conquest (M3), built as a parallel track | Practice and solo play long before 1.0; Mario asked for an intelligent AI now |
+| 14 | **How difficulty works** | Four levels (Recruit, Veteran, General, Warlord) that differ in how well they think, never in cheating; a separate handicap (income 50% to 150%) for any slot | A fair AI is one you can learn from; the handicap is the honest way to balance mixed skill |
+| 15 | **Mercenary companies** as their own parties (bands with a captain, a price and a memory), beyond hamlet militia | Yes, in M4 | The first piece of "encountering people" on the map; tests the relations system early |
+| 16 | **Diplomacy between players** (ceasefires, alliances, tribute in free-for-all) | Later, as a lobby option, off by default | It changes how free-for-all plays; the relations system supports it whenever it's wanted |
+| 17 | **Exploration content**: factions met while exploring (friendly, neutral, hostile) with their own minds | After 1.0, on the same relations system; sooner if Mario wants exploration to lead | The design keeps the door open; what those peoples are like is a creative call |
+
 ## Smaller questions for later
 - Should allied players share supply or resources by default in team games?
 - Should Field Battle have a campaign-lite "ladder" among friends (persistent army veterancy across battles)?
 - Is there appetite for a fifth faction before naval play, or naval first?
 - Friendly-fire for all ranged units in Field Battle (more Shogun, less forgiving)?
+- Should an AI remember a human's habits across matches (a small local profile per player name)? See [18 · AI](18-ai.md#open-questions) for this and two other AI questions.

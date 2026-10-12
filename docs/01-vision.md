@@ -64,7 +64,7 @@ Mario and friends: 2 to 4 players on the same Wi-Fi network (with internet play 
 - **No Warhammer-level complexity.** No ammunition counters, no fatigue meters beyond a short post-charge "winded", no lord skill trees with 40 nodes, no per-unit equipment.
 - **No dedicated servers, accounts, matchmaking or anti-cheat.** You play with friends; the host's machine runs the lobby.
 - **No naval combat in the first release.** Water is terrain at first; naval gameplay is a planned expansion ([13 · Roadmap](13-roadmap.md)).
-- **No bots in the first release**, though the architecture keeps the door open (the simulation is headless and deterministic, which is exactly what a bot needs).
+- **No AI that cheats.** Computer opponents and allies arrive in stages (a battle AI with Field Battle, a Conquest AI with Conquest; see [18 · AI](18-ai.md)) and play by exactly the same rules and fog of war as people. They are a way to practise and to fill a slot, not a replacement for game night.
 
 ## Success criteria
 
