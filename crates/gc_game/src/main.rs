@@ -19,13 +19,14 @@
 mod camera;
 mod data;
 mod profile;
+mod puppets;
 mod terrain_gen;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
-use gc_render::{FrameParams, RegimentInstance, Renderer, RendererOptions, Terrain};
+use gc_render::{BoxInstance, FrameParams, Renderer, RendererOptions, Terrain};
 use gc_sim::formation::{self, GroupMember};
 use gc_sim::scenario::Drill;
 use gc_sim::{Capacities, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, UnitStats, World};
@@ -38,6 +39,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use camera::RtsCamera;
+use puppets::{Block, Puppets};
 use terrain_gen::Heightmap;
 
 #[global_allocator]
@@ -54,8 +56,10 @@ const TEAM_COLORS: [[u8; 3]; 4] = [
     [214, 204, 170],
 ];
 const EDGE_SCROLL_PX: f64 = 6.0;
-/// Height of a regiment block until soldiers are drawn individually.
-const BLOCK_HEIGHT: f32 = 0.8;
+/// Placeholder soldier height in tiles (real models come with M1 step 8).
+const SOLDIER_HEIGHT: f32 = 0.95;
+/// Thickness of the ground plate drawn under a selected regiment.
+const PLATE_HEIGHT: f32 = 0.03;
 
 const _: () = assert!(gc_data::MAX_MODELS == gc_sim::formation::MAX_MODELS);
 
@@ -139,7 +143,8 @@ struct Running {
     human_orders: Vec<PlayerCommand>,
     /// Position and facing at the previous tick, by pool index, for interpolation.
     prev_positions: Vec<Option<(RegimentHandle, Vec2, Vec2)>>,
-    instances: Vec<RegimentInstance>,
+    instances: Vec<BoxInstance>,
+    puppets: Puppets,
     /// The match's regiment types, as the simulation sees them.
     unit_stats: Vec<UnitStats>,
     selected: Vec<RegimentHandle>,
@@ -319,7 +324,8 @@ impl App {
             pending,
             human_orders: Vec::with_capacity(64),
             prev_positions,
-            instances: Vec::with_capacity(gc_render::MAX_REGIMENT_INSTANCES),
+            instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
+            puppets: Puppets::new(capacities.regiments as usize),
             unit_stats,
             selected: Vec::with_capacity(64),
             group: Vec::with_capacity(64),
@@ -624,17 +630,43 @@ impl Running {
                 _ => (cur, cur_facing),
             };
             let [cr, cg, cb] = TEAM_COLORS[r.owner as usize % TEAM_COLORS.len()];
-            let highlight = if self.selected.contains(&r.handle) {
-                255
-            } else {
-                0
+            let selected = self.selected.contains(&r.handle);
+            let stats = &self.unit_stats[r.unit as usize];
+            let (file_spacing, rank_spacing) =
+                (fx_to_f32(stats.file_spacing), fx_to_f32(stats.rank_spacing));
+            if selected {
+                let (width, depth) = stats.block_size(r.files, r.models);
+                self.instances.push(BoxInstance {
+                    pos: pos.to_array(),
+                    facing: facing.to_array(),
+                    size: [fx_to_f32(width) + 0.3, PLATE_HEIGHT, fx_to_f32(depth) + 0.3],
+                    color: [cr, cg, cb, 255],
+                });
+            }
+            let block = Block {
+                handle: r.handle,
+                centre: pos,
+                facing,
+                files: r.files,
+                models: r.models,
+                file_spacing,
+                rank_spacing,
+                speed: fx_to_f32(stats.speed),
             };
-            let (width, depth) = self.unit_stats[r.unit as usize].block_size(r.files, r.models);
-            self.instances.push(RegimentInstance {
-                pos: pos.to_array(),
-                facing: facing.to_array(),
-                size: [fx_to_f32(width), BLOCK_HEIGHT, fx_to_f32(depth)],
-                color: [cr, cg, cb, highlight],
+            let size = [
+                (file_spacing * 0.6).min(0.45),
+                SOLDIER_HEIGHT,
+                (rank_spacing * 0.42).min(0.35),
+            ];
+            let color = [cr, cg, cb, if selected { 70 } else { 0 }];
+            let instances = &mut self.instances;
+            self.puppets.update(&block, dt.as_secs_f32(), |s| {
+                instances.push(BoxInstance {
+                    pos: s.pos.to_array(),
+                    facing: s.facing.to_array(),
+                    size,
+                    color,
+                });
             });
         }
 
@@ -735,7 +767,7 @@ impl Running {
             "GRUBCRAFT DEV OVERLAY                          ` or F11 hides\n\
              frame   {fps:5.0} fps   {frame_avg:6.2} ms avg   {:6.2} ms worst\n\
              sim     tick {:<7} {tick_avg:6.3} ms avg   {:6.3} ms worst\n\
-             render  {} draw calls   {}/{} chunks   {} regiments\n\
+             render  {} draw calls   {}/{} chunks   {} boxes\n\
              memory  process {process}   heap {:.1} MB   gpu {:.1} MB\n\
              heap    {}\n\
              data    {}\n\
@@ -746,7 +778,7 @@ impl Running {
             rs.draw_calls,
             rs.chunks_drawn,
             rs.chunks_total,
-            rs.regiments_drawn,
+            rs.boxes_drawn,
             mb(tagged_alloc::total_live_bytes()),
             mb(self.renderer.gpu_bytes() as usize),
             heap_tags.join("  "),
@@ -770,7 +802,7 @@ impl Running {
         let rs = self.renderer.stats();
         format!(
             "Grubcraft · {fps:.0} fps · sim {tick_ms:.3} ms/tick · {} regiments · {}/{} chunks · {} MB process · {} MB heap · {} MB gpu",
-            rs.regiments_drawn,
+            self.world.regiments.len(),
             rs.chunks_drawn,
             rs.chunks_total,
             mem.current

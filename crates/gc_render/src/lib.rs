@@ -1,7 +1,7 @@
 //! Grubcraft renderer: wgpu on Metal (macOS), DirectX 12 (Windows) and Vulkan.
 //!
-//! M0 scope: heightmap terrain drawn in frustum-culled chunks, and regiments
-//! drawn as instanced blocks. See `docs/10-architecture.md#rendering` for where
+//! Current scope: heightmap terrain drawn in frustum-culled chunks, and
+//! soldiers drawn as instanced placeholder boxes. See `docs/10-architecture.md#rendering` for where
 //! this is heading (shadows, vertex-animated soldiers, Commander View, UI).
 //!
 //! The renderer knows nothing about windows or input: the caller hands it a
@@ -19,8 +19,8 @@ use glam::{Mat4, Vec3, Vec4};
 pub const CHUNK_TILES: u32 = 32;
 /// Quads per chunk side; vertices sit every half tile.
 const CHUNK_QUADS: u32 = 64;
-/// Fixed capacity of the regiment instance buffer; never reallocated.
-pub const MAX_REGIMENT_INSTANCES: usize = 2048;
+/// Fixed capacity of the box instance buffer (soldiers and markers); never reallocated.
+pub const MAX_BOX_INSTANCES: usize = 65_536;
 pub use overlay::MAX_OVERLAY_CHARS;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -53,15 +53,15 @@ pub struct Terrain<'a> {
     pub heights: &'a [u16],
 }
 
-/// One regiment block. 32 bytes.
+/// One shaded box draped on the terrain: a soldier, or a ground marker. 32 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct RegimentInstance {
+pub struct BoxInstance {
     /// Centre on the map, in tiles.
     pub pos: [f32; 2],
-    /// Unit vector the regiment faces.
+    /// Unit vector the box faces.
     pub facing: [f32; 2],
-    /// Frontage width, height, depth in tiles.
+    /// Width (across the facing), height and depth in tiles.
     pub size: [f32; 3],
     /// Team colour (rgb) and selection highlight (a).
     pub color: [u8; 4],
@@ -109,7 +109,7 @@ pub struct RenderStats {
     pub draw_calls: u32,
     pub chunks_drawn: u32,
     pub chunks_total: u32,
-    pub regiments_drawn: u32,
+    pub boxes_drawn: u32,
 }
 
 #[repr(C)]
@@ -147,7 +147,7 @@ pub struct Renderer {
     chunk_index_count: u32,
     chunk_instances: wgpu::Buffer,
     chunk_instance_capacity: u32,
-    regiment_instances: wgpu::Buffer,
+    box_instances: wgpu::Buffer,
     terrain: Option<TerrainGpu>,
     /// GPU memory we allocated ourselves (excludes the swapchain and driver).
     static_gpu_bytes: u64,
@@ -294,10 +294,10 @@ impl Renderer {
             &layout,
             &shader,
             format,
-            "regiment blocks",
+            "boxes",
             ("vs_block", "fs_block"),
             wgpu::VertexBufferLayout {
-                array_stride: size_of::<RegimentInstance>() as u64,
+                array_stride: size_of::<BoxInstance>() as u64,
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &wgpu::vertex_attr_array![
                     0 => Float32x2, 1 => Float32x2, 2 => Float32x3, 3 => Unorm8x4
@@ -314,9 +314,9 @@ impl Renderer {
         });
         queue.write_buffer(&chunk_index_buffer, 0, bytemuck::cast_slice(&chunk_indices));
 
-        let regiment_instances = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("regiment instances"),
-            size: (MAX_REGIMENT_INSTANCES * size_of::<RegimentInstance>()) as u64,
+        let box_instances = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("box instances"),
+            size: (MAX_BOX_INSTANCES * size_of::<BoxInstance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -337,7 +337,7 @@ impl Renderer {
         );
         let static_gpu_bytes = size_of::<Globals>() as u64
             + chunk_index_buffer.size()
-            + regiment_instances.size()
+            + box_instances.size()
             + chunk_instances.size();
 
         Ok(Renderer {
@@ -356,7 +356,7 @@ impl Renderer {
             chunk_index_count: chunk_indices.len() as u32,
             chunk_instances,
             chunk_instance_capacity: 1,
-            regiment_instances,
+            box_instances,
             terrain: None,
             static_gpu_bytes,
             terrain_gpu_bytes: 0,
@@ -497,7 +497,7 @@ impl Renderer {
         });
     }
 
-    pub fn render(&mut self, frame: &FrameParams, regiments: &[RegimentInstance]) -> FrameOutcome {
+    pub fn render(&mut self, frame: &FrameParams, boxes: &[BoxInstance]) -> FrameOutcome {
         let Some(terrain) = &self.terrain else {
             return FrameOutcome::Skipped;
         };
@@ -567,14 +567,14 @@ impl Renderer {
         if !self.options.draw_terrain {
             self.visible_chunks.clear();
         }
-        let regiments = if self.options.draw_blocks {
-            &regiments[..regiments.len().min(MAX_REGIMENT_INSTANCES)]
+        let boxes = if self.options.draw_blocks {
+            &boxes[..boxes.len().min(MAX_BOX_INSTANCES)]
         } else {
             &[]
         };
-        if !regiments.is_empty() {
+        if !boxes.is_empty() {
             self.queue
-                .write_buffer(&self.regiment_instances, 0, bytemuck::cast_slice(regiments));
+                .write_buffer(&self.box_instances, 0, bytemuck::cast_slice(boxes));
         }
 
         // The overlay draws inside the main pass, which a bare frame skips.
@@ -645,10 +645,10 @@ impl Renderer {
                 );
                 draw_calls += 1;
             }
-            if !regiments.is_empty() {
+            if !boxes.is_empty() {
                 pass.set_pipeline(&self.block_pipeline);
-                pass.set_vertex_buffer(0, self.regiment_instances.slice(..));
-                pass.draw(0..30, 0..regiments.len() as u32);
+                pass.set_vertex_buffer(0, self.box_instances.slice(..));
+                pass.draw(0..30, 0..boxes.len() as u32);
                 draw_calls += 1;
             }
             if overlay_visible {
@@ -669,7 +669,7 @@ impl Renderer {
             draw_calls,
             chunks_drawn: self.visible_chunks.len() as u32,
             chunks_total: n * n,
-            regiments_drawn: regiments.len() as u32,
+            boxes_drawn: boxes.len() as u32,
         };
         FrameOutcome::Presented
     }
@@ -1014,6 +1014,6 @@ mod tests {
 
     #[test]
     fn regiment_instance_layout_is_stable() {
-        assert_eq!(size_of::<RegimentInstance>(), 32);
+        assert_eq!(size_of::<BoxInstance>(), 32);
     }
 }
