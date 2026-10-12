@@ -16,9 +16,11 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::cell::Cell;
 
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
+use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_REAR, WAVERING_DAMAGE_PERCENT};
 use crate::regiments::{RegimentHandle, Regiments, hash_handle};
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
 
@@ -146,7 +148,25 @@ pub struct Combat {
     /// Every live regiment's footprint at the start of this tick.
     blocks: Vec<Block>,
     radius: Vec<Fx>,
+    /// Marks for visiting each regiment once per search (see `each_near`).
+    seen: Vec<Cell<u32>>,
+    search: Cell<u32>,
     volleys: Volleys,
+}
+
+/// Where every regiment is, borrowed field by field from [`Regiments`] so a
+/// search can run while the caller changes other fields.
+pub(crate) struct Placement<'a> {
+    pub alive: &'a [bool],
+    pub owner: &'a [PlayerId],
+    pub position: &'a [FxVec2],
+}
+
+/// Whose regiments a search around a point visits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Whose {
+    Enemies(PlayerId),
+    Friends(PlayerId),
 }
 
 struct Volleys {
@@ -197,6 +217,8 @@ impl Combat {
                 regiment_capacity
             ],
             radius: vec![Fx::ZERO; regiment_capacity],
+            seen: vec![Cell::new(0); regiment_capacity],
+            search: Cell::new(0),
             volleys: Volleys {
                 alive: vec![false; MAX_VOLLEYS],
                 owner: vec![0; MAX_VOLLEYS],
@@ -296,11 +318,71 @@ impl Combat {
         }
     }
 
+    /// Call `f` once for every live regiment of `whose` whose centre is within
+    /// `range` of `p`, as the grid saw them at the start of this tick.
+    pub(crate) fn each_near(
+        &self,
+        regs: &Placement,
+        p: FxVec2,
+        range: Fx,
+        whose: Whose,
+        mut f: impl FnMut(usize),
+    ) {
+        let search = self.search.get().wrapping_add(1);
+        self.search.set(search);
+        if search == 0 {
+            // Wrapped: forget every old mark so none can match by accident.
+            self.seen.iter().for_each(|c| c.set(u32::MAX));
+        }
+        let (x0, y0, x1, y1) = Self::cells(p, range);
+        let (owner, friends) = match whose {
+            Whose::Enemies(owner) => (owner, false),
+            Whose::Friends(owner) => (owner, true),
+        };
+        let wanted = owner as usize % OWNER_SLOTS;
+        let range_sq = range.raw() as i64 * range.raw() as i64;
+        let mut visit = |j: usize| {
+            if self.seen[j].get() == search || !regs.alive[j] {
+                return;
+            }
+            self.seen[j].set(search);
+            if (regs.owner[j] == owner) != friends {
+                return;
+            }
+            if ((regs.position[j] - p).length_sq_raw() as i64) <= range_sq {
+                f(j);
+            }
+        };
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let b = Self::bucket_of(x, y) * OWNER_SLOTS;
+                for slot in 0..OWNER_SLOTS {
+                    if (slot == wanted) != friends {
+                        continue;
+                    }
+                    let mut e = self.head[b + slot];
+                    while e != EMPTY {
+                        visit(self.entry_regiment[e as usize] as usize);
+                        e = self.entry_next[e as usize];
+                    }
+                }
+            }
+        }
+        for &j in &self.big {
+            visit(j as usize);
+        }
+    }
+
     /// Contacts, charges and chasing, before anyone moves this tick.
     pub(crate) fn before_move(&mut self, regs: &mut Regiments, units: &[UnitStats]) {
         self.build_grid(regs, units);
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
+                continue;
+            }
+            if regs.morale_state[i].broken() {
+                // Running for their lives: nobody here is fighting back.
+                regs.engaged[i] = None;
                 continue;
             }
             let me = self.blocks[i];
@@ -353,7 +435,7 @@ impl Combat {
 
         // Regiments ordered to attack close on their target.
         for i in 0..regs.alive.len() {
-            if !regs.alive[i] || regs.engaged[i].is_some() {
+            if !regs.alive[i] || regs.engaged[i].is_some() || regs.morale_state[i].broken() {
                 continue;
             }
             let Some(t) = regs.attack_target[i] else {
@@ -408,12 +490,19 @@ impl Combat {
             } as u64;
             let hit = (50 + attacker.melee_attack as i32 - defender.melee_defence as i32)
                 .clamp(10, 90) as u64;
-            let side = them.side_facing(me.centre).damage_percent();
+            let side = them.side_facing(me.centre);
             let charge =
                 100 + attacker.charge_bonus as u64 * regs.charge[i] as u64 / CHARGE_TICKS as u64;
-            let expected = fighters * hit * attacker.melee_damage as u64 * side * charge * 256
-                / (100 * 100 * 100);
-            deal(regs, units, j, expected, rng);
+            let heart = heart_percent(regs.morale_state[i]);
+            let expected = fighters
+                * hit
+                * attacker.melee_damage as u64
+                * side.damage_percent()
+                * charge
+                * heart
+                * 256
+                / (100 * 100 * 100 * 100);
+            deal(regs, units, j, expected, side, rng);
         }
 
         // Ranged regiments standing still loose volleys at the nearest enemy
@@ -423,7 +512,11 @@ impl Combat {
                 continue;
             }
             let stats = &units[regs.unit[i] as usize];
-            if stats.range.raw() <= 0 || regs.target[i].is_some() || regs.models[i] == 0 {
+            if stats.range.raw() <= 0
+                || regs.target[i].is_some()
+                || regs.models[i] == 0
+                || regs.morale_state[i].broken()
+            {
                 continue;
             }
             let Some(j) = self.pick_target(regs, i, stats.range) else {
@@ -453,7 +546,8 @@ impl Combat {
             vs.impact[v] = tick + flight;
             vs.shots[v] = regs.models[i];
             vs.damage[v] = stats.missile_damage;
-            vs.accuracy[v] = stats.accuracy;
+            vs.accuracy[v] =
+                (stats.accuracy as u64 * heart_percent(regs.morale_state[i]) / 100) as u8;
             regs.reload[i] = stats.reload_ticks.max(1);
         }
 
@@ -476,15 +570,15 @@ impl Combat {
             let area = (block.half_width * block.half_depth).raw() as i64 * 4;
             let density = (regs.models[j] as i64 * REFERENCE_AREA_PER_SOLDIER * 100 / area.max(1))
                 .clamp(25, 125) as u64;
-            let side = block.side_facing(vs.from[v]).damage_percent();
+            let side = block.side_facing(vs.from[v]);
             let expected = vs.shots[v] as u64
                 * vs.accuracy[v] as u64
                 * density
                 * vs.damage[v] as u64
-                * side
+                * side.damage_percent()
                 * 256
                 / (100 * 100 * 100);
-            deal(regs, units, j, expected, rng);
+            deal(regs, units, j, expected, side, rng);
         }
 
         // The fallen.
@@ -541,10 +635,31 @@ impl Combat {
     }
 }
 
+/// Percent of its usual damage a regiment deals in this state of mind.
+fn heart_percent(state: MoraleState) -> u64 {
+    match state {
+        MoraleState::Wavering => WAVERING_DAMAGE_PERCENT,
+        _ => 100,
+    }
+}
+
 /// Apply `expected` damage (in 1/256 hit points) to regiment `j`, rolled
-/// within ±25%. When a rank empties the block steps forward half a rank, so
-/// its front stays where it was (the rear thins; the front rank holds).
-fn deal(regs: &mut Regiments, units: &[UnitStats], j: usize, expected: u64, rng: &mut Pcg32) {
+/// within ±25%, landing on its `side`. When a rank empties the block steps
+/// forward half a rank, so its front stays where it was (the rear thins; the
+/// front rank holds).
+fn deal(
+    regs: &mut Regiments,
+    units: &[UnitStats],
+    j: usize,
+    expected: u64,
+    side: Side,
+    rng: &mut Pcg32,
+) {
+    regs.shock[j] |= match side {
+        Side::Front => 0,
+        Side::Flank => SHOCK_FLANK,
+        Side::Rear => SHOCK_REAR,
+    };
     let rolled = expected * (192 + rng.below(129) as u64) / 256;
     let total = rolled + regs.damage_carry[j] as u64;
     regs.damage_carry[j] = (total % 256) as u16;

@@ -34,6 +34,7 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         missile_damage: 0,
         reload_ticks: 0,
         accuracy: 0,
+        morale: 60,
     },
     UnitStats {
         speed: Fx::from_int(4),
@@ -51,6 +52,7 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         missile_damage: 0,
         reload_ticks: 0,
         accuracy: 0,
+        morale: 45,
     },
     UnitStats {
         speed: Fx::from_ratio(13, 4),
@@ -68,6 +70,7 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         missile_damage: 4,
         reload_ticks: 80,
         accuracy: 30,
+        morale: 50,
     },
     UnitStats {
         speed: Fx::from_ratio(5, 2),
@@ -85,6 +88,7 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         missile_damage: 0,
         reload_ticks: 0,
         accuracy: 0,
+        morale: 70,
     },
 ];
 

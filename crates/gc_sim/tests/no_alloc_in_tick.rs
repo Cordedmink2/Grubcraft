@@ -50,6 +50,7 @@ fn ticking_never_allocates() {
         seed: 7,
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
+        map_tiles: 256,
     });
     let mut drill = Drill::new(7);
     let mut commands = Vec::with_capacity(512);

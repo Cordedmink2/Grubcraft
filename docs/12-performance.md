@@ -112,7 +112,7 @@ Scenarios replayed headless (sim) and rendered with a scripted camera (frame):
 | `zoom-sweep` | Camera from closest to Commander View: LOD transitions |
 | `cold-start` | Launch to menu, menu to match |
 
-**Built so far:** one scenario, `drill`: four scripted players with 300 regiments each, ordering moves and group moves and fighting, for 12,000 ticks. It gates tick p99 (≤ 2 ms), sim heap (≤ 8 MB) and allocations per tick (0); CI runs it on every pull request. At M1 step 4 it measures about 0.4 ms p99, 0.49 MB and 0 allocations (in the cloud build container). The other scenarios need features that don't exist yet (replays, rendering benchmarks, pathfinding).
+**Built so far:** one scenario, `drill`: four scripted players with 300 regiments each, ordering moves and group moves and fighting, for 12,000 ticks. It gates tick p99 (≤ 2 ms), sim heap (≤ 8 MB) and allocations per tick (0); CI runs it on every pull request. With morale (M1 step 5) it measures about 0.5 ms p99, 0.52 MB and 0 allocations (in the cloud build container). The other scenarios need features that don't exist yet (replays, rendering benchmarks, pathfinding).
 
 ### Gates in CI
 - Every pull request runs the headless benchmarks on CI machines and compares against the stored baseline: **> 5% regression in any tracked metric fails**, unless the PR updates the baseline with a written reason. *(Not built yet: today CI checks the fixed budgets above, not a stored baseline. Due in M1, requirement PRF-7.)*

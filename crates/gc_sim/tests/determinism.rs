@@ -13,10 +13,10 @@ const TICKS: u32 = 2_400; // two minutes of game time
 
 /// Expected state hash every 600 ticks (30 s of game time).
 const GOLDEN: [(u32, u64); 4] = [
-    (600, 0xd1f0_672e_62d7_dcdb),
-    (1200, 0x1190_fb03_92aa_d6b8),
-    (1800, 0xe933_72c0_e89d_5a15),
-    (2400, 0x8e6d_f5d3_61ef_3e84),
+    (600, 0x2952_d134_a4a0_78a4),
+    (1200, 0x3ed5_3336_f111_338f),
+    (1800, 0x1476_28c0_ef84_976c),
+    (2400, 0xca02_52b2_6b8b_9591),
 ];
 
 fn run() -> Vec<(u32, u64)> {
@@ -24,6 +24,7 @@ fn run() -> Vec<(u32, u64)> {
         seed: SEED,
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
+        map_tiles: 256,
     });
     let mut drill = Drill::new(SEED);
     let mut commands = Vec::with_capacity(512);
@@ -61,11 +62,13 @@ fn different_seed_different_hash() {
         seed: 1,
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
+        map_tiles: 256,
     });
     let b = World::new(&MatchSetup {
         seed: 2,
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
+        map_tiles: 256,
     });
     assert_ne!(a.state_hash(), b.state_hash());
     a.tick(&[]);

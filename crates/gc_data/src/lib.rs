@@ -18,7 +18,7 @@ pub const UNITS_PATH: &str = "data/units";
 /// Pack path of the data manifest (the data hash).
 pub const MANIFEST_PATH: &str = "data/manifest";
 /// Bump whenever [`UnitRecord`]'s layout or meaning changes.
-pub const UNIT_SCHEMA: u32 = 3;
+pub const UNIT_SCHEMA: u32 = 4;
 /// Longest unit name, in UTF-8 bytes.
 pub const NAME_BYTES: usize = 32;
 /// Most soldiers in one regiment. Must equal `gc_sim::formation::MAX_MODELS`
@@ -97,7 +97,9 @@ pub struct UnitRecord {
     pub charge_bonus: u8,
     /// Percent of arrows that hit a block of normal density.
     pub accuracy: u8,
-    pub _pad2: [u8; 2],
+    /// Morale when fresh, 1 to 100; 0 means the regiment never routs.
+    pub morale: u8,
+    pub _pad2: u8,
 }
 
 impl UnitRecord {
@@ -253,7 +255,10 @@ pub fn validate_unit(u: &UnitRecord) -> Result<(), &'static str> {
     if u.range > 0 && (u.missile_damage == 0 || u.reload_ticks == 0 || u.accuracy == 0) {
         return Err("a regiment with a range needs missile damage, reload and accuracy");
     }
-    if u._pad2 != [0; 2] {
+    if u.morale > 100 {
+        return Err("morale is 0 (never routs) to 100");
+    }
+    if u._pad2 != 0 {
         return Err("padding must be zero");
     }
     if u._pad != 0 {

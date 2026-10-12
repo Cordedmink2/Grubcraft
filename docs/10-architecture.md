@@ -127,7 +127,7 @@ Crates marked *(later)* or *(M2)* don't exist yet. Until `gc_present` is needed,
 11. Victory checks.
 12. State hash (every 10 ticks) and snapshot publish.
 
-**Built so far:** commands, then combat's contact, charge and chase checks, then movement and turning (straight lines; pathfinding is M1 step 6), then melee blows and volleys. The state hash is computed on request (the determinism test checks it every 600 ticks); snapshots come with M2.
+**Built so far:** commands, then combat's contact, charge and chase checks, then movement and turning (straight lines; pathfinding is M1 step 6), then melee blows and volleys, then morale. The state hash is computed on request (the determinism test checks it every 600 ticks); snapshots come with M2.
 
 ### Spatial partitioning
 A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt incrementally (entities move bucket only when they cross a boundary). Used for collision, targeting, vision and area effects.
@@ -147,7 +147,16 @@ A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt increm
 - **Melee:** two regiments are in contact when their blocks (oriented rectangles) come within half a tile of each other; a regiment in contact is locked, ignores move orders and only turns toward its foe at half speed. Each fighting regiment strikes once a second (staggered across regiments so the work spreads over ticks) with one blow per soldier who can reach the foe (the front rank when the foe is ahead, one per rank when it is to the side, half the front rank when it is behind): a blow lands with chance 50 + attack − defence percent (clamped 10 to 90), damage is multiplied by the side it lands on (front ×1.0, flank ×1.4, rear ×1.8) plus a charge bonus that fades over 3 s if contact began at speed. The expected damage is rolled ±25% on the combat RNG stream and carried in 1/256 hit points, so small blows add up exactly. Casualties remove models from the back slots first (the "front rank steps up"), and a block that loses whole ranks steps forward to stay in contact. Terrain and veterancy come later.
 - **Ranged:** each volley is one entity in a fixed pool, flying one tile per tick from the archers to the aim point. On impact it rolls hits on the combat RNG stream, scaled by how densely packed the target is, so a tight block suffers more than a loose screen; a target that has moved away from the aim point is missed. Archers standing still fire at will at the nearest enemy in range, or at the regiment they were ordered to attack (walking into range first).
 - **Finding foes:** a spatial hash of 16-tile cells (each regiment is listed in every cell its block covers, split by owner) keeps contact and target searches local; 1,200 regiments fighting cost about 0.4 ms per tick at the 99th percentile.
-- **Morale** (M1 step 5) is an integer per regiment updated from events (casualties, flank hits, nearby routs, heroes, terror) with decay toward a baseline.
+- **Morale** (`gc_sim::morale`) is an integer per regiment (tenths of a point), starting at the unit's `morale` stat. Each regiment checks it once a second, half a second out of step with its blows:
+  - **Losses:** 0.9 points per 1% of full strength lost since the last check.
+  - **Shock:** 3 points for flank hits that second, 6 for rear hits.
+  - **In melee:** 2 points a second below half strength. Another 2 (or 4) when enemy soldiers within 12 tiles outnumber friendly ones 2 to 1 (or 3 to 1).
+  - **Recovery:** out of the fight and losing nobody, it regains 3 points a second. The cap falls from the stat at full strength to half the stat with nobody left.
+  - **States:** below 25 points a regiment wavers and deals 85% damage. At 0 it routs: it drops out of melee, rejects orders and every second aims 10 tiles away from the enemies within 20 tiles, at 90% of its speed, inside the map edge.
+  - **Ripples:** a rout costs friends within 16 tiles 8 points and gives the enemies fighting the routers 5.
+  - **Rally and shatter:** after 10 s with no enemy within 20 tiles, routers rally, wavering. Routing again within 120 s shatters a regiment: it runs, then stands and never takes orders again.
+  - **Fearless:** units with a morale stat of 0 skip all of this.
+  - Heroes, terror and veterancy come later.
 
 ### Fog of war
 - Visibility per player on a tile-resolution grid of `u8` reference counts (256 × 256 = 64 KB per player). Units add and remove "vision stamps" only when they cross tiles, so cost is proportional to movement, not unit count.

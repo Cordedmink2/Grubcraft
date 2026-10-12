@@ -62,6 +62,12 @@ struct UnitDef {
     melee_damage: u16,
     /// Percent extra melee damage when a charge hits home.
     charge_bonus: u8,
+    /// Morale when fresh, 1 to 100; `never_routs: true` instead for units
+    /// that fight to the last (the Concord's undead).
+    #[serde(default)]
+    morale: u8,
+    #[serde(default)]
+    never_routs: bool,
     /// Shooting: range in tiles, damage per arrow, seconds between volleys,
     /// percent of arrows that hit. Leave out for regiments that don't shoot.
     #[serde(default)]
@@ -192,7 +198,17 @@ fn bake_units(file: &Path) -> Result<Vec<UnitRecord>, BakeError> {
             melee_defence: def.melee_defence,
             charge_bonus: def.charge_bonus,
             accuracy: def.ranged.as_ref().map_or(0, |r| r.accuracy),
-            _pad2: [0; 2],
+            morale: match (def.morale, def.never_routs) {
+                (m @ 1..=100, false) => m,
+                (0, true) => 0,
+                _ => {
+                    return Err(invalid(
+                        &def.name,
+                        "needs either morale (1 to 100) or never_routs: true".into(),
+                    ));
+                }
+            },
+            _pad2: 0,
         };
         gc_data::validate_unit(&record).map_err(|why| invalid(&def.name, why.into()))?;
         records.push(record);
@@ -279,7 +295,7 @@ mod tests {
     const ONE: &str = r#"[(name: "Test Spears", faction: EmberClans, models: 24,
         hp_per_model: 10, files: 8, speed: 3.0, turn_rate: 60.0, file_spacing: 0.75,
         rank_spacing: 0.85, melee_attack: 30, melee_defence: 45, melee_damage: 3,
-        charge_bonus: 20)]"#;
+        charge_bonus: 20, morale: 50)]"#;
 
     #[test]
     fn bakes_and_reads_back() {
@@ -308,7 +324,7 @@ mod tests {
         let hex: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,
-            "6bd995b907f1517c8d370eda83c33bd7ac10696125fd23f6e73ed913a3ae326b"
+            "5afa499c0c6ccf31a6c711b53f899aaeb37435791961225d9c34941405d3ec4a"
         );
     }
 
@@ -330,7 +346,7 @@ mod tests {
     fn bakes_ranged_stats() {
         let archers = r#"[(name: "Bows", faction: EmberClans, models: 16, hp_per_model: 8,
             files: 8, speed: 3.0, turn_rate: 70.0, file_spacing: 0.8, rank_spacing: 1.0,
-            melee_attack: 15, melee_defence: 20, melee_damage: 2, charge_bonus: 5,
+            melee_attack: 15, melee_defence: 20, melee_damage: 2, charge_bonus: 5, morale: 50,
             ranged: Some((range: 30.0, damage: 4, reload: 4.0, accuracy: 30)))]"#;
         let baked = bake(&temp_data(archers)).unwrap();
         let store = aligned(&baked.pack);
@@ -342,31 +358,55 @@ mod tests {
     }
 
     #[test]
+    fn bakes_morale() {
+        let undead = r#"[
+            (name: "Brave", faction: EmberClans, models: 4, hp_per_model: 1, files: 4, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 70),
+            (name: "Dead", faction: CarrionConcord, models: 4, hp_per_model: 1, files: 4, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, never_routs: true),
+        ]"#;
+        let baked = bake(&temp_data(undead)).unwrap();
+        let store = aligned(&baked.pack);
+        let bytes = &bytemuck::cast_slice::<u128, u8>(&store)[..baked.pack.len()];
+        let pack = Pack::parse(bytes).unwrap();
+        let units = GameData::from_pack(&pack).unwrap().units;
+        assert_eq!((units[0].morale, units[1].morale), (70, 0));
+    }
+
+    #[test]
     fn rejects_bad_definitions() {
         let dup = r#"[
-            (name: "A", faction: Brood, models: 1, hp_per_model: 1, files: 1, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0),
-            (name: "A", faction: Brood, models: 1, hp_per_model: 1, files: 1, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0),
+            (name: "A", faction: Brood, models: 1, hp_per_model: 1, files: 1, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 50),
+            (name: "A", faction: Brood, models: 1, hp_per_model: 1, files: 1, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 50),
         ]"#;
         let err = bake(&temp_data(dup)).err().unwrap().to_string();
         assert!(err.contains("defined twice"), "{err}");
 
-        let slow = r#"[(name: "B", faction: Choir, models: 1, hp_per_model: 1, files: 1, speed: 0.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0)]"#;
+        let slow = r#"[(name: "B", faction: Choir, models: 1, hp_per_model: 1, files: 1, speed: 0.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 50)]"#;
         let err = bake(&temp_data(slow)).err().unwrap().to_string();
         assert!(err.contains("speed"), "{err}");
 
-        let wide = r#"[(name: "D", faction: Choir, models: 4, hp_per_model: 1, files: 5, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0)]"#;
+        let wide = r#"[(name: "D", faction: Choir, models: 4, hp_per_model: 1, files: 5, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 50)]"#;
         let err = bake(&temp_data(wide)).err().unwrap().to_string();
         assert!(err.contains("files"), "{err}");
 
-        let big = r#"[(name: "E", faction: Brood, models: 33, hp_per_model: 1, files: 8, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0)]"#;
+        let big = r#"[(name: "E", faction: Brood, models: 33, hp_per_model: 1, files: 8, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 50)]"#;
         let err = bake(&temp_data(big)).err().unwrap().to_string();
         assert!(err.contains("32 models"), "{err}");
 
-        let no_reload = r#"[(name: "F", faction: Choir, models: 4, hp_per_model: 1, files: 4, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, ranged: Some((range: 20.0, damage: 2, reload: 0.0, accuracy: 30)))]"#;
+        let no_reload = r#"[(name: "F", faction: Choir, models: 4, hp_per_model: 1, files: 4, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 50, ranged: Some((range: 20.0, damage: 2, reload: 0.0, accuracy: 30)))]"#;
         let err = bake(&temp_data(no_reload)).err().unwrap().to_string();
         assert!(err.contains("reload"), "{err}");
 
-        let typo = r#"[(name: "C", faction: Choir, models: 1, hp_per_model: 1, files: 1, sped: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0)]"#;
+        let fearless_and_brave = r#"[(name: "G", faction: CarrionConcord, models: 1, hp_per_model: 1, files: 1, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 50, never_routs: true)]"#;
+        let err = bake(&temp_data(fearless_and_brave))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("never_routs"), "{err}");
+        let no_morale = r#"[(name: "H", faction: Brood, models: 1, hp_per_model: 1, files: 1, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0)]"#;
+        let err = bake(&temp_data(no_morale)).err().unwrap().to_string();
+        assert!(err.contains("morale"), "{err}");
+
+        let typo = r#"[(name: "C", faction: Choir, models: 1, hp_per_model: 1, files: 1, sped: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 50)]"#;
         assert!(matches!(bake(&temp_data(typo)), Err(BakeError::Parse(..))));
     }
 }

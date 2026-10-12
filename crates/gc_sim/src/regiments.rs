@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use gc_fixed::{Angle, Fx, FxVec2};
 
 use crate::formation::{self, MAX_MODELS};
+use crate::morale::{self, MoraleState};
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
 
 /// Generational handle to a regiment. Stale handles (to a slot that has since
@@ -71,6 +72,19 @@ pub struct Regiments {
     pub(crate) reload: Vec<u16>,
     /// Damage taken but not yet a whole hit point, in 1/256ths.
     pub(crate) damage_carry: Vec<u16>,
+    /// Soldiers at full strength (the unit's), for casualty fractions.
+    pub(crate) full_models: Vec<u16>,
+    /// Morale in tenths of a point (see [`crate::morale`]), and what it means.
+    pub(crate) morale: Vec<i16>,
+    pub(crate) morale_state: Vec<MoraleState>,
+    /// Soldiers lost, and flank (bit 0) or rear (bit 1) hits taken, since the
+    /// regiment's last morale check.
+    pub(crate) losses: Vec<u16>,
+    pub(crate) shock: Vec<u8>,
+    /// While routing: ticks spent with no enemy near.
+    pub(crate) rout_clock: Vec<u16>,
+    /// Tick the regiment last broke and ran, plus one (0: never).
+    pub(crate) last_rout: Vec<u32>,
     /// Free slot indices, popped from the back. Initialised so slot 0 is used first.
     pub(crate) free: Vec<u32>,
 }
@@ -98,6 +112,13 @@ impl Regiments {
             charge: vec![0; n],
             reload: vec![0; n],
             damage_carry: vec![0; n],
+            full_models: vec![0; n],
+            morale: vec![0; n],
+            morale_state: vec![MoraleState::Steady; n],
+            losses: vec![0; n],
+            shock: vec![0; n],
+            rout_clock: vec![0; n],
+            last_rout: vec![0; n],
             free: (0..capacity).rev().collect(),
         }
     }
@@ -146,6 +167,13 @@ impl Regiments {
         self.charge[i] = 0;
         self.reload[i] = 0;
         self.damage_carry[i] = 0;
+        self.full_models[i] = stats.models;
+        self.morale[i] = morale::fresh(stats);
+        self.morale_state[i] = MoraleState::Steady;
+        self.losses[i] = 0;
+        self.shock[i] = 0;
+        self.rout_clock[i] = 0;
+        self.last_rout[i] = 0;
         Some(RegimentHandle {
             index,
             generation: self.generation[i],
@@ -185,10 +213,14 @@ impl Regiments {
             .map(|i| &self.hp[i * MAX_MODELS as usize..][..self.models[i] as usize])
     }
 
+    /// Give a move order. Routing regiments don't listen.
     pub fn order(&mut self, h: RegimentHandle, order: Order) -> bool {
         let Some(i) = self.resolve(h) else {
             return false;
         };
+        if self.morale_state[i].broken() {
+            return false;
+        }
         self.target[i] = Some(order.target);
         self.target_facing[i] = order.facing;
         self.attack_target[i] = None;
@@ -210,7 +242,7 @@ impl Regiments {
         let (Some(i), Some(t)) = (self.resolve(h), self.resolve(target)) else {
             return false;
         };
-        if self.owner[i] == self.owner[t] {
+        if self.owner[i] == self.owner[t] || self.morale_state[i].broken() {
             return false;
         }
         self.attack_target[i] = Some(target);
@@ -237,7 +269,9 @@ impl Regiments {
             }
         }
         self.files[i] = self.files[i].min(self.models[i]).max(1);
-        before - self.models[i]
+        let lost = before - self.models[i];
+        self.losses[i] = self.losses[i].saturating_add(lost);
+        lost
     }
 
     fn view(&self, i: usize) -> RegimentView {
@@ -254,6 +288,8 @@ impl Regiments {
             models: self.models[i],
             moving: self.target[i].is_some() || self.target_facing[i].is_some(),
             engaged: self.engaged[i].is_some(),
+            morale: self.morale_state[i],
+            morale_points: (self.morale[i].max(0) / morale::SCALE) as u8,
         }
     }
 
@@ -337,6 +373,13 @@ impl Regiments {
             h.u16(self.charge[i]);
             h.u16(self.reload[i]);
             h.u16(self.damage_carry[i]);
+            h.u16(self.full_models[i]);
+            h.u16(self.morale[i] as u16);
+            h.u8(self.morale_state[i] as u8);
+            h.u16(self.losses[i]);
+            h.u8(self.shock[i]);
+            h.u16(self.rout_clock[i]);
+            h.u32(self.last_rout[i]);
             match self.target[i] {
                 Some(t) => {
                     h.u8(1);
@@ -384,6 +427,9 @@ pub struct RegimentView {
     pub moving: bool,
     /// Fighting in melee.
     pub engaged: bool,
+    pub morale: MoraleState,
+    /// Morale in points (0 to 100); meaningless for regiments that never rout.
+    pub morale_points: u8,
 }
 
 impl RegimentView {

@@ -47,6 +47,7 @@ fn main() {
             seed,
             capacities,
             units: &DRILL_UNITS,
+            map_tiles: 256,
         })
     });
     let mut drill = Drill::new(seed);

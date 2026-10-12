@@ -2,7 +2,7 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
-use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, RegimentHandle, World};
+use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, RegimentHandle, UnitStats, World};
 
 const SOUTH: Angle = Angle(0x4000);
 const EAST: Angle = Angle(0);
@@ -11,11 +11,18 @@ const SPEARS: u16 = 0;
 /// Drill unit 2: 12 archers with a 25-tile range.
 const ARCHERS: u16 = 2;
 
+/// The drill's units with morale switched off (they never rout), so these
+/// tests measure the fighting alone; tests/morale.rs covers breaking.
+fn fearless() -> [UnitStats; 4] {
+    DRILL_UNITS.map(|u| UnitStats { morale: 0, ..u })
+}
+
 fn world() -> World {
     World::new(&MatchSetup {
         seed: 11,
         capacities: Capacities::default(),
-        units: &DRILL_UNITS,
+        units: &fearless(),
+        map_tiles: 256,
     })
 }
 
@@ -124,13 +131,14 @@ fn flank_and_rear_hits_hurt_more() {
 #[test]
 fn charges_hit_harder_than_standing_fights() {
     // Spearmen with a big charge bonus, so the effect stands out from the dice.
-    let mut units = DRILL_UNITS;
+    let mut units = fearless();
     units[0].charge_bonus = 200;
     let world = || {
         World::new(&MatchSetup {
             seed: 11,
             capacities: Capacities::default(),
             units: &units,
+            map_tiles: 256,
         })
     };
     // Charge in from 14 tiles away, then fight for 3 s.

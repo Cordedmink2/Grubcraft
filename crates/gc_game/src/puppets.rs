@@ -26,6 +26,10 @@ const TURN_RATE: f32 = 6.0;
 /// how many lunges a second.
 const LUNGE: f32 = 0.18;
 const LUNGE_RATE: f32 = 1.6;
+/// A routing regiment's soldiers spread this much further apart (as a
+/// fraction of their spacing) and this much further off their slots, in tiles.
+const ROUT_SPREAD: f32 = 0.8;
+const ROUT_JITTER: f32 = 0.45;
 /// Fallen soldiers stay on the field this long, in seconds, then sink away.
 const CORPSE_SECONDS: f32 = 20.0;
 const CORPSE_SINK_SECONDS: f32 = 3.0;
@@ -45,6 +49,8 @@ pub struct Block {
     pub speed: f32,
     /// Fighting in melee: the front ranks lunge at the enemy.
     pub engaged: bool,
+    /// Running away: the ranks come apart.
+    pub routing: bool,
 }
 
 /// One soldier ready to draw.
@@ -112,6 +118,11 @@ impl Puppets {
         let right = Vec2::new(-block.facing.y, block.facing.x);
         let back = -block.facing;
         let files = block.files.clamp(1, block.models.max(1));
+        let (spread, scatter) = if block.routing {
+            (1.0 + ROUT_SPREAD, SLOT_JITTER + ROUT_JITTER)
+        } else {
+            (1.0, SLOT_JITTER)
+        };
         for k in 0..models {
             let i = r * SLOTS + k;
             let local = slot_offset(
@@ -120,7 +131,8 @@ impl Puppets {
                 block.models,
                 block.file_spacing,
                 block.rank_spacing,
-            ) + jitter(block.handle, k) * SLOT_JITTER;
+            ) * spread
+                + jitter(block.handle, k) * scatter;
             let target = block.centre + right * local.x + back * local.y;
             if fresh {
                 self.pos[i] = target;
@@ -280,6 +292,7 @@ mod tests {
             rank_spacing: 1.0,
             speed: 3.0,
             engaged: false,
+            routing: false,
         };
         let mut first = Vec::new();
         p.update(&block, 0, 0.016, |s| first.push(s.pos));
@@ -313,6 +326,7 @@ mod tests {
             rank_spacing: 1.0,
             speed: 3.0,
             engaged: true,
+            routing: false,
         };
         let mut soldiers = Vec::new();
         p.update(&block, 2, 0.016, |s| soldiers.push(s.pos));

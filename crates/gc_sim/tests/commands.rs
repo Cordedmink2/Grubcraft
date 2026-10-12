@@ -9,6 +9,7 @@ fn world() -> World {
         seed: 3,
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
+        map_tiles: 256,
     })
 }
 

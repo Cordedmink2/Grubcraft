@@ -13,6 +13,10 @@
 // ranged: range in tiles, damage per arrow, seconds between volleys, and the
 // percent of arrows that hit a block of normal density.
 //
+// morale: how much a regiment can take before it breaks and runs, 1 to 100
+// (it wavers below 25 and routs at 0; see docs/05-combat.md). Units that
+// fight to the last say never_routs: true instead.
+//
 // Numbers are first-pass and will be tuned in M1.
 [
     (
@@ -29,6 +33,7 @@
         melee_defence: 45,
         melee_damage: 3,
         charge_bonus: 20,
+        morale: 60,
     ),
     (
         name: "Skitterlings",
@@ -44,6 +49,7 @@
         melee_defence: 20,
         melee_damage: 2,
         charge_bonus: 40,
+        morale: 45,
     ),
     (
         name: "Shardlings",
@@ -59,6 +65,7 @@
         melee_defence: 35,
         melee_damage: 4,
         charge_bonus: 30,
+        morale: 55,
     ),
     (
         name: "Bone Pikes",
@@ -74,6 +81,7 @@
         melee_defence: 50,
         melee_damage: 3,
         charge_bonus: 10,
+        never_routs: true,
     ),
     (
         name: "Yumi Ashigaru",
@@ -89,6 +97,7 @@
         melee_defence: 20,
         melee_damage: 2,
         charge_bonus: 5,
+        morale: 50,
         ranged: Some((range: 30.0, damage: 4, reload: 4.0, accuracy: 30)),
     ),
 ]

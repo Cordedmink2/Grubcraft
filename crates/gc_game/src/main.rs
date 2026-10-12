@@ -8,7 +8,9 @@
 //! away from the camera side of the line); a big selection forms several
 //! lines. Right-click an enemy regiment to attack it; archers (each army's
 //! back two rows) also shoot enemies in range on their own, and blocks that
-//! touch fight. Ctrl (or Cmd) + a number key saves
+//! touch fight. Banners show morale: blinking amber is wavering, white is
+//! routing (no orders until it rallies), grey is shattered. Ctrl (or Cmd) +
+//! a number key saves
 //! the selection as a control group; the number recalls it (Shift adds it),
 //! and pressing it twice quickly centres the camera on it.
 //!
@@ -39,7 +41,8 @@ use gc_render::{BoxInstance, FrameParams, Renderer, RendererOptions, Terrain};
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
-    Capacities, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, UnitId, UnitStats, World,
+    Capacities, MatchSetup, MoraleState, PlayerCommand, PlayerId, RegimentHandle, UnitId,
+    UnitStats, World,
 };
 use glam::Vec2;
 use winit::application::ApplicationHandler;
@@ -81,6 +84,10 @@ const DOUBLE_TAP: Duration = Duration::from_millis(350);
 const ATTACK_PICK_TILES: f32 = 1.5;
 /// How long the marker under an attacked regiment shows.
 const ATTACK_MARK: Duration = Duration::from_millis(700);
+/// Banner over a shaken regiment: wavering (blinking amber), routing (white)
+/// or shattered (grey). Height above the ground and size, in tiles.
+const BANNER_LIFT: f32 = SOLDIER_HEIGHT + 0.7;
+const BANNER_SIZE: [f32; 3] = [0.12, 0.8, 0.7];
 /// Fallen soldiers kept on the field at once.
 const MAX_CORPSES: usize = 8192;
 /// Arrows drawn per volley, and how far apart they fly, in tiles.
@@ -312,6 +319,7 @@ impl App {
                 missile_damage: u.missile_damage,
                 reload_ticks: u.reload_ticks,
                 accuracy: u.accuracy,
+                morale: u.morale,
             })
             .collect();
         let capacities = Capacities::default();
@@ -321,6 +329,7 @@ impl App {
                     seed: opts.seed,
                     capacities,
                     units: &unit_stats,
+                    map_tiles: MAP_TILES,
                 }),
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
@@ -915,7 +924,24 @@ impl Running {
                 rank_spacing,
                 speed: fx_to_f32(stats.speed),
                 engaged: r.engaged,
+                routing: r.morale.broken(),
             };
+            let blink = self.started.elapsed().as_millis() % 600 < 300;
+            let banner = match r.morale {
+                MoraleState::Steady => None,
+                MoraleState::Wavering => blink.then_some([235, 170, 40, 200]),
+                MoraleState::Routing => Some([245, 245, 240, 200]),
+                MoraleState::Shattered => Some([110, 110, 110, 120]),
+            };
+            if let Some(color) = banner {
+                self.instances.push(BoxInstance {
+                    pos: pos.to_array(),
+                    facing: facing.to_array(),
+                    size: BANNER_SIZE,
+                    color,
+                    lift: BANNER_LIFT,
+                });
+            }
             let size = [
                 (file_spacing * 0.6).min(0.45),
                 SOLDIER_HEIGHT,

@@ -16,10 +16,12 @@ use alloc::vec::Vec;
 pub mod combat;
 pub mod formation;
 mod hash;
+pub mod morale;
 mod regiments;
 pub mod scenario;
 
 pub use hash::StateHasher;
+pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 
 use combat::Combat;
@@ -82,6 +84,9 @@ pub struct UnitStats {
     pub reload_ticks: u16,
     /// Percent of arrows that hit a block of normal density.
     pub accuracy: u8,
+    /// Morale when fresh, 1 to 100 (see [`morale`]). Zero means the regiment
+    /// never routs (the Concord's undead).
+    pub morale: u8,
 }
 
 impl UnitStats {
@@ -102,6 +107,7 @@ impl UnitStats {
             melee_defence: self.melee_defence.min(100),
             accuracy: self.accuracy.min(100),
             range: self.range.max(Fx::ZERO),
+            morale: self.morale.min(100),
             ..self
         }
     }
@@ -118,6 +124,9 @@ pub struct MatchSetup<'a> {
     pub seed: u64,
     pub capacities: Capacities,
     pub units: &'a [UnitStats],
+    /// Map edge length in tiles; fleeing regiments stay inside it. Zero means
+    /// no edge (tests on an open plane).
+    pub map_tiles: u32,
 }
 
 /// A player's order. The only way anything outside the sim changes the sim.
@@ -169,6 +178,7 @@ pub struct World {
     combat_rng: Pcg32,
     combat: Combat,
     units: Vec<UnitStats>,
+    map_tiles: u32,
     pub regiments: Regiments,
 }
 
@@ -180,6 +190,7 @@ impl World {
             combat_rng: Pcg32::new(setup.seed, streams::COMBAT),
             combat: Combat::new(setup.capacities.regiments as usize),
             units: setup.units.iter().map(|u| u.sanitized()).collect(),
+            map_tiles: setup.map_tiles,
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
@@ -215,6 +226,13 @@ impl World {
             &self.units,
             self.tick,
             &mut self.combat_rng,
+        );
+        morale::update(
+            &mut self.regiments,
+            &self.combat,
+            &self.units,
+            self.tick,
+            self.map_tiles,
         );
         self.tick += 1;
         stats
