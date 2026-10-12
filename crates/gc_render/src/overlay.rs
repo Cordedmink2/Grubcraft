@@ -11,18 +11,25 @@ pub const MAX_OVERLAY_CHARS: usize = 4096;
 const SOLID: u32 = u32::MAX;
 const MARGIN: u16 = 8;
 
+/// One rectangle or glyph of screen-space UI (and of the dev overlay).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub(crate) struct GlyphInstance {
-    pos: [u16; 2],
-    cells: [u16; 2],
-    glyph: u32,
-    color: [u8; 4],
+pub struct UiQuad {
+    /// Top-left corner, in UI pixels (times the draw scale on screen).
+    pub pos: [u16; 2],
+    /// Size in UI pixels. A glyph's cell is stretched to fit.
+    pub size: [u16; 2],
+    /// Index into the font strip (`code - 32`), or `u32::MAX` for a solid
+    /// rectangle.
+    pub glyph: u32,
+    pub color: [u8; 4],
 }
+
+pub(crate) type GlyphInstance = UiQuad;
 
 /// Lay out `text` (lines separated by `\n`) at the top-left corner over a
 /// panel. Characters outside printable ASCII show as `?`.
-pub(crate) fn layout(text: &str, out: &mut Vec<GlyphInstance>) {
+pub(crate) fn layout(text: &str, out: &mut Vec<UiQuad>) {
     out.clear();
     let lines = text.lines().count() as u16;
     let columns = text.lines().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
@@ -33,7 +40,10 @@ pub(crate) fn layout(text: &str, out: &mut Vec<GlyphInstance>) {
     // half a cell of padding on the sides and top and bottom.
     out.push(GlyphInstance {
         pos: [MARGIN, MARGIN],
-        cells: [columns + 2, lines + 1],
+        size: [
+            (columns + 2) * GLYPH_WIDTH as u16,
+            (lines + 1) * GLYPH_HEIGHT as u16,
+        ],
         glyph: SOLID,
         color: [10, 12, 16, 190],
     });
@@ -57,7 +67,7 @@ pub(crate) fn layout(text: &str, out: &mut Vec<GlyphInstance>) {
                     left + col as u16 * GLYPH_WIDTH as u16,
                     top + row as u16 * GLYPH_HEIGHT as u16,
                 ],
-                cells: [1, 1],
+                size: [GLYPH_WIDTH as u16, GLYPH_HEIGHT as u16],
                 glyph: (code - FIRST_CHAR) as u32,
                 color: [235, 238, 242, 255],
             });
@@ -96,7 +106,7 @@ mod tests {
         // Panel + 'a' 'b' 'c' 'd' (space skipped).
         assert_eq!(out.len(), 5);
         assert_eq!(out[0].glyph, SOLID);
-        assert_eq!(out[0].cells, [5, 3]);
+        assert_eq!(out[0].size, [5 * 8, 3 * 16]);
         assert_eq!(out[1].glyph, (b'a' - FIRST_CHAR) as u32);
         assert_eq!(out[4].pos[0] - out[3].pos[0], 2 * GLYPH_WIDTH as u16);
         assert_eq!(out[3].pos[1] - out[1].pos[1], GLYPH_HEIGHT as u16);

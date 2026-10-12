@@ -62,7 +62,7 @@ grubcraft/
 │  ├─ gc_net/        transport, lockstep turns, lobby protocol, discovery   (M2)
 │  ├─ gc_present/    interpolation, soldier puppets, effects triggers       (later)
 │  ├─ gc_render/     wgpu renderer: terrain, instancing, VAT, fog, UI batch
-│  ├─ gc_ui/         game UI (immediate mode, MSDF text)                     (later)
+│  ├─ gc_ui/         game UI (immediate mode; menus, lobby, settings built)
 │  ├─ gc_audio/      mixer, voices, decoders, music layers                   (later)
 │  ├─ gc_assets/     pack format, mmap loader, asset ids
 │  ├─ gc_platform/   per-OS glue: paths, local-network permission, memory stats
@@ -264,6 +264,8 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 
 ## UI framework
 - Our own **immediate-mode UI** in `gc_ui`: layout in Rust code, rendered as one batched draw, with an MSDF font atlas baked offline (crisp at any UI scale from one small atlas).
+
+**Built so far (menus and lobby):** `gc_ui` has no GPU code: each frame `gc_game` feeds it the mouse and keys (`UiInput`), a `Menu` lays out and draws its current screen into a list of `Quad`s (a rectangle or a glyph, in UI pixels), and `gc_render` draws them in one instanced call (`Renderer::set_ui`, the same pipeline as the dev overlay, drawn under it). Text uses the dev overlay's 8 × 16 bitmap font at whole-number sizes; the MSDF font comes later. Screens: main menu, Play (host card and join card), lobby, settings; all are unit tested by clicking through them headlessly. The lobby model (`Slot`, `LobbySettings`, `MatchStart`) and the `Network` trait in `gc_ui::lobby` are the contract with the netcode: `gc_net` (M2) implements `Network`, and until then `LocalNetwork` hosts a practice lobby with AI players and answers a join with "networking arrives in milestone 2". Starting a lobby match runs the sandbox armies for now; nothing in the lobby feeds the simulation yet. Settings are RON in the user config folder (`~/Library/Application Support/Grubcraft/` on a Mac, `%APPDATA%\Grubcraft\` on Windows), overridable with `GRUBCRAFT_SETTINGS`.
 - Immediate mode suits a UI that is mostly views over game state; no retained widget tree to keep in sync.
 - Localisation-ready from day one (strings by key, UTF-8, font fallback), English only at launch.
 

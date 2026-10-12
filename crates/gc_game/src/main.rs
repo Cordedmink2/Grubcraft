@@ -16,13 +16,19 @@
 //! number recalls it (Shift adds it), and pressing it twice quickly centres
 //! the camera on it.
 //!
+//! The game opens on the main menu (Play, Sandbox, Settings); Esc brings it
+//! back during a match. Play hosts or joins a lobby (joining other machines
+//! arrives with the netcode in M2; today you can host a practice lobby with
+//! AI players).
+//!
 //! Camera: arrow keys / screen edges / two-finger scroll pan; mouse wheel or
 //! pinch zooms; Alt + middle-drag or two-finger rotate turns the view;
 //! middle-click or Home resets the rotation; ` (backquote) or F11 toggles the
 //! dev overlay and prints memory by subsystem;
-//! Esc quits.
+//! Esc opens the menu.
 //!
-//! Flags: `--seed N` picks the match seed; `--frames N` quits after N frames
+//! Flags: `--no-menu` starts straight in the sandbox (`--frames` implies it,
+//! `--menu` overrides); `--seed N` picks the match seed; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
 //! `--overlay` starts with the dev overlay shown; `--latency 1|2|3` sets
 //! frames in flight; `--render-scale F` renders at a
@@ -39,13 +45,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
-use gc_render::{BoxInstance, FrameParams, Renderer, RendererOptions, Terrain};
+use gc_render::{BoxInstance, FrameParams, Renderer, RendererOptions, Terrain, UiQuad};
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
     Capacities, MatchSetup, MoraleState, PlayerCommand, PlayerId, RegimentHandle, UnitId,
     UnitStats, World,
 };
+use gc_ui::{LocalNetwork, Menu, MenuAction, Screen, Settings, Ui, UiInput};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
@@ -116,6 +123,9 @@ struct Options {
     seed: u64,
     frames: Option<u64>,
     overlay: bool,
+    /// Whether to open on the main menu. Defaults to yes, except for
+    /// `--frames` runs, which measure the sandbox itself.
+    menu: Option<bool>,
     render: RendererOptions,
 }
 
@@ -124,12 +134,17 @@ fn parse_args() -> Options {
         seed: 0x6772_7562,
         frames: None,
         overlay: false,
+        menu: None,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         if flag == "--overlay" {
             opts.overlay = true;
+            continue;
+        }
+        if flag == "--menu" || flag == "--no-menu" {
+            opts.menu = Some(flag == "--menu");
             continue;
         }
         let value = args.next().unwrap_or_default();
@@ -173,7 +188,7 @@ fn parse_args() -> Options {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--seed N] [--frames N] [--overlay] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--seed N] [--frames N] [--overlay] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
     );
     std::process::exit(2);
@@ -219,6 +234,18 @@ struct Running {
     show_blocked: bool,
     /// Data hash and size, for the overlay.
     data_label: String,
+    seed: u64,
+    capacities: Capacities,
+    /// Menus: the screens, the immediate-mode UI they draw with, and the
+    /// mouse and keys collected since the last frame.
+    menu: Menu,
+    ui: Ui,
+    ui_input: UiInput,
+    ui_quads: Vec<UiQuad>,
+    menu_open: bool,
+    /// Whether a match has started (the sim is frozen until then).
+    match_started: bool,
+    quit: bool,
 }
 
 /// Process memory recorded at startup milestones, to see what each costs.
@@ -353,16 +380,7 @@ impl App {
                 Vec::with_capacity(1024),
             )
         });
-        let mut drill = Drill::new(opts.seed);
-        drill.skip_player = Some(HUMAN);
-        // The last unit type is the archers: every army's back two rows.
-        drill.unit_of = |player, k, types| {
-            if types > 1 && k >= 40 {
-                (types - 1) as UnitId
-            } else {
-                (player as usize % (types - 1).max(1)) as UnitId
-            }
-        };
+        let drill = make_drill(opts.seed);
 
         let start = Vec2::splat(MAP_TILES as f32 * 0.25);
         let mut camera = RtsCamera::new(MAP_TILES as f32, start + Vec2::new(10.0, 20.0));
@@ -397,6 +415,18 @@ impl App {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+
+        let settings_path = gc_ui::settings::settings_path();
+        let settings = settings_path
+            .as_deref()
+            .map_or_else(Settings::default, Settings::load);
+        let menu = Menu::new(
+            Box::new(LocalNetwork::new()),
+            settings,
+            settings_path,
+            env!("CARGO_PKG_VERSION"),
+        );
+        let show_menu = opts.menu.unwrap_or(opts.frames.is_none());
 
         let now = Instant::now();
         self.running = Some(Running {
@@ -444,7 +474,19 @@ impl App {
                 game_data.units.len()
             ),
             memory_timeline: std::mem::take(&mut self.memory_timeline),
+            seed: opts.seed,
+            capacities,
+            menu,
+            ui: Ui::new(),
+            ui_input: UiInput::default(),
+            ui_quads: Vec::with_capacity(512),
+            menu_open: show_menu,
+            match_started: !show_menu,
+            quit: false,
         });
+        if let Some(r) = self.running.as_mut() {
+            r.menu.set_in_match(r.match_started);
+        }
         Ok(())
     }
 }
@@ -464,6 +506,27 @@ impl ApplicationHandler for App {
         let Some(r) = self.running.as_mut() else {
             return;
         };
+        if r.menu_open {
+            match &event {
+                WindowEvent::MouseInput { state, button, .. } => {
+                    if *button == MouseButton::Left {
+                        match state {
+                            ElementState::Pressed => r.ui_input.pressed = true,
+                            ElementState::Released => r.ui_input.released = true,
+                        }
+                    }
+                    return;
+                }
+                WindowEvent::KeyboardInput { event: key, .. } => {
+                    r.menu_key(key);
+                    return;
+                }
+                WindowEvent::MouseWheel { .. }
+                | WindowEvent::PinchGesture { .. }
+                | WindowEvent::RotationGesture { .. } => return,
+                _ => {}
+            }
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -529,7 +592,7 @@ impl ApplicationHandler for App {
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
                         }
-                        KeyCode::Escape if down => event_loop.exit(),
+                        KeyCode::Escape if down && !event.repeat => r.open_menu(),
                         _ if down && !event.repeat && digit(code).is_some() => {
                             r.control_group(digit(code).unwrap());
                         }
@@ -539,6 +602,9 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 r.frame();
+                if r.quit {
+                    event_loop.exit();
+                }
                 match r.stats.frames {
                     1 => r.memory_timeline.mark("frame 1"),
                     2 => r.memory_timeline.mark("frame 2"),
@@ -873,7 +939,10 @@ impl Running {
         self.update_camera(dt.as_secs_f32());
 
         // Fixed-rate simulation; render interpolates between the last two ticks.
-        self.sim_clock += dt;
+        // The sim stands still behind the menu.
+        if !self.menu_open {
+            self.sim_clock += dt;
+        }
         let mut ticks_this_frame = 0;
         while self.sim_clock >= TICK && ticks_this_frame < 5 {
             self.sim_clock -= TICK;
@@ -989,6 +1058,12 @@ impl Running {
             self.instances.extend_from_slice(&self.blocked_marks);
         }
 
+        if self.menu_open {
+            self.run_menu();
+        } else {
+            self.renderer.clear_ui();
+        }
+
         let frame = FrameParams {
             view_proj: self.camera.view_proj(),
             camera_pos: self.camera.eye(),
@@ -1016,6 +1091,133 @@ impl Running {
             self.stats.tick_max = Duration::ZERO;
             self.stats.ticks = 0;
         }
+    }
+
+    /// UI pixels to physical pixels: the display's scale times the player's
+    /// UI scale setting.
+    fn ui_scale(&self) -> f32 {
+        self.window.scale_factor() as f32 * self.menu.settings().effective_ui_scale()
+    }
+
+    fn open_menu(&mut self) {
+        if self.menu_open {
+            return;
+        }
+        self.menu_open = true;
+        self.menu.show(Screen::Main);
+        self.menu.set_in_match(self.match_started);
+        self.ui.reset();
+        self.ui_input = UiInput::default();
+        // Drop any half-made drag so it doesn't fire when the menu closes.
+        self.input.left_down = None;
+        self.input.right_down = None;
+        self.input.middle_down = None;
+    }
+
+    fn menu_key(&mut self, key: &winit::event::KeyEvent) {
+        if key.state != ElementState::Pressed {
+            return;
+        }
+        if !self.input.command
+            && let Some(text) = &key.text
+        {
+            self.ui_input
+                .typed
+                .extend(text.chars().filter(|c| (' '..='~').contains(c)));
+        }
+        match key.physical_key {
+            PhysicalKey::Code(KeyCode::Backspace) => self.ui_input.backspace = true,
+            PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => self.ui_input.enter = true,
+            PhysicalKey::Code(KeyCode::Escape) if !key.repeat => self.ui_input.escape = true,
+            _ => {}
+        }
+    }
+
+    /// Draw this frame's menu and carry out what it asks for.
+    fn run_menu(&mut self) {
+        let scale = self.ui_scale();
+        let size = self.window.inner_size();
+        let screen = (
+            (size.width as f32 / scale) as i32,
+            (size.height as f32 / scale) as i32,
+        );
+        let mut input = std::mem::take(&mut self.ui_input);
+        input.mouse = self.input.cursor.map_or((-1, -1), |c| {
+            ((c.x as f32 / scale) as i32, (c.y as f32 / scale) as i32)
+        });
+        self.ui.begin_frame(input, screen);
+        let action = self.menu.frame(&mut self.ui);
+        self.ui.end_frame();
+        self.ui_quads.clear();
+        self.ui_quads
+            .extend(self.ui.draw.quads.iter().map(|q| UiQuad {
+                pos: q.pos,
+                size: q.size,
+                glyph: q.glyph,
+                color: q.color,
+            }));
+        self.renderer.set_ui(&self.ui_quads, scale);
+        match action {
+            MenuAction::None | MenuAction::SettingsChanged => {}
+            MenuAction::Resume => self.close_menu(),
+            MenuAction::Quit => self.quit = true,
+            MenuAction::StartSandbox => self.start_match(),
+            MenuAction::StartMatch(setup) => {
+                // The lobby's choices are not consumed yet: the sandbox
+                // always runs the same four armies (the netcode in M2 will
+                // build the match from `setup`).
+                eprintln!(
+                    "grubcraft: starting {} on {} with {} players (sandbox armies for now)",
+                    setup.settings.mode.name(),
+                    gc_ui::lobby::MAPS[setup.settings.map],
+                    setup.players.len()
+                );
+                self.start_match();
+            }
+        }
+    }
+
+    fn close_menu(&mut self) {
+        self.menu_open = false;
+        self.renderer.clear_ui();
+        self.input.left_down = None;
+        self.input.right_down = None;
+    }
+
+    /// Begin the sandbox: the first time the world is already fresh; later
+    /// it is rebuilt from the seed.
+    fn start_match(&mut self) {
+        if self.match_started {
+            self.restart_match();
+        }
+        self.match_started = true;
+        self.menu.set_in_match(true);
+        self.camera.reset_rotation();
+        self.close_menu();
+    }
+
+    fn restart_match(&mut self) {
+        let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
+        self.world = tagged_alloc::scope(Tag::Sim, || {
+            World::new(&MatchSetup {
+                seed: self.seed,
+                capacities: self.capacities,
+                units: &self.unit_stats,
+                map_tiles: MAP_TILES,
+                nav: &nav,
+            })
+        });
+        self.drill = make_drill(self.seed);
+        self.prev_positions.iter_mut().for_each(|p| *p = None);
+        self.pending.clear();
+        self.human_orders.clear();
+        self.selected.clear();
+        self.boxed.clear();
+        self.control_groups = Default::default();
+        self.last_group_key = None;
+        self.attack_mark = None;
+        self.sim_clock = Duration::ZERO;
+        self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
     }
 
     /// Dotted lines along the routes of the selected regiments, with a plate
@@ -1103,9 +1305,17 @@ impl Running {
     }
 
     fn update_camera(&mut self, dt: f32) {
+        if self.menu_open && !self.match_started {
+            // A slow sway behind the main menu.
+            self.camera.yaw = 0.3 * (self.started.elapsed().as_secs_f32() * 0.12).sin();
+        }
         let mut dx = 0.0;
         let mut dy = 0.0;
-        let [up, down, left, right] = self.input.arrows;
+        let [up, down, left, right] = if self.menu_open {
+            [false; 4]
+        } else {
+            self.input.arrows
+        };
         if up {
             dy += 1.0
         }
@@ -1118,7 +1328,7 @@ impl Running {
         if right {
             dx += 1.0
         }
-        if let (Some(c), true) = (self.input.cursor, self.input.focused) {
+        if let (Some(c), true, false) = (self.input.cursor, self.input.focused, self.menu_open) {
             let size = self.window.inner_size();
             if c.x <= EDGE_SCROLL_PX {
                 dx -= 1.0
@@ -1217,6 +1427,21 @@ impl Running {
             format_args!("{:.1}", mb(self.renderer.gpu_bytes() as usize)),
         )
     }
+}
+
+/// The scripted opponents of the sandbox.
+fn make_drill(seed: u64) -> Drill {
+    let mut drill = Drill::new(seed);
+    drill.skip_player = Some(HUMAN);
+    // The last unit type is the archers: every army's back two rows.
+    drill.unit_of = |player, k, types| {
+        if types > 1 && k >= 40 {
+            (types - 1) as UnitId
+        } else {
+            (player as usize % (types - 1).max(1)) as UnitId
+        }
+    };
+    drill
 }
 
 fn print_memory(renderer: &Renderer) {

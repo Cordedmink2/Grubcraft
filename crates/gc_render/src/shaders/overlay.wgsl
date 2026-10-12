@@ -14,8 +14,8 @@ const SOLID: u32 = 0xffffffffu;
 struct GlyphIn {
     // Top-left corner in unscaled pixels.
     @location(0) pos: vec2<u32>,
-    // Size in glyph cells.
-    @location(1) cells: vec2<u32>,
+    // Size in unscaled pixels; a glyph's 8 x 16 cell is stretched to fit.
+    @location(1) size: vec2<u32>,
     // Glyph index into the font strip, or SOLID for a filled panel.
     @location(2) glyph: u32,
     @location(3) color: vec4<f32>,
@@ -32,12 +32,12 @@ struct GlyphOut {
 @vertex
 fn vs_glyph(@builtin(vertex_index) vi: u32, g: GlyphIn) -> GlyphOut {
     let corner = vec2<f32>(f32(vi & 1u), f32((vi >> 1u) & 1u));
-    let size = vec2<f32>(g.cells) * GLYPH;
-    let px = (vec2<f32>(g.pos) + corner * size) * og.screen.z;
+    let px = (vec2<f32>(g.pos) + corner * vec2<f32>(g.size)) * og.screen.z;
     var out: GlyphOut;
     out.clip = vec4<f32>(px.x / og.screen.x * 2.0 - 1.0, 1.0 - px.y / og.screen.y * 2.0, 0.0, 1.0);
     out.texel = corner * GLYPH;
-    out.color = g.color;
+    // Colours are authored in sRGB; the surface is sRGB, so write linear.
+    out.color = vec4<f32>(pow(g.color.rgb, vec3<f32>(2.2)), g.color.a);
     out.glyph = g.glyph;
     return out;
 }

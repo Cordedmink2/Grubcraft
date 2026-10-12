@@ -1,0 +1,15 @@
+[package]
+name = "gc_ui"
+description = "Grubcraft menus and lobby: an immediate-mode UI with no GPU dependency"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ron.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true
