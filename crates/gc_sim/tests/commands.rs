@@ -10,6 +10,7 @@ fn world() -> World {
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
         map_tiles: 256,
+        nav: &[],
     })
 }
 

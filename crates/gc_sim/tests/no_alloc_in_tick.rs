@@ -7,7 +7,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use gc_sim::scenario::{DRILL_UNITS, Drill};
+use gc_sim::scenario::{DRILL_UNITS, Drill, ribs_map};
 use gc_sim::{Capacities, MatchSetup, World};
 
 struct Counting;
@@ -46,11 +46,14 @@ static GLOBAL: Counting = Counting;
 
 #[test]
 fn ticking_never_allocates() {
+    // On the ridged map, so route searches run too.
+    let nav = ribs_map(256);
     let mut world = World::new(&MatchSetup {
         seed: 7,
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
         map_tiles: 256,
+        nav: &nav,
     });
     let mut drill = Drill::new(7);
     let mut commands = Vec::with_capacity(512);

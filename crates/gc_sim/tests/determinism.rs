@@ -5,7 +5,7 @@
 //! If a change intentionally alters simulation behaviour, update the golden
 //! values in the same pull request and say why in its description.
 
-use gc_sim::scenario::{DRILL_UNITS, Drill};
+use gc_sim::scenario::{DRILL_UNITS, Drill, ribs_map};
 use gc_sim::{Capacities, MatchSetup, World};
 
 const SEED: u64 = 0x6772_7562; // "grub"
@@ -19,12 +19,25 @@ const GOLDEN: [(u32, u64); 4] = [
     (2400, 0xca02_52b2_6b8b_9591),
 ];
 
+/// The same drill on the ridged test map, where most orders need routes.
+const GOLDEN_RIBS: [(u32, u64); 4] = [
+    (600, 0xd77e_5e07_c7d8_5f9e),
+    (1200, 0x5c8c_0438_dc92_d6d5),
+    (1800, 0x24ef_3665_75b5_a8a6),
+    (2400, 0xdec3_f5f4_e527_7c6f),
+];
+
 fn run() -> Vec<(u32, u64)> {
+    run_on(&[])
+}
+
+fn run_on(nav: &[u8]) -> Vec<(u32, u64)> {
     let mut world = World::new(&MatchSetup {
         seed: SEED,
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
         map_tiles: 256,
+        nav,
     });
     let mut drill = Drill::new(SEED);
     let mut commands = Vec::with_capacity(512);
@@ -57,18 +70,34 @@ fn matches_golden_hashes() {
 }
 
 #[test]
+fn matches_golden_hashes_with_pathfinding() {
+    let nav = ribs_map(256);
+    let got = run_on(&nav);
+    assert_eq!(got, run_on(&nav));
+    for (g, (tick, hash)) in GOLDEN_RIBS.iter().zip(&got) {
+        assert_eq!(g.0, *tick);
+        assert_eq!(
+            g.1, *hash,
+            "state hash at tick {tick} is {hash:#018x}; full run: {got:#x?}"
+        );
+    }
+}
+
+#[test]
 fn different_seed_different_hash() {
     let mut a = World::new(&MatchSetup {
         seed: 1,
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
         map_tiles: 256,
+        nav: &[],
     });
     let b = World::new(&MatchSetup {
         seed: 2,
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
         map_tiles: 256,
+        nav: &[],
     });
     assert_ne!(a.state_hash(), b.state_hash());
     a.tick(&[]);

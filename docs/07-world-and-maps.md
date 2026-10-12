@@ -87,3 +87,5 @@ Creeps sleep at night on maps with a night lighting preset (purely as a scouting
 ## Water (later)
 
 Launch maps treat water as terrain: shallow fords are walkable and slow, deep water is impassable except to air. Naval play (ships, coastal raids, sea seeps) comes with the naval expansion. The map format reserves a water-depth layer from day one so old maps upgrade cleanly.
+
+**Built so far (M1 step 6):** the placeholder map's walkable ground comes from its heights: ground rising more than 1.2 tiles per tile and water deeper than 0.35 tiles are blocked; slopes over half that and shallow fords are walkable but routes avoid them (they don't slow the march yet).

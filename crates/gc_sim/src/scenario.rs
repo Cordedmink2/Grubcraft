@@ -275,3 +275,30 @@ impl Drill {
             .map(|r| r.handle)
     }
 }
+
+/// A test map `map_tiles` across, as nav costs (see [`crate::nav`]): long
+/// diagonal ridges 3 tiles thick every 96 tiles, each broken by an 8-tile
+/// pass every 40 tiles, and a lake ringed by bog in the middle. Integer
+/// only, so every machine builds the same map.
+pub fn ribs_map(map_tiles: u32) -> Vec<u8> {
+    let side = map_tiles as i32 * crate::nav::CELLS_PER_TILE;
+    let mut cells = Vec::with_capacity((side * side) as usize);
+    let (cx, cy) = (side / 2, side / 2);
+    for y in 0..side {
+        for x in 0..side {
+            // Across and along the ridges, in fifths of a cell (|(4, 3)| = 5).
+            let across = (4 * x + 3 * y).rem_euclid(192 * 5);
+            let along = (3 * x - 4 * y).rem_euclid(80 * 5);
+            let ridge = across < 6 * 5 && along >= 16 * 5;
+            let d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+            cells.push(if ridge || d2 < 24 * 24 {
+                crate::nav::BLOCKED
+            } else if d2 < 36 * 36 {
+                3
+            } else {
+                1
+            });
+        }
+    }
+    cells
+}

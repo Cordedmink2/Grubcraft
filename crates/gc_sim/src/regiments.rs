@@ -5,6 +5,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 
 use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
+use crate::nav::Nav;
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
 
 /// Generational handle to a regiment. Stale handles (to a slot that has since
@@ -300,7 +301,7 @@ impl Regiments {
             .map(|i| self.view(i))
     }
 
-    pub(crate) fn step_movement(&mut self) {
+    pub(crate) fn step_movement(&mut self, nav: &mut Nav) {
         for i in 0..self.alive.len() {
             if !self.alive[i] {
                 continue;
@@ -314,10 +315,15 @@ impl Regiments {
                 continue;
             }
             if let Some(target) = self.target[i] {
-                let delta = target - self.position[i];
+                // The next waypoint on the way to the target; none while the
+                // route is being searched for.
+                let Some((point, last)) = nav.steer(i, target) else {
+                    continue;
+                };
+                let delta = point - self.position[i];
                 let dist = delta.length();
                 let pace = self.pace[i];
-                let shuffle = dist <= SHUFFLE_DISTANCE && self.target_facing[i].is_some();
+                let shuffle = last && dist <= SHUFFLE_DISTANCE && self.target_facing[i].is_some();
                 let step = if shuffle {
                     self.facing[i] =
                         self.facing[i].turn_toward(self.target_facing[i].unwrap(), turn);
@@ -332,11 +338,20 @@ impl Regiments {
                     pace
                 };
                 if dist <= step {
-                    self.position[i] = target;
-                    self.target[i] = None;
+                    self.position[i] = point;
+                    if last {
+                        self.target[i] = None;
+                    } else {
+                        nav.reached(i);
+                    }
                 } else {
                     let dir = FxVec2::new(delta.x / dist, delta.y / dist);
-                    self.position[i] += dir * step;
+                    let next = self.position[i] + dir * step;
+                    if nav.blocks(self.position[i], next) {
+                        nav.lost(i);
+                    } else {
+                        self.position[i] = next;
+                    }
                 }
             } else if let Some(want) = self.target_facing[i] {
                 self.facing[i] = self.facing[i].turn_toward(want, turn);

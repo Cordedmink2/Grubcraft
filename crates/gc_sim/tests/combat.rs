@@ -23,6 +23,7 @@ fn world() -> World {
         capacities: Capacities::default(),
         units: &fearless(),
         map_tiles: 256,
+        nav: &[],
     })
 }
 
@@ -139,6 +140,7 @@ fn charges_hit_harder_than_standing_fights() {
             capacities: Capacities::default(),
             units: &units,
             map_tiles: 256,
+            nav: &[],
         })
     };
     // Charge in from 14 tiles away, then fight for 3 s.

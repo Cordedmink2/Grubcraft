@@ -9,10 +9,12 @@
 //! lines. Right-click an enemy regiment to attack it; archers (each army's
 //! back two rows) also shoot enemies in range on their own, and blocks that
 //! touch fight. Banners show morale: blinking amber is wavering, white is
-//! routing (no orders until it rallies), grey is shattered. Ctrl (or Cmd) +
-//! a number key saves
-//! the selection as a control group; the number recalls it (Shift adds it),
-//! and pressing it twice quickly centres the camera on it.
+//! routing (no orders until it rallies), grey is shattered. Regiments find
+//! their own way around cliffs and deep water; a selected regiment's route
+//! shows as a dotted line, and G shows the ground no regiment can cross.
+//! Ctrl (or Cmd) + a number key saves the selection as a control group; the
+//! number recalls it (Shift adds it), and pressing it twice quickly centres
+//! the camera on it.
 //!
 //! Camera: arrow keys / screen edges / two-finger scroll pan; mouse wheel or
 //! pinch zooms; Alt + middle-drag or two-finger rotate turns the view;
@@ -90,6 +92,16 @@ const BANNER_LIFT: f32 = SOLDIER_HEIGHT + 0.7;
 const BANNER_SIZE: [f32; 3] = [0.12, 0.8, 0.7];
 /// Fallen soldiers kept on the field at once.
 const MAX_CORPSES: usize = 8192;
+/// Dots along a selected regiment's route: spacing and size, in tiles.
+const ROUTE_DOT_SPACING: f32 = 1.2;
+const ROUTE_DOT: [f32; 3] = [0.22, 0.04, 0.22];
+const ROUTE_END: [f32; 3] = [0.7, 0.05, 0.7];
+const MAX_ROUTE_DOTS: usize = 400;
+/// Colour of ground no regiment can cross, when shown (G).
+const BLOCKED_COLOR: [u8; 4] = [70, 16, 22, 0];
+const BLOCKED_MARK: [f32; 3] = [0.3, 0.04, 0.3];
+/// Raised a little so steep ground doesn't hide it.
+const BLOCKED_LIFT: f32 = 0.1;
 /// Arrows drawn per volley, and how far apart they fly, in tiles.
 const ARROWS_PER_VOLLEY: usize = 6;
 const ARROW_SPREAD: f32 = 1.6;
@@ -202,6 +214,9 @@ struct Running {
     memory_timeline: MemoryTimeline,
     /// Whether the dev overlay is showing.
     overlay: bool,
+    /// Marks over ground no regiment can cross, and whether to show them (G).
+    blocked_marks: Vec<BoxInstance>,
+    show_blocked: bool,
     /// Data hash and size, for the overlay.
     data_label: String,
 }
@@ -323,6 +338,8 @@ impl App {
             })
             .collect();
         let capacities = Capacities::default();
+        let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
+        let blocked_marks = blocked_marks(&nav, MAP_TILES);
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
             (
                 World::new(&MatchSetup {
@@ -330,6 +347,7 @@ impl App {
                     capacities,
                     units: &unit_stats,
                     map_tiles: MAP_TILES,
+                    nav: &nav,
                 }),
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
@@ -418,6 +436,8 @@ impl App {
                 ticks: 0,
             },
             overlay: opts.overlay,
+            blocked_marks,
+            show_blocked: false,
             data_label: format!(
                 "{:016x}   {} unit types",
                 game_data.short_hash(),
@@ -505,6 +525,9 @@ impl ApplicationHandler for App {
                             }
                             r.memory_timeline.print();
                             print_memory(&r.renderer);
+                        }
+                        KeyCode::KeyG if down && !event.repeat => {
+                            r.show_blocked = !r.show_blocked;
                         }
                         KeyCode::Escape if down => event_loop.exit(),
                         _ if down && !event.repeat && digit(code).is_some() => {
@@ -961,6 +984,10 @@ impl Running {
         }
         self.push_corpses();
         self.push_arrows(alpha);
+        self.push_routes();
+        if self.show_blocked {
+            self.instances.extend_from_slice(&self.blocked_marks);
+        }
 
         let frame = FrameParams {
             view_proj: self.camera.view_proj(),
@@ -988,6 +1015,49 @@ impl Running {
             self.stats.tick_time = Duration::ZERO;
             self.stats.tick_max = Duration::ZERO;
             self.stats.ticks = 0;
+        }
+    }
+
+    /// Dotted lines along the routes of the selected regiments, with a plate
+    /// where each will stop.
+    fn push_routes(&mut self) {
+        let mut dots = 0;
+        for &h in &self.selected {
+            let Some(r) = self.world.regiments.get(h) else {
+                continue;
+            };
+            let [cr, cg, cb] = TEAM_COLORS[r.owner as usize % TEAM_COLORS.len()];
+            let color = [cr, cg, cb, 160];
+            let mut from = from_fx_vec(r.position);
+            let route = self.world.route(h);
+            for (k, &p) in route.iter().enumerate() {
+                let to = from_fx_vec(p);
+                let leg = to - from;
+                let steps = (leg.length() / ROUTE_DOT_SPACING) as usize;
+                for s in 1..=steps {
+                    if dots == MAX_ROUTE_DOTS {
+                        return;
+                    }
+                    dots += 1;
+                    self.instances.push(BoxInstance {
+                        pos: (from + leg * (s as f32 / (steps + 1) as f32)).to_array(),
+                        facing: [0.0, 1.0],
+                        size: ROUTE_DOT,
+                        color,
+                        lift: 0.0,
+                    });
+                }
+                if k + 1 == route.len() {
+                    self.instances.push(BoxInstance {
+                        pos: to.to_array(),
+                        facing: [0.0, 1.0],
+                        size: ROUTE_END,
+                        color,
+                        lift: 0.0,
+                    });
+                }
+                from = to;
+            }
         }
     }
 
@@ -1100,6 +1170,7 @@ impl Running {
             "GRUBCRAFT DEV OVERLAY                          ` or F11 hides\n\
              frame   {fps:5.0} fps   {frame_avg:6.2} ms avg   {:6.2} ms worst\n\
              sim     tick {:<7} {tick_avg:6.3} ms avg   {:6.3} ms worst\n\
+             routes  {} portals   {} waiting\n\
              render  {} draw calls   {}/{} chunks   {} boxes\n\
              memory  process {process}   heap {:.1} MB   gpu {:.1} MB\n\
              heap    {}\n\
@@ -1108,6 +1179,8 @@ impl Running {
             ms(self.stats.frame_max),
             self.world.tick_count(),
             ms(self.stats.tick_max),
+            self.world.nav().portal_count(),
+            self.world.nav().queued(),
             rs.draw_calls,
             rs.chunks_drawn,
             rs.chunks_total,
@@ -1160,6 +1233,29 @@ fn print_memory(renderer: &Renderer) {
     if let Some(c) = mem.current {
         eprintln!("  process  {:>8.2}", mb(c as usize));
     }
+}
+
+/// A small square over every cell of ground no regiment can cross.
+fn blocked_marks(nav: &[u8], map_tiles: u32) -> Vec<BoxInstance> {
+    let per_tile = gc_sim::nav::CELLS_PER_TILE as usize;
+    let side = map_tiles as usize * per_tile;
+    let cell = 1.0 / per_tile as f32;
+    let mut marks = Vec::new();
+    for (k, _) in nav
+        .iter()
+        .enumerate()
+        .filter(|&(_, &c)| c == gc_sim::nav::BLOCKED)
+    {
+        let (x, y) = (k % side, k / side);
+        marks.push(BoxInstance {
+            pos: [(x as f32 + 0.5) * cell, (y as f32 + 0.5) * cell],
+            facing: [0.0, 1.0],
+            size: BLOCKED_MARK,
+            color: BLOCKED_COLOR,
+            lift: BLOCKED_LIFT,
+        });
+    }
+    marks
 }
 
 fn mb(bytes: usize) -> f64 {

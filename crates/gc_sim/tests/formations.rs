@@ -18,6 +18,7 @@ fn one_regiment() -> (World, RegimentHandle) {
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
         map_tiles: 256,
+        nav: &[],
     });
     w.tick(&[PlayerCommand {
         player: 0,

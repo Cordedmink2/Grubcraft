@@ -127,7 +127,7 @@ Crates marked *(later)* or *(M2)* don't exist yet. Until `gc_present` is needed,
 11. Victory checks.
 12. State hash (every 10 ticks) and snapshot publish.
 
-**Built so far:** commands, then combat's contact, charge and chase checks, then movement and turning (straight lines; pathfinding is M1 step 6), then melee blows and volleys, then morale. The state hash is computed on request (the determinism test checks it every 600 ticks); snapshots come with M2.
+**Built so far:** commands, then combat's contact, charge and chase checks, then route planning (budgeted searches), then movement and turning along the routes, then melee blows and volleys, then morale. The state hash is computed on request (the determinism test checks it every 600 ticks); snapshots come with M2.
 
 ### Spatial partitioning
 A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt incrementally (entities move bucket only when they cross a boundary). Used for collision, targeting, vision and area effects.
@@ -140,6 +140,13 @@ A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt increm
 - **Flow fields** per (sector, target portal) are computed on demand and cached in a fixed-size LRU (~1 KB each). Many regiments heading to the same place share fields, which is exactly what armies do.
 - Regiments path **as a block**: the flow field moves the formation's anchor; members follow formation slots, with local avoidance between regiments (oriented-rectangle footprints).
 - A per-tick path budget smooths spikes when 40 regiments are ordered at once.
+
+**Built so far (M1 step 6):** `gc_sim::nav`, with **waypoint routes instead of flow fields**. Regiments march as rigid blocks that wheel to face their direction of travel, so straight legs between a few waypoints suit them better than per-cell flow directions (which zigzag in 45° steps and would make blocks stop and turn constantly). Flow fields can still come later if huge armies sharing one goal make searches the bottleneck.
+- **Grid:** one cost byte per half-tile cell (0 blocked, 1 open, higher is slow going that routes avoid; it does not slow marching yet). At load the sim measures each cell's clearance (steps to the nearest blocked cell or the map edge) and treats cells under 3 as closed to a regiment's centre, so blocks keep 1.25 tiles off cliffs. It also numbers the connected areas, so a search never starts for a goal that can't be reached.
+- **Sectors and portals:** 32 × 32-cell sectors; a portal for every run of up to 16 open cells facing each other across a sector edge; each portal linked at load to every other portal it can reach in its sector, with the true walking cost. On the 256-tile ridged test map that is about 1,900 portal nodes, built in about 0.15 s.
+- **A route request:** if the goal is in plain sight, walk straight there. Otherwise A* over the portal graph (start and goal linked to the portals they can see), fill in any leg between portals that isn't a straight line with a sector-local A*, then pull the chain tight into waypoints (legs of at most 24 tiles; 16 waypoints stored per regiment, and a longer route is finished with a fresh search when the 16th is reached). Searches weight their estimate by 1.25, trading routes up to a quarter longer than the shortest for much less work. A goal on blocked ground, or cut off from the start, becomes the nearest reachable cell within 32 tiles; a regiment standing too close to blocked ground first steps out to the nearest open cell.
+- **Budget:** requests queue in order and each tick serves them until 32,000 work units are spent (4 per search step, 1 per cell checked along a line; at least one request per tick). A target that drifts less than 3 tiles from the one a route was found for (a chased enemy) keeps the route. Movement never steps onto a blocked cell; a regiment that would is sent to search again.
+- **Not yet:** local avoidance between regiments (friendly blocks still pass through each other), blocks narrowing into columns for tight passes, and terrain costs slowing the march.
 
 ### Formations and combat
 - A regiment's formation is its centre, facing and number of files (soldiers per rank); the ranks follow from how many soldiers are standing, and the block's width and depth from the unit's file and rank spacing. Hit points are kept per soldier by formation slot (rank 0 is the front). The sim never tracks individual soldier positions; `gc_sim::formation` gives each slot's place in the block for the renderer and for combat.
@@ -301,7 +308,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 - **Network chaos test:** four local clients over a loopback shim that injects latency, jitter, loss and reordering.
 - **Performance gates** (see [12 · Performance](12-performance.md#hill-climbing-process)).
 
-**Built so far:** unit tests per crate (fixed-point maths, formations, group orders, combat, data baking, puppets); a golden determinism test that runs a scripted 4-player drill (moves, group moves and fights) for 2,400 ticks and compares state hashes on macOS, Windows and Linux CI; the no-float and no-allocation tests; and the `gc_bench` drill benchmark. Recorded golden replays arrive with replay recording in M2.
+**Built so far:** unit tests per crate (fixed-point maths, formations, group orders, combat, morale, pathfinding, data baking, puppets); a golden determinism test that runs a scripted 4-player drill (moves, group moves and fights) for 2,400 ticks, on an open plane and again on a ridged test map where most orders need routes, and compares state hashes on macOS, Windows and Linux CI; the no-float and no-allocation tests (the latter on the ridged map); and the `gc_bench` drill and pathing-storm benchmarks. Recorded golden replays arrive with replay recording in M2.
 
 ## Dependency policy
 - Every third-party crate is listed in `docs/dependencies.md` with its purpose and its cost (binary size, transitive dependencies).

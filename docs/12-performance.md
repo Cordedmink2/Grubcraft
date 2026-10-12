@@ -112,7 +112,11 @@ Scenarios replayed headless (sim) and rendered with a scripted camera (frame):
 | `zoom-sweep` | Camera from closest to Commander View: LOD transitions |
 | `cold-start` | Launch to menu, menu to match |
 
-**Built so far:** one scenario, `drill`: four scripted players with 300 regiments each, ordering moves and group moves and fighting, for 12,000 ticks. It gates tick p99 (≤ 2 ms), sim heap (≤ 8 MB) and allocations per tick (0); CI runs it on every pull request. With morale (M1 step 5) it measures about 0.5 ms p99, 0.52 MB and 0 allocations (in the cloud build container). The other scenarios need features that don't exist yet (replays, rendering benchmarks, pathfinding).
+**Built so far:** two scenarios, both on a 256-tile ridged test map (`gc_sim::scenario::ribs_map`; `--open` runs on an open plane instead), gating tick p99 (≤ 2 ms), sim heap (≤ 8 MB) and allocations per tick (0). CI runs both on every pull request.
+- `drill`: four scripted players with 300 regiments each, ordering moves and group moves and fighting, for 12,000 ticks. With pathfinding (M1 step 6) it measures about 0.75 to 0.9 ms p99 (0.5 ms on the open plane), 2.7 MB of sim heap (the nav grid and portal graph are most of it) and 0 allocations, in the cloud build container.
+- `pathing-storm`: 120 regiments ordered across the map in the same tick. It also gates how long the last one waits for its route (≤ 40 ticks, 2 s); today about 17 ticks, at about 0.45 ms p99.
+
+The other scenarios need features that don't exist yet (replays, rendering benchmarks).
 
 ### Gates in CI
 - Every pull request runs the headless benchmarks on CI machines and compares against the stored baseline: **> 5% regression in any tracked metric fails**, unless the PR updates the baseline with a written reason. *(Not built yet: today CI checks the fixed budgets above, not a stored baseline. Due in M1, requirement PRF-7.)*

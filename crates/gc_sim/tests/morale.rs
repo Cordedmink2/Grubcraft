@@ -18,6 +18,7 @@ fn world_with(units: &[UnitStats]) -> World {
         capacities: Capacities::default(),
         units,
         map_tiles: 256,
+        nav: &[],
     })
 }
 

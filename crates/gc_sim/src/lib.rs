@@ -17,6 +17,7 @@ pub mod combat;
 pub mod formation;
 mod hash;
 pub mod morale;
+pub mod nav;
 mod regiments;
 pub mod scenario;
 
@@ -27,6 +28,7 @@ pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 use combat::Combat;
 use formation::MAX_MODELS;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
+use nav::Nav;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -127,6 +129,10 @@ pub struct MatchSetup<'a> {
     /// Map edge length in tiles; fleeing regiments stay inside it. Zero means
     /// no edge (tests on an open plane).
     pub map_tiles: u32,
+    /// Ground cost of each half-tile cell, row by row (see [`nav`]): 0 is
+    /// blocked, 1 open, higher is slow going routes avoid. Empty means an
+    /// open plane where regiments walk in straight lines.
+    pub nav: &'a [u8],
 }
 
 /// A player's order. The only way anything outside the sim changes the sim.
@@ -179,6 +185,7 @@ pub struct World {
     combat: Combat,
     units: Vec<UnitStats>,
     map_tiles: u32,
+    nav: Nav,
     pub regiments: Regiments,
 }
 
@@ -191,6 +198,11 @@ impl World {
             combat: Combat::new(setup.capacities.regiments as usize),
             units: setup.units.iter().map(|u| u.sanitized()).collect(),
             map_tiles: setup.map_tiles,
+            nav: Nav::new(
+                setup.nav,
+                setup.map_tiles,
+                setup.capacities.regiments as usize,
+            ),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
@@ -220,7 +232,8 @@ impl World {
             }
         }
         self.combat.before_move(&mut self.regiments, &self.units);
-        self.regiments.step_movement();
+        self.nav.plan(&mut self.regiments);
+        self.regiments.step_movement(&mut self.nav);
         self.combat.after_move(
             &mut self.regiments,
             &self.units,
@@ -280,6 +293,20 @@ impl World {
         }
     }
 
+    /// The walkable ground and the route searches in progress.
+    pub fn nav(&self) -> &Nav {
+        &self.nav
+    }
+
+    /// Where a regiment is still headed: the waypoints ahead of it, ending
+    /// at its destination. Empty when it is standing, or waiting for a route.
+    pub fn route(&self, h: RegimentHandle) -> &[FxVec2] {
+        match self.regiments.resolve(h) {
+            Some(i) => self.nav.route_ahead(i, self.regiments.target[i]),
+            None => &[],
+        }
+    }
+
     /// Volleys in flight, for drawing arrows.
     pub fn volleys(&self) -> impl Iterator<Item = combat::VolleyView> + '_ {
         self.combat.volleys()
@@ -297,6 +324,7 @@ impl World {
         h.u64(inc);
         self.regiments.hash_into(&mut h);
         self.combat.hash_into(&mut h);
+        self.nav.hash_into(&mut h);
         h.finish()
     }
 
