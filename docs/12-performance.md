@@ -98,7 +98,7 @@ Performance work is continuous, measured and recorded.
 - **Dev overlay (`` ` `` or `F11`):** frame time breakdown, sim tick time, memory per tag, GPU memory, draw calls, instance counts, network RTT/jitter/delay.
 - **Tracy** profiling in instrumented builds.
 - **Tagged allocator** and **GPU allocation wrapper** for exact memory attribution.
-- **Allocation-in-tick tripwire:** debug builds abort if the sim allocates during a tick.
+- **Allocation-in-tick tripwire:** a test and the `gc_bench` gate fail if the sim allocates during a tick.
 
 ### Benchmark suite (`gc_bench`)
 Scenarios replayed headless (sim) and rendered with a scripted camera (frame):
@@ -112,14 +112,16 @@ Scenarios replayed headless (sim) and rendered with a scripted camera (frame):
 | `zoom-sweep` | Camera from closest to Commander View: LOD transitions |
 | `cold-start` | Launch to menu, menu to match |
 
+**Built so far:** one scenario, `drill`: four scripted players with 300 regiments each, ordering moves and group moves and fighting, for 12,000 ticks. It gates tick p99 (≤ 2 ms), sim heap (≤ 8 MB) and allocations per tick (0); CI runs it on every pull request. At M1 step 4 it measures about 0.4 ms p99, 0.49 MB and 0 allocations (in the cloud build container). The other scenarios need features that don't exist yet (replays, rendering benchmarks, pathfinding).
+
 ### Gates in CI
-- Every pull request runs the headless benchmarks on CI machines and compares against the stored baseline: **> 5% regression in any tracked metric fails**, unless the PR updates the baseline with a written reason.
+- Every pull request runs the headless benchmarks on CI machines and compares against the stored baseline: **> 5% regression in any tracked metric fails**, unless the PR updates the baseline with a written reason. *(Not built yet: today CI checks the fixed budgets above, not a stored baseline. Due in M1, requirement PRF-7.)*
 - Memory per tag is compared against the budget table above; exceeding a budget fails.
 - Frame benchmarks run on real reference hardware (Mario's machines) before each release, since CI machines have no representative GPU.
 
 ### The loop
 1. Each milestone ends with a **performance pass**: profile the benchmark suite, list the top three costs.
-2. Optimise them, measure, and record before/after numbers in `docs/perf-log.md`.
+2. Optimise them, measure, and record before/after numbers in `docs/perf-log.md` (started at the first milestone performance pass; until then, numbers are in each pull request).
 3. Tighten budgets when there is headroom. Budgets only ever go down.
 
 ### Optimisation backlog (ideas to try when the numbers ask for it)

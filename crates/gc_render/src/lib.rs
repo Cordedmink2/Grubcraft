@@ -53,7 +53,8 @@ pub struct Terrain<'a> {
     pub heights: &'a [u16],
 }
 
-/// One shaded box draped on the terrain: a soldier, or a ground marker. 32 bytes.
+/// One shaded box draped on the terrain: a soldier, a ground marker or an
+/// arrow in flight. 36 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct BoxInstance {
@@ -65,6 +66,8 @@ pub struct BoxInstance {
     pub size: [f32; 3],
     /// Team colour (rgb) and selection highlight (a).
     pub color: [u8; 4],
+    /// Height above the ground, in tiles (arrows in flight).
+    pub lift: f32,
 }
 
 /// How the renderer is set up. The draw switches exist to measure what each
@@ -300,7 +303,8 @@ impl Renderer {
                 array_stride: size_of::<BoxInstance>() as u64,
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &wgpu::vertex_attr_array![
-                    0 => Float32x2, 1 => Float32x2, 2 => Float32x3, 3 => Unorm8x4
+                    0 => Float32x2, 1 => Float32x2, 2 => Float32x3, 3 => Unorm8x4,
+                    4 => Float32
                 ],
             },
         );
@@ -1014,6 +1018,6 @@ mod tests {
 
     #[test]
     fn regiment_instance_layout_is_stable() {
-        assert_eq!(size_of::<BoxInstance>(), 32);
+        assert_eq!(size_of::<BoxInstance>(), 36);
     }
 }

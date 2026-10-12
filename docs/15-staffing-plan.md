@@ -73,8 +73,8 @@ The engine thread (currently running) stays Opus and builds the eight steps in o
 |---|---|---|---|
 | 1 Formations in the sim | Opus (merged) | | |
 | 2 Soldier puppets | Opus (merged) | | |
-| 3 Controls: box select, right-drag frontage, control groups | Opus | Haiku `screenshotter`, `test-writer` for `group_move` cases | Order expansion feeds the sim; the input plumbing is routine |
-| 4 Melee, volleys, facing multipliers, charges | **Opus alone** for formulas and tick order | Haiku `test-writer` (formula tables), `data-entry` (unit combat stats) | The heart of "feels like Shogun", and all hashed state |
+| 3 Controls: box select, right-drag frontage, control groups | Opus (merged) | Haiku `screenshotter`, `test-writer` for `group_move` cases | Order expansion feeds the sim; the input plumbing is routine |
+| 4 Melee, volleys, facing multipliers, charges | **Opus alone** for formulas and tick order (in review) | Haiku `test-writer` (formula tables), `data-entry` (unit combat stats) | The heart of "feels like Shogun", and all hashed state |
 | 5 Morale and routing | **Opus alone** | Haiku `test-writer`, `bench-runner` | Cascading rout is emergent and easy to get subtly wrong |
 | 6 Pathfinding: nav grid, sectors, flow fields | Opus | Haiku `bench-runner` (path cost per tick), `test-writer` (grid edge cases) | Deterministic and performance critical at once |
 | 7 Sandbox: place armies, slow-mo, hot-reload stats | Opus for slow-mo and hot-reload (they touch the tick) | **Sonnet `feature-builder`** for the placement UI and panels | First clean seam where Sonnet can build inside the thread |

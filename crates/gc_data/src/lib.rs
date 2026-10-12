@@ -18,7 +18,7 @@ pub const UNITS_PATH: &str = "data/units";
 /// Pack path of the data manifest (the data hash).
 pub const MANIFEST_PATH: &str = "data/manifest";
 /// Bump whenever [`UnitRecord`]'s layout or meaning changes.
-pub const UNIT_SCHEMA: u32 = 2;
+pub const UNIT_SCHEMA: u32 = 3;
 /// Longest unit name, in UTF-8 bytes.
 pub const NAME_BYTES: usize = 32;
 /// Most soldiers in one regiment. Must equal `gc_sim::formation::MAX_MODELS`
@@ -82,6 +82,22 @@ pub struct UnitRecord {
     /// A [`Faction`] as `u8`.
     pub faction: u8,
     pub _pad: u8,
+    /// Shooting range in tiles (`Fx` raw); zero for regiments that don't shoot.
+    pub range: i32,
+    /// Hit points a landed melee blow takes.
+    pub melee_damage: u16,
+    /// Hit points a landed arrow takes.
+    pub missile_damage: u16,
+    /// Simulation ticks between volleys.
+    pub reload_ticks: u16,
+    /// Melee skill and defence, 0 to 100.
+    pub melee_attack: u8,
+    pub melee_defence: u8,
+    /// Extra melee damage, percent, when a charge hits home.
+    pub charge_bonus: u8,
+    /// Percent of arrows that hit a block of normal density.
+    pub accuracy: u8,
+    pub _pad2: [u8; 2],
 }
 
 impl UnitRecord {
@@ -100,6 +116,10 @@ impl UnitRecord {
 
     pub fn rank_spacing(&self) -> Fx {
         Fx::from_raw(self.rank_spacing)
+    }
+
+    pub fn range(&self) -> Fx {
+        Fx::from_raw(self.range)
     }
 
     pub fn faction(&self) -> Faction {
@@ -221,6 +241,21 @@ pub fn validate_unit(u: &UnitRecord) -> Result<(), &'static str> {
     if u.hp_per_model == 0 {
         return Err("hp per model must be above 0");
     }
+    if u.melee_attack > 100 || u.melee_defence > 100 || u.accuracy > 100 {
+        return Err("melee attack, melee defence and accuracy are 0 to 100");
+    }
+    if u.melee_damage == 0 {
+        return Err("melee damage must be above 0");
+    }
+    if u.range < 0 || u.range > Fx::from_int(100).raw() {
+        return Err("range must be 0 to 100 tiles");
+    }
+    if u.range > 0 && (u.missile_damage == 0 || u.reload_ticks == 0 || u.accuracy == 0) {
+        return Err("a regiment with a range needs missile damage, reload and accuracy");
+    }
+    if u._pad2 != [0; 2] {
+        return Err("padding must be zero");
+    }
     if u._pad != 0 {
         return Err("padding must be zero");
     }
@@ -234,7 +269,7 @@ mod tests {
     #[test]
     fn record_layout_is_stable() {
         // Changing this means bumping UNIT_SCHEMA.
-        assert_eq!(size_of::<UnitRecord>(), 56);
+        assert_eq!(size_of::<UnitRecord>(), 72);
         assert_eq!(align_of::<UnitRecord>(), 4);
     }
 }

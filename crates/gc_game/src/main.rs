@@ -5,7 +5,10 @@
 //! several; Shift adds or removes. Right-click the ground to march the
 //! selection there side by side, facing the way they travel; right-drag to
 //! draw the line they form instead (its length sets their frontage; they face
-//! away from the camera side of the line). Ctrl (or Cmd) + a number key saves
+//! away from the camera side of the line); a big selection forms several
+//! lines. Right-click an enemy regiment to attack it; archers (each army's
+//! back two rows) also shoot enemies in range on their own, and blocks that
+//! touch fight. Ctrl (or Cmd) + a number key saves
 //! the selection as a control group; the number recalls it (Shift adds it),
 //! and pressing it twice quickly centres the camera on it.
 //!
@@ -35,7 +38,9 @@ use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
 use gc_render::{BoxInstance, FrameParams, Renderer, RendererOptions, Terrain};
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
-use gc_sim::{Capacities, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, UnitStats, World};
+use gc_sim::{
+    Capacities, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, UnitId, UnitStats, World,
+};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
@@ -72,6 +77,19 @@ const MIN_LINE_TILES: f32 = 2.0;
 const MIN_BOX_PIXELS: f32 = 6.0;
 /// Two presses of a control-group key within this time centre the camera.
 const DOUBLE_TAP: Duration = Duration::from_millis(350);
+/// A right-click this close to an enemy block's edge, in tiles, attacks it.
+const ATTACK_PICK_TILES: f32 = 1.5;
+/// How long the marker under an attacked regiment shows.
+const ATTACK_MARK: Duration = Duration::from_millis(700);
+/// Fallen soldiers kept on the field at once.
+const MAX_CORPSES: usize = 8192;
+/// Arrows drawn per volley, and how far apart they fly, in tiles.
+const ARROWS_PER_VOLLEY: usize = 6;
+const ARROW_SPREAD: f32 = 1.6;
+/// Arrows leave the bow and land at about this height above the ground.
+const ARROW_HEIGHT: f32 = 0.9;
+/// Peak of an arrow's arc as a fraction of the distance it flies.
+const ARROW_ARC: f32 = 0.22;
 
 const _: () = assert!(gc_data::MAX_MODELS == gc_sim::formation::MAX_MODELS);
 
@@ -167,6 +185,8 @@ struct Running {
     boxed: Vec<RegimentHandle>,
     control_groups: [Vec<RegimentHandle>; 10],
     last_group_key: Option<(usize, Instant)>,
+    /// The enemy regiment last ordered attacked, marked on the ground briefly.
+    attack_mark: Option<(RegimentHandle, Instant)>,
     sim_clock: Duration,
     last_frame: Instant,
     started: Instant,
@@ -284,6 +304,14 @@ impl App {
                 files: u.files,
                 file_spacing: u.file_spacing(),
                 rank_spacing: u.rank_spacing(),
+                melee_attack: u.melee_attack,
+                melee_defence: u.melee_defence,
+                melee_damage: u.melee_damage,
+                charge_bonus: u.charge_bonus,
+                range: u.range(),
+                missile_damage: u.missile_damage,
+                reload_ticks: u.reload_ticks,
+                accuracy: u.accuracy,
             })
             .collect();
         let capacities = Capacities::default();
@@ -300,6 +328,14 @@ impl App {
         });
         let mut drill = Drill::new(opts.seed);
         drill.skip_player = Some(HUMAN);
+        // The last unit type is the archers: every army's back two rows.
+        drill.unit_of = |player, k, types| {
+            if types > 1 && k >= 40 {
+                (types - 1) as UnitId
+            } else {
+                (player as usize % (types - 1).max(1)) as UnitId
+            }
+        };
 
         let start = Vec2::splat(MAP_TILES as f32 * 0.25);
         let mut camera = RtsCamera::new(MAP_TILES as f32, start + Vec2::new(10.0, 20.0));
@@ -347,7 +383,7 @@ impl App {
             human_orders: Vec::with_capacity(64),
             prev_positions,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
-            puppets: Puppets::new(capacities.regiments as usize),
+            puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
             unit_stats,
             selected: Vec::with_capacity(64),
             group: Vec::with_capacity(64),
@@ -355,6 +391,7 @@ impl App {
             boxed: Vec::with_capacity(64),
             control_groups: Default::default(),
             last_group_key: None,
+            attack_mark: None,
             sim_clock: Duration::ZERO,
             last_frame: now,
             started: now,
@@ -542,7 +579,22 @@ impl Running {
                 self.input.right_down = self.input.cursor.zip(self.ground_under_cursor());
             }
             (MouseButton::Right, ElementState::Released) => {
-                if let Some(order) = self.drag_order().or_else(|| {
+                let drag = self.drag_order();
+                let enemy = drag
+                    .is_none()
+                    .then(|| self.ground_under_cursor())
+                    .flatten()
+                    .and_then(|p| self.enemy_at(p));
+                if let Some(target) = enemy {
+                    if !self.selected.is_empty() {
+                        self.attack_mark = Some((target, Instant::now()));
+                    }
+                    self.human_orders
+                        .extend(self.selected.iter().map(|&regiment| PlayerCommand {
+                            player: HUMAN,
+                            command: gc_sim::Command::Attack { regiment, target },
+                        }));
+                } else if let Some(order) = drag.or_else(|| {
                     self.ground_under_cursor().map(|p| GroupOrder {
                         target: fx_vec(p),
                         facing: None,
@@ -620,6 +672,7 @@ impl Running {
                 files: r.files,
                 models: r.models,
                 file_spacing: stats.file_spacing,
+                rank_spacing: stats.rank_spacing,
                 speed: stats.speed,
             });
         }
@@ -652,6 +705,7 @@ impl Running {
                 facing: angle_vec(facing.unwrap_or(r.facing)).to_array(),
                 size: [fx_to_f32(width), PLATE_HEIGHT, fx_to_f32(depth)],
                 color: [cr / 2, cg / 2, cb / 2, 160],
+                lift: 0.0,
             });
         }
     }
@@ -744,6 +798,26 @@ impl Running {
         }
     }
 
+    /// The enemy regiment whose block is under (or within a step of) `p`.
+    fn enemy_at(&self, p: Vec2) -> Option<RegimentHandle> {
+        self.world
+            .regiments
+            .iter()
+            .filter(|r| r.owner != HUMAN)
+            .filter_map(|r| {
+                let stats = &self.unit_stats[r.unit as usize];
+                let (width, depth) = stats.block_size(r.files, r.models);
+                let to = p - from_fx_vec(r.position);
+                let facing = angle_vec(r.facing);
+                let ahead = to.dot(facing).abs() - fx_to_f32(depth) / 2.0;
+                let across = to.perp_dot(facing).abs() - fx_to_f32(width) / 2.0;
+                let outside = ahead.max(across);
+                (outside <= ATTACK_PICK_TILES).then_some((r.handle, outside))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(h, _)| h)
+    }
+
     fn nearest_own(&self, p: Vec2, radius: f32) -> Option<RegimentHandle> {
         self.world
             .regiments
@@ -797,6 +871,11 @@ impl Running {
             self.plan_order(order);
             self.push_order_preview();
         }
+        self.puppets.advance(dt.as_secs_f32());
+        let marked = self
+            .attack_mark
+            .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
+            .map(|(h, _)| h);
         for r in self.world.regiments.iter() {
             let cur = from_fx_vec(r.position);
             let cur_facing = angle_vec(r.facing);
@@ -812,13 +891,18 @@ impl Running {
             let stats = &self.unit_stats[r.unit as usize];
             let (file_spacing, rank_spacing) =
                 (fx_to_f32(stats.file_spacing), fx_to_f32(stats.rank_spacing));
-            if selected {
+            if selected || marked == Some(r.handle) {
                 let (width, depth) = stats.block_size(r.files, r.models);
                 self.instances.push(BoxInstance {
                     pos: pos.to_array(),
                     facing: facing.to_array(),
                     size: [fx_to_f32(width) + 0.3, PLATE_HEIGHT, fx_to_f32(depth) + 0.3],
-                    color: [cr, cg, cb, 255],
+                    color: if selected {
+                        [cr, cg, cb, 255]
+                    } else {
+                        [255, 40, 20, 255]
+                    },
+                    lift: 0.0,
                 });
             }
             let block = Block {
@@ -830,6 +914,7 @@ impl Running {
                 file_spacing,
                 rank_spacing,
                 speed: fx_to_f32(stats.speed),
+                engaged: r.engaged,
             };
             let size = [
                 (file_spacing * 0.6).min(0.45),
@@ -838,15 +923,18 @@ impl Running {
             ];
             let color = [cr, cg, cb, if selected { 70 } else { 0 }];
             let instances = &mut self.instances;
-            self.puppets.update(&block, dt.as_secs_f32(), |s| {
+            self.puppets.update(&block, r.owner, dt.as_secs_f32(), |s| {
                 instances.push(BoxInstance {
                     pos: s.pos.to_array(),
                     facing: s.facing.to_array(),
                     size,
                     color,
+                    lift: 0.0,
                 });
             });
         }
+        self.push_corpses();
+        self.push_arrows(alpha);
 
         let frame = FrameParams {
             view_proj: self.camera.view_proj(),
@@ -874,6 +962,47 @@ impl Running {
             self.stats.tick_time = Duration::ZERO;
             self.stats.tick_max = Duration::ZERO;
             self.stats.ticks = 0;
+        }
+    }
+
+    /// Fallen soldiers lie flat in a darker shade of their team's colour.
+    fn push_corpses(&mut self) {
+        for c in self.puppets.corpses() {
+            let [r, g, b] = TEAM_COLORS[c.owner as usize % TEAM_COLORS.len()];
+            self.instances.push(BoxInstance {
+                pos: c.pos.to_array(),
+                facing: c.facing.to_array(),
+                size: [0.4, 0.14, SOLDIER_HEIGHT * 0.8],
+                color: [r / 2, g / 2, b / 2, 0],
+                lift: -0.16 * c.sink,
+            });
+        }
+    }
+
+    /// Volleys in flight: a few arrows each, arcing from the archers to where
+    /// they aimed. Only a picture; the simulation decides what they hit.
+    fn push_arrows(&mut self, alpha: f32) {
+        let now = self.world.tick_count() as f32 - 1.0 + alpha;
+        for v in self.world.volleys() {
+            let flight = (v.impact_tick - v.launch_tick).max(1) as f32;
+            let t = ((now - v.launch_tick as f32) / flight).clamp(0.0, 1.0);
+            let (from, aim) = (from_fx_vec(v.from), from_fx_vec(v.aim));
+            let travel = aim - from;
+            let length = travel.length();
+            let dir = travel.normalize_or(Vec2::X);
+            let arc = (t * std::f32::consts::PI).sin() * length * ARROW_ARC;
+            let seed = v.launch_tick.wrapping_mul(0x9E37_79B9) ^ v.from.x.raw() as u32;
+            for k in 0..ARROWS_PER_VOLLEY.min(v.shots as usize) {
+                let spread = Vec2::new(spread_hash(seed, k, 0), spread_hash(seed, k, 1));
+                let pos = from.lerp(aim, t) + spread * ARROW_SPREAD;
+                self.instances.push(BoxInstance {
+                    pos: pos.to_array(),
+                    facing: dir.to_array(),
+                    size: [0.05, 0.05, 0.7],
+                    color: [70, 52, 36, 0],
+                    lift: ARROW_HEIGHT + arc,
+                });
+            }
         }
     }
 
@@ -1028,6 +1157,15 @@ fn fx_vec(v: Vec2) -> gc_fixed::FxVec2 {
 }
 
 /// The number on a digit key, for control groups.
+/// A stable value in [-1, 1) per volley, arrow and axis.
+fn spread_hash(seed: u32, k: usize, axis: u32) -> f32 {
+    let mut x = seed ^ (k as u32).wrapping_mul(0x85EB_CA6B) ^ axis.wrapping_mul(0xC2B2_AE35);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2C1B_3C6D);
+    x ^= x >> 12;
+    (x >> 8) as f32 / (1u32 << 23) as f32 - 1.0
+}
+
 fn digit(code: KeyCode) -> Option<usize> {
     const DIGITS: [KeyCode; 10] = [
         KeyCode::Digit0,

@@ -61,6 +61,8 @@ Structures use the same grid for production. Workers' build menu is one sub-page
 - `Tab` cycles sub-groups within a mixed selection (for abilities).
 - **Smart cast:** abilities fire on key-press at the cursor (option for click-to-confirm).
 
+**Built so far (M1 step 4):** click and drag-box select (Shift adds or removes), right-click to move, right-drag to set a line's position, width and facing, right-click an enemy to attack, and control groups (`Ctrl`/`Cmd` + number to set, the number to recall, `Shift` + number to add, double-tap to centre). Not yet: double-click to select a type, arranging melee in front and ranged behind on a group order (today regiments keep their left-to-right order, and a big group forms several lines with whoever is furthest forward in front), `Tab` sub-groups, and the order hotkeys.
+
 ## Readability on the battlefield
 
 - **Regiment banner** above every regiment: faction colour, unit icon, small model-count bar, morale shown by banner state (upright, tilting when wavering, flat and white-flagged when routing).

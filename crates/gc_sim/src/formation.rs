@@ -17,6 +17,11 @@ pub const MAX_MODELS: u16 = 32;
 
 /// Space left between regiments standing side by side after a group order.
 pub const GROUP_GAP: Fx = Fx::from_int(1);
+/// A group order without a dragged width forms lines no longer than this, in
+/// tiles; a bigger army stands in several lines, one behind the other.
+pub const GROUP_LINE_MAX: Fx = Fx::from_int(64);
+/// Space between those lines, in tiles.
+pub const GROUP_LINE_GAP: Fx = Fx::from_int(3);
 
 /// Number of ranks for `models` soldiers in `files` files (at least 1).
 pub fn ranks(files: u16, models: u16) -> u16 {
@@ -65,8 +70,10 @@ pub struct GroupMember {
     /// Its current frontage in soldiers, and how many soldiers it has.
     pub files: u16,
     pub models: u16,
-    /// Distance between neighbouring soldiers in a rank, in tiles.
+    /// Distance between neighbouring soldiers in a rank, and between ranks,
+    /// in tiles.
     pub file_spacing: Fx,
+    pub rank_spacing: Fx,
     /// Its own marching speed, tiles per second.
     pub speed: Fx,
 }
@@ -74,6 +81,10 @@ pub struct GroupMember {
 impl GroupMember {
     fn width(&self, files: u16) -> Fx {
         block_size(files, self.models, self.file_spacing, Fx::ONE).0
+    }
+
+    fn depth(&self) -> Fx {
+        block_size(self.files, self.models, Fx::ONE, self.rank_spacing).1
     }
 }
 
@@ -93,11 +104,14 @@ pub struct GroupOrder {
 
 /// Turn a group order into one `MoveTo` per regiment: the regiments stand side
 /// by side, centred on the target, all facing the same way, and march at the
-/// slowest member's speed so they arrive together.
+/// slowest member's speed so they arrive together. Without a dragged width, a
+/// group too wide for one line (`GROUP_LINE_MAX`) forms several lines, the
+/// first centred on the target and the rest behind it.
 ///
-/// Members are reordered left to right by where they stand now, so blocks
-/// don't cross each other's paths. Runs on the ordering player's machine only;
-/// the commands it produces are what the lockstep turn carries.
+/// Members are reordered by where they stand now (front to back into lines,
+/// then left to right), so blocks don't cross each other's paths. Runs on the
+/// ordering player's machine only; the commands it produces are what the
+/// lockstep turn carries.
 pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<Command>) {
     let Some(&first) = members.first() else {
         return;
@@ -120,8 +134,8 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
             Angle::of_vec(travel)
         }
     });
+    let ahead = facing.to_vec();
     let right = facing.wrapping_add(Angle::QUARTER).to_vec();
-    members.sort_unstable_by_key(|m| ((m.position - centre).dot(right), m.handle.index));
 
     // Refit frontages: each regiment gets a share of the line in proportion
     // to its current width.
@@ -142,18 +156,48 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
         total += m.width(m.files);
         pace = pace.min(m.speed);
     }
-    let mut left = -Fx::from_raw(total.raw() / 2);
-    for m in members.iter() {
-        let width = m.width(m.files);
-        let lateral = left + Fx::from_raw(width.raw() / 2);
-        left += width + GROUP_GAP;
-        out.push(Command::MoveTo {
-            regiment: m.handle,
-            target: order.target + right * lateral,
-            facing: Some(facing),
-            files: if order.width.is_some() { m.files } else { 0 },
-            pace: if members.len() > 1 { pace } else { Fx::ZERO },
-        });
+    let pace = if members.len() > 1 { pace } else { Fx::ZERO };
+
+    // Split into lines of equal count: the regiments furthest forward now
+    // take the front line.
+    let lines = if order.width.is_some() {
+        1
+    } else {
+        ((total.raw().max(1) as u32).div_ceil(GROUP_LINE_MAX.raw() as u32) as usize)
+            .min(members.len())
+    };
+    let per_line = members.len().div_ceil(lines);
+    if lines > 1 {
+        members.sort_unstable_by_key(|m| (-(m.position - centre).dot(ahead), m.handle.index));
+    }
+
+    let mut back = Fx::ZERO;
+    let mut last_depth = Fx::ZERO;
+    for (row, line) in members.chunks_mut(per_line).enumerate() {
+        line.sort_unstable_by_key(|m| ((m.position - centre).dot(right), m.handle.index));
+        let mut width = GROUP_GAP * (line.len() as i32 - 1);
+        let mut depth = Fx::ZERO;
+        for m in line.iter() {
+            width += m.width(m.files);
+            depth = depth.max(m.depth());
+        }
+        if row > 0 {
+            back += Fx::from_raw((last_depth + depth).raw() / 2) + GROUP_LINE_GAP;
+        }
+        last_depth = depth;
+        let mut left = -Fx::from_raw(width.raw() / 2);
+        for m in line.iter() {
+            let width = m.width(m.files);
+            let lateral = left + Fx::from_raw(width.raw() / 2);
+            left += width + GROUP_GAP;
+            out.push(Command::MoveTo {
+                regiment: m.handle,
+                target: order.target + right * lateral - ahead * back,
+                facing: Some(facing),
+                files: if order.width.is_some() { m.files } else { 0 },
+                pace,
+            });
+        }
     }
 }
 
@@ -203,6 +247,7 @@ mod tests {
             files: 6,
             models: 24,
             file_spacing: Fx::ONE,
+            rank_spacing: Fx::ONE,
             speed: Fx::from_int(3 + index as i32),
         }
     }
@@ -274,5 +319,41 @@ mod tests {
         };
         group_move(&mut members, order, &mut out);
         assert!(moves(&out).iter().all(|m| m.3 == 1));
+    }
+
+    #[test]
+    fn big_groups_form_several_lines() {
+        // Twelve regiments 6 tiles wide in two rows of six: 83 tiles in one
+        // line, so two lines of six, the front row staying in front.
+        let mut members: Vec<GroupMember> = (0..12)
+            .map(|i| GroupMember {
+                position: FxVec2::from_ints(20 + (i % 6) * 8, 60 + (i / 6) * 6),
+                ..member(i as u32, 0)
+            })
+            .collect();
+        let mut out = Vec::new();
+        let order = GroupOrder {
+            target: FxVec2::from_ints(100, 20),
+            facing: Some(Angle(0xC000)),
+            width: None,
+        };
+        group_move(&mut members, order, &mut out);
+        let got = moves(&out);
+        assert_eq!(got.len(), 12);
+        // Front line: regiments 0..6 (they stood further north), left to
+        // right, 6 + 1 apart, centred on the target. Depth 4 ranks, so the
+        // second line stands 4 + 3 tiles behind.
+        for (k, m) in got.iter().enumerate() {
+            let (row, col) = (k as i32 / 6, k as i32 % 6);
+            assert_eq!(m.0, (row * 6 + col) as u32, "{got:?}");
+            assert_eq!(
+                m.1,
+                FxVec2::new(
+                    Fx::from_int(100) + Fx::from_ratio(7 * (2 * col - 5), 2),
+                    Fx::from_int(20 + row * 7),
+                ),
+                "{got:?}"
+            );
+        }
     }
 }

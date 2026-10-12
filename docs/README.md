@@ -26,5 +26,6 @@ Read in order the first time; afterwards each document stands alone.
 ## Conventions
 
 - Numbers in these docs (costs, rates, sizes) are **first-pass targets**. Once code exists, the canonical values live in `data/*.ron` and budgets in the benchmark suite; docs link to them rather than duplicate them.
+- **Docs change with the code.** Every pull request updates the documents it affects (architecture, performance, roadmap progress, controls in the README, dependencies) in the same pull request. Where the design describes more than exists yet, a short **Built so far** note says what is actually built.
 - Technical decisions are recorded as ADRs in `docs/adr/`.
 - Requirement IDs from the [Specification](02-specification.md) are referenced in issues and pull requests.

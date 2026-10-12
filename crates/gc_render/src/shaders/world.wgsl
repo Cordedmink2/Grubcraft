@@ -182,6 +182,7 @@ fn vs_block(
     @location(1) facing: vec2<f32>,
     @location(2) size: vec3<f32>,
     @location(3) color: vec4<f32>,
+    @location(4) lift: f32,
 ) -> BlockOut {
     let corner = BOX_POS[BOX_IDX[vi]];
     let n_local = BOX_NORMAL[vi / 6u];
@@ -190,7 +191,7 @@ fn vs_block(
     let xz = pos + right * (corner.x * size.x) + fwd * (corner.z * size.z);
     // Drape over the terrain: each column sits on the ground beneath it.
     let ground = max(height_at(xz), g.misc.x - 0.05);
-    let world = vec3<f32>(xz.x, ground + corner.y * size.y, xz.y);
+    let world = vec3<f32>(xz.x, ground + lift + corner.y * size.y, xz.y);
     var out: BlockOut;
     out.clip = g.view_proj * vec4<f32>(world, 1.0);
     out.world = world;

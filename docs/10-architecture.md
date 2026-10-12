@@ -49,6 +49,7 @@ No general-purpose engine, no ECS framework, no async runtime, no scripting VM i
 - The **main thread** must own the window on macOS. It runs input, UI, presentation and rendering.
 - The **sim thread** is single-threaded and deterministic. At the target scale a tick costs ~1 to 2 ms out of 50 ms, so parallelising the sim is unnecessary and would only add determinism risk.
 - Threads communicate through fixed-size lock-free ring buffers and a triple-buffered snapshot. No locks on hot paths.
+- **Built so far (M1):** one thread. The sim ticks inside the main thread's frame loop (at most five ticks per frame) and the renderer interpolates between the last two ticks; the sim and net threads arrive with networking in M2.
 
 ## Workspace layout
 
@@ -58,23 +59,25 @@ grubcraft/
 │  ├─ gc_fixed/      fixed-point math, angles, trig tables, isqrt (no_std)
 │  ├─ gc_sim/        deterministic simulation (no_std + alloc, no floats)
 │  ├─ gc_data/       unit/faction/ability definitions, compiled tables
-│  ├─ gc_net/        transport, lockstep turns, lobby protocol, discovery
-│  ├─ gc_present/    interpolation, soldier puppets, effects triggers
+│  ├─ gc_net/        transport, lockstep turns, lobby protocol, discovery   (M2)
+│  ├─ gc_present/    interpolation, soldier puppets, effects triggers       (later)
 │  ├─ gc_render/     wgpu renderer: terrain, instancing, VAT, fog, UI batch
-│  ├─ gc_ui/         game UI (immediate mode, MSDF text)
-│  ├─ gc_audio/      mixer, voices, decoders, music layers
+│  ├─ gc_ui/         game UI (immediate mode, MSDF text)                     (later)
+│  ├─ gc_audio/      mixer, voices, decoders, music layers                   (later)
 │  ├─ gc_assets/     pack format, mmap loader, asset ids
 │  ├─ gc_platform/   per-OS glue: paths, local-network permission, memory stats
 │  └─ gc_game/       the application: states, input mapping, glue
 ├─ tools/
 │  ├─ gc_bake/       asset baker: glTF/Blender exports → packed formats
-│  ├─ gc_replay/     headless replay runner, determinism checker
+│  ├─ gc_replay/     headless replay runner, determinism checker            (later)
 │  ├─ gc_bench/      performance benchmarks with budget gates
-│  └─ gc_mapcheck/   map validator
+│  └─ gc_mapcheck/   map validator                                          (later)
 ├─ data/             RON definitions (factions, units, abilities, maps)
 ├─ assets-src/       source art and audio (or a pointer to where they live)
 └─ docs/
 ```
+
+Crates marked *(later)* or *(M2)* don't exist yet. Until `gc_present` is needed, interpolation and the soldier puppets live in `gc_game` (`src/puppets.rs`).
 
 `gc_sim` depends on nothing platform-related. It cannot read the clock, open files, spawn threads or use floating point. This boundary is what makes lockstep, replays, rejoin, "Restage this battle" and future bots possible.
 
@@ -85,7 +88,7 @@ grubcraft/
 - Rendering runs at the display rate and interpolates between the two latest sim snapshots, so 20 Hz simulation still looks smooth at 144 Hz.
 
 ### Numbers
-- **No floating point anywhere in `gc_sim`**, enforced by Clippy's `disallowed_types` lint and a CI grep. Floats can round differently across CPUs and compilers; integers cannot.
+- **No floating point anywhere in `gc_sim`**, enforced by a test (`gc_sim/tests/no_floats.rs`) that fails on any float type in the crate's source. Floats can round differently across CPUs and compilers; integers cannot.
 - Positions are **Q16.16 fixed-point** in tile units (`i32`), giving ±32,768 tiles of range at 1/65,536-tile precision.
 - Angles are `u16` (65,536 steps per turn) with a 1,024-entry sine table. Square roots use integer Newton iteration on `u64`.
 - Damage, HP and morale are plain integers.
@@ -107,6 +110,7 @@ grubcraft/
 
 - Entities are addressed by **generational handles** (`u32` index + `u16` generation), so stale references fail safely.
 - Iteration is always in index order. No hash-map iteration in the sim; lookups use dense arrays or sorted vectors.
+- **Built so far:** the regiment (1,536) and volley (2,048) pools. Fallen soldiers are presentation-only for now (`gc_game` keeps the latest 8,192 on screen); a sim corpse pool comes with abilities that use corpses.
 - Total simulation state for a 4-player late game is **under 4 MB**, which also makes snapshots (for rejoin and desync recovery) cheap.
 
 ### Tick pipeline (fixed order)
@@ -123,8 +127,12 @@ grubcraft/
 11. Victory checks.
 12. State hash (every 10 ticks) and snapshot publish.
 
+**Built so far:** commands, then combat's contact, charge and chase checks, then movement and turning (straight lines; pathfinding is M1 step 6), then melee blows and volleys. The state hash is computed on request (the determinism test checks it every 600 ticks); snapshots come with M2.
+
 ### Spatial partitioning
 A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt incrementally (entities move bucket only when they cross a boundary). Used for collision, targeting, vision and area effects.
+
+**Built so far:** combat has its own spatial hash of 16-tile cells, rebuilt every tick (see [Formations and combat](#formations-and-combat)). Collision, vision and area effects will share or replace it when they arrive.
 
 ### Pathfinding
 - **Navigation grid** at half-tile resolution: a Warfield map is 512 × 512 cells, 2 bytes per cell (cost + flags) = 512 KB.
@@ -135,10 +143,11 @@ A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt increm
 
 ### Formations and combat
 - A regiment's formation is its centre, facing and number of files (soldiers per rank); the ranks follow from how many soldiers are standing, and the block's width and depth from the unit's file and rank spacing. Hit points are kept per soldier by formation slot (rank 0 is the front). The sim never tracks individual soldier positions; `gc_sim::formation` gives each slot's place in the block for the renderer and for combat.
-- Regiments turn on the spot before marching when the destination is more than 45° off their facing, and shuffle (step while turning toward the final facing) for short adjustments. Group orders are expanded by the ordering player's machine into one move per regiment (`formation::group_move`: side by side, at the slowest member's pace), so the lockstep turn only ever carries single-regiment moves.
-- **Melee:** when two formations' fronts (or a front and a flank/rear) touch, a contact segment forms. Damage is resolved per file along the segment, using attacker and defender stats, facing multipliers, charge bonus, terrain and veterancy. Casualties remove models from the back ranks first (the "front rank steps up").
-- **Ranged:** each volley is one entity. On impact it rolls hits against the target formation's footprint and density with the combat RNG substream, so a tight block suffers more than a loose screen.
-- **Morale** is an integer per regiment updated from events (casualties, flank hits, nearby routs, heroes, terror) with decay toward a baseline.
+- Regiments turn on the spot before marching when the destination is more than 45° off their facing, and shuffle (step while turning toward the final facing) for short adjustments. Group orders are expanded by the ordering player's machine into one move per regiment (`formation::group_move`: side by side, at the slowest member's pace; a group wider than 64 tiles forms several lines, front to back, unless the player dragged the line's width), so the lockstep turn only ever carries single-regiment moves.
+- **Melee:** two regiments are in contact when their blocks (oriented rectangles) come within half a tile of each other; a regiment in contact is locked, ignores move orders and only turns toward its foe at half speed. Each fighting regiment strikes once a second (staggered across regiments so the work spreads over ticks) with one blow per soldier who can reach the foe (the front rank when the foe is ahead, one per rank when it is to the side, half the front rank when it is behind): a blow lands with chance 50 + attack − defence percent (clamped 10 to 90), damage is multiplied by the side it lands on (front ×1.0, flank ×1.4, rear ×1.8) plus a charge bonus that fades over 3 s if contact began at speed. The expected damage is rolled ±25% on the combat RNG stream and carried in 1/256 hit points, so small blows add up exactly. Casualties remove models from the back slots first (the "front rank steps up"), and a block that loses whole ranks steps forward to stay in contact. Terrain and veterancy come later.
+- **Ranged:** each volley is one entity in a fixed pool, flying one tile per tick from the archers to the aim point. On impact it rolls hits on the combat RNG stream, scaled by how densely packed the target is, so a tight block suffers more than a loose screen; a target that has moved away from the aim point is missed. Archers standing still fire at will at the nearest enemy in range, or at the regiment they were ordered to attack (walking into range first).
+- **Finding foes:** a spatial hash of 16-tile cells (each regiment is listed in every cell its block covers, split by owner) keeps contact and target searches local; 1,200 regiments fighting cost about 0.4 ms per tick at the 99th percentile.
+- **Morale** (M1 step 5) is an integer per regiment updated from events (casualties, flank hits, nearby routs, heroes, terror) with decay toward a baseline.
 
 ### Fog of war
 - Visibility per player on a tile-resolution grid of `u8` reference counts (256 × 256 = 64 KB per player). Units add and remove "vision stamps" only when they cross tiles, so cost is proportional to movement, not unit count.
@@ -164,8 +173,7 @@ Abilities are composed in data files from a fixed vocabulary of deterministic ef
 ```
 
 The **presentation layer** turns regiment state into believable soldiers:
-- Each soldier is a ~32-byte puppet that steers toward its formation slot with a little lag and separation, so blocks ripple and jostle rather than sliding rigidly.
-- When the sim says regiment R lost 3 models this tick, presentation picks three soldiers in contact (or in the back rank for ranged hits) and plays death animations, then shuffles survivors forward.
+- Each soldier is a ~32-byte puppet that steers toward its formation slot with a little lag and separation, so blocks ripple and jostle rather than sliding rigidly. The front two ranks of a fighting regiment lunge at the enemy. When the simulation removes soldiers from the back slots, the puppets show a front-rank soldier falling (anyone, for a block under arrows) and the soldier from the emptied slot stepping up into the gap; the fallen lie on the field for 20 s, then sink away.
 - Melee pairs, sword swings, arrows arcing to individual soldiers: all chosen by presentation to match the sim's numbers.
 - Presentation never writes back to the sim, and it is allowed to be non-deterministic. Two players may see slightly different soldiers fall; they always see the same regiments with the same model counts.
 
@@ -190,6 +198,7 @@ Forward renderer on `wgpu`. Target **under 300 draw calls** per frame in the hea
 - Per-instance data is packed into **16 bytes**: quantised position (2 × `u16`), facing, animation id and frame, team colour row, flags. 10,000 soldiers is 160 KB of upload per frame.
 - Animation uses **bone animation textures**: each unit type's skeleton poses are baked per frame into a small texture, and vertices are rigidly bound to one bone (which suits the low-poly style). About 100 to 150 KB per unit type for all its animations, against several megabytes for per-vertex animation textures.
 - Meshes use 16-bit quantised positions, octahedral-encoded normals and a palette index per vertex: around 8 bytes per vertex.
+- **Built so far:** placeholder boxes. Everything on the field (soldiers, selection plates, order previews, arrows, the fallen) is one instanced draw of `BoxInstance` (36 bytes: position, facing, size, colour, lift above the ground) with up to 65,536 instances. The packed 16-byte instances, meshes and animation textures come with real art in M1 step 8.
 
 ### Level of detail and Commander View
 - Soldiers have two mesh LODs (full and ~40% triangles).
@@ -202,7 +211,7 @@ Forward renderer on `wgpu`. Target **under 300 draw calls** per frame in the hea
 ## Memory architecture
 
 ### Rules
-1. **Pools, not heaps, for gameplay.** All sim pools, flow-field caches, puppet arrays and per-frame instance buffers are allocated at match load. A debug assertion fails if anything allocates during a sim tick.
+1. **Pools, not heaps, for gameplay.** All sim pools, flow-field caches, puppet arrays and per-frame instance buffers are allocated at match load. A test (`gc_sim/tests/no_alloc_in_tick.rs`) and the `gc_bench` gate fail if anything allocates during a sim tick.
 2. **Tagged accounting.** A thin global-allocator wrapper attributes every allocation to a subsystem tag (`sim`, `render`, `audio`, `ui`, `net`, `assets`). GPU buffers and textures are tracked by our renderer wrapper. The dev overlay shows a live table; the benchmark suite fails if any tag exceeds its budget.
 3. **Upload and forget.** Texture and mesh bytes go from the memory-mapped pack straight into GPU staging buffers; no CPU copy is retained.
 4. **Unified memory counts.** On Apple Silicon, GPU memory *is* system RAM, so GPU allocations are budgeted alongside CPU ones, not separately.
@@ -268,12 +277,12 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 ## Tooling
 | Tool | Purpose |
 |---|---|
-| `gc_replay` | Run a replay headless at maximum speed; verify state hashes; dump state at a tick |
+| `gc_replay` *(later)* | Run a replay headless at maximum speed; verify state hashes; dump state at a tick |
 | `gc_bench` | Fixed benchmark scenarios; reports tick time, frame time, memory by tag; enforces budgets |
-| `gc_mapcheck` | Map fairness and validity checks |
+| `gc_mapcheck` *(later)* | Map fairness and validity checks |
 | `gc_bake` | Asset and data baker |
 | Dev overlay (`` ` `` or `F11`) | Frame and tick timings, memory by tag, draw calls, network stats |
-| Sandbox | In-game unit placement, balance hot-reload, slow motion |
+| Sandbox *(M1 step 7)* | In-game unit placement, balance hot-reload, slow motion |
 
 ## Testing strategy
 - **Unit tests** for fixed-point math, pathfinding, combat formulas, economy rules.
@@ -282,6 +291,8 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 - **Fuzzed soak test:** four scripted random-command players for 60 simulated minutes, headless, at maximum speed: no panics, memory plateaus, tick time within budget.
 - **Network chaos test:** four local clients over a loopback shim that injects latency, jitter, loss and reordering.
 - **Performance gates** (see [12 · Performance](12-performance.md#hill-climbing-process)).
+
+**Built so far:** unit tests per crate (fixed-point maths, formations, group orders, combat, data baking, puppets); a golden determinism test that runs a scripted 4-player drill (moves, group moves and fights) for 2,400 ticks and compares state hashes on macOS, Windows and Linux CI; the no-float and no-allocation tests; and the `gc_bench` drill benchmark. Recorded golden replays arrive with replay recording in M2.
 
 ## Dependency policy
 - Every third-party crate is listed in `docs/dependencies.md` with its purpose and its cost (binary size, transitive dependencies).

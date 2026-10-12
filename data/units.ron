@@ -4,8 +4,16 @@
 // models: soldiers at full strength (at most 32). files: soldiers per rank
 // when raised; ranks follow from models / files. speed: tiles per second.
 // turn_rate: degrees per second. file_spacing, rank_spacing: tiles between
-// neighbouring soldiers across and front to back. Numbers are first-pass and
-// will be tuned in M1.
+// neighbouring soldiers across and front to back.
+//
+// Melee: a blow lands with chance 50 + melee_attack - the target's
+// melee_defence percent (kept between 10 and 90) and takes melee_damage hit
+// points. Each front-rank soldier strikes once a second. charge_bonus is extra
+// melee damage, percent, when a charge hits home; it fades over 3 seconds.
+// ranged: range in tiles, damage per arrow, seconds between volleys, and the
+// percent of arrows that hit a block of normal density.
+//
+// Numbers are first-pass and will be tuned in M1.
 [
     (
         name: "Yari Ashigaru",
@@ -17,6 +25,10 @@
         turn_rate: 60.0,
         file_spacing: 0.75,
         rank_spacing: 0.85,
+        melee_attack: 30,
+        melee_defence: 45,
+        melee_damage: 3,
+        charge_bonus: 20,
     ),
     (
         name: "Skitterlings",
@@ -28,6 +40,10 @@
         turn_rate: 120.0,
         file_spacing: 0.8,
         rank_spacing: 0.8,
+        melee_attack: 40,
+        melee_defence: 20,
+        melee_damage: 2,
+        charge_bonus: 40,
     ),
     (
         name: "Shardlings",
@@ -39,6 +55,10 @@
         turn_rate: 80.0,
         file_spacing: 0.7,
         rank_spacing: 0.9,
+        melee_attack: 35,
+        melee_defence: 35,
+        melee_damage: 4,
+        charge_bonus: 30,
     ),
     (
         name: "Bone Pikes",
@@ -50,5 +70,25 @@
         turn_rate: 45.0,
         file_spacing: 0.55,
         rank_spacing: 0.9,
+        melee_attack: 25,
+        melee_defence: 50,
+        melee_damage: 3,
+        charge_bonus: 10,
+    ),
+    (
+        name: "Yumi Ashigaru",
+        faction: EmberClans,
+        models: 16,
+        hp_per_model: 8,
+        files: 8,
+        speed: 3.0,
+        turn_rate: 70.0,
+        file_spacing: 0.8,
+        rank_spacing: 1.0,
+        melee_attack: 15,
+        melee_defence: 20,
+        melee_damage: 2,
+        charge_bonus: 5,
+        ranged: Some((range: 30.0, damage: 4, reload: 4.0, accuracy: 30)),
     ),
 ]

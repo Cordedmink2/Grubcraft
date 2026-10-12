@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
 use crate::formation::{self, GroupMember, GroupOrder};
-use crate::{Command, PlayerCommand, PlayerId, RegimentHandle, UnitStats, World};
+use crate::{Command, PlayerCommand, PlayerId, RegimentHandle, UnitId, UnitStats, World};
 
 /// Turn rate of `deg` degrees per second, in angle steps per second.
 const fn degrees_per_second(deg: u32) -> u32 {
@@ -16,7 +16,7 @@ const fn degrees_per_second(deg: u32) -> u32 {
 }
 
 /// Fixed regiment types for tests and benchmarks (one per player), so their
-/// golden hashes don't change when `data/units.ron` is tuned.
+/// golden hashes don't change when `data/units.ron` is tuned. Type 2 shoots.
 pub const DRILL_UNITS: [UnitStats; 4] = [
     UnitStats {
         speed: Fx::from_int(3),
@@ -26,6 +26,14 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         files: 8,
         file_spacing: Fx::from_ratio(3, 4),
         rank_spacing: Fx::from_ratio(17, 20),
+        melee_attack: 30,
+        melee_defence: 45,
+        melee_damage: 3,
+        charge_bonus: 20,
+        range: Fx::ZERO,
+        missile_damage: 0,
+        reload_ticks: 0,
+        accuracy: 0,
     },
     UnitStats {
         speed: Fx::from_int(4),
@@ -35,6 +43,14 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         files: 6,
         file_spacing: Fx::from_ratio(4, 5),
         rank_spacing: Fx::from_ratio(4, 5),
+        melee_attack: 40,
+        melee_defence: 20,
+        melee_damage: 2,
+        charge_bonus: 40,
+        range: Fx::ZERO,
+        missile_damage: 0,
+        reload_ticks: 0,
+        accuracy: 0,
     },
     UnitStats {
         speed: Fx::from_ratio(13, 4),
@@ -44,6 +60,14 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         files: 6,
         file_spacing: Fx::from_ratio(7, 10),
         rank_spacing: Fx::from_ratio(9, 10),
+        melee_attack: 15,
+        melee_defence: 20,
+        melee_damage: 2,
+        charge_bonus: 5,
+        range: Fx::from_int(25),
+        missile_damage: 4,
+        reload_ticks: 80,
+        accuracy: 30,
     },
     UnitStats {
         speed: Fx::from_ratio(5, 2),
@@ -53,6 +77,14 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         files: 10,
         file_spacing: Fx::from_ratio(11, 20),
         rank_spacing: Fx::from_ratio(9, 10),
+        melee_attack: 25,
+        melee_defence: 50,
+        melee_damage: 3,
+        charge_bonus: 10,
+        range: Fx::ZERO,
+        missile_damage: 0,
+        reload_ticks: 0,
+        accuracy: 0,
     },
 ];
 
@@ -73,6 +105,9 @@ pub struct Drill {
     pub order_interval: u32,
     /// A player the drill spawns but never orders (left to a human).
     pub skip_player: Option<PlayerId>,
+    /// Picks the unit type of player `p`'s `k`th regiment, given how many
+    /// types there are. By default every player fields type `p % types`.
+    pub unit_of: fn(player: PlayerId, k: u32, types: usize) -> UnitId,
     /// Scratch space for expanding group orders.
     group_commands: Vec<Command>,
 }
@@ -86,6 +121,7 @@ impl Drill {
             map_tiles: 256,
             order_interval: 10,
             skip_player: None,
+            unit_of: |player, _, types| (player as usize % types) as UnitId,
             group_commands: Vec::with_capacity(8),
         }
     }
@@ -123,7 +159,7 @@ impl Drill {
                     out.push(PlayerCommand {
                         player,
                         command: Command::SpawnRegiment {
-                            unit: (player as usize % unit_types) as u16,
+                            unit: (self.unit_of)(player, k as u32, unit_types),
                             position,
                             facing: NORTH,
                         },
@@ -180,6 +216,7 @@ impl Drill {
                 files: 0,
                 models: 0,
                 file_spacing: Fx::ZERO,
+                rank_spacing: Fx::ZERO,
                 speed: Fx::ZERO,
             }; 3];
             let mut count = 0;
@@ -199,6 +236,7 @@ impl Drill {
                     files: r.files,
                     models: r.models,
                     file_spacing: stats.file_spacing,
+                    rank_spacing: stats.rank_spacing,
                     speed: stats.speed,
                 };
                 count += 1;

@@ -39,30 +39,40 @@ const SHUFFLE_DISTANCE: Fx = Fx::from_int(4);
 /// Every array is allocated to full capacity up front; spawning and freeing
 /// only flip flags and push/pop a free list that never grows past capacity.
 pub struct Regiments {
-    alive: Vec<bool>,
-    generation: Vec<u16>,
-    owner: Vec<PlayerId>,
-    unit: Vec<UnitId>,
+    pub(crate) alive: Vec<bool>,
+    pub(crate) generation: Vec<u16>,
+    pub(crate) owner: Vec<PlayerId>,
+    pub(crate) unit: Vec<UnitId>,
     /// Centre of the block.
-    position: Vec<FxVec2>,
-    facing: Vec<Angle>,
+    pub(crate) position: Vec<FxVec2>,
+    pub(crate) facing: Vec<Angle>,
     /// Soldiers per rank.
-    files: Vec<u16>,
+    pub(crate) files: Vec<u16>,
     /// Soldiers still standing.
-    models: Vec<u16>,
+    pub(crate) models: Vec<u16>,
     /// Hit points per soldier, `MAX_MODELS` per regiment, by formation slot
     /// (slot `k` is rank `k / files`, file `k % files`; rank 0 is the front).
-    hp: Vec<u16>,
+    pub(crate) hp: Vec<u16>,
     /// Full marching speed, tiles per tick.
-    speed: Vec<Fx>,
+    pub(crate) speed: Vec<Fx>,
     /// Turn rate, angle steps per tick.
-    turn: Vec<u16>,
-    target: Vec<Option<FxVec2>>,
-    target_facing: Vec<Option<Angle>>,
+    pub(crate) turn: Vec<u16>,
+    pub(crate) target: Vec<Option<FxVec2>>,
+    pub(crate) target_facing: Vec<Option<Angle>>,
     /// Speed for the current order, tiles per tick.
-    pace: Vec<Fx>,
+    pub(crate) pace: Vec<Fx>,
+    /// Enemy regiment this one was ordered to attack.
+    pub(crate) attack_target: Vec<Option<RegimentHandle>>,
+    /// The enemy it is fighting in melee this tick (the nearest one in contact).
+    pub(crate) engaged: Vec<Option<RegimentHandle>>,
+    /// Ticks of charge bonus left.
+    pub(crate) charge: Vec<u16>,
+    /// Ticks until a ranged regiment can loose its next volley.
+    pub(crate) reload: Vec<u16>,
+    /// Damage taken but not yet a whole hit point, in 1/256ths.
+    pub(crate) damage_carry: Vec<u16>,
     /// Free slot indices, popped from the back. Initialised so slot 0 is used first.
-    free: Vec<u32>,
+    pub(crate) free: Vec<u32>,
 }
 
 impl Regiments {
@@ -83,6 +93,11 @@ impl Regiments {
             target: vec![None; n],
             target_facing: vec![None; n],
             pace: vec![Fx::ZERO; n],
+            attack_target: vec![None; n],
+            engaged: vec![None; n],
+            charge: vec![0; n],
+            reload: vec![0; n],
+            damage_carry: vec![0; n],
             free: (0..capacity).rev().collect(),
         }
     }
@@ -126,6 +141,11 @@ impl Regiments {
         self.target[i] = None;
         self.target_facing[i] = None;
         self.pace[i] = self.speed[i];
+        self.attack_target[i] = None;
+        self.engaged[i] = None;
+        self.charge[i] = 0;
+        self.reload[i] = 0;
+        self.damage_carry[i] = 0;
         Some(RegimentHandle {
             index,
             generation: self.generation[i],
@@ -142,7 +162,7 @@ impl Regiments {
         true
     }
 
-    fn resolve(&self, h: RegimentHandle) -> Option<usize> {
+    pub(crate) fn resolve(&self, h: RegimentHandle) -> Option<usize> {
         let i = h.index as usize;
         (i < self.alive.len() && self.alive[i] && self.generation[i] == h.generation).then_some(i)
     }
@@ -171,6 +191,7 @@ impl Regiments {
         };
         self.target[i] = Some(order.target);
         self.target_facing[i] = order.facing;
+        self.attack_target[i] = None;
         if order.files != 0 {
             self.files[i] = order.files.clamp(1, self.models[i].max(1));
         }
@@ -181,6 +202,42 @@ impl Regiments {
             pace.min(self.speed[i])
         };
         true
+    }
+
+    /// Order a regiment to attack an enemy regiment: melee regiments close
+    /// in and fight, ranged ones move into range and shoot.
+    pub fn attack(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
+        let (Some(i), Some(t)) = (self.resolve(h), self.resolve(target)) else {
+            return false;
+        };
+        if self.owner[i] == self.owner[t] {
+            return false;
+        }
+        self.attack_target[i] = Some(target);
+        self.target_facing[i] = None;
+        self.pace[i] = self.speed[i];
+        true
+    }
+
+    /// Take `amount` hit points off the regiment, from the back ranks forward:
+    /// the last slot loses hit points first, and each soldier who falls takes
+    /// the next one's place in the damage. Returns soldiers lost.
+    pub(crate) fn take_damage(&mut self, i: usize, mut amount: u32) -> u16 {
+        let before = self.models[i];
+        let hp = &mut self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize];
+        while amount > 0 && self.models[i] > 0 {
+            let k = self.models[i] as usize - 1;
+            if hp[k] as u32 > amount {
+                hp[k] -= amount as u16;
+                amount = 0;
+            } else {
+                amount -= hp[k] as u32;
+                hp[k] = 0;
+                self.models[i] -= 1;
+            }
+        }
+        self.files[i] = self.files[i].min(self.models[i]).max(1);
+        before - self.models[i]
     }
 
     fn view(&self, i: usize) -> RegimentView {
@@ -196,6 +253,7 @@ impl Regiments {
             files: self.files[i],
             models: self.models[i],
             moving: self.target[i].is_some() || self.target_facing[i].is_some(),
+            engaged: self.engaged[i].is_some(),
         }
     }
 
@@ -212,6 +270,13 @@ impl Regiments {
                 continue;
             }
             let turn = self.turn[i];
+            if self.engaged[i].is_some() {
+                // Locked in melee: only turn toward the enemy (set by combat).
+                if let Some(want) = self.target_facing[i] {
+                    self.facing[i] = self.facing[i].turn_toward(want, turn / 2);
+                }
+                continue;
+            }
             if let Some(target) = self.target[i] {
                 let delta = target - self.position[i];
                 let dist = delta.length();
@@ -267,6 +332,11 @@ impl Regiments {
             h.i32(self.speed[i].raw());
             h.u16(self.turn[i]);
             h.i32(self.pace[i].raw());
+            hash_handle(h, self.attack_target[i]);
+            hash_handle(h, self.engaged[i]);
+            h.u16(self.charge[i]);
+            h.u16(self.reload[i]);
+            h.u16(self.damage_carry[i]);
             match self.target[i] {
                 Some(t) => {
                     h.u8(1);
@@ -286,6 +356,17 @@ impl Regiments {
     }
 }
 
+pub(crate) fn hash_handle(h: &mut StateHasher, handle: Option<RegimentHandle>) {
+    match handle {
+        Some(r) => {
+            h.u8(1);
+            h.u32(r.index);
+            h.u16(r.generation);
+        }
+        None => h.u8(0),
+    }
+}
+
 /// Read-only snapshot of one regiment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RegimentView {
@@ -301,6 +382,8 @@ pub struct RegimentView {
     pub models: u16,
     /// Walking or turning to an ordered facing.
     pub moving: bool,
+    /// Fighting in melee.
+    pub engaged: bool,
 }
 
 impl RegimentView {

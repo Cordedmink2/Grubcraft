@@ -13,6 +13,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+pub mod combat;
 pub mod formation;
 mod hash;
 mod regiments;
@@ -21,6 +22,7 @@ pub mod scenario;
 pub use hash::StateHasher;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 
+use combat::Combat;
 use formation::MAX_MODELS;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
@@ -64,6 +66,22 @@ pub struct UnitStats {
     pub file_spacing: Fx,
     /// Distance between ranks, in tiles.
     pub rank_spacing: Fx,
+    /// Melee skill and defence, 0 to 100. A blow lands with chance
+    /// 50 + attack - defence percent, kept between 10 and 90.
+    pub melee_attack: u8,
+    pub melee_defence: u8,
+    /// Hit points a landed melee blow takes.
+    pub melee_damage: u16,
+    /// Extra melee damage, percent, at the moment a charge hits home.
+    pub charge_bonus: u8,
+    /// Shooting range in tiles; zero for regiments that don't shoot.
+    pub range: Fx,
+    /// Hit points a landed arrow takes.
+    pub missile_damage: u16,
+    /// Ticks between volleys.
+    pub reload_ticks: u16,
+    /// Percent of arrows that hit a block of normal density.
+    pub accuracy: u8,
 }
 
 impl UnitStats {
@@ -80,6 +98,11 @@ impl UnitStats {
             files: self.files.clamp(1, models),
             file_spacing: self.file_spacing.max(Fx::from_raw(1)),
             rank_spacing: self.rank_spacing.max(Fx::from_raw(1)),
+            melee_attack: self.melee_attack.min(100),
+            melee_defence: self.melee_defence.min(100),
+            accuracy: self.accuracy.min(100),
+            range: self.range.max(Fx::ZERO),
+            ..self
         }
     }
 
@@ -118,6 +141,12 @@ pub enum Command {
         /// Tiles per second; zero means the regiment's own speed.
         pace: Fx,
     },
+    /// Close with an enemy regiment and fight it (melee), or move into range
+    /// and shoot it (ranged).
+    Attack {
+        regiment: RegimentHandle,
+        target: RegimentHandle,
+    },
 }
 
 /// A command tagged with who issued it. Turn bundles carry these.
@@ -137,6 +166,8 @@ pub struct TickStats {
 pub struct World {
     tick: u32,
     rng: Pcg32,
+    combat_rng: Pcg32,
+    combat: Combat,
     units: Vec<UnitStats>,
     pub regiments: Regiments,
 }
@@ -146,6 +177,8 @@ impl World {
         World {
             tick: 0,
             rng: Pcg32::new(setup.seed, streams::WORLD),
+            combat_rng: Pcg32::new(setup.seed, streams::COMBAT),
+            combat: Combat::new(setup.capacities.regiments as usize),
             units: setup.units.iter().map(|u| u.sanitized()).collect(),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
@@ -175,7 +208,14 @@ impl World {
                 stats.commands_rejected += 1;
             }
         }
+        self.combat.before_move(&mut self.regiments, &self.units);
         self.regiments.step_movement();
+        self.combat.after_move(
+            &mut self.regiments,
+            &self.units,
+            self.tick,
+            &mut self.combat_rng,
+        );
         self.tick += 1;
         stats
     }
@@ -215,7 +255,16 @@ impl World {
                     _ => false,
                 }
             }
+            Command::Attack { regiment, target } => match self.regiments.owner(regiment) {
+                Some(owner) if owner == pc.player => self.regiments.attack(regiment, target),
+                _ => false,
+            },
         }
+    }
+
+    /// Volleys in flight, for drawing arrows.
+    pub fn volleys(&self) -> impl Iterator<Item = combat::VolleyView> + '_ {
+        self.combat.volleys()
     }
 
     /// 64-bit hash of the complete simulation state, for desync detection.
@@ -225,7 +274,11 @@ impl World {
         let (state, inc) = self.rng.raw_state();
         h.u64(state);
         h.u64(inc);
+        let (state, inc) = self.combat_rng.raw_state();
+        h.u64(state);
+        h.u64(inc);
         self.regiments.hash_into(&mut h);
+        self.combat.hash_into(&mut h);
         h.finish()
     }
 
