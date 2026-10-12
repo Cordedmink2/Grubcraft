@@ -44,7 +44,7 @@ This is a personal project, so the art pipeline must be realistic:
 3. **Procedural where possible:** terrain, foliage scattering, Grub seeps, chord triangles, veins, fortifications built from modular pieces.
 4. **Custom models over time** for faction-defining units and heroes.
 
-The vetted shortlist, licences and gaps are in [16 · Art Sourcing](16-art-sourcing.md).
+The vetted shortlist, licences, gaps and download status are in [16 · Art Sourcing](16-art-sourcing.md); credits are in [`CREDITS.md`](../CREDITS.md).
 
 See [14 · Decisions Needed](14-decisions-needed.md) for the open question of who makes custom art.
 
@@ -69,6 +69,6 @@ Audio carries a surprising amount of RTS readability: you hear a battle start, a
 The first sound pass is in the game. Every sound is synthesised by `tools/gc_sfx` (see [assets/audio/README.md](../assets/audio/README.md) for the catalogue and how to regenerate): volleys, melee clashes, the war-drum charge, the wavering tone, the rout horn, the shatter crash, the rally horn, three UI clicks, and a calm and a battle music loop in the Ember Clans' style (flute, drone, taiko, plucked string). The two loops play in step and crossfade as regiments engage. Sounds follow the camera: quieter with distance, panned left or right. Keys: M mutes, N toggles the music; `--no-audio` skips the sound card. Faction themes, unit voices and positional battle-ambience layers are still to do.
 
 ### Audio sourcing
-The free-sound sites (OpenGameArt, Kenney, Freesound) were not reachable from the build environment when the first pass was made, so the prototype sounds are generated instead, which also means they carry no licence obligations. Recorded CC0 or royalty-free sounds can replace any of them later; record each in the table in `assets/audio/README.md`.
+The free-sound sites were not reachable when the first pass was made, so the prototype sounds are generated instead, which also means they carry no licence obligations. The Kenney CC0 packs are now downloaded (`assets-src/kenney/`) and ready to audition. Recorded CC0 or royalty-free sounds can replace any of them later; record each in the table in `assets/audio/README.md`.
 
 CC0 / Creative Commons effects libraries for prototyping, a couple of royalty-free music packs, then custom where it matters. Voice lines can be recorded by friends, which suits a personal game nicely.
