@@ -19,6 +19,7 @@ Read in order the first time; afterwards each document stands alone.
 | 13 | [Roadmap](13-roadmap.md) | Milestones M0 to M6 and beyond |
 | 14 | [Decisions Needed](14-decisions-needed.md) | Calls for Mario, each with a recommendation |
 | 15 | [Staffing Plan](15-staffing-plan.md) | Which work goes to Opus, Sonnet, Haiku, parallel threads and subagents, milestone by milestone |
+| 16 | [Art Sourcing](16-art-sourcing.md) | Vetted free (CC0) models, textures and sounds for the Ember Clans and the Brood, with licences and gaps |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |

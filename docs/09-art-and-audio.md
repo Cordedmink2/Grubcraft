@@ -44,6 +44,8 @@ This is a personal project, so the art pipeline must be realistic:
 3. **Procedural where possible:** terrain, foliage scattering, Grub seeps, chord triangles, veins, fortifications built from modular pieces.
 4. **Custom models over time** for faction-defining units and heroes.
 
+The vetted shortlist, licences and gaps are in [16 · Art Sourcing](16-art-sourcing.md).
+
 See [14 · Decisions Needed](14-decisions-needed.md) for the open question of who makes custom art.
 
 ## Audio direction
