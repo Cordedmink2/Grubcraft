@@ -69,6 +69,7 @@ mod battle;
 mod camera;
 mod credits;
 mod data;
+mod lens;
 mod models;
 mod profile;
 mod puppets;
@@ -342,6 +343,8 @@ struct Running {
     memory_timeline: MemoryTimeline,
     /// Whether the dev overlay is showing.
     overlay: bool,
+    /// Whether the AI lens is showing (L).
+    lens: bool,
     /// Marks over ground no regiment can cross, and whether to show them (G).
     blocked_marks: Vec<BoxInstance>,
     show_blocked: bool,
@@ -741,6 +744,7 @@ impl App {
                 ai_time: Duration::ZERO,
             },
             overlay: opts.overlay,
+            lens: false,
             blocked_marks,
             show_blocked: false,
             data_label: format!(
@@ -906,6 +910,10 @@ impl ApplicationHandler for App {
                         }
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
+                        }
+                        KeyCode::KeyL if down && !event.repeat => {
+                            r.lens = !r.lens;
+                            r.sandbox.dirty = true;
                         }
                         KeyCode::KeyM if down && !event.repeat => {
                             if let Some(s) = &mut r.sounds {
@@ -1532,6 +1540,17 @@ impl Running {
         }
         self.push_arrows(alpha);
         self.push_routes();
+        if self.lens && !self.minds.is_empty() {
+            let lenses = lens::lenses(&self.minds);
+            let parties = &self.parties;
+            lens::push(
+                &lenses,
+                &self.minds,
+                lens::scale_for(self.camera.distance),
+                |p| color_of(parties, p),
+                &mut self.instances,
+            );
+        }
         if self.show_blocked {
             self.instances.extend_from_slice(&self.blocked_marks);
         }
@@ -2063,6 +2082,13 @@ impl Running {
         } else {
             self.battle_outcome().unwrap_or_default().to_string()
         };
+        if self.lens && !self.menu_open {
+            let lenses = lens::lenses(&self.minds);
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&lens::panel(&lenses, |p| party_name(&self.parties, p)));
+        }
         if let Some(dev) = dev {
             if !text.is_empty() {
                 text.push('\n');
@@ -2341,7 +2367,7 @@ impl Running {
             ));
         }
         lines.push(match self.minds.get(sb.side) {
-            None => "I: hand this side to the computer".to_string(),
+            None => "I: hand this side to the computer   L: AI lens".to_string(),
             Some(m) => {
                 let next = Difficulty::ALL
                     .get(m.difficulty().index() + 1)
@@ -2350,7 +2376,7 @@ impl Running {
                     .journal()
                     .latest()
                     .map_or(String::new(), |e| format!(": {}", e.text));
-                format!("I: {next}   the computer plays this side{thinking}")
+                format!("I: {next}   L: AI lens   the computer plays this side{thinking}")
             }
         });
         lines.extend([

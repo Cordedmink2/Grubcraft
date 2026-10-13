@@ -16,6 +16,7 @@
 //! - [`captain`]: battle tactics: the plan, the roles, every regiment's job.
 //! - [`orders`]: turns decisions into commands with a human's reaction time
 //!   and attention.
+//! - [`lens`]: what a mind is thinking, for the game to draw (the AI lens).
 //!
 //! Each mind has a [`Difficulty`] (how well it thinks) and a
 //! [`Personality`](personality::Personality) (what it likes to do), and
@@ -27,6 +28,7 @@ pub mod difficulty;
 pub mod estimator;
 pub mod ground;
 pub mod journal;
+pub mod lens;
 pub mod orders;
 pub mod perception;
 pub mod personality;
@@ -111,6 +113,11 @@ impl Mind {
 
     pub fn difficulty(&self) -> Difficulty {
         self.difficulty
+    }
+
+    /// How well it thinks: its level's settings.
+    pub fn knobs(&self) -> &Knobs {
+        &self.knobs
     }
 
     pub fn personality(&self) -> &'static Personality {

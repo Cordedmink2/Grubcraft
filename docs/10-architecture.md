@@ -321,7 +321,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 | Dev overlay (`` ` `` or `F11`) | Frame and tick timings, memory by tag, draw calls, network stats |
 | Sandbox (`--sandbox`) | In-game unit placement for any side, live stat tuning and `data/units.ron` reload, pause and 0.1× to 4× speed |
 | `gc_arena` *(later)* | Headless AI-against-AI ladders and tactical drills ([18 · AI](18-ai.md#testing-tuning-and-explaining)) |
-| AI lens *(later)* | Dev overlay view of each AI's intents, armies, battle plans, roles and influence maps |
+| AI lens (`L`) | Each computer player's battle plan drawn on the field (its front, every regiment's role, place and target, its point of attack) and its plan, odds, roles and latest decisions in the panel. Built in AI-1 step 3; intents, armies and influence maps join it as those layers arrive |
 
 ## Testing strategy
 - **Unit tests** for fixed-point math, pathfinding, combat formulas, economy rules.

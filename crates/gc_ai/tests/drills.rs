@@ -14,9 +14,10 @@ use std::ops::Range;
 use gc_ai::army::{Placement, spawn_commands};
 use gc_ai::captain::gap_between;
 use gc_ai::ground::Line;
+use gc_ai::lens::Lens;
 use gc_ai::perception::{Seen, Side};
 use gc_ai::scripted::ChargeBot;
-use gc_ai::{Difficulty, Mind, MindConfig, Minds, Perception, Terrain};
+use gc_ai::{Difficulty, Mind, MindConfig, Minds, Perception, Role, Terrain};
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
 use gc_sim::scenario::DRILL_UNITS;
 use gc_sim::{
@@ -702,29 +703,33 @@ fn routers_are_chased_by_fast_troops_only_and_within_the_leash() {
     }
 }
 
+/// A cliff 16 tiles beyond the right of the AI's line; the enemy charges
+/// from 90 tiles off.
+fn cliff_drill(personality: usize) -> Drill {
+    let mut ai = row(&[SPEARS, SPEARS, PIKES, SPEARS], 128.0, 150.0, NORTH);
+    ai.push(at(ARCHERS, 120.0, 157.0, NORTH));
+    ai.push(at(ARCHERS, 136.0, 157.0, NORTH));
+    ai.push(at(CAVALRY, 104.0, 150.0, NORTH));
+    ai.push(at(CAVALRY, 152.0, 150.0, NORTH));
+    let foe = row(
+        &[SPEARS, SPEARS, PIKES, SPEARS, CAVALRY, CAVALRY],
+        128.0,
+        60.0,
+        SOUTH,
+    );
+    Drill {
+        ground: Ground::open().cliff(158.0..210.0, 115.0..190.0),
+        ai,
+        foe,
+        foe_plays: Foe::Charge,
+        personality,
+    }
+}
+
 #[test]
 fn it_anchors_an_end_of_its_line_on_a_cliff() {
     for personality in only(STEADY) {
-        // A cliff 16 tiles beyond the right of the line; the enemy charges
-        // from 90 tiles off.
-        let mut ai = row(&[SPEARS, SPEARS, PIKES, SPEARS], 128.0, 150.0, NORTH);
-        ai.push(at(ARCHERS, 120.0, 157.0, NORTH));
-        ai.push(at(ARCHERS, 136.0, 157.0, NORTH));
-        ai.push(at(CAVALRY, 104.0, 150.0, NORTH));
-        ai.push(at(CAVALRY, 152.0, 150.0, NORTH));
-        let foe = row(
-            &[SPEARS, SPEARS, PIKES, SPEARS, CAVALRY, CAVALRY],
-            128.0,
-            60.0,
-            SOUTH,
-        );
-        let drill = Drill {
-            ground: Ground::open().cliff(158.0..210.0, 115.0..190.0),
-            ai,
-            foe,
-            foe_plays: Foe::Charge,
-            personality,
-        };
+        let drill = cliff_drill(personality);
         let mut contacts = Contacts::default();
         let mut at_contact: Option<(f32, Line, [Option<f32>; 2], bool)> = None;
         run(drill, 60, |f| {
@@ -798,5 +803,34 @@ fn it_waits_for_the_enemy_to_cross_the_ford() {
             (at.x - 128.0).abs() <= 8.0 && (128.0..=142.0).contains(&at.y),
             "personality {personality} waits at {at}"
         );
+    }
+}
+
+/// Not a drill: the AI lens (step 3) shows what the cliff drill checks.
+#[test]
+fn the_lens_shows_the_anchored_line_and_every_regiment() {
+    let mut lens: Option<Lens> = None;
+    let mut standing = 0;
+    run(cliff_drill(0), 20, |f| {
+        lens = Some(f.mind.lens(f.view));
+        standing = f.of(AI).filter(|r| !r.broken()).count();
+    });
+    let lens = lens.unwrap();
+    let front = lens.front.expect("no front");
+    assert_eq!(front.covered, 1.0, "{front:?}");
+    assert!(front.width > 20.0, "{front:?}");
+    assert_eq!(lens.marks.len(), standing);
+    assert!(lens.marks.iter().all(|m| m.place.is_some()));
+    assert!(lens.marks.iter().any(|m| m.role == Role::Hammer));
+    let text = lens.text.join("\n");
+    println!("{text}");
+    for line in [
+        "odds",
+        "right end anchored",
+        "roles",
+        "orders",
+        "Taking ground",
+    ] {
+        assert!(text.contains(line), "no {line:?} in:\n{text}");
     }
 }

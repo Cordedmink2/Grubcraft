@@ -230,6 +230,9 @@ const GROUND_BACK: f32 = 16.0;
 const GROUND_FORWARD: f32 = 4.0;
 /// Tiles between the places it weighs on its first, rough look.
 const GROUND_STEP: f32 = 3.0;
+/// Moving the line further than this for the same reason as last time is
+/// worth a new journal entry, tiles.
+const GROUND_NEWS: f32 = 8.0;
 /// Share of the formation's ground that must be standable and dry.
 const FOOTING: f32 = 0.9;
 /// What a covered end of the line is worth, before odds; and a tile of rise
@@ -311,6 +314,8 @@ pub struct Captain {
     /// The enemy is beaten and the regiments are finishing off the rest.
     pub finishing: bool,
     pub estimate: Option<Estimate>,
+    /// What it expected when it first weighed the fight up.
+    pub first_estimate: Option<Estimate>,
     pub members: Vec<Member>,
     /// The battle frame: which way is the enemy, and where the line stands.
     forward: Vec2,
@@ -354,6 +359,8 @@ pub struct Captain {
     /// It has decided to cross the water after all.
     crossing: bool,
     next_ground: u32,
+    /// The journal's last word on the ground.
+    ground_note: String,
     /// The point of attack: the enemy regiment whose rout would do most
     /// harm (wavering, beside others shaken). Line regiments in reach go
     /// for it first.
@@ -373,6 +380,7 @@ impl Captain {
             posture: Posture::Form,
             finishing: false,
             estimate: None,
+            first_estimate: None,
             members: Vec::new(),
             forward: Vec2::Y,
             anchor: Vec2::ZERO,
@@ -399,6 +407,7 @@ impl Captain {
             river: None,
             crossing: false,
             next_ground: 0,
+            ground_note: String::new(),
             focus: None,
         }
     }
@@ -406,6 +415,19 @@ impl Captain {
     /// Where the line stands and which way it faces.
     pub fn frame(&self) -> (Vec2, Vec2) {
         (self.anchor, self.forward)
+    }
+
+    /// Where it wants its front, once the battle has started: the middle of
+    /// its front edge, which way it faces, how wide it is, and the end
+    /// anchored on ground nobody crosses (-1 left, +1 right, 0 neither).
+    pub fn front(&self) -> Option<(Vec2, Vec2, f32, f32)> {
+        self.started
+            .then_some((self.anchor, self.forward, self.line_width, self.covered))
+    }
+
+    /// Whether it is waiting behind water for the enemy to cross.
+    pub fn waiting_behind_water(&self) -> bool {
+        self.river.is_some() && !self.crossing
     }
 
     /// Where regiment `h`'s place in the formation is on the map (before
@@ -635,6 +657,7 @@ impl Captain {
         let closing = (mine.speed + theirs.speed) * 0.5;
         let est = estimator::estimate(&mine, &theirs, Approach { gap, closing });
         self.estimate = Some(est);
+        self.first_estimate.get_or_insert(est);
     }
 
     /// Tiles between the front of the formation and the nearest enemy front.
@@ -1116,7 +1139,12 @@ impl Captain {
             } else {
                 "a better place".to_string()
             };
-            ctx.journal.note(now, format!("Taking ground: {what}"));
+            let note = format!("Taking ground: {what}");
+            // A small step to better ground for the same reason isn't news.
+            if note != self.ground_note || to.distance(anchor) > GROUND_NEWS {
+                ctx.journal.note(now, note.clone());
+                self.ground_note = note;
+            }
         }
         if side != self.covered {
             self.covered = side;
