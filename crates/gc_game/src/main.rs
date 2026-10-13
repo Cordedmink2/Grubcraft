@@ -423,6 +423,9 @@ impl Sandbox {
 fn soldier_action(s: &Soldier, block: &Block, shooting: bool) -> Action {
     if block.routing {
         Action::Run
+    } else if s.striking && !s.dueling && s.phase > 0.6 {
+        // Behind the fighting line, some wait their turn.
+        Action::Idle
     } else if s.striking {
         if s.phase < 0.5 {
             Action::Attack
@@ -1367,6 +1370,8 @@ impl Running {
         }
         self.push_placement_ghost();
         self.puppets.advance(game_dt.as_secs_f32());
+        let world = &self.world;
+        self.puppets.pair(|a, b| world.hostile(a, b));
         let marked = self
             .attack_mark
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)

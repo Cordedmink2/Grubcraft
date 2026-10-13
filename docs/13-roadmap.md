@@ -40,7 +40,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - AI track: the battle AI (phases AI-1 and AI-2), so any Field Battle or sandbox slot can be an AI opponent or ally.
 - Desync detection with report files; cross-platform determinism CI on golden replays.
 - Replays (record and play back).
-- Soldier fighting, stage 1: duel pairs and living formations (acceleration, settle, idle sway), see [09](09-art-and-audio.md#animation).
+- Soldier fighting, stage 1: duel pairs and living formations (acceleration, settle, idle sway), see [09](09-art-and-audio.md#animation). *Built.*
 - Packaging: Mac `.app` (ad-hoc signed), Windows `.exe`, one zip each.
 - **Exit:** a 2v2 Field Battle across two Macs and two Windows PCs on home Wi-Fi with zero desyncs.
 
