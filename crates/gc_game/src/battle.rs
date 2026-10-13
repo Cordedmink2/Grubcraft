@@ -307,7 +307,8 @@ mod tests {
             .iter()
             .map(|u| Faction::from_index(u.faction() as u8))
             .collect();
-        let nav = Heightmap::generate(seed, MAP).nav_costs();
+        let heightmap = Heightmap::generate(seed, MAP);
+        let nav = heightmap.nav_costs();
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
         let mut world = World::new(&MatchSetup {
             seed,
@@ -317,7 +318,7 @@ mod tests {
             nav: &nav,
             teams: &teams,
         });
-        let mut minds = Minds::new(gc_ai::Terrain::new(&nav, MAP));
+        let mut minds = Minds::new(heightmap.ai_terrain(&nav));
         let mut out = Vec::new();
         let set = set_out(
             setup,

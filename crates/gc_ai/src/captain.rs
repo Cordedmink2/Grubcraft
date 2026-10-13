@@ -10,9 +10,14 @@
 //! 4. **Gives every regiment a role** in that doctrine and a place in the
 //!    formation: the line (anchors and wings), batteries of archers behind
 //!    it or a screen in front, hammers on the flanks, a reserve.
-//! 5. **Chooses a posture:** form up, hold and receive, advance, or fall
-//!    back.
-//! 6. **Plays each role**, which turns into ordinary move and attack orders:
+//! 5. **Picks its ground** while forming up or holding: an end of the line
+//!    against a cliff or deep water, higher ground, a stand back from a
+//!    river the enemy must cross (see [`crate::ground`]).
+//! 6. **Chooses a posture:** form up, hold and receive, advance, or fall
+//!    back. Expecting to lose, it waits for the enemy rather than marching
+//!    into the fight; with water between the armies, it waits for them to
+//!    cross.
+//! 7. **Plays each role**, which turns into ordinary move and attack orders:
 //!    line regiments counter-charge enemies that come close, ganging up to
 //!    make local odds; hammers wait until the enemy line is locked in melee
 //!    and then swing round to hit a flank or the rear; batteries shoot what
@@ -29,6 +34,7 @@ use glam::Vec2;
 
 use crate::difficulty::Knobs;
 use crate::estimator::{self, Approach, Estimate, Force};
+use crate::ground::{self, Crossing, Line};
 use crate::journal::Journal;
 use crate::orders::{Act, Want};
 use crate::perception::{Class, Perception, Seen, Side, TICKS, right_of};
@@ -182,6 +188,10 @@ const SUPPORT_TILES: f32 = 35.0;
 const LOCAL_TILES: f32 = 12.0;
 /// A free line regiment chases a router this close, so it can't rally.
 const PURSUE_TILES: f32 = 12.0;
+/// The point of attack is picked from wavering enemies this close to the
+/// line, and line regiments reach this much further for it.
+const FOCUS_TILES: f32 = 40.0;
+const FOCUS_REACH: f32 = 6.0;
 /// A waiting hammer meets an enemy coming at it this close: charging back
 /// if it can win, getting out of the way if not.
 const COUNTER_TILES: f32 = 12.0;
@@ -206,6 +216,39 @@ const FINISH_SPREAD: f32 = 20.0;
 /// Falling back at most this often in a battle: past that, it stands and
 /// fights rather than retreat across the map from an enemy who waits.
 const WITHDRAWALS: u32 = 2;
+/// Expecting to lose by this much, it doesn't march on the enemy: it waits
+/// on its ground for them to come.
+const LOSING: f32 = -0.25;
+/// Picking ground: how often it looks (ticks), and only with the enemy
+/// front at least this far off (tiles).
+const GROUND_TICKS: u32 = 3 * 20;
+const GROUND_GAP: f32 = 20.0;
+/// How far it looks for better ground: tiles to either side, back and
+/// forward from where the line stands.
+const GROUND_ACROSS: f32 = 30.0;
+const GROUND_BACK: f32 = 16.0;
+const GROUND_FORWARD: f32 = 4.0;
+/// Tiles between the places it weighs on its first, rough look.
+const GROUND_STEP: f32 = 3.0;
+/// Share of the formation's ground that must be standable and dry.
+const FOOTING: f32 = 0.9;
+/// What a covered end of the line is worth, before odds; and a tile of rise
+/// over the ground in front (capped at three).
+const COVER: f32 = 1.0;
+const HIGH_GROUND: f32 = 0.15;
+/// Moving costs a point for every this many tiles, and more for every tile
+/// towards the enemy. A new place must beat the current one by this much.
+const MOVE_TILES: f32 = 25.0;
+const FORWARD_TILES: f32 = 6.0;
+const STAY: f32 = 0.3;
+/// Waiting behind water, the line stands this far back from it (further
+/// if the enemy's archers on the far bank would reach it), facing the
+/// nearest ford within this many tiles to either side.
+const BANK_BACK: f32 = 8.0;
+const FORD_REACH: f32 = 40.0;
+/// Behind water, it crosses only when expecting to win by this much and
+/// after twice its usual patience.
+const CROSS_MARGIN: f32 = 0.3;
 
 /// One of the Captain's regiments.
 #[derive(Clone, Copy, Debug)]
@@ -299,6 +342,22 @@ pub struct Captain {
     /// Depth of the line, front to back, tiles.
     line_depth: f32,
     line_width: f32,
+    /// Tiles behind the line's back edge that its archers need.
+    rear: f32,
+    /// Where the enemy army it faces stands (its centre).
+    enemy_at: Vec2,
+    /// The end of the line with cover beside it: -1 left, +1 right, 0
+    /// neither. Its hammers wait on the open side.
+    covered: f32,
+    /// Water between the line and the enemy.
+    river: Option<Crossing>,
+    /// It has decided to cross the water after all.
+    crossing: bool,
+    next_ground: u32,
+    /// The point of attack: the enemy regiment whose rout would do most
+    /// harm (wavering, beside others shaken). Line regiments in reach go
+    /// for it first.
+    pub focus: Option<RegimentHandle>,
 }
 
 impl Default for Captain {
@@ -334,12 +393,26 @@ impl Captain {
             pace: 0.0,
             line_depth: 0.0,
             line_width: 0.0,
+            rear: 0.0,
+            enemy_at: Vec2::ZERO,
+            covered: 0.0,
+            river: None,
+            crossing: false,
+            next_ground: 0,
+            focus: None,
         }
     }
 
     /// Where the line stands and which way it faces.
     pub fn frame(&self) -> (Vec2, Vec2) {
         (self.anchor, self.forward)
+    }
+
+    /// Where regiment `h`'s place in the formation is on the map (before
+    /// it is nudged onto standable ground).
+    pub fn place_of(&self, h: RegimentHandle) -> Option<Vec2> {
+        let m = self.members.iter().find(|m| m.handle == h)?;
+        Some(self.anchor + right_of(self.forward) * m.slot.x - self.forward * m.slot.y)
     }
 
     /// Look at the battle and decide what every regiment should do.
@@ -375,6 +448,10 @@ impl Captain {
             self.next_doctrine = now + DOCTRINE_TICKS;
             self.choose_doctrine(ctx, &ours, &fighting);
         }
+        if self.relayout {
+            self.layout(ctx);
+        }
+        self.choose_ground(ctx, &ours, &fighting);
         if self.relayout {
             self.layout(ctx);
         }
@@ -433,7 +510,10 @@ impl Captain {
             if m.lost || r.broken() || r.engaged {
                 continue;
             }
-            let target = match m.target.filter(|&t| standing(t)) {
+            // Someone charging at us comes first, or they take us in the
+            // flank on the way to the last stragglers.
+            let threat = self.threat(ctx, r, fighting).map(|f| f.handle);
+            let target = match threat.or(m.target.filter(|&t| standing(t))) {
                 Some(t) => t,
                 None => {
                     let score = |f: &Seen| {
@@ -505,6 +585,7 @@ impl Captain {
     fn update_frame(&mut self, ctx: &mut Ctx, ours: &[&Seen], fighting: &[&Seen]) {
         let our_c = centroid(ours);
         let their_c = nearest_army(ctx.party, our_c, fighting);
+        self.enemy_at = their_c;
         let dir = their_c - our_c;
         let distance = dir.length();
         if !self.started {
@@ -730,12 +811,19 @@ impl Captain {
         self.line_depth = line_depth;
         self.line_width = total;
         let refused = self.doctrine == Doctrine::RefusedFlank;
+        // A line with one end covered leads with that end, and refuses the
+        // open one.
+        let strong_side = if self.covered != 0.0 {
+            self.covered
+        } else {
+            self.strong_side
+        };
         let mut x = -total * 0.5;
         for (i, &k) in line.iter().enumerate() {
             let cx = x + width[k] * 0.5;
             x += width[k] + LINE_GAP;
             // Refused flank: the weak wing steps back at an angle.
-            let back = if refused && cx * self.strong_side < 0.0 {
+            let back = if refused && cx * strong_side < 0.0 {
                 cx.abs() * 0.55
             } else {
                 0.0
@@ -763,6 +851,10 @@ impl Captain {
             _ => (0.0, 0.0),
         };
         let screen = self.doctrine == Doctrine::SkirmishScreen;
+        self.rear = ranged
+            .iter()
+            .map(|&k| BATTERY_BACK + depth[k])
+            .fold(0.0, f32::max);
         for (i, &k) in ranged.iter().enumerate() {
             let cx = first + step * i as f32;
             let behind = Vec2::new(cx, line_depth * 0.5 + BATTERY_BACK + depth[k] * 0.5);
@@ -783,7 +875,9 @@ impl Captain {
         // Hammers wait behind the ends of the line, where the line shields
         // them, ready to swing round a flank. Hammer and anvil holds them
         // further out, already round the ends. A refused flank puts them all
-        // behind the strong wing.
+        // behind the strong wing, and a line with a covered end puts them
+        // all on the open side (nobody gets round the covered one, either
+        // way).
         shock.sort_by(by_lateral);
         let half = shock.len().div_ceil(2);
         let anvil = self.doctrine == Doctrine::HammerAndAnvil;
@@ -794,8 +888,10 @@ impl Captain {
         };
         for (i, &k) in shock.iter().enumerate() {
             let w = width[k];
-            let to_right = if refused {
-                self.strong_side > 0.0
+            let to_right = if self.covered != 0.0 {
+                self.covered < 0.0
+            } else if refused {
+                strong_side > 0.0
             } else {
                 i >= shock.len() - half
             };
@@ -868,6 +964,173 @@ impl Captain {
         } else {
             ctx.terrain.nearest_walkable(p, 8.0).unwrap_or(p)
         }
+    }
+
+    /// While forming up or holding, every few seconds: is there better ground
+    /// close by to receive the enemy on? It scores the places the line could
+    /// stand within reach by cover at its ends, rise over the ground in
+    /// front and, with water between the armies, keeping back from the
+    /// bank, against the distance to get there; and moves the line if one
+    /// is clearly better (docs/18-ai.md, "Using ground").
+    fn choose_ground(&mut self, ctx: &mut Ctx, ours: &[&Seen], fighting: &[&Seen]) {
+        let view = ctx.view;
+        let now = view.tick;
+        let t = ctx.terrain;
+        if !ctx.knobs.ground || now < self.next_ground || self.line_width <= 0.0 {
+            return;
+        }
+        // On a beat of its own, so several AIs don't all look in one tick.
+        let phase = u32::from(ctx.party) * 13 % GROUND_TICKS;
+        self.next_ground = (now / GROUND_TICKS + 1) * GROUND_TICKS + phase;
+        let river = ground::crossing(t, self.anchor, self.enemy_at);
+        if river.is_some() != self.river.is_some() && !self.crossing {
+            let note = if river.is_some() {
+                "Water between us: waiting for them to cross"
+            } else {
+                "No water between us now"
+            };
+            ctx.journal.note(now, note.to_string());
+        }
+        self.river = river;
+        if !matches!(self.posture, Posture::Form | Posture::Hold)
+            || self.front_gap(fighting) < GROUND_GAP
+        {
+            return;
+        }
+        let mine = Force::of(view, ours.iter().copied());
+        let theirs = Force::of(view, fighting.iter().copied());
+        let margin = self.estimate.map_or(0.0, |e| e.margin);
+        // Cover is worth more the worse the odds.
+        let cover_worth = COVER * (1.0 + 2.0 * (-margin).max(0.0));
+        // Behind water, out of reach of archers on the far bank if they
+        // shoot better.
+        let bank_back = match river {
+            Some(r) if theirs.ranged > mine.ranged * 1.15 => {
+                BANK_BACK.max(theirs.range - (r.far - r.near) + 3.0)
+            }
+            _ => BANK_BACK,
+        };
+        let (anchor, forward, enemy_at) = (self.anchor, self.forward, self.enemy_at);
+        let (width, depth, rear) = (self.line_width, self.line_depth, self.rear);
+        // Where they would come out of the water: wait just behind it, to
+        // fall on each regiment as it wades out.
+        let wait_at = river
+            .and_then(|r| ground::ford(t, anchor, forward, r, FORD_REACH))
+            .map(|exit| exit - forward * (bank_back + depth * 0.5));
+        let score = |p: Vec2| -> Option<(f32, f32, f32)> {
+            let line = Line {
+                centre: p,
+                forward,
+                width,
+                depth,
+            };
+            if line.footing(t, rear) < FOOTING {
+                return None;
+            }
+            let mut s = 0.0;
+            let mut side = 0.0;
+            for (cover, sign) in line.cover(t).into_iter().zip([-1.0, 1.0]) {
+                if let Some(k) = cover {
+                    let snug = if k <= 2.0 {
+                        1.0
+                    } else if k <= 4.0 {
+                        0.5
+                    } else {
+                        0.25
+                    };
+                    s += cover_worth * snug;
+                    side += sign;
+                }
+            }
+            let rise = line.rise(t, 12.0).clamp(0.0, 3.0);
+            s += HIGH_GROUND * rise;
+            if river.is_some()
+                && let Some(c) = ground::crossing(t, p, enemy_at)
+                && c.near < bank_back
+            {
+                s -= (bank_back - c.near) / 4.0;
+            }
+            let moved = p - anchor;
+            s -= moved.length() / MOVE_TILES;
+            match wait_at {
+                // Up to the ford is safe ground: they must cross to reach it.
+                Some(w) => s -= p.distance(w) / 5.0,
+                None => s -= moved.dot(forward).max(0.0) / FORWARD_TILES,
+            }
+            Some((s, side, rise))
+        };
+        let right = right_of(forward);
+        let mut best = score(anchor).map(|(s, side, rise)| (s + STAY, anchor, side, rise));
+        let mut look = |centre: Vec2, wide: f32, ahead: f32, behind: f32, step: f32| {
+            let mut back = -ahead;
+            while back <= behind {
+                let mut across = -wide;
+                while across <= wide {
+                    let p = centre + right * across - forward * back;
+                    if t.inside(p, 6.0)
+                        && let Some((s, side, rise)) = score(p)
+                        && best.is_none_or(|b| s > b.0)
+                    {
+                        best = Some((s, p, side, rise));
+                    }
+                    across += step;
+                }
+                back += step;
+            }
+            best
+        };
+        // A rough look around where the line stands and around the ford,
+        // then a closer one around the best place found.
+        let mut found = look(
+            anchor,
+            GROUND_ACROSS,
+            GROUND_FORWARD,
+            GROUND_BACK,
+            GROUND_STEP,
+        );
+        if let Some(w) = wait_at {
+            found = look(w, 8.0, 6.0, 6.0, GROUND_STEP);
+        }
+        let near = GROUND_STEP - 1.0;
+        if let Some((_, p, _, _)) = found
+            && p != anchor
+        {
+            found = look(p, near, near, near, 1.0);
+        }
+        let Some((_, to, side, rise)) = found else {
+            return;
+        };
+        if to != anchor {
+            self.anchor = to;
+            let what = if side != 0.0 {
+                format!(
+                    "anchoring the {} on ground nobody crosses",
+                    if side > 0.0 { "right" } else { "left" }
+                )
+            } else if wait_at.is_some() {
+                "facing the ford".to_string()
+            } else if river.is_some() {
+                "standing back from the water".to_string()
+            } else if rise >= 0.5 {
+                "the high ground".to_string()
+            } else {
+                "a better place".to_string()
+            };
+            ctx.journal.note(now, format!("Taking ground: {what}"));
+        }
+        if side != self.covered {
+            self.covered = side;
+            self.relayout = true;
+        }
+    }
+
+    /// Whether `f` stands beyond water the line is waiting behind, from
+    /// `r`'s side of it: not to be attacked across the water.
+    fn beyond_water(&self, terrain: &Terrain, r: &Seen, f: &Seen) -> bool {
+        self.river.is_some()
+            && !self.crossing
+            && !terrain.wet(f.pos)
+            && ground::crossing(terrain, r.pos, f.pos).is_some()
     }
 
     fn choose_posture(&mut self, ctx: &mut Ctx, ours: &[&Seen], fighting: &[&Seen]) {
@@ -947,15 +1210,39 @@ impl Captain {
             // meet them in the open.
             let coming = self.closing > 1.0 && gap < 60.0;
             let meet = p.aggression() >= 0.7 && gap > 45.0;
-            let outshot = theirs.ranged > mine.ranged * 1.15 && theirs.ranged > 0.0;
+            // Outshot only matters once their archers can reach us.
+            let under_fire = theirs.ranged > 0.0 && gap < theirs.range + 2.0;
+            let outshot = theirs.ranged > mine.ranged * 1.15 && under_fire;
             let out_of_range = mine.ranged > 0.0 && gap > our_range;
+            let losing = margin < LOSING;
             let patience = 3.0 + 25.0 * p.patience() - 10.0 * p.aggression()
                 + if margin > 0.25 { -5.0 } else { 0.0 };
             let waited = (now - self.standoff_since) as f32 / TICKS;
-            let advance = if only_archers {
+            // Water between the armies: whoever crosses comes out of it a
+            // regiment at a time, so wait for them, unless clearly the
+            // stronger and tired of waiting.
+            if self.river.is_some()
+                && !self.crossing
+                && margin > CROSS_MARGIN
+                && waited > 2.0 * patience.max(5.0)
+            {
+                self.crossing = true;
+                ctx.journal.note(
+                    now,
+                    format!("Crossing the water: expects {}", describe_margin(margin)),
+                );
+            }
+            let behind_water = self.river.is_some() && !self.crossing;
+            let advance = if behind_water {
+                false
+            } else if only_archers {
                 true
             } else if coming {
-                meet
+                meet && !losing
+            } else if losing {
+                // Wait on our own ground for them to come. Being shot to
+                // pieces with no falling back left is the exception.
+                outshot && self.withdrawals >= WITHDRAWALS
             } else {
                 outshot || out_of_range || waited > patience.max(0.0)
             };
@@ -969,6 +1256,11 @@ impl Captain {
             let settled = now >= self.posture_since + POSTURE_TICKS;
             if want != self.posture && settled {
                 self.posture = want;
+                if want == Posture::Advance && self.covered != 0.0 {
+                    // Leaving its cover behind: hammers on both wings again.
+                    self.covered = 0.0;
+                    self.relayout = true;
+                }
                 if want == Posture::Hold {
                     // Halt where the line stands now.
                     self.standoff_since = now;
@@ -1130,6 +1422,11 @@ impl Captain {
             }
         }
         let routers = foes.iter().any(|f| f.broken());
+        self.focus = if ctx.knobs.morale_targeting {
+            point_of_attack(view, fighting, self.anchor)
+        } else {
+            None
+        };
         for k in 0..self.members.len() {
             let mut m = self.members[k];
             let Some(r) = view.get(m.handle) else {
@@ -1231,17 +1528,30 @@ impl Captain {
         let leash = LINE_LEASH + reach;
         let right = right_of(self.forward);
         let help = ctx.knobs.focus_fire;
+        let terrain = ctx.terrain;
         // Only archers still standing against us: go and get them.
         let only_archers = fighting.iter().all(|f| view.unit(f).class == Class::Ranged);
         let wanted = |f: &Seen, slack: f32| {
             let gap = gap_between(r, f) - slack;
-            if gap <= 3.0 || only_archers {
+            if gap <= 3.0 {
                 // Close enough to hit us: always an answer.
                 return true;
             }
+            if self.beyond_water(terrain, r, f) {
+                return false;
+            }
+            if only_archers {
+                return true;
+            }
             let from_home = f.pos.distance(home) - slack;
-            // Coming at our stretch of the line.
+            // Coming at our stretch of the line (or the point of attack,
+            // a little further).
             let across = (f.pos - home).dot(right).abs();
+            let reach = if Some(f.handle) == self.focus {
+                reach + FOCUS_REACH
+            } else {
+                reach
+            };
             if gap <= reach && from_home <= leash && across <= r.width * 0.5 + f.width * 0.5 + 8.0 {
                 return true;
             }
@@ -1357,20 +1667,32 @@ impl Captain {
             .and_then(|t| view.get(t))
             .filter(|t| !t.broken() && t.pos.distance(r.pos) < 45.0)
             .map(|t| t.handle);
-        let target = self.best_melee_target(ctx, r, breach.chain(finish).chain(support), on, keep);
+        // A breach first; then a gap in the line with the enemy coming at
+        // it, before helping anywhere else.
+        let breach: Vec<&&Seen> = breach.collect();
+        let target = match gap_slot {
+            Some(_) if breach.is_empty() => None,
+            _ => self.best_melee_target(
+                ctx,
+                r,
+                breach.into_iter().chain(finish).chain(support),
+                on,
+                keep,
+            ),
+        };
         if let Some(t) = target {
             m.target = Some(t);
             wants.push(attack(m.handle, t, 3));
             return;
         }
-        m.target = None;
         let to = match gap_slot {
             Some(p) => {
                 // Standing in the gap, it fights like the line.
-                let near = fighting
-                    .iter()
-                    .filter(|f| gap_between(r, f) <= ctx.knobs.engage_tiles);
-                if let Some(t) = self.best_melee_target(ctx, r, near, on, None) {
+                let near = fighting.iter().filter(|f| {
+                    gap_between(r, f) <= ctx.knobs.engage_tiles && f.pos.distance(p) < 16.0
+                });
+                let keep = keep.filter(|&t| view.get(t).is_some_and(|t| t.pos.distance(p) < 16.0));
+                if let Some(t) = self.best_melee_target(ctx, r, near, on, keep) {
                     m.target = Some(t);
                     wants.push(attack(m.handle, t, 3));
                     return;
@@ -1379,6 +1701,7 @@ impl Captain {
             }
             None => self.place(ctx, m.slot),
         };
+        m.target = None;
         wants.push(slot_move(m.handle, to, self.forward, pace));
     }
 
@@ -1438,6 +1761,7 @@ impl Captain {
             }
             return;
         }
+        let terrain = ctx.terrain;
         let go = if !timed {
             fighting.iter().any(|f| gap_between(r, f) < 30.0)
         } else {
@@ -1446,12 +1770,14 @@ impl Captain {
                     exposed(f)
                         && f.pos.distance(r.pos) < 45.0
                         && path_clear(view, fighting, r.pos, f.pos, f.handle)
+                        && !self.beyond_water(terrain, r, f)
                 })
         };
         if go {
             let reckless = !timed || ctx.slip();
             let target = fighting
                 .iter()
+                .filter(|f| !self.beyond_water(terrain, r, f))
                 .filter(|f| {
                     // Never fed into the front of a steady enemy that is
                     // free to meet it.
@@ -1714,11 +2040,20 @@ impl Captain {
             if f.engaged {
                 s += 1.0;
             }
+            let wavering = f.morale == MoraleState::Wavering;
+            if Some(f.handle) == self.focus {
+                s += 1.0;
+            }
             if knobs.morale_targeting {
-                if f.morale == MoraleState::Wavering {
-                    s += 1.5 + opportunism;
+                let shaken = shaken_near_all(view, f) as f32;
+                if wavering {
+                    // About to break, and its rout costs every friend
+                    // within 16 tiles 8 points: worth most beside others
+                    // already shaken, which it may take with it.
+                    s += 1.5 + opportunism + 0.8 * shaken;
+                } else {
+                    s += 0.5 * shaken;
                 }
-                s += 0.5 * shaken_near_all(view, f) as f32;
                 if them.stalwart {
                     s -= 1.0;
                 }
@@ -1727,7 +2062,8 @@ impl Captain {
             if knobs.focus_fire {
                 // Local odds: worth most where joining makes them two or
                 // three to one (which breaks nerve), little where they
-                // already are, and walking alone into a crowd is a poor idea.
+                // already are, and walking alone into a crowd is a poor idea
+                // (less so if the one it hits is about to run).
                 let (ours, theirs) = local_soldiers(view, party, f.pos, r.handle);
                 let theirs = theirs.max(1.0);
                 let before = ours / theirs;
@@ -1740,6 +2076,8 @@ impl Captain {
                     0.4
                 } else if after >= 0.8 {
                     0.0
+                } else if wavering && knobs.morale_targeting {
+                    -0.2
                 } else {
                     -0.8
                 };
@@ -1881,6 +2219,24 @@ fn exposed(view: &Perception, fighting: &[&Seen], f: &Seen) -> bool {
                 && view.unit(g).class != Class::Ranged
                 && g.pos.distance(f.pos) < 12.0
         })
+}
+
+/// The enemy regiment whose rout would do most harm, among the wavering
+/// within [`FOCUS_TILES`] of the line at `anchor`: the one with most shaken
+/// friends beside it, closest to breaking. None if none is wavering.
+fn point_of_attack(view: &Perception, fighting: &[&Seen], anchor: Vec2) -> Option<RegimentHandle> {
+    fighting
+        .iter()
+        .filter(|f| f.morale == MoraleState::Wavering && !view.unit(f).stalwart)
+        .filter(|f| f.pos.distance(anchor) <= FOCUS_TILES)
+        .map(|f| {
+            let s = shaken_near_all(view, f) as f32 + (1.0 - f.strength())
+                - f.morale_points as f32 / 25.0
+                - f.pos.distance(anchor) / FOCUS_TILES;
+            (s, f.handle)
+        })
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, h)| h)
 }
 
 /// Shaken enemies within 16 tiles of `f` (a rout there would cascade).

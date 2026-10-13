@@ -11,6 +11,8 @@
 //! This crate has the battle layers so far:
 //! - [`perception`]: what can be seen, copied from the world once per tick.
 //! - [`estimator`]: a quick model of who wins a fight, from the sim's rules.
+//! - [`ground`]: what the ground offers a line: cover for a flank, high
+//!   ground, water between the armies.
 //! - [`captain`]: battle tactics: the plan, the roles, every regiment's job.
 //! - [`orders`]: turns decisions into commands with a human's reaction time
 //!   and attention.
@@ -23,6 +25,7 @@ pub mod army;
 pub mod captain;
 pub mod difficulty;
 pub mod estimator;
+pub mod ground;
 pub mod journal;
 pub mod orders;
 pub mod perception;

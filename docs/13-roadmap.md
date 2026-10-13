@@ -90,7 +90,7 @@ AI players were planned for after 1.0; on 2026-10-12 Mario asked for an intellig
 
 | Phase | What | With |
 |---|---|---|
-| AI-1 · Battle AI | Perception, terrain analysis, battle estimator, battle tactics with four doctrines, difficulty levels, drills | Starts once the sandbox lands; ships with M2. Built in three steps: (1) the battle AI itself, playable from the lobby and the sandbox; (2) terrain sense, the eight drills and the estimator check; (3) the AI lens and journal overlay. Step 1 is built (2026-10-12) |
+| AI-1 · Battle AI | Perception, terrain analysis, battle estimator, battle tactics with four doctrines, difficulty levels, drills | Starts once the sandbox lands; ships with M2. Built in three steps: (1) the battle AI itself, playable from the lobby and the sandbox; (2) terrain sense, the eight drills and the estimator check; (3) the AI lens and journal overlay. Steps 1 (2026-10-12) and 2 (2026-10-13) are built |
 | AI-2 · Rehearsal | The AI plays candidate battle plans ahead in a copy of the real sim; the Warlord difficulty | M2 |
 | AI-3 · Conquest AI | Strategy, economy, scouting, armies; Clans and Brood; AI allies; the arena | M3 |
 | AI-4 · Relations and the living world | Relations ledger, hamlets, creep camps, mercenary companies, parley | M4 |

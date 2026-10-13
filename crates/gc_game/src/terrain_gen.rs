@@ -151,6 +151,20 @@ impl Heightmap {
         }
         cells
     }
+
+    /// The ground as the computer players read it: the walkable-ground
+    /// grid plus each tile's height and where the water is, so they can
+    /// pick a line beside a cliff, on a rise or behind a river.
+    pub fn ai_terrain(&self, nav: &[u8]) -> gc_ai::Terrain {
+        let tiles = (self.size - 1) / self.samples_per_tile;
+        let mut heights = Vec::with_capacity((tiles * tiles) as usize);
+        for y in 0..tiles {
+            for x in 0..tiles {
+                heights.push(self.height_at(x as f32 + 0.5, y as f32 + 0.5));
+            }
+        }
+        gc_ai::Terrain::new(nav, tiles).with_heights(heights, self.water_level)
+    }
 }
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {

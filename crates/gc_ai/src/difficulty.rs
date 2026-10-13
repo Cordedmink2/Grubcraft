@@ -51,6 +51,7 @@ impl Difficulty {
                 timed_hammer: false,
                 save_wavering: false,
                 focus_fire: false,
+                ground: false,
                 engage_tiles: 14.0,
                 hunt_leash: 120.0,
                 slip_percent: 35,
@@ -66,6 +67,7 @@ impl Difficulty {
                 timed_hammer: true,
                 save_wavering: true,
                 focus_fire: true,
+                ground: true,
                 engage_tiles: 10.0,
                 hunt_leash: 55.0,
                 slip_percent: 10,
@@ -81,6 +83,7 @@ impl Difficulty {
                 timed_hammer: true,
                 save_wavering: true,
                 focus_fire: true,
+                ground: true,
                 engage_tiles: 9.0,
                 hunt_leash: 40.0,
                 slip_percent: 2,
@@ -113,6 +116,9 @@ pub struct Knobs {
     pub save_wavering: bool,
     /// Several regiments gang up on one enemy to make local odds.
     pub focus_fire: bool,
+    /// Picks its ground: anchors a flank on a cliff, takes high ground,
+    /// waits behind water for the enemy to cross.
+    pub ground: bool,
     /// How close (tiles between blocks) an enemy gets before a line
     /// regiment charges it.
     pub engage_tiles: f32,

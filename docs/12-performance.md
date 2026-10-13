@@ -85,7 +85,7 @@ AI players think on their own thread, never inside the tick, so they have their 
 | Rehearsal (top difficulty), all AIs together | ≤ 15 ms average per tick; spikes allowed, the sim never waits |
 | Each mercenary company or faction mind | ≤ 0.2 ms average per tick |
 
-**Measured (AI-1 step 1, 2026-10-12):** two General-level battle AIs fighting each other on the generated map cost about 0.003 ms per tick between them on average and 0.11 ms in the worst tick (release build, Linux CI-class machine; the ignored `watch` test in `gc_game/src/battle.rs` prints it). That is so far under budget that they still run on the main thread just before each tick; they move to their own thread when rehearsal (AI-2) makes thinking expensive. Their memory is tracked under the `ai` tag in the dev overlay.
+**Measured (AI-1 step 1, 2026-10-12):** two General-level battle AIs fighting each other on the generated map cost about 0.003 ms per tick between them on average and 0.11 ms in the worst tick (release build, Linux CI-class machine; the ignored `watch` test in `gc_game/src/battle.rs` prints it). That is so far under budget that they still run on the main thread just before each tick; they move to their own thread when rehearsal (AI-2) makes thinking expensive. Their memory is tracked under the `ai` tag in the dev overlay. **AI-1 step 2 (2026-10-13):** reading the ground raises the worst tick to 1 to 2 ms, the tick in which one AI weighs where its line should stand (every 3 s, each AI on its own beat); the average stays under 0.01 ms.
 
 ## The big ideas that make the numbers possible
 

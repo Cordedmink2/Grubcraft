@@ -633,8 +633,7 @@ impl App {
             )
         });
         let drill = (!opts.sandbox).then(|| make_drill(opts.seed));
-        let minds =
-            tagged_alloc::scope(Tag::Ai, || Minds::new(gc_ai::Terrain::new(&nav, MAP_TILES)));
+        let minds = tagged_alloc::scope(Tag::Ai, || Minds::new(heightmap.ai_terrain(&nav)));
 
         let start = Vec2::splat(MAP_TILES as f32 * 0.25);
         let mut camera = RtsCamera::new(MAP_TILES as f32, start + Vec2::new(10.0, 20.0));
@@ -1738,8 +1737,7 @@ impl Running {
                 teams: &teams,
             })
         });
-        self.minds =
-            tagged_alloc::scope(Tag::Ai, || Minds::new(gc_ai::Terrain::new(&nav, MAP_TILES)));
+        self.minds = tagged_alloc::scope(Tag::Ai, || Minds::new(self.heightmap.ai_terrain(&nav)));
         self.matches += 1;
         self.drill = None;
         self.sandbox = Sandbox::new(matches!(kind, MatchKind::Sandbox));

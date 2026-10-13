@@ -8,7 +8,7 @@ A four-player LAN real-time strategy game where Warcraft III's base-building mee
 
 ## Status
 
-M0 (foundations) is done apart from a test run on a Windows PC. M1 (regiments on a field) is in progress: formations, soldiers on screen, controls, melee and arrows, morale, pathfinding, the sandbox, real art, the Commander View and the menus and lobby screens are built. The first battle AI is in: you can fight computer opponents at three levels in a Field Battle from the lobby, or hand any sandbox side to the computer. See the [roadmap](docs/13-roadmap.md). Start with the [design documents](docs/README.md).
+M0 (foundations) is done apart from a test run on a Windows PC. M1 (regiments on a field) is in progress: formations, soldiers on screen, controls, melee and arrows, morale, pathfinding, the sandbox, real art, the Commander View and the menus and lobby screens are built. The first battle AI is in: you can fight computer opponents at three levels in a Field Battle from the lobby, or hand any sandbox side to the computer. It reads the ground, anchoring its line on cliffs and waiting behind rivers. See the [roadmap](docs/13-roadmap.md). Start with the [design documents](docs/README.md).
 
 ## Building and running
 
