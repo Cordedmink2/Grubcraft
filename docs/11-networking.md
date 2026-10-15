@@ -63,7 +63,9 @@ Tests: three `Lan`s in one process play 300 turns over real UDP on this machine,
 
 **Built in step 3 (2026-10-15):** encrypted links, join codes and the lobby password (all described above), protocol 3. `--password WORD` goes with `--host` or `--join`.
 
-**Next steps for M2:** (4) baked battle maps, so every machine has the identical map without relying on floating point; (5) the army builder with points and a deployment phase; (6) replays in the game: recording every match on `gc_replay::Recorder` and playback (the file format and the golden-replay CI were built for the M1 exit), desync reports moved onto the same file, sim snapshots, and with them resyncing a diverged player and rejoining after a restart; (7) packaging. Until the maps are baked, the map is generated from the seed with floating-point maths, which is identical between two Macs but not guaranteed between a Mac and a Windows PC; the map hash check catches a difference before the battle starts.
+*Built in step 4 (2026-10-15):* the battle map is made with whole-number maths only (`gc_game::terrain_gen`: fixed-point noise, `gc_fixed`'s sine table and integer square roots), so the same seed gives the identical map on every machine, Mac, Windows or Linux. This replaced the plan to ship baked map files: a seed still makes a fresh map for every match and nothing extra crosses the network. The maps look as before (heights within 0.007 of a tile of the old float version). A test (`the_map_is_the_same_on_every_machine`) pins the fingerprint of two seeds' maps and runs in CI on all three systems; the lobby's map hash check stays as a second guard. Floats are still used to draw the map, and for the computer players' view of it, which only the host runs.
+
+**Next steps for M2:** (5) the army builder with points and a deployment phase; (6) replays in the game: recording every match on `gc_replay::Recorder` and playback (the file format and the golden-replay CI were built for the M1 exit), desync reports moved onto the same file, sim snapshots, and with them resyncing a diverged player and rejoining after a restart; (7) packaging.
 
 ## Session flow
 

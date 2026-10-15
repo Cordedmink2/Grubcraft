@@ -22,17 +22,18 @@ pub fn version() -> String {
 /// A fingerprint of a map's walkable ground, hills, water and cover (FNV-1a), so a joiner whose
 /// map came out differently finds out before the battle starts.
 pub fn map_hash(nav: &[u8], ground: &gc_sim::Ground) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut eat = |b: u8| {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    };
-    nav.iter().for_each(|&b| eat(b));
-    for v in ground.heights.iter().chain([&ground.water_level]) {
-        v.to_le_bytes().into_iter().for_each(&mut eat);
-    }
-    ground.cover.iter().for_each(|&b| eat(b));
-    h ^ nav.len() as u64
+    let heights = ground.heights.iter().chain([&ground.water_level]);
+    let bytes = (nav.iter().copied())
+        .chain(heights.flat_map(|v| v.to_le_bytes()))
+        .chain(ground.cover.iter().copied());
+    fnv1a(bytes) ^ nav.len() as u64
+}
+
+/// FNV-1a over a stream of bytes.
+pub fn fnv1a(bytes: impl IntoIterator<Item = u8>) -> u64 {
+    bytes.into_iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 /// Save a desync report beside the settings file (or in the working
