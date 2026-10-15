@@ -40,12 +40,14 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - AI track: the battle AI (phases AI-1 and AI-2), so any Field Battle or sandbox slot can be an AI opponent or ally.
 - Desync detection with report files; cross-platform determinism CI on golden replays.
 - Replays (record and play back).
+- Soldier fighting, stage 1: duel pairs and living formations (acceleration, settle, idle sway), see [09](09-art-and-audio.md#animation). *Built.*
 - Packaging: Mac `.app` (ad-hoc signed), Windows `.exe`, one zip each.
 - **Exit:** a 2v2 Field Battle across two Macs and two Windows PCs on home Wi-Fi with zero desyncs.
 
 ### M3 · First Harvest (Conquest playable)
 *Goal: the primary mode, with two factions.*
 - Workers, Grub seeps and Marrow veins, structures and construction, production queues, supply and upkeep, tech tiers.
+- Soldier fighting, stage 2: block, stagger and hit-reaction clips and partner kills, with the chosen faction art kits.
 - Ember Clans economy and Honor; Brood veins, larvae, metamorphosis, Reclaimers.
 - Unit, hero and ability data for all four factions is already drafted in `data/rosters/` ([17 · Unit Rosters](17-unit-rosters.md)); M3 bakes it into the game.
 - Heroes: levelling, abilities from the effect-primitive system, items, altar revive.
@@ -79,7 +81,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Disconnect handling and rejoin, multiplayer save and load.
 - Settings completeness, key rebinding, accessibility options.
 - Performance pass against every budget; stretch targets attempted.
-- Art pass: custom models for faction-defining units and heroes.
+- Art pass: custom models for faction-defining units and heroes, moving toward high-fidelity soldiers (smooth skinning, richer skeletons); soldier fighting stage 3, matched kills for heroes, charges and cavalry.
 - Simple self-update check (host's version offered to joining friends).
 - Lobby option: an AI runs a disconnected player's army until they rejoin.
 - **Exit:** 1.0 tagged; a month of game nights with no crash or desync.
