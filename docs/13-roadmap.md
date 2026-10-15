@@ -33,8 +33,8 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 
 ### M2 · LAN Battle (first game night)
 *Goal: Mario and friends play Field Battle together over Wi-Fi.*
-- `gc_net`: UDP transport, encryption, host-sequenced lockstep, adaptive input delay. *Built apart from encryption: lockstep in step 1, the adaptive delay in step 2.*
-- LAN discovery, Host/Join screens, lobby, version gate.
+- `gc_net`: UDP transport, encryption, host-sequenced lockstep, adaptive input delay. *Built: lockstep in step 1, the adaptive delay in step 2, encryption in step 3.*
+- LAN discovery, Host/Join screens, lobby, version gate. *Built, with join codes and a lobby password since step 3.*
 - Field Battle mode: army builder with points, deployment phase, victory conditions, 2 battle maps.
 - Teams: teammates are allied, through one hostility test that reads a stance table filled from the lobby ([18 · AI](18-ai.md#engine-hooks), hook 1). *Built with AI-1 step 1: lobby teams reach the sim and teammates don't fight.*
 - AI track: the battle AI (phases AI-1 and AI-2), so any Field Battle or sandbox slot can be an AI opponent or ally. *AI-1 built (2026-10-13): the battle AI at three levels, reading the ground, and the AI lens (`L`). AI-2 (rehearsal and the Warlord level) is next ([18 · AI](18-ai.md#build-plan)).*
@@ -45,7 +45,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Soldier fighting, stage 1: duel pairs and living formations (acceleration, settle, idle sway), see [09](09-art-and-audio.md#animation). *Built.*
 - Packaging: Mac `.app` (ad-hoc signed), Windows `.exe`, one zip each.
 - **Exit:** a 2v2 Field Battle across two Macs and two Windows PCs on home Wi-Fi with zero desyncs.
-- **Progress (2026-10-13):** the netcode is built in steps. Step 1 is built: `gc_net` hosts and joins lobbies over UDP, finds games on the network, checks builds, data and maps match, and plays Field Battles in host-sequenced lockstep with desync detection and disconnect notices Step 2 (2026-10-15): the input delay follows the slowest connection, every machine saves a desync report when worlds disagree, and the match pauses for a player who drops. [11 · Networking](11-networking.md#transport) has the detail and the next steps: encryption and join codes, baked maps, army builder, replays with sim snapshots (and with them resync and rejoin), packaging.
+- **Progress (2026-10-13):** the netcode is built in steps. Step 1 is built: `gc_net` hosts and joins lobbies over UDP, finds games on the network, checks builds, data and maps match, and plays Field Battles in host-sequenced lockstep with desync detection and disconnect notices Step 2 (2026-10-15): the input delay follows the slowest connection, every machine saves a desync report when worlds disagree, and the match pauses for a player who drops. Step 3 (2026-10-15): every link is encrypted, the host's lobby shows a join code, and a lobby can have a password. [11 · Networking](11-networking.md#transport) has the detail and the next steps: baked maps, army builder, replays with sim snapshots (and with them resync and rejoin), packaging.
 
 ### M3 · First Harvest (Conquest playable)
 *Goal: the primary mode, with two factions.*

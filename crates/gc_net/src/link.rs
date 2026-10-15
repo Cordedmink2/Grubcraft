@@ -11,15 +11,20 @@
 //!
 //! Every packet also carries a timestamp and an echo of the last one heard,
 //! so both ends measure the round trip without separate pings.
+//!
+//! Once [`Link::secure`] has given it keys, a link seals every packet it
+//! makes and opens every packet it takes ([`crate::crypt`]).
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::proto::{Kind, MAX_MESSAGE, MAX_PACKET, Msg, header};
+use crate::crypt::{Cipher, OVERHEAD};
+use crate::proto::{HEADER_LEN, Kind, MAX_MESSAGE, MAX_PACKET, Msg, header};
 use crate::wire::{Reader, Writer};
 
 pub struct Link {
     epoch: Instant,
+    cipher: Option<Cipher>,
     /// Messages sent but not yet acknowledged, by stream number from
     /// `acked`.
     out: VecDeque<Vec<u8>>,
@@ -43,6 +48,7 @@ impl Link {
     pub fn new(now: Instant) -> Link {
         Link {
             epoch: now,
+            cipher: None,
             out: VecDeque::new(),
             acked: 0,
             received: 0,
@@ -53,6 +59,21 @@ impl Link {
             last_sent: now,
             fresh: false,
         }
+    }
+
+    /// From now on, seal and open every packet with these keys.
+    pub fn secure(&mut self, cipher: Cipher) {
+        self.cipher = Some(cipher);
+    }
+
+    pub fn is_secure(&self) -> bool {
+        self.cipher.is_some()
+    }
+
+    /// Whether a sealed packet from the other side has opened, proving
+    /// they have the same keys (a later failure is a replay or noise).
+    pub fn is_proven(&self) -> bool {
+        self.cipher.as_ref().is_some_and(Cipher::has_opened)
     }
 
     /// Queue a message for reliable, in-order delivery.
@@ -103,7 +124,8 @@ impl Link {
         w.u8(0);
         let mut count = 0u8;
         for m in &self.out {
-            if w.buf.len() + m.len() + 2 > MAX_PACKET {
+            // Room is left for sealing the packet.
+            if w.buf.len() + m.len() + 2 > MAX_PACKET - OVERHEAD {
                 break;
             }
             w.bytes(m);
@@ -112,12 +134,34 @@ impl Link {
         w.buf[count_at] = count;
         self.last_sent = now;
         self.fresh = false;
-        w.buf
+        match &mut self.cipher {
+            Some(c) => {
+                let (head, body) = w.buf.split_at(HEADER_LEN);
+                let mut sealed = head.to_vec();
+                sealed.extend(c.seal(head, body));
+                sealed
+            }
+            None => w.buf,
+        }
     }
 
-    /// Take in a link packet (after its header), returning the new messages
-    /// in order. `None` if it was malformed.
-    pub fn receive(&mut self, r: &mut Reader, now: Instant) -> Option<Vec<Msg>> {
+    /// Take in a whole link packet, returning the new messages in order.
+    /// `None` if it was malformed, or (on a secured link) not sealed with
+    /// the other side's keys.
+    pub fn receive(&mut self, packet: &[u8], now: Instant) -> Option<Vec<Msg>> {
+        let (head, body) = packet.split_at_checked(HEADER_LEN)?;
+        let opened;
+        let body = match &mut self.cipher {
+            Some(c) => {
+                opened = c.open(head, body)?;
+                &opened[..]
+            }
+            None => body,
+        };
+        self.take_in(&mut Reader::new(body), now)
+    }
+
+    fn take_in(&mut self, r: &mut Reader, now: Instant) -> Option<Vec<Msg>> {
         let stamp = r.var_as::<u32>()?;
         let echo = r.var()?;
         let echo_age = if echo > 0 { r.var()? } else { 0 };
@@ -170,12 +214,31 @@ impl Link {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypt::KeyPair;
     use crate::proto::read_header;
 
     fn deliver(packet: &[u8], to: &mut Link, now: Instant) -> Vec<Msg> {
-        let mut r = Reader::new(packet);
-        read_header(&mut r).unwrap();
-        to.receive(&mut r, now).unwrap()
+        read_header(&mut Reader::new(packet)).unwrap();
+        to.receive(packet, now).unwrap()
+    }
+
+    #[test]
+    fn secured_links_seal_and_open() {
+        let t0 = Instant::now();
+        let (h, j) = (KeyPair::new().unwrap(), KeyPair::new().unwrap());
+        let mut a = Link::new(t0);
+        let mut b = Link::new(t0);
+        a.secure(Cipher::new(&h, j.public, true, "").unwrap());
+        b.secure(Cipher::new(&j, h.public, false, "").unwrap());
+        let text = "a secret plan".to_string();
+        a.send(&Msg::Notice { text: text.clone() });
+        let p = a.packet(t0);
+        assert!(!p.windows(text.len()).any(|w| w == text.as_bytes()));
+        assert_eq!(deliver(&p, &mut b, t0), [Msg::Notice { text }]);
+        // An unsecured link's packet is refused by a secured one.
+        let mut plain = Link::new(t0);
+        plain.send(&Msg::Notice { text: "x".into() });
+        assert_eq!(b.receive(&plain.packet(t0), t0), None);
     }
 
     fn notice(i: usize) -> Msg {

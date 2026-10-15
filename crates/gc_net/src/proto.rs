@@ -14,7 +14,7 @@ use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 2;
+pub const PROTOCOL: u8 = 3;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -38,7 +38,18 @@ pub enum Kind {
     /// A host that cannot speak the joiner's protocol says so, in a form
     /// every protocol version reads: the host's build as a string.
     WrongProtocol = 3,
+    /// A joiner's public key, to begin securing the link
+    /// ([`crate::crypt`]).
+    Hi = 4,
+    /// The host's public key in answer.
+    KeyReply = 5,
+    /// The host could not open a joiner's packets: the password differs.
+    /// Carries whether the lobby has a password.
+    WrongPassword = 6,
 }
+
+/// Bytes in a packet header: `GC`, the protocol and the kind.
+pub const HEADER_LEN: usize = 4;
 
 pub fn header(w: &mut Writer, kind: Kind) {
     w.buf.extend_from_slice(&MAGIC);
@@ -64,6 +75,8 @@ pub struct Beacon {
     pub version: String,
     /// Whether the match has started (then it can't be joined).
     pub playing: bool,
+    /// Whether joining needs a password.
+    pub locked: bool,
 }
 
 impl Beacon {
@@ -74,6 +87,7 @@ impl Beacon {
         w.u8(self.max_players);
         w.str(&self.version);
         w.bool(self.playing);
+        w.bool(self.locked);
     }
 
     pub fn read(r: &mut Reader) -> Option<Beacon> {
@@ -84,6 +98,7 @@ impl Beacon {
             max_players: r.u8()?,
             version: r.str()?,
             playing: r.bool()?,
+            locked: r.bool()?,
         })
     }
 }

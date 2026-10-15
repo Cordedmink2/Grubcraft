@@ -272,6 +272,8 @@ pub struct DiscoveredGame {
     pub players: u8,
     pub max_players: u8,
     pub version: String,
+    /// Joining needs a password.
+    pub locked: bool,
     /// What to hand to [`Network::join`].
     pub address: String,
 }
@@ -334,13 +336,24 @@ impl fmt::Display for NetError {
 /// work (connecting, discovery) happens behind it and shows up through
 /// [`Network::lobby`], [`Network::discovered`] and [`Network::poll`].
 pub trait Network {
-    /// Open a lobby on this machine with you in slot 0.
-    fn host(&mut self, me: &Profile, settings: LobbySettings) -> Result<(), NetError>;
+    /// Open a lobby on this machine with you in slot 0. A non-empty
+    /// `password` must be typed by everyone who joins.
+    fn host(
+        &mut self,
+        me: &Profile,
+        settings: LobbySettings,
+        password: &str,
+    ) -> Result<(), NetError>;
     /// Lobbies heard on the local network, newest state.
     fn discovered(&mut self) -> &[DiscoveredGame];
     /// Join by a discovered game's `address`, or whatever the player typed
-    /// (`ip:port` or a join code).
-    fn join(&mut self, me: &Profile, target: &str) -> Result<(), NetError>;
+    /// (`ip:port` or a join code), with the lobby's password if it has one.
+    fn join(&mut self, me: &Profile, target: &str, password: &str) -> Result<(), NetError>;
+    /// While hosting: how friends reach this lobby (a join code and the
+    /// address), to show in it.
+    fn invite(&self) -> Option<&str> {
+        None
+    }
     /// The lobby we are in, if any.
     fn lobby(&self) -> Option<&LobbyState>;
     /// Change a slot: your own, or any AI slot if you host.
@@ -432,7 +445,12 @@ impl LocalNetwork {
 }
 
 impl Network for LocalNetwork {
-    fn host(&mut self, me: &Profile, settings: LobbySettings) -> Result<(), NetError> {
+    fn host(
+        &mut self,
+        me: &Profile,
+        settings: LobbySettings,
+        _password: &str,
+    ) -> Result<(), NetError> {
         let mut slots = [Slot::open(0), Slot::open(1), Slot::open(2), Slot::open(3)];
         slots[0] = Slot {
             kind: SlotKind::Human,
@@ -458,7 +476,7 @@ impl Network for LocalNetwork {
         &[]
     }
 
-    fn join(&mut self, _me: &Profile, target: &str) -> Result<(), NetError> {
+    fn join(&mut self, _me: &Profile, target: &str, _password: &str) -> Result<(), NetError> {
         if target.trim().is_empty() {
             return Err(NetError::BadAddress("Type an address or join code".into()));
         }
@@ -517,7 +535,7 @@ mod tests {
 
     fn hosted() -> LocalNetwork {
         let mut n = LocalNetwork::new();
-        n.host(&me(), LobbySettings::default()).unwrap();
+        n.host(&me(), LobbySettings::default(), "").unwrap();
         n
     }
 
@@ -609,10 +627,10 @@ mod tests {
     fn joining_says_it_is_not_built() {
         let mut n = LocalNetwork::new();
         assert_eq!(
-            n.join(&me(), "").unwrap_err(),
+            n.join(&me(), "", "").unwrap_err(),
             NetError::BadAddress("Type an address or join code".into())
         );
-        let e = n.join(&me(), "192.168.1.5:7777").unwrap_err();
+        let e = n.join(&me(), "192.168.1.5:7777", "").unwrap_err();
         assert!(matches!(e, NetError::Unavailable(_)));
         assert!(n.lobby().is_none());
     }

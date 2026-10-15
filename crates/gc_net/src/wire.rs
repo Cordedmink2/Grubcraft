@@ -121,6 +121,10 @@ impl<'a> Reader<'a> {
         Some(u64::from_le_bytes(b.try_into().ok()?))
     }
 
+    pub fn array<const N: usize>(&mut self) -> Option<[u8; N]> {
+        self.take(N)?.try_into().ok()
+    }
+
     pub fn take(&mut self, n: usize) -> Option<&'a [u8]> {
         if n > self.buf.len() {
             return None;

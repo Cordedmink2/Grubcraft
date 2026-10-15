@@ -15,10 +15,14 @@
 //!   the local network, and the turns of a match.
 //!
 //! - [`report`]: desync reports, a replay of what one machine played.
+//! - [`crypt`]: the key exchange and encryption that secure every link.
+//! - [`joincode`]: a host's address as a short code to type.
 //!
 //! Not built yet (later M2 steps): resyncing a player whose world
-//! diverged, encryption, join codes.
+//! diverged.
 
+pub mod crypt;
+pub mod joincode;
 mod lan;
 pub mod link;
 pub mod proto;

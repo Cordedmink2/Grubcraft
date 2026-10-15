@@ -57,8 +57,18 @@ fn join(joiner: &mut Lan, name: &str, host: &mut Lan) -> Result<(), NetError> {
 }
 
 fn join_at(joiner: &mut Lan, name: &str, target: &str, host: &mut Lan) -> Result<(), NetError> {
+    join_with(joiner, name, target, "", host)
+}
+
+fn join_with(
+    joiner: &mut Lan,
+    name: &str,
+    target: &str,
+    password: &str,
+    host: &mut Lan,
+) -> Result<(), NetError> {
     std::thread::scope(|s| {
-        let joining = s.spawn(|| joiner.join(&profile(name), target));
+        let joining = s.spawn(|| joiner.join(&profile(name), target, password));
         while !joining.is_finished() {
             host.pump(Instant::now());
             std::thread::sleep(Duration::from_millis(1));
@@ -115,6 +125,7 @@ impl Match {
                 on_drop,
                 ..LobbySettings::default()
             },
+            "",
         )
         .unwrap();
         let mut lans = vec![host];
@@ -226,7 +237,7 @@ impl Match {
 fn three_machines_play_in_lockstep_through_lost_packets() {
     let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
     let mut host = lan();
-    host.host(&profile("Mario"), LobbySettings::default())
+    host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
     let mut alex = lan();
     let mut sam = lan();
@@ -463,7 +474,7 @@ fn a_desync_is_found_and_reported_everywhere() {
 fn joiners_are_refused_when_full_or_on_different_data() {
     let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
     let mut host = lan();
-    host.host(&profile("Mario"), LobbySettings::default())
+    host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
     for slot in 1..4 {
         host.edit_slot(slot, SlotEdit::Kind(SlotKind::Ai));
@@ -493,7 +504,7 @@ fn joiners_are_refused_when_full_or_on_different_data() {
 fn leaving_and_being_removed() {
     let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
     let mut host = lan();
-    host.host(&profile("Mario"), LobbySettings::default())
+    host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
     let mut alex = lan();
     join(&mut alex, "Alex", &mut host).unwrap();
@@ -529,7 +540,7 @@ fn leaving_and_being_removed() {
 fn the_join_screen_finds_a_hosted_game() {
     let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
     let mut host = lan();
-    host.host(&profile("Mario"), LobbySettings::default())
+    host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
     let mut finder = lan();
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -554,6 +565,112 @@ fn nobody_answering_is_a_clear_error() {
     let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
     let mut alex = lan();
     // A port nothing listens on.
-    let err = alex.join(&profile("Alex"), "127.0.0.1:9").unwrap_err();
+    let err = alex.join(&profile("Alex"), "127.0.0.1:9", "").unwrap_err();
     assert!(err.to_string().contains("No answer"), "{err}");
+}
+
+#[test]
+fn a_password_keeps_strangers_out() {
+    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut host = lan();
+    host.host(&profile("Mario"), LobbySettings::default(), "moles")
+        .unwrap();
+    let target = address(&host);
+    let mut alex = lan();
+    let err = join_with(&mut alex, "Alex", &target, "", &mut host).unwrap_err();
+    assert!(err.to_string().contains("needs a password"), "{err}");
+    let err = join_with(&mut alex, "Alex", &target, "voles", &mut host).unwrap_err();
+    assert_eq!(err, NetError::Refused("Wrong password.".into()));
+    join_with(&mut alex, "Alex", &target, "moles", &mut host).unwrap();
+    settle(&mut [&mut host, &mut alex]);
+    assert_eq!(host.lobby().unwrap().slots[1].name, "Alex");
+
+    // The Join list says a password is needed.
+    let mut finder = lan();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        host.pump(Instant::now());
+        if let Some(g) = finder.discovered().iter().find(|g| g.host == "Mario") {
+            assert!(g.locked);
+            break;
+        }
+        assert!(Instant::now() < deadline, "no game found");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    // A password where none is set is caught too.
+    let mut open = lan();
+    open.host(&profile("Sam"), LobbySettings::default(), "")
+        .unwrap();
+    let mut late = lan();
+    let target = address(&open);
+    let err = join_with(&mut late, "Late", &target, "moles", &mut open).unwrap_err();
+    assert!(err.to_string().contains("no password"), "{err}");
+}
+
+#[test]
+fn friends_join_with_a_code() {
+    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut host = lan();
+    host.host(&profile("Mario"), LobbySettings::default(), "")
+        .unwrap();
+    // The lobby shows a code for this machine's network address (when it
+    // has one); here, a code for this machine itself.
+    if let Some(invite) = host.invite() {
+        assert!(invite.starts_with("Join code "), "{invite}");
+    }
+    let code =
+        gc_net::joincode::encode(std::net::Ipv4Addr::LOCALHOST, host.port().unwrap()).unwrap();
+    let mut alex = lan();
+    join_at(&mut alex, "Alex", &code.to_lowercase(), &mut host).unwrap();
+    settle(&mut [&mut host, &mut alex]);
+    assert_eq!(host.lobby().unwrap().slots[1].name, "Alex");
+}
+
+#[test]
+fn nothing_readable_crosses_the_network() {
+    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    // A listener between the two sees every packet the joiner sends.
+    let mut host = lan();
+    host.host(&profile("Mario"), LobbySettings::default(), "")
+        .unwrap();
+    let relay = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    relay.set_nonblocking(true).unwrap();
+    let host_addr: std::net::SocketAddr = address(&host).parse().unwrap();
+    let mut seen: Vec<Vec<u8>> = Vec::new();
+    let mut alex = lan();
+    let target = relay.local_addr().unwrap().to_string();
+    std::thread::scope(|s| {
+        let joining = s.spawn(|| alex.join(&profile("Zanzibar"), &target, ""));
+        let mut joiner = None;
+        let mut buf = [0u8; 2048];
+        while !joining.is_finished() {
+            host.pump(Instant::now());
+            // Pass packets both ways, keeping a copy.
+            while let Ok((n, from)) = relay.recv_from(&mut buf) {
+                seen.push(buf[..n].to_vec());
+                if from == host_addr {
+                    if let Some(j) = joiner {
+                        relay.send_to(&buf[..n], j).unwrap();
+                    }
+                } else {
+                    joiner = Some(from);
+                    relay.send_to(&buf[..n], host_addr).unwrap();
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        joining.join().unwrap()
+    })
+    .unwrap();
+    assert!(seen.len() > 2);
+    // The host only knows the relay, but the name made it through, sealed.
+    let lobby = host.lobby().unwrap();
+    assert_eq!(lobby.slots[1].name, "Zanzibar");
+    let found = |needle: &[u8]| {
+        seen.iter()
+            .any(|p| p.windows(needle.len()).any(|w| w == needle))
+    };
+    assert!(!found(b"Zanzibar"), "a name crossed in the clear");
+    assert!(!found(b"Mario"), "the lobby crossed in the clear");
 }

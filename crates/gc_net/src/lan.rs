@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 use std::io::ErrorKind;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
 use gc_sim::{PlayerCommand, PlayerId};
@@ -12,6 +12,8 @@ use gc_ui::lobby::{
     NetError, NetEvent, Network, OnDrop, Profile, Slot, SlotEdit, SlotKind, apply_edit,
 };
 
+use crate::crypt::{Cipher, KeyPair};
+use crate::joincode;
 use crate::link::Link;
 use crate::proto::{
     Beacon, Kind, LobbyWire, MAX_PACKET, Msg, PROTOCOL, header, read_header, short_name,
@@ -61,7 +63,16 @@ pub const JOIN_TIMEOUT: Duration = Duration::from_secs(3);
 const LOBBY_KEEPALIVE: Duration = Duration::from_millis(200);
 const MATCH_KEEPALIVE: Duration = TURN;
 const QUERY_EVERY: Duration = Duration::from_secs(1);
+/// A joiner repeats its key until the host answers.
+const HI_EVERY: Duration = Duration::from_millis(100);
 const DISCOVERED_FOR: Duration = Duration::from_secs(3);
+/// Joiners the host keeps keys for before they are let in; more Hi
+/// packets are ignored until some are dropped.
+const MAX_WAITING: usize = 8;
+/// Wrong-password answers one address gets per GUESS_WINDOW; past that
+/// its guesses go unanswered.
+const MAX_GUESSES: usize = 5;
+const GUESS_WINDOW: Duration = Duration::from_secs(60);
 /// Commands per turn bundle are capped so a bundle fits a packet; the rest
 /// go in the next turn.
 const MAX_BUNDLE_BYTES: usize = 900;
@@ -104,6 +115,11 @@ pub struct HostMap {
 
 struct Peer {
     addr: SocketAddr,
+    /// Their public key and the host's answer to it, kept to answer a
+    /// repeated Hi the same way.
+    their_key: [u8; 32],
+    host_key: [u8; 32],
+    /// Secured from the start (the keys come before the link).
     link: Link,
     /// The lobby slot this player holds; `None` while being turned away.
     slot: Option<usize>,
@@ -147,6 +163,12 @@ struct HostGame {
 }
 
 struct Host {
+    /// Empty for none.
+    password: String,
+    /// How friends reach this lobby, for the lobby screen.
+    invite: Option<String>,
+    /// Recent wrong passwords: from where, and when.
+    guesses: Vec<(IpAddr, Instant)>,
     lobby: LobbyState,
     peers: Vec<Peer>,
     sent: Option<LobbyWire>,
@@ -170,6 +192,11 @@ struct ClientGame {
 
 struct Client {
     host: SocketAddr,
+    keys: KeyPair,
+    password: String,
+    hi_sent: Option<Instant>,
+    /// Secured once the host has answered our key; until then we only
+    /// send that key.
     link: Link,
     slot: Option<usize>,
     lobby: Option<LobbyState>,
@@ -555,8 +582,13 @@ impl Lan {
                 } else {
                     LOBBY_KEEPALIVE
                 };
-                if all || c.link.fresh || now - c.link.last_sent >= keepalive {
-                    out.push((c.link.packet(now), c.host));
+                if c.link.is_secure() {
+                    if all || c.link.fresh || now - c.link.last_sent >= keepalive {
+                        out.push((c.link.packet(now), c.host));
+                    }
+                } else if all || c.hi_sent.is_none_or(|t| now - t >= HI_EVERY) {
+                    c.hi_sent = Some(now);
+                    out.push((key_packet(Kind::Hi, &c.keys.public), c.host));
                 }
             }
             Role::Idle => {}
@@ -574,7 +606,7 @@ impl Lan {
         if protocol != PROTOCOL {
             // Tell a joiner on another protocol which build we run, in the
             // one packet every version understands.
-            if self.is_host() && kind == Kind::Link as u8 {
+            if self.is_host() && (kind == Kind::Link as u8 || kind == Kind::Hi as u8) {
                 let mut w = Writer::new();
                 header(&mut w, Kind::WrongProtocol);
                 w.str(&self.id.version);
@@ -591,7 +623,43 @@ impl Lan {
                     self.send_raw(&w.buf, from);
                 }
             }
-            k if k == Kind::Link as u8 => self.on_link(&mut r, from, now),
+            k if k == Kind::Link as u8 => self.on_link(packet, from, now),
+            k if k == Kind::Hi as u8 => {
+                if let Some(key) = r.array()
+                    && r.is_empty()
+                {
+                    self.on_hi(key, from, now);
+                }
+            }
+            k if k == Kind::KeyReply as u8 => {
+                if let Role::Client(c) = &mut self.role
+                    && c.host == from
+                    && !c.link.is_secure()
+                    && let Some(key) = r.array()
+                {
+                    match Cipher::new(&c.keys, key, false, &c.password) {
+                        Some(cipher) => {
+                            c.link.secure(cipher);
+                            self.flush(now, true);
+                        }
+                        None => self.lose_host("The host's key was not valid.".into()),
+                    }
+                }
+            }
+            k if k == Kind::WrongPassword as u8 => {
+                if let Role::Client(c) = &self.role
+                    && c.host == from
+                    && c.lobby.is_none()
+                {
+                    let locked = r.bool().unwrap_or(true);
+                    let why = match (locked, c.password.is_empty()) {
+                        (true, true) => "That game needs a password: type it in the Password box.",
+                        (true, false) => "Wrong password.",
+                        (false, _) => "That game has no password: clear the Password box.",
+                    };
+                    self.lose_host(why.into());
+                }
+            }
             k if k == Kind::WrongProtocol as u8 => {
                 if let Role::Client(c) = &self.role
                     && c.host == from
@@ -624,30 +692,81 @@ impl Lan {
             max_players: MAX_PLAYERS as u8,
             version: self.id.version.clone(),
             playing: h.game.is_some(),
+            locked: !h.password.is_empty(),
         })
     }
 
-    fn on_link(&mut self, r: &mut Reader, from: SocketAddr, now: Instant) {
+    /// A joiner's key: answer with ours, and keep the keys for their link.
+    fn on_hi(&mut self, theirs: [u8; 32], from: SocketAddr, now: Instant) {
+        let Role::Host(h) = &mut self.role else {
+            return;
+        };
+        let known = h.peers.iter().position(|p| p.addr == from);
+        let reply_key = match known {
+            Some(i) if h.peers[i].their_key == theirs => h.peers[i].host_key,
+            // A new key from someone already in: a restarted game on the
+            // same port. They can join again once their old place is freed.
+            Some(i) if h.peers[i].slot.is_some() => return,
+            _ => {
+                if let Some(i) = known {
+                    h.peers.remove(i);
+                }
+                let waiting = h.peers.iter().filter(|p| p.slot.is_none() && !p.gone);
+                if waiting.count() >= MAX_WAITING {
+                    return;
+                }
+                let Some(mine) = KeyPair::new() else { return };
+                let Some(cipher) = Cipher::new(&mine, theirs, true, &h.password) else {
+                    return;
+                };
+                let mut link = Link::new(now);
+                link.secure(cipher);
+                h.peers.push(Peer {
+                    addr: from,
+                    their_key: theirs,
+                    host_key: mine.public,
+                    link,
+                    slot: None,
+                    player: None,
+                    name: String::new(),
+                    loaded: false,
+                    lost_at: None,
+                    gone: false,
+                    drop_at: Some(now + Duration::from_secs(5)),
+                });
+                mine.public
+            }
+        };
+        self.send_raw(&key_packet(Kind::KeyReply, &reply_key), from);
+    }
+
+    fn on_link(&mut self, packet: &[u8], from: SocketAddr, now: Instant) {
         match &mut self.role {
             Role::Host(h) => {
-                let index = match h.peers.iter().position(|p| p.addr == from) {
-                    Some(i) => i,
-                    None => {
-                        h.peers.push(Peer {
-                            addr: from,
-                            link: Link::new(now),
-                            slot: None,
-                            player: None,
-                            name: String::new(),
-                            loaded: false,
-                            lost_at: None,
-                            gone: false,
-                            drop_at: Some(now + Duration::from_secs(5)),
-                        });
-                        h.peers.len() - 1
-                    }
+                // Links begin with a key exchange: strangers are ignored.
+                let Some(index) = h.peers.iter().position(|p| p.addr == from) else {
+                    return;
                 };
-                let Some(msgs) = h.peers[index].link.receive(r, now) else {
+                let Some(msgs) = h.peers[index].link.receive(packet, now) else {
+                    // A joiner whose first packet we can't open typed a
+                    // different password. Forget their keys, and answer
+                    // only a few guesses a minute from one address.
+                    let peer = &mut h.peers[index];
+                    if peer.slot.is_some() || peer.gone || peer.link.is_proven() {
+                        return;
+                    }
+                    peer.gone = true;
+                    peer.drop_at = Some(now + Duration::from_secs(2));
+                    h.guesses.retain(|&(_, at)| now < at + GUESS_WINDOW);
+                    let ip = from.ip();
+                    if h.guesses.iter().filter(|&&(g, _)| g == ip).count() >= MAX_GUESSES {
+                        return;
+                    }
+                    h.guesses.push((ip, now));
+                    let mut w = Writer::new();
+                    header(&mut w, Kind::WrongPassword);
+                    w.bool(!h.password.is_empty());
+                    self.send_raw(&w.buf, from);
                     return;
                 };
                 if h.peers[index].gone {
@@ -662,7 +781,10 @@ impl Lan {
                 if c.host != from {
                     return;
                 }
-                let Some(msgs) = c.link.receive(r, now) else {
+                if !c.link.is_secure() {
+                    return;
+                }
+                let Some(msgs) = c.link.receive(packet, now) else {
                     return;
                 };
                 for msg in msgs {
@@ -1163,6 +1285,7 @@ impl Lan {
                 players: b.players,
                 max_players: b.max_players,
                 version: b.version,
+                locked: b.locked,
                 address: from.to_string(),
             };
             // The same host heard on loopback and on the network is one game.
@@ -1198,6 +1321,14 @@ impl Lan {
         let _ = socket.set_broadcast(true);
         Ok(socket)
     }
+}
+
+/// A Hi or KeyReply packet: the header and a public key.
+fn key_packet(kind: Kind, key: &[u8; 32]) -> Vec<u8> {
+    let mut w = Writer::new();
+    header(&mut w, kind);
+    w.buf.extend_from_slice(key);
+    w.buf
 }
 
 fn h_name(role: &Role, index: usize) -> String {
@@ -1366,9 +1497,24 @@ fn client_turn(g: &mut ClientGame, now: Instant, length: Duration) -> Option<Vec
 }
 
 impl Network for Lan {
-    fn host(&mut self, me: &Profile, settings: LobbySettings) -> Result<(), NetError> {
+    fn host(
+        &mut self,
+        me: &Profile,
+        settings: LobbySettings,
+        password: &str,
+    ) -> Result<(), NetError> {
         self.leave();
         let socket = Lan::open(Lan::bind_host()?)?;
+        let port = socket.local_addr().map_or(DEFAULT_PORT, |a| a.port());
+        let invite = joincode::local_ip().and_then(|ip| {
+            let code = joincode::encode(ip, port)?;
+            let address = if port == DEFAULT_PORT {
+                ip.to_string()
+            } else {
+                format!("{ip}:{port}")
+            };
+            Some(format!("Join code {code} (or {address})"))
+        });
         let mut slots = [Slot::open(0), Slot::open(1), Slot::open(2), Slot::open(3)];
         slots[0] = Slot {
             kind: SlotKind::Human,
@@ -1382,6 +1528,9 @@ impl Network for Lan {
         };
         self.socket = Some(socket);
         self.role = Role::Host(Box::new(Host {
+            password: password.trim().to_string(),
+            invite,
+            guesses: Vec::new(),
             lobby: LobbyState {
                 slots,
                 settings,
@@ -1406,7 +1555,14 @@ impl Network for Lan {
         &self.games
     }
 
-    fn join(&mut self, me: &Profile, target: &str) -> Result<(), NetError> {
+    fn invite(&self) -> Option<&str> {
+        match &self.role {
+            Role::Host(h) => h.invite.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn join(&mut self, me: &Profile, target: &str, password: &str) -> Result<(), NetError> {
         let target = target.trim();
         if target.is_empty() {
             return Err(NetError::BadAddress("Type an address or join code".into()));
@@ -1417,6 +1573,8 @@ impl Network for Lan {
             .map_err(|e| NetError::Unavailable(format!("Network error: {e}")))?;
         self.socket = Some(Lan::open(socket)?);
         let start = Instant::now();
+        let keys = KeyPair::new()
+            .ok_or_else(|| NetError::Unavailable("No randomness for a secure link".into()))?;
         let mut link = Link::new(start);
         link.send(&Msg::Hello {
             version: self.id.version.clone(),
@@ -1427,6 +1585,9 @@ impl Network for Lan {
         });
         self.role = Role::Client(Box::new(Client {
             host: addr,
+            keys,
+            password: password.trim().to_string(),
+            hi_sent: None,
             link,
             slot: None,
             lobby: None,
@@ -1442,7 +1603,7 @@ impl Network for Lan {
                 Role::Client(_) if now - start > JOIN_TIMEOUT => {
                     self.leave();
                     return Err(NetError::Refused(format!(
-                        "No answer from {addr}. Is a game hosted there, on the same network?"
+                        "No answer from {addr}. Is a game hosted there, on the same network and build?"
                     )));
                 }
                 Role::Client(_) => std::thread::sleep(Duration::from_millis(5)),
@@ -1601,12 +1762,15 @@ impl Drop for Lan {
     }
 }
 
-/// `ip:port`, or an IP or host name on the default port.
+/// `ip:port`, a join code, or an IP or host name on the default port.
 fn parse_address(target: &str) -> Result<SocketAddr, NetError> {
     if let Ok(a) = target.parse::<SocketAddr>() {
         return Ok(a);
     }
-    if let Ok(ip) = target.parse::<std::net::IpAddr>() {
+    if let Some(a) = joincode::decode(target) {
+        return Ok(a);
+    }
+    if let Ok(ip) = target.parse::<IpAddr>() {
         return Ok(SocketAddr::new(ip, DEFAULT_PORT));
     }
     let with_port = if target.contains(':') {
@@ -1620,7 +1784,7 @@ fn parse_address(target: &str) -> Result<SocketAddr, NetError> {
         .and_then(|mut a| a.find(|a| a.is_ipv4()))
         .ok_or_else(|| {
             NetError::BadAddress(format!(
-                "\"{target}\" is not an address. Type the host's IP, like 192.168.1.20."
+                "\"{target}\" is not an address or join code. Type the code the host's lobby shows, or their IP, like 192.168.1.20."
             ))
         })
 }

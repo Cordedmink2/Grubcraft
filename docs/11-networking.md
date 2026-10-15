@@ -34,7 +34,7 @@ The host's own commands go through the same delay, so hosting gives no advantage
 - Our own small reliability layer: every packet carries a sequence number, the latest received sequence and a 32-bit ack bitfield.
 - **Redundancy instead of retransmission:** every packet repeats all data the other side hasn't acknowledged yet (the last few turn bundles, or unacknowledged commands). On Wi-Fi, where losses come in bursts, the next packet already contains what was lost, with no retransmit timers and no stalls. Turn bundles are tiny, so this is cheap.
 - The host sends a bundle every 50 ms even when empty. This doubles as a keepalive that stops laptop Wi-Fi radios from dozing between packets.
-- **Encrypted and authenticated:** X25519 key exchange at join, then ChaCha20-Poly1305 per packet. Cheap enough to always run, so there is one code path whether playing at home or over a virtual LAN.
+- **Encrypted and authenticated:** X25519 key exchange at join, then ChaCha20-Poly1305 per packet. Cheap enough to always run, so there is one code path whether playing at home or over a virtual LAN. *Built in step 3 (`gc_net::crypt`):* each side makes a fresh key pair per connection and the two swap public keys in the clear (Hi and KeyReply packets). BLAKE3 then derives one key per direction from the shared secret, both public keys and the lobby password (empty when there is none). Every link packet after that is sealed: the 4-byte header stays readable and is authenticated, then come the packet's 8-byte number in that direction (the nonce) and the ciphertext with its 16-byte tag. Without the password nobody can make keys that work, so a joiner who typed it wrong is found at their first packet, and a machine in between can neither read nor change the game.
 
 ### Bandwidth
 | Direction | Typical | Busy late-game micro |
@@ -61,7 +61,9 @@ Tests: three `Lan`s in one process play 300 turns over real UDP on this machine,
 
 **Built in step 2 (2026-10-15):** the adaptive input delay, desync reports, and Wait or Play on when a player drops (all described above).
 
-**Next steps for M2:** (3) encryption (X25519 and ChaCha20-Poly1305), join codes and the lobby password; (4) baked battle maps, so every machine has the identical map without relying on floating point; (5) the army builder with points and a deployment phase; (6) replays in the game: recording every match on `gc_replay::Recorder` and playback (the file format and the golden-replay CI were built for the M1 exit), desync reports moved onto the same file, sim snapshots, and with them resyncing a diverged player and rejoining after a restart; (7) packaging. Until the maps are baked, the map is generated from the seed with floating-point maths, which is identical between two Macs but not guaranteed between a Mac and a Windows PC; the map hash check catches a difference before the battle starts.
+**Built in step 3 (2026-10-15):** encrypted links, join codes and the lobby password (all described above), protocol 3. `--password WORD` goes with `--host` or `--join`.
+
+**Next steps for M2:** (4) baked battle maps, so every machine has the identical map without relying on floating point; (5) the army builder with points and a deployment phase; (6) replays in the game: recording every match on `gc_replay::Recorder` and playback (the file format and the golden-replay CI were built for the M1 exit), desync reports moved onto the same file, sim snapshots, and with them resyncing a diverged player and rejoining after a restart; (7) packaging. Until the maps are baked, the map is generated from the seed with floating-point maths, which is identical between two Macs but not guaranteed between a Mac and a Windows PC; the map hash check catches a difference before the battle starts.
 
 ## Session flow
 
@@ -78,9 +80,9 @@ Host                         Client
 ```
 
 - **Discovery:** UDP broadcast beacon plus mDNS service `_grubcraft._udp`. Friends on the same network see the game without typing anything.
-- **Direct join:** IP and port, or a short **join code** that encodes them (for virtual LANs and port-forwarding).
+- **Direct join:** IP and port, or a short **join code** that encodes them (for virtual LANs and port-forwarding). *Built in step 3 (`gc_net::joincode`):* the code is eight characters of Crockford base 32, like `K7QD-M2XA`. It holds the host's IPv4 address, which of the four game ports it is on, and six check bits that catch most typos. Case and dashes don't matter, and O, I and L read as 0, 1 and 1. The host's lobby shows its code and address.
 - **Version gate:** the Hello carries the build hash and the game-data hash. Mismatches are rejected with a clear message naming both versions.
-- Optional lobby password.
+- Optional lobby password. *Built in step 3:* the host types it on the Play screen, and it goes into the link keys rather than across the network. The Join list marks locked games "(password)". A joiner is told "That game needs a password", "Wrong password" or "That game has no password".
 
 ## Desync detection and recovery
 
