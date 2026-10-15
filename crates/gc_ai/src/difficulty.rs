@@ -3,8 +3,8 @@
 //! Every level plays by exactly the same rules and sees exactly what its
 //! player could see. Levels differ only in how well they think: how quickly
 //! they react, how many orders a minute they can give, which tactics they
-//! know, and how often they slip. The fourth level, Warlord, rehearses its
-//! battles in a copy of the real simulation and arrives with AI-2.
+//! know, and how often they slip. The fourth, Warlord, also rehearses its
+//! big decisions in a scratch copy of the battle (see [`crate::rehearsal`]).
 
 use crate::captain::Doctrine;
 use crate::perception::TICKS;
@@ -14,13 +14,15 @@ pub enum Difficulty {
     Recruit,
     Veteran,
     General,
+    Warlord,
 }
 
 impl Difficulty {
-    pub const ALL: [Difficulty; 3] = [
+    pub const ALL: [Difficulty; 4] = [
         Difficulty::Recruit,
         Difficulty::Veteran,
         Difficulty::General,
+        Difficulty::Warlord,
     ];
 
     pub fn name(self) -> &'static str {
@@ -28,6 +30,7 @@ impl Difficulty {
             Difficulty::Recruit => "Recruit",
             Difficulty::Veteran => "Veteran",
             Difficulty::General => "General",
+            Difficulty::Warlord => "Warlord",
         }
     }
 
@@ -56,6 +59,7 @@ impl Difficulty {
                 hunt_leash: 120.0,
                 slip_percent: 35,
                 slip_gap_ticks: 10 * 20,
+                rehearse: false,
             },
             Difficulty::Veteran => Knobs {
                 reaction_ticks: 16,
@@ -72,6 +76,7 @@ impl Difficulty {
                 hunt_leash: 55.0,
                 slip_percent: 10,
                 slip_gap_ticks: 30 * 20,
+                rehearse: false,
             },
             Difficulty::General => Knobs {
                 reaction_ticks: 8,
@@ -88,6 +93,24 @@ impl Difficulty {
                 hunt_leash: 40.0,
                 slip_percent: 2,
                 slip_gap_ticks: 90 * 20,
+                rehearse: false,
+            },
+            Difficulty::Warlord => Knobs {
+                reaction_ticks: 5,
+                orders_per_minute: 150,
+                think_ticks: 4,
+                doctrines: &Doctrine::ALL,
+                reserve: true,
+                morale_targeting: true,
+                timed_hammer: true,
+                save_wavering: true,
+                focus_fire: true,
+                ground: true,
+                engage_tiles: 9.0,
+                hunt_leash: 40.0,
+                slip_percent: 0,
+                slip_gap_ticks: 90 * 20,
+                rehearse: true,
             },
         }
     }
@@ -131,6 +154,9 @@ pub struct Knobs {
     pub slip_percent: u32,
     /// Shortest time between two slips, ticks.
     pub slip_gap_ticks: u32,
+    /// Rehearses its plan in a scratch copy of the battle before committing
+    /// to it (see [`crate::rehearsal`]).
+    pub rehearse: bool,
 }
 
 impl Knobs {

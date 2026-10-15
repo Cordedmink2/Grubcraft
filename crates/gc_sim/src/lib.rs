@@ -14,10 +14,12 @@
 
 extern crate alloc;
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 pub mod champions;
 pub mod combat;
+pub mod fork;
 pub mod formation;
 mod hash;
 pub mod morale;
@@ -29,6 +31,7 @@ pub mod terrain;
 pub mod vision;
 
 pub use champions::Challenge;
+pub use fork::Standing;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
@@ -462,7 +465,8 @@ pub struct World {
     map_tiles: u32,
     nav: Nav,
     stances: Stances,
-    terrain: Terrain,
+    /// Shared with this world's scratch copies (see [`fork`]).
+    terrain: Arc<Terrain>,
     vision: Vision,
     /// Only in matches that allow champions.
     champions: Option<Champions>,
@@ -487,7 +491,7 @@ impl World {
                 setup.capacities.regiments as usize,
             ),
             stances,
-            terrain,
+            terrain: Arc::new(terrain),
             vision,
             champions: setup.champions.then(|| {
                 Champions::new(

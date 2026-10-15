@@ -16,6 +16,8 @@
 //! - [`captain`]: battle tactics: the plan, the roles, every regiment's job.
 //! - [`orders`]: turns decisions into commands with a human's reaction time
 //!   and attention.
+//! - [`rehearsal`]: the Warlord tries plans out in a scratch copy of the
+//!   battle under the real rules before committing to one.
 //! - [`lens`]: what a mind is thinking, for the game to draw (the AI lens).
 //!
 //! Each mind has a [`Difficulty`] (how well it thinks) and a
@@ -32,18 +34,23 @@ pub mod lens;
 pub mod orders;
 pub mod perception;
 pub mod personality;
+pub mod reading;
+pub mod rehearsal;
 pub mod scripted;
 pub mod terrain;
+
+use std::sync::Arc;
 
 use gc_fixed::Pcg32;
 use gc_sim::{PlayerCommand, PlayerId, World};
 
-pub use crate::captain::{Captain, Doctrine, Posture, Role};
+pub use crate::captain::{Captain, Doctrine, Plan, Posture, Role, Stance};
 pub use crate::difficulty::{Difficulty, Knobs};
 pub use crate::journal::Journal;
 pub use crate::orders::{Orders, Want};
 pub use crate::perception::Perception;
 pub use crate::personality::{Faction, Personality};
+pub use crate::rehearsal::Verdict;
 pub use crate::terrain::Terrain;
 
 /// How to set up a mind.
@@ -74,6 +81,15 @@ pub struct Mind {
     /// What its side sees, with the enemies it remembers (on a map with
     /// cover).
     sight: Perception,
+    /// Rehearsals under way, when the next round is due, and what the last
+    /// one decided.
+    round: Option<rehearsal::Round>,
+    next_round: u32,
+    verdict: Option<Verdict>,
+    /// What it makes of each enemy (Warlord only).
+    readings: Vec<reading::Reading>,
+    /// Playing in real time (see [`Minds::live`]).
+    live: bool,
 }
 
 impl Mind {
@@ -84,7 +100,22 @@ impl Mind {
     /// A mind with hand-set knobs, for tuning and tests.
     pub fn with_knobs(config: MindConfig, knobs: Knobs) -> Mind {
         let all = personality::all();
-        let persona = &all[config.personality % all.len()];
+        Mind::seat(
+            config,
+            knobs,
+            &all[config.personality % all.len()],
+            Captain::new(),
+        )
+    }
+
+    /// A mind with a given temper, taking over `captain` (a rehearsal's
+    /// players). `config.personality` is ignored.
+    pub(crate) fn seat(
+        config: MindConfig,
+        knobs: Knobs,
+        persona: &'static Personality,
+        captain: Captain,
+    ) -> Mind {
         let mut journal = Journal::new();
         journal.note(
             0,
@@ -100,7 +131,7 @@ impl Mind {
             knobs,
             persona,
             rng: Pcg32::new(config.seed, 0xA1 + u64::from(config.party)),
-            captain: Captain::new(),
+            captain,
             orders: Orders::new(config.party, knobs.reaction_ticks, knobs.orders_per_minute),
             journal,
             // Minds of a match look on different ticks, to spread the work.
@@ -108,6 +139,11 @@ impl Mind {
             next_slip: 0,
             wants: Vec::new(),
             sight: Perception::new(),
+            round: None,
+            next_round: 0,
+            verdict: None,
+            readings: Vec::new(),
+            live: false,
         }
     }
 
@@ -146,8 +182,29 @@ impl Mind {
         &self.orders
     }
 
+    /// Fight with `plan` from now on (until a rehearsal picks another).
+    pub fn follow(&mut self, plan: Plan) {
+        self.captain.follow(plan);
+    }
+
+    /// What its last round of rehearsals decided (Warlord only).
+    pub fn verdict(&self) -> Option<&Verdict> {
+        self.verdict.as_ref()
+    }
+
     /// Look (when it's time to) and append the orders due now to `out`.
-    pub fn tick(&mut self, view: &Perception, terrain: &Terrain, out: &mut Vec<PlayerCommand>) {
+    /// `world` is what `view` was captured from; a Warlord borrows its map
+    /// to rehearse on.
+    pub fn tick(
+        &mut self,
+        view: &Perception,
+        terrain: &Arc<Terrain>,
+        world: &World,
+        out: &mut Vec<PlayerCommand>,
+    ) {
+        if self.knobs.rehearse {
+            self.rehearse(view, terrain, world);
+        }
         if view.tick >= self.next_think {
             self.next_think = view.tick + self.knobs.think_ticks.max(1);
             self.wants.clear();
@@ -165,6 +222,82 @@ impl Mind {
             self.orders.decide(view, &mut self.wants);
         }
         self.orders.release(view.tick, out);
+    }
+
+    /// Take the answer of the rehearsals under way once it is due, and
+    /// start the next round when it is time: every [`rehearsal::EVERY`]
+    /// while the battle is still to be decided.
+    fn rehearse(&mut self, view: &Perception, terrain: &Arc<Terrain>, world: &World) {
+        let answered = |r: &rehearsal::Round| view.tick >= r.due && (!self.live || r.ready());
+        if self.round.as_ref().is_some_and(answered) {
+            let round = self.round.take().unwrap();
+            let v = round.finish(self.captain.plan);
+            if self.captain.plan != Some(v.plan) {
+                let runner_up = v
+                    .plans
+                    .iter()
+                    .find(|(p, _)| *p != v.plan)
+                    .map_or(String::new(), |(p, s)| {
+                        format!("; next best {} ({s:+.2})", p.describe())
+                    });
+                self.journal.note(
+                    view.tick,
+                    format!(
+                        "Rehearsed {} plans: {} comes out best ({:+.2}){runner_up}",
+                        v.plans.len(),
+                        v.plan.describe(),
+                        v.score
+                    ),
+                );
+            }
+            self.captain.follow(v.plan);
+            self.verdict = Some(v);
+        }
+        let party = self.party;
+        self.read(view, terrain, world);
+        let contested = view
+            .regiments
+            .iter()
+            .any(|r| view.hostile(party, r.owner) && !r.broken());
+        if self.round.is_none()
+            && view.tick >= self.next_round
+            && self.captain.started()
+            && !self.captain.finishing
+            && contested
+        {
+            self.next_round = view.tick + rehearsal::EVERY;
+            let mut foes = Vec::new();
+            for x in &mut self.readings {
+                let Some(g) = x.guess() else { continue };
+                if x.news(&g) {
+                    self.journal.note(
+                        view.tick,
+                        format!(
+                            "Reads the enemy as {} ({:.0}% fit)",
+                            g.persona.name,
+                            g.fit * 100.0
+                        ),
+                    );
+                }
+                foes.push(g);
+            }
+            self.round = rehearsal::Round::start(world, view, terrain, self, foes);
+        }
+    }
+
+    /// Watch every enemy for which commander it seems to be.
+    fn read(&mut self, view: &Perception, terrain: &Arc<Terrain>, world: &World) {
+        let party = self.party;
+        for r in &view.regiments {
+            if view.hostile(party, r.owner) && !self.readings.iter().any(|x| x.party() == r.owner) {
+                let seed = u64::from(r.owner) << 8 | u64::from(party);
+                self.readings
+                    .push(reading::Reading::new(r.owner, Difficulty::General, seed));
+            }
+        }
+        for x in &mut self.readings {
+            x.tick(view, terrain, world);
+        }
     }
 
     /// One line on what it is doing, for the sandbox panel.
@@ -194,21 +327,39 @@ impl Mind {
 /// with cover, each takes its own look at what its side sees).
 pub struct Minds {
     view: Perception,
-    terrain: Terrain,
+    terrain: Arc<Terrain>,
     minds: Vec<Mind>,
+    live: bool,
 }
 
 impl Minds {
     pub fn new(terrain: Terrain) -> Minds {
+        Minds::sharing(Arc::new(terrain))
+    }
+
+    /// Minds planning on ground another set of minds plans on too (a
+    /// rehearsal's).
+    pub(crate) fn sharing(terrain: Arc<Terrain>) -> Minds {
         Minds {
             view: Perception::new(),
             terrain,
             minds: Vec::new(),
+            live: false,
         }
     }
 
+    /// Minds playing in real time: a Warlord takes its rehearsals' answer
+    /// as soon as it is ready after it is due, rather than make the game
+    /// wait on a machine too slow to finish in time. Without this a battle
+    /// plays out the same way on any machine, which tests rely on.
+    pub fn live(mut self) -> Minds {
+        self.live = true;
+        self
+    }
+
     /// Put `mind` in charge of its party (replacing any mind already there).
-    pub fn add(&mut self, mind: Mind) {
+    pub fn add(&mut self, mut mind: Mind) {
+        mind.live = self.live;
         self.remove(mind.party);
         self.minds.push(mind);
         self.minds.sort_by_key(|m| m.party);
@@ -256,10 +407,10 @@ impl Minds {
             if fair {
                 let mut sight = std::mem::take(&mut m.sight);
                 sight.capture_for(world, m.party);
-                m.tick(&sight, &self.terrain, out);
+                m.tick(&sight, &self.terrain, world, out);
                 m.sight = sight;
             } else {
-                m.tick(&self.view, &self.terrain, out);
+                m.tick(&self.view, &self.terrain, world, out);
             }
         }
     }

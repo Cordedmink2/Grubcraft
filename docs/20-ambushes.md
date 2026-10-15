@@ -163,7 +163,7 @@ Now: the AI reacts to what appears. A regiment ambushed on the flank fights back
 Later (with the Spymaster's belief, AI-2 and AI-3):
 - It remembers every enemy regiment it has seen for the whole battle, guesses where it went, and notices when part of the enemy army has gone missing, which is what an ambush looks like from outside.
 - With missing enemies and woods near its route, cautious personalities probe the woods with a fast regiment, keep their distance, or advance more slowly; reckless ones march on.
-- Its rehearsal can only rehearse what it believes, so a hidden reserve or an ambush still surprises it ([18](18-ai.md#rehearsal-thinking-ahead-with-the-real-simulation)).
+- The Warlord's rehearsal (built, AI-2) can only rehearse what it believes: its scratch worlds hold only the regiments it sees, and every commander in them sees only what its side would, so a hidden reserve or an ambush still surprises it ([18](18-ai.md#rehearsal-thinking-ahead-with-the-real-simulation)). Where there is cover it rehearses laying an ambush of its own too.
 
 ## Fog of war and line of sight (M3)
 

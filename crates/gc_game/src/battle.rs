@@ -486,6 +486,11 @@ mod tests {
             champions: champions_allowed(setup),
         });
         let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+        // As in a real game (for measuring what the minds cost the game's
+        // thread): the battle may not play out the same way twice.
+        if std::env::var_os("AI_LIVE").is_some() {
+            minds = minds.live();
+        }
         let mut out = Vec::new();
         let set = set_out(
             setup,
@@ -725,6 +730,7 @@ mod tests {
         let level = |v: &str| match v {
             "Recruit" => Difficulty::Recruit,
             "General" => Difficulty::General,
+            "Warlord" => Difficulty::Warlord,
             _ => Difficulty::Veteran,
         };
         let a = std::env::var("AI_A").map_or(None, |v| Some(level(&v)));

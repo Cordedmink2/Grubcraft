@@ -38,7 +38,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Field Battle mode: army builder with points, deployment phase, victory conditions, 2 battle maps.
 - Ambushes: woods and tall grass that hide regiments, spotting, and the morale shock of a sprung ambush; the AI plays fair with them and lays its own ([20 · Ambushes](20-ambushes.md)). *Built (2026-10-15): step A, the battle rules, the woods on the maps, the on-screen cues and the AI's Ambush doctrine. Steps B (unit traits, forest slow-down) and C (fog of war, with M3) follow.*
 - Teams: teammates are allied, through one hostility test that reads a stance table filled from the lobby ([18 · AI](18-ai.md#engine-hooks), hook 1). *Built with AI-1 step 1: lobby teams reach the sim and teammates don't fight.*
-- AI track: the battle AI (phases AI-1 and AI-2), so any Field Battle or sandbox slot can be an AI opponent or ally. *AI-1 built (2026-10-13): the battle AI at three levels, reading the ground, and the AI lens (`L`). AI-2 (rehearsal and the Warlord level) is next ([18 · AI](18-ai.md#build-plan)).*
+- AI track: the battle AI (phases AI-1 and AI-2), so any Field Battle or sandbox slot can be an AI opponent or ally. *AI-1 built (2026-10-13): the battle AI at three levels, reading the ground, and the AI lens (`L`). AI-2 built (2026-10-15): the fourth level, the Warlord, which reads the enemy's plan from how its army moves and rehearses its own plans in a copy of the real simulation before choosing one ([18 · AI](18-ai.md#build-plan)).*
 - Terrain rules for battle maps: high ground and fords ([05 · Combat](05-combat.md#terrain)). *Built (2026-10-13): fighting downhill and shooting from high ground, slow wading, no charging out of a river, extra blows on waders. Friendly regiments queue in fords and passes instead of stacking (built the same day); elsewhere they push through each other slowly and fall into disorder (2026-10-15).*
 - Desync detection with report files; cross-platform determinism CI on golden replays. *Detection built in step 1, report files in step 2; the golden-replay CI was built for the M1 exit.*
 - Pausing for a player who drops (up to 90 s, or play on). *Built in step 2.*
@@ -99,7 +99,7 @@ AI players were planned for after 1.0; on 2026-10-12 Mario asked for an intellig
 | Phase | What | With |
 |---|---|---|
 | AI-1 · Battle AI | Perception, terrain analysis, battle estimator, battle tactics with four doctrines, difficulty levels, drills | Starts once the sandbox lands; ships with M2. Built in three steps: (1) the battle AI itself, playable from the lobby and the sandbox; (2) terrain sense, the eight drills and the estimator check; (3) the AI lens and journal overlay. All three steps are built (step 1 on 2026-10-12, steps 2 and 3 on 2026-10-13) |
-| AI-2 · Rehearsal | The AI plays candidate battle plans ahead in a copy of the real sim; the Warlord difficulty | M2 |
+| AI-2 · Rehearsal | The AI plays candidate battle plans ahead in a copy of the real sim; the Warlord difficulty | M2. Built (2026-10-15): the Warlord reads the enemy's plan, rehearses its own and beats the General 81% of the time (195 of 240 arena battles) |
 | AI-3 · Conquest AI | Strategy, economy, scouting, armies; Clans and Brood; AI allies; the arena | M3 |
 | AI-4 · Relations and the living world | Relations ledger, hamlets, creep camps, mercenary companies, parley | M4 |
 | AI-5 · Choir and Concord AI | Their economy modules and doctrines | M5 |

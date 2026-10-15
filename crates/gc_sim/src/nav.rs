@@ -22,6 +22,7 @@
 //! a tick), so a hundred regiments ordered at once can't stall a tick.
 
 use alloc::collections::BinaryHeap;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Reverse;
@@ -79,7 +80,8 @@ const DIRS: [(i32, i32); 8] = [
     (-1, -1),
 ];
 
-/// The walkable map and its portal graph. Built once when the match starts.
+/// The walkable map and its portal graph. Built once when the match starts,
+/// and shared with any scratch world on the same map (see [`Nav::sharing`]).
 struct Grid {
     /// Cells per side.
     side: i32,
@@ -529,7 +531,7 @@ enum Route {
 /// The map's walkable ground and every regiment's route.
 pub struct Nav {
     /// `None` on an open plane with no map (tests): everyone walks straight.
-    grid: Option<Grid>,
+    grid: Option<Arc<Grid>>,
     search: Search,
     route: Vec<Route>,
     /// The target the route was found for.
@@ -591,8 +593,19 @@ impl Nav {
                 (side * side) as usize,
                 "the nav grid must have {side} x {side} cells"
             );
-            Grid::build(costs, side)
+            Arc::new(Grid::build(costs, side))
         });
+        Nav::on(grid, regiments)
+    }
+
+    /// Routes for `regiments` regiments on the same map as this one, sharing
+    /// its grid and portal graph rather than building them again (scratch
+    /// worlds, see `World::scratch`).
+    pub fn sharing(&self, regiments: usize) -> Nav {
+        Nav::on(self.grid.clone(), regiments)
+    }
+
+    fn on(grid: Option<Arc<Grid>>, regiments: usize) -> Nav {
         let search = match &grid {
             Some(g) => {
                 let max_sector_nodes = g
@@ -797,6 +810,30 @@ impl Nav {
     /// Regiment slot `i` was stopped by blocked ground: find a new route.
     pub(crate) fn lost(&mut self, i: usize) {
         self.route[i] = Route::Idle;
+    }
+
+    /// Give regiment slot `i` the route it has in `from`, a world on the same
+    /// map; if it is waiting for a search there, it waits here too (behind
+    /// any copied before it).
+    pub(crate) fn copy_route(&mut self, from: &Nav, i: usize) {
+        self.route[i] = from.route[i];
+        self.goal[i] = from.goal[i];
+        self.way[i * MAX_WAYPOINTS..][..MAX_WAYPOINTS]
+            .copy_from_slice(&from.way[i * MAX_WAYPOINTS..][..MAX_WAYPOINTS]);
+        self.way_len[i] = from.way_len[i];
+        self.way_next[i] = from.way_next[i];
+        self.partial[i] = from.partial[i];
+    }
+
+    /// Queue the searches waiting in `from` for the regiments `copied` says
+    /// were copied here, in the same order.
+    pub(crate) fn copy_queue(&mut self, from: &Nav, copied: impl Fn(usize) -> bool) {
+        for i in from.queue.iter() {
+            let i = i as usize;
+            if copied(i) {
+                self.queue.push(i);
+            }
+        }
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {

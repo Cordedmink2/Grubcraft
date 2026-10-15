@@ -80,6 +80,7 @@ struct Sent {
     retries: u8,
 }
 
+#[derive(Clone)]
 pub struct Orders {
     party: PlayerId,
     reaction: u32,

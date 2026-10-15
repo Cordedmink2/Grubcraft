@@ -84,7 +84,7 @@ pub(super) fn line_ambushers(line: usize) -> usize {
 /// fast regiments, as the layout makes hammers of them: its fast troops
 /// beside a line (or a third of an army of fast troops only), otherwise its
 /// line infantry when there are enough to spare.
-fn ambusher_class(line: usize, shock: usize) -> Option<Class> {
+pub(super) fn ambusher_class(line: usize, shock: usize) -> Option<Class> {
     if shock > 0 && (line > 0 || shock >= 3) {
         Some(Class::Shock)
     } else {
@@ -105,6 +105,12 @@ impl Captain {
     /// Whether any ambusher is still lying in wait (or on its way there).
     pub(super) fn lying_in_wait(&self) -> bool {
         self.doctrine == Doctrine::Ambush && self.ambush.hideouts.iter().any(|h| !h.sprung)
+    }
+
+    /// Whether the Ambush doctrine can still be fought with: one is laid,
+    /// or nobody has come to blows yet.
+    pub fn may_ambush(&self) -> bool {
+        self.doctrine == Doctrine::Ambush && !self.ambush.hideouts.is_empty() || !self.ambush.joined
     }
 
     /// How much better the Ambush doctrine fits than Hammer and anvil now,

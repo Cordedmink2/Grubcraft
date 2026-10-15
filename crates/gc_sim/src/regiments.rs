@@ -65,6 +65,7 @@ const CLEAR_TICKS: u8 = 8;
 ///
 /// Every array is allocated to full capacity up front; spawning and freeing
 /// only flip flags and push/pop a free list that never grows past capacity.
+/// A new per-regiment field must also be copied in `copy_from`.
 pub struct Regiments {
     /// Morale tenths added to (or taken from) the ceiling of every regiment
     /// of each party for the rest of the battle, by its side's champion
@@ -292,6 +293,66 @@ impl Regiments {
         self.alive[i] = false;
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.free.push(h.index);
+        true
+    }
+
+    /// Make free slot `h.index` the next one [`Regiments::spawn`] fills, with
+    /// `h`'s generation, so a regiment copied from another world keeps its
+    /// handle. False if that slot is taken or out of range.
+    pub(crate) fn claim(&mut self, h: RegimentHandle) -> bool {
+        let i = h.index as usize;
+        if i >= self.alive.len() || self.alive[i] {
+            return false;
+        }
+        let Some(k) = self.free.iter().rposition(|&f| f == h.index) else {
+            return false;
+        };
+        let index = self.free.remove(k);
+        self.free.push(index);
+        self.generation[i] = h.generation;
+        true
+    }
+
+    /// Copy everything about regiment slot `i` of `from` into the same slot
+    /// here, which must be free. A field added to [`Regiments`] must be
+    /// copied here too.
+    pub(crate) fn copy_from(&mut self, from: &Regiments, i: usize) -> bool {
+        if !from.alive[i] || !self.claim(from.handle(i)) {
+            return false;
+        }
+        self.free.pop();
+        self.alive[i] = true;
+        self.owner[i] = from.owner[i];
+        self.unit[i] = from.unit[i];
+        self.position[i] = from.position[i];
+        self.facing[i] = from.facing[i];
+        self.files[i] = from.files[i];
+        self.formation[i] = from.formation[i];
+        self.models[i] = from.models[i];
+        let m = MAX_MODELS as usize;
+        self.hp[i * m..][..m].copy_from_slice(&from.hp[i * m..][..m]);
+        self.speed[i] = from.speed[i];
+        self.turn[i] = from.turn[i];
+        self.target[i] = from.target[i];
+        self.target_facing[i] = from.target_facing[i];
+        self.pace[i] = from.pace[i];
+        self.attack_target[i] = from.attack_target[i];
+        self.engaged[i] = from.engaged[i];
+        self.charge[i] = from.charge[i];
+        self.strike[i] = from.strike[i];
+        self.reload[i] = from.reload[i];
+        self.damage_carry[i] = from.damage_carry[i];
+        self.full_models[i] = from.full_models[i];
+        self.morale[i] = from.morale[i];
+        self.morale_state[i] = from.morale_state[i];
+        self.losses[i] = from.losses[i];
+        self.shock[i] = from.shock[i];
+        self.rout_clock[i] = from.rout_clock[i];
+        self.last_rout[i] = from.last_rout[i];
+        self.held[i] = from.held[i];
+        self.clear[i] = from.clear[i];
+        self.crowd[i] = from.crowd[i];
+        self.disorder[i] = from.disorder[i];
         true
     }
 

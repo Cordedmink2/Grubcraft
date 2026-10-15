@@ -67,7 +67,7 @@
 //! Esc leaves placing, the stats panel or the credits, and otherwise opens
 //! the menu.
 //!
-//! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general`
+//! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
 //! starts a Field Battle against one computer player of that level;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed; `--frames N` quits after N frames
@@ -342,7 +342,7 @@ fn parse_args() -> Options {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
     );
     std::process::exit(2);
@@ -776,7 +776,7 @@ impl App {
             )
         });
         let drill = (!opts.sandbox).then(|| make_drill(opts.seed));
-        let minds = tagged_alloc::scope(Tag::Ai, || Minds::new(heightmap.ai_terrain(&nav)));
+        let minds = tagged_alloc::scope(Tag::Ai, || Minds::new(heightmap.ai_terrain(&nav)).live());
 
         let start = Vec2::splat(MAP_TILES as f32 * 0.25);
         let mut camera = RtsCamera::new(MAP_TILES as f32, start + Vec2::new(10.0, 20.0));
@@ -2270,7 +2270,9 @@ impl Running {
                 champions,
             })
         });
-        self.minds = tagged_alloc::scope(Tag::Ai, || Minds::new(self.heightmap.ai_terrain(&nav)));
+        self.minds = tagged_alloc::scope(Tag::Ai, || {
+            Minds::new(self.heightmap.ai_terrain(&nav)).live()
+        });
         self.matches += 1;
         self.drill = None;
         self.sandbox = Sandbox::new(matches!(kind, MatchKind::Sandbox));
@@ -2730,7 +2732,7 @@ impl Running {
     }
 
     /// I: hand the side you command to the computer, raise its level
-    /// (Recruit, Veteran, General), or take the side back.
+    /// (Recruit, Veteran, General, Warlord), or take the side back.
     fn cycle_mind(&mut self) {
         let side = self.sandbox.side;
         let name = party_name(&self.parties, side);

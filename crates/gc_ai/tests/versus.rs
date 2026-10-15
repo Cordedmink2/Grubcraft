@@ -15,7 +15,10 @@
 
 use gc_ai::army::{Placement, deploy, spawn_commands};
 use gc_ai::scripted::ChargeBot;
-use gc_ai::{Difficulty, Knobs, Mind, MindConfig, Minds, Perception, Terrain, holding_the_field};
+use gc_ai::{
+    Difficulty, Doctrine, Knobs, Mind, MindConfig, Minds, Perception, Plan, Stance, Terrain,
+    holding_the_field,
+};
 use gc_fixed::Pcg32;
 use gc_sim::scenario::DRILL_UNITS;
 use gc_sim::{Capacities, MatchSetup, PlayerCommand, PlayerId, UnitId, World};
@@ -35,6 +38,8 @@ enum Side {
     Mind(Difficulty),
     /// A difficulty with some knobs changed, for tuning.
     Tuned(Difficulty, fn(&mut Knobs)),
+    /// A difficulty told to fight with one plan throughout (no rehearsals).
+    Planned(Difficulty, Plan),
     /// Charge straight in.
     Charge,
     /// Stands still; only the simulation's own reflexes fight back.
@@ -63,11 +68,10 @@ enum Player {
     Idle,
 }
 
-/// One battle: `side` against `against`.
-fn fight(seed: u64, side: Side, against: Side) -> Outcome {
+/// Battle `seed`'s field: two armies facing each other across 70 to 100
+/// tiles of open ground, and the side under test (the other is `1 -` it).
+fn field(seed: u64) -> (World, Terrain, PlayerId) {
     let mut rng = Pcg32::new(seed, 7);
-    let us: PlayerId = (seed % 2) as PlayerId;
-    let them: PlayerId = 1 - us;
     let mut world = World::new(&MatchSetup {
         seed,
         capacities: Capacities { regiments: 32 },
@@ -79,7 +83,6 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
         champions: false,
     });
     let terrain = Terrain::open(MAP);
-    // Two armies facing each other across 70 to 100 tiles of open ground.
     let apart = 70.0 + rng.below(31) as f32;
     let x = 100.0 + rng.below(57) as f32;
     let tilt = (rng.below(41) as f32 - 20.0) / 100.0;
@@ -93,16 +96,28 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
         spawn_commands(party, &placed, &mut out);
     }
     world.tick(&out);
+    (world, terrain, (seed % 2) as PlayerId)
+}
 
+/// How `party` is set up in battle `seed`, at the General's level.
+fn config(seed: u64, party: PlayerId) -> MindConfig {
+    MindConfig {
+        party,
+        difficulty: Difficulty::General,
+        // Personalities take turns, so every one is tested.
+        personality: (seed / 2) as usize + usize::from(party) * 3,
+        seed: seed * 2 + u64::from(party),
+    }
+}
+
+/// One battle: `side` against `against`.
+fn fight(seed: u64, side: Side, against: Side) -> Outcome {
+    let (mut world, terrain, us) = field(seed);
+    let them = 1 - us;
+    let mut out: Vec<PlayerCommand> = Vec::new();
     let mut minds = Minds::new(terrain);
     let mut seat = |party: PlayerId, side: Side| -> Player {
-        let config = MindConfig {
-            party,
-            difficulty: Difficulty::General,
-            // Personalities take turns, so every one is tested.
-            personality: (seed / 2) as usize + party as usize * 3,
-            seed: seed * 2 + u64::from(party),
-        };
+        let config = config(seed, party);
         match side {
             Side::Mind(difficulty) => {
                 minds.add(Mind::new(MindConfig {
@@ -123,6 +138,20 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
                 ));
                 Player::Mind
             }
+            Side::Planned(difficulty, plan) => {
+                let mut knobs = difficulty.knobs();
+                knobs.rehearse = false;
+                let mut mind = Mind::with_knobs(
+                    MindConfig {
+                        difficulty,
+                        ..config
+                    },
+                    knobs,
+                );
+                mind.follow(plan);
+                minds.add(mind);
+                Player::Mind
+            }
             Side::Charge => Player::Bot(ChargeBot::new(party)),
             Side::Idle => Player::Idle,
         }
@@ -131,6 +160,7 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
     let mut view = Perception::new();
     let mut held_by: Option<(PlayerId, u32)> = None;
     let mut winner = None;
+    let mut last_verdict = None;
     while world.tick_count() < LIMIT {
         out.clear();
         view.capture(&world);
@@ -141,6 +171,13 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
         }
         minds.tick(&world, &mut out);
         world.tick(&out);
+        if trace(seed)
+            && let Some(v) = minds.get(us).and_then(Mind::verdict)
+            && Some(v.tick) != last_verdict
+        {
+            last_verdict = Some(v.tick);
+            print_verdict(v);
+        }
         if world.tick_count().is_multiple_of(20) {
             view.capture(&world);
             if trace(seed) && world.tick_count().is_multiple_of(40) {
@@ -286,6 +323,19 @@ fn a_battle_plays_out_the_same_every_time() {
     );
 }
 
+fn print_verdict(v: &gc_ai::Verdict) {
+    println!(
+        "t={}s rehearsed: {} ({:+.2}, before {:?})",
+        v.tick / 20,
+        v.plan.describe(),
+        v.score,
+        v.before
+    );
+    for (plan, score) in &v.plans {
+        println!("    {:>40} {score:+.2}", plan.describe());
+    }
+}
+
 /// `AI_TRACE=<seed>` prints the field every two seconds of that battle.
 fn trace(seed: u64) -> bool {
     std::env::var("AI_TRACE").is_ok_and(|v| v == seed.to_string())
@@ -327,7 +377,7 @@ fn print_field(view: &Perception, us: PlayerId, mind: Option<&Mind>) {
 }
 
 /// One General battle, traced: against charge-straight-in, or against
-/// `AI_AGAINST=Recruit|Veteran|General`.
+/// `AI_AGAINST=Recruit|Veteran|General|Warlord`.
 #[test]
 #[ignore = "traces one battle, run by hand"]
 fn one() {
@@ -335,7 +385,7 @@ fn one() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(1);
-    let r = fight(seed, Side::Mind(Difficulty::General), against());
+    let r = fight(seed, Side::Mind(level()), against());
     println!(
         "{} in {}s: {}",
         if r.won { "won" } else { "LOST" },
@@ -359,8 +409,39 @@ fn against() -> Side {
         Ok("Recruit") => Side::Mind(Difficulty::Recruit),
         Ok("Veteran") => Side::Mind(Difficulty::Veteran),
         Ok("General") => Side::Mind(Difficulty::General),
+        Ok("Warlord") => Side::Mind(Difficulty::Warlord),
         _ => Side::Charge,
     }
+}
+
+/// `AI_LEVEL`: the level under test in tuning runs (the General by default).
+fn level() -> Difficulty {
+    match std::env::var("AI_LEVEL").as_deref() {
+        Ok("Recruit") => Difficulty::Recruit,
+        Ok("Veteran") => Difficulty::Veteran,
+        Ok("Warlord") => Difficulty::Warlord,
+        _ => Difficulty::General,
+    }
+}
+
+/// `AI_LEVEL` against `AI_AGAINST` over `AI_BATTLES` from `AI_FROM`, in
+/// parallel, with the time it took. `AI_LEVEL=Hands` is the Warlord without
+/// its rehearsals.
+#[test]
+#[ignore = "slow: hundreds of arena battles, run by hand"]
+fn duel() {
+    let level = match std::env::var("AI_LEVEL").as_deref() {
+        Ok("Hands") => Side::Tuned(Difficulty::Warlord, |k| k.rehearse = false),
+        _ => Side::Mind(level()),
+    };
+    let against = against();
+    let t0 = std::time::Instant::now();
+    let n = battles();
+    let wins = contest_parallel(level, against, first_seed()..=first_seed() + n - 1);
+    println!(
+        "{level:?} v {against:?}: won {wins} of {n} in {:?}",
+        t0.elapsed()
+    );
 }
 
 /// Win rates over many battles, every level against charge-straight-in and
@@ -432,4 +513,115 @@ fn knob_study() {
         let wins = contest(Side::Tuned(level, tune), against, from..=from + n - 1);
         println!("{level:?} with {name} v {against:?}: won {wins} of {n}");
     }
+}
+
+/// Every plan fought throughout by the Warlord's hands against `AI_AGAINST`
+/// (the General by default): is one plan simply better?
+#[test]
+#[ignore = "slow: every plan over many arena battles, run by hand"]
+fn plans() {
+    let against = match std::env::var("AI_AGAINST") {
+        Ok(_) => against(),
+        Err(_) => Side::Mind(Difficulty::General),
+    };
+    let seeds = first_seed()..=first_seed() + battles() - 1;
+    for doctrine in Doctrine::ALL {
+        for stance in Stance::ALL {
+            let plan = Plan { doctrine, stance };
+            let wins = contest_parallel(
+                Side::Planned(Difficulty::Warlord, plan),
+                against,
+                seeds.clone(),
+            );
+            println!("{:>40}: won {wins} of {}", plan.describe(), battles());
+        }
+    }
+}
+
+/// [`contest`] spread over the machine's cores.
+fn contest_parallel(side: Side, against: Side, seeds: std::ops::RangeInclusive<u64>) -> u32 {
+    let seeds: Vec<u64> = seeds.collect();
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    std::thread::scope(|s| {
+        seeds
+            .chunks(seeds.len().div_ceil(threads).max(1))
+            .map(|c| s.spawn(move || contest(side, against, c[0]..=c[c.len() - 1])))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .sum()
+    })
+}
+
+// The Warlord rehearses in the real simulation, too slow unoptimised: CI
+// runs these with `cargo test --release -p gc_ai --test versus warlord`.
+
+#[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "too slow unoptimised: CI runs it in release"
+)]
+fn the_warlord_beats_the_general_seven_times_in_ten() {
+    let warlord = Side::Mind(Difficulty::Warlord);
+    let wins = contest_parallel(warlord, Side::Mind(Difficulty::General), 1..=24);
+    assert!(wins >= 17, "won {wins} of 24");
+}
+
+#[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "too slow unoptimised: CI runs it in release"
+)]
+fn a_warlord_battle_plays_out_the_same_every_time() {
+    let warlord = Side::Mind(Difficulty::Warlord);
+    let general = Side::Mind(Difficulty::General);
+    let (a, b) = std::thread::scope(|s| {
+        let a = s.spawn(|| fight(5, warlord, general));
+        let b = s.spawn(|| fight(5, warlord, general));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    assert!(a.journal.iter().any(|l| l.contains("Rehearsed")), "{a:?}");
+    assert_eq!(
+        (a.ticks, a.orders, a.journal),
+        (b.ticks, b.orders, b.journal)
+    );
+}
+
+/// The Warlord's reader names the plan of the General it faces (its
+/// doctrine, and whether it holds or advances) before the armies meet, in
+/// at least 9 of 10 battles.
+#[test]
+fn the_reader_names_the_enemy_plan_before_contact() {
+    use gc_ai::reading::Reading;
+    use std::sync::Arc;
+    let (mut doctrine, mut posture) = (0, 0);
+    for seed in 1..=10 {
+        let (mut world, terrain, us) = field(seed);
+        let them = 1 - us;
+        let terrain = Arc::new(terrain);
+        let mut minds: Vec<Mind> = (0..2).map(|p| Mind::new(config(seed, p))).collect();
+        let mut reading = Reading::new(them, Difficulty::General, seed);
+        let mut view = Perception::new();
+        let mut out = Vec::new();
+        for _ in 0..15 * 20 {
+            view.capture(&world);
+            reading.tick(&view, &terrain, &world);
+            out.clear();
+            for m in &mut minds {
+                m.tick(&view, &terrain, &world, &mut out);
+            }
+            world.tick(&out);
+        }
+        view.capture(&world);
+        assert!(
+            view.regiments.iter().all(|r| !r.engaged),
+            "battle {seed} met within 15 s"
+        );
+        let guess = reading.guess().expect("a guess");
+        let real = minds[them as usize].captain();
+        doctrine += usize::from(guess.captain.doctrine == real.doctrine);
+        posture += usize::from(guess.captain.posture == real.posture);
+    }
+    assert!(doctrine >= 9, "named the doctrine in {doctrine} of 10");
+    assert!(posture >= 9, "named the posture in {posture} of 10");
 }

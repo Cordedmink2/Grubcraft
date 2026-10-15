@@ -100,7 +100,7 @@ impl Tempo {
 
 /// How well an AI player plays (docs/18-ai.md, "Difficulty"), easiest
 /// first. A slot's `ai_level` indexes this.
-pub const AI_LEVELS: [&str; 3] = ["Recruit", "Veteran", "General"];
+pub const AI_LEVELS: [&str; 4] = ["Recruit", "Veteran", "General", "Warlord"];
 /// The level a newly added AI starts at.
 pub const DEFAULT_AI_LEVEL: u8 = 1;
 
