@@ -135,6 +135,34 @@ impl Seen {
         0.5 * (self.width + self.depth)
     }
 
+    /// How far this block is from `other` along the axis that separates
+    /// them best, in tiles: the gap between their edges when apart, and
+    /// less than zero by as much as they overlap (as the simulation
+    /// measures crowding).
+    pub fn clearance(&self, other: &Seen) -> f32 {
+        let d = other.pos - self.pos;
+        [
+            self.facing,
+            right_of(self.facing),
+            other.facing,
+            right_of(other.facing),
+        ]
+        .iter()
+        .map(|&axis| d.dot(axis).abs() - self.half_extent(axis) - other.half_extent(axis))
+        .fold(f32::MIN, f32::max)
+    }
+
+    /// Half this block's length along `axis` (a unit vector), in tiles.
+    pub fn half_extent(&self, axis: Vec2) -> f32 {
+        0.5 * self.width * right_of(self.facing).dot(axis).abs()
+            + 0.5 * self.depth * self.facing.dot(axis).abs()
+    }
+
+    /// How deep this block and `other` overlap, in tiles (zero when apart).
+    pub fn overlap(&self, other: &Seen) -> f32 {
+        (-self.clearance(other)).max(0.0)
+    }
+
     /// Which side of this block `point` is on, as the combat rules judge it.
     pub fn side_facing(&self, point: Vec2) -> Side {
         let d = point - self.pos;

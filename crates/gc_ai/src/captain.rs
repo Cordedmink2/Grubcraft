@@ -150,8 +150,20 @@ impl Posture {
     }
 }
 
+/// Seconds a side expecting to lose waits for an enemy that doesn't come
+/// before going to fetch it.
+const TIRED_OF_WAITING: f32 = 30.0;
 /// Space left between regiments side by side in the line, tiles.
 const LINE_GAP: f32 = 1.5;
+/// A regiment shouldn't meet an enemy where it would overlap a friend's
+/// block by more than this, tiles: the simulation slows regiments pushing
+/// into friends and throws both out of order (see [`Captain::room_at`]).
+const ROOM: f32 = 0.5;
+/// How much worse an enemy looks, to a level that gangs up, when there is
+/// no room to meet it.
+const NO_ROOM: f32 = 2.0;
+/// Tiles between the fronts of two blocks meeting in melee.
+const MEET_GAP: f32 = 0.25;
 /// Archers stand this far behind the line's rear edge, and a screen this
 /// far in front of its front edge.
 const BATTERY_BACK: f32 = 3.0;
@@ -326,6 +338,9 @@ pub struct Captain {
     pub posture: Posture,
     /// The enemy is beaten and the regiments are finishing off the rest.
     pub finishing: bool,
+    /// Expecting to lose, it waited for an enemy that never came, and has
+    /// gone to fetch it: every regiment after the nearest enemy.
+    pub fetching: bool,
     pub estimate: Option<Estimate>,
     /// What it expected when it first weighed the fight up.
     pub first_estimate: Option<Estimate>,
@@ -341,6 +356,9 @@ pub struct Captain {
     withdrawn_at: Option<u32>,
     withdrawals: u32,
     standoff_since: u32,
+    /// Since when it has been waiting, expecting to lose, with the enemy
+    /// not coming and nobody fighting.
+    waiting_since: Option<u32>,
     /// Tick the posture last changed.
     posture_since: u32,
     /// Where the enemy army was a while ago, to tell whether it is coming:
@@ -380,6 +398,20 @@ pub struct Captain {
     pub focus: Option<RegimentHandle>,
     /// Where its ambushers hide, with the Ambush doctrine.
     ambush: ambush::Plan,
+    /// Where friends stand in the fight, as of this look (see
+    /// [`Captain::room_at`]).
+    taken: Vec<Taken>,
+}
+
+/// A friend's ground in the fight: its own block while it fights, or where
+/// it will meet the enemy it is closing on, with how far from that enemy
+/// it still is.
+#[derive(Clone, Copy, Debug)]
+struct Taken {
+    handle: RegimentHandle,
+    pos: Vec2,
+    block: Seen,
+    closing: Option<f32>,
 }
 
 impl Default for Captain {
@@ -394,6 +426,7 @@ impl Captain {
             doctrine: Doctrine::HoldTheLine,
             posture: Posture::Form,
             finishing: false,
+            fetching: false,
             estimate: None,
             first_estimate: None,
             members: Vec::new(),
@@ -407,6 +440,7 @@ impl Captain {
             withdrawn_at: None,
             withdrawals: 0,
             standoff_since: 0,
+            waiting_since: None,
             posture_since: 0,
             distance_then: None,
             closing: 0.0,
@@ -425,6 +459,7 @@ impl Captain {
             ground_note: String::new(),
             focus: None,
             ambush: ambush::Plan::default(),
+            taken: Vec::new(),
         }
     }
 
@@ -495,7 +530,8 @@ impl Captain {
         if self.relayout {
             self.layout(ctx);
         }
-        if self.beaten(ctx, &ours, &fighting) {
+        if self.beaten(ctx, &ours, &fighting) || self.fetching {
+            self.waiting_since = None;
             self.finish(ctx, &fighting, wants);
             return;
         }
@@ -670,7 +706,13 @@ impl Captain {
 
     fn weigh(&mut self, ctx: &mut Ctx, ours: &[&Seen], fighting: &[&Seen]) {
         let view = ctx.view;
-        let mine = Force::of(view, ours.iter().copied());
+        // Allies fight the same enemy: without them every side of a 2v2
+        // expects to lose to both enemies at once, and waits.
+        let allies = view
+            .regiments
+            .iter()
+            .filter(|r| r.owner != ctx.party && !r.broken() && !view.hostile(ctx.party, r.owner));
+        let mine = Force::of(view, ours.iter().copied().chain(allies));
         let theirs = Force::of(view, fighting.iter().copied());
         let gap = self.front_gap(fighting);
         let closing = (mine.speed + theirs.speed) * 0.5;
@@ -913,6 +955,9 @@ impl Captain {
             .iter()
             .map(|&k| BATTERY_BACK + depth[k])
             .fold(0.0, f32::max);
+        // How far behind the line the archers standing behind it reach (not
+        // a screen out in front).
+        let mut archers_back: f32 = 0.0;
         for (i, &k) in ranged.iter().enumerate() {
             let cx = first + step * i as f32;
             let behind = Vec2::new(cx, line_depth * 0.5 + BATTERY_BACK + depth[k] * 0.5);
@@ -927,6 +972,7 @@ impl Captain {
                 self.assign(k, Role::Screen, ahead);
             } else {
                 self.assign(k, Role::Battery, behind);
+                archers_back = archers_back.max(BATTERY_BACK + depth[k]);
             }
         }
 
@@ -973,10 +1019,11 @@ impl Captain {
                     left_x - LINE_GAP - w * 0.5
                 }
             };
+            // Behind the archers, not among them.
             let back = if anvil {
                 line_depth * 0.5
             } else {
-                line_depth * 0.5 + HAMMER_BACK + depth[k] * 0.5
+                line_depth * 0.5 + HAMMER_BACK.max(archers_back + LINE_GAP) + depth[k] * 0.5
             };
             self.assign(k, Role::Hammer, Vec2::new(cx, back));
         }
@@ -1202,6 +1249,8 @@ impl Captain {
         let now = view.tick;
         let p = ctx.persona;
         let before = self.posture;
+        // Only kept while it goes on waiting, below.
+        let was_waiting = self.waiting_since.take();
         // How far the enemy is from where the line stands now (the anchor
         // is where it is going, which while advancing is near the enemy).
         let line_now = line_centre(&self.members, ours, centroid(ours));
@@ -1310,7 +1359,18 @@ impl Captain {
                 meet && !losing
             } else if losing {
                 // Wait on our own ground for them to come. Being shot to
-                // pieces with no falling back left is the exception.
+                // pieces with no falling back left is the exception. An
+                // enemy that never comes has to be fetched in the end, or
+                // the battle never ends. Only time with nobody coming and
+                // nobody fighting counts.
+                if !ours.iter().any(|r| r.engaged) {
+                    let since = *self.waiting_since.insert(was_waiting.unwrap_or(now));
+                    if (now - since) as f32 / TICKS > TIRED_OF_WAITING {
+                        self.fetching = true;
+                        ctx.journal
+                            .note(now, "Tired of waiting: going to fetch them".to_string());
+                    }
+                }
                 outshot && self.withdrawals >= WITHDRAWALS
             } else {
                 // Ambushers lying in wait need the enemy to come to them,
@@ -1494,6 +1554,7 @@ impl Captain {
             }
         }
         let routers = foes.iter().any(|f| f.broken());
+        self.taken = self.taken_ground(view, ctx.party);
         self.focus = if ctx.knobs.morale_targeting {
             point_of_attack(view, fighting, self.anchor)
         } else {
@@ -1603,6 +1664,8 @@ impl Captain {
         let leash = LINE_LEASH + reach;
         let right = right_of(self.forward);
         let help = ctx.knobs.focus_fire;
+        // The wing holding the end of the line against cover.
+        let anchored = m.role == Role::Wing && m.slot.x * self.covered > 0.0;
         let terrain = ctx.terrain;
         // Only archers still standing against us: go and get them.
         let only_archers = fighting.iter().all(|f| view.unit(f).class == Class::Ranged);
@@ -1627,11 +1690,24 @@ impl Captain {
             } else {
                 reach
             };
-            if gap <= reach && from_home <= leash && across <= r.width * 0.5 + f.width * 0.5 + 8.0 {
+            // An anchored wing only meets what comes straight at it, rather
+            // than leave the end of the line open.
+            let side_slack = if anchored { 0.0 } else { 8.0 };
+            if gap <= reach
+                && from_home <= leash
+                && across <= r.width * 0.5 + f.width * 0.5 + side_slack
+            {
                 return true;
             }
-            // Locked in a fight with a friend close by: join in.
-            if help && f.engaged && gap <= HELP_TILES && from_home <= leash {
+            // Locked in a fight with a friend close by: join in, where there
+            // is room beside the friends already fighting it.
+            if help
+                && !anchored
+                && f.engaged
+                && gap <= HELP_TILES
+                && from_home <= leash
+                && self.room_at(r, f)
+            {
                 return true;
             }
             // Archers left unguarded close by, with nothing in the way.
@@ -2088,6 +2164,52 @@ impl Captain {
         }
     }
 
+    /// Whether regiment `r` can meet enemy `f` straight in without
+    /// overlapping a friend there: one fighting, or one nearer its own enemy
+    /// and closing on it (where it will meet that enemy). Two regiments on
+    /// one face of an enemy push into each other and both fall out of order;
+    /// a second does better on another face, or elsewhere.
+    fn room_at(&self, r: &Seen, f: &Seen) -> bool {
+        let at = meeting(r, f);
+        let near = r.clearance(f);
+        let reach = r.pos.distance(f.pos) + f.radius() + r.radius();
+        self.taken.iter().all(|t| {
+            t.handle == r.handle
+                || t.pos.distance(f.pos) > reach
+                || t.closing.is_some_and(|c| c >= near)
+                || at.overlap(&t.block) <= ROOM
+        })
+    }
+
+    /// Friends' ground in the fight as they stand now, for
+    /// [`Captain::room_at`]: allies' fighting regiments, and ours fighting
+    /// or closing on an enemy.
+    fn taken_ground(&self, view: &Perception, party: PlayerId) -> Vec<Taken> {
+        view.regiments
+            .iter()
+            .filter(|g| !g.broken() && !view.hostile(party, g.owner))
+            .filter_map(|g| {
+                let (block, closing) = if g.engaged {
+                    (*g, None)
+                } else {
+                    let e = self
+                        .members
+                        .iter()
+                        .find(|m| m.handle == g.handle)
+                        .and_then(|m| view.get(m.target?))
+                        .filter(|e| !e.broken() && view.hostile(party, e.owner))?;
+                    (meeting(g, e), Some(g.clearance(e)))
+                };
+                Some(Taken {
+                    handle: g.handle,
+                    pos: g.pos,
+                    block,
+                    closing,
+                })
+            })
+            .collect()
+    }
+
     /// The best enemy for a melee regiment to go for among `candidates`.
     /// `keep` is its current target, which it sticks with unless something
     /// is clearly better.
@@ -2169,6 +2291,9 @@ impl Captain {
             } else {
                 -0.5 * n.max(0) as f32
             };
+            if knobs.focus_fire && !self.room_at(r, f) {
+                s -= NO_ROOM;
+            }
             let hit = (50.0 + me.stats.melee_attack as f32 - them.stats.melee_defence as f32)
                 .clamp(10.0, 90.0);
             s += (hit - 50.0) / 25.0;
@@ -2193,6 +2318,16 @@ impl Captain {
             (None, b) => b.map(|(_, h)| h),
             (Some(_), None) => keep,
         }
+    }
+}
+
+/// `r`'s block standing against `f`, having come straight at its centre.
+fn meeting(r: &Seen, f: &Seen) -> Seen {
+    let dir = (f.pos - r.pos).normalize_or(-f.facing);
+    Seen {
+        pos: f.pos - dir * (f.half_extent(dir) + 0.5 * r.depth + MEET_GAP),
+        facing: dir,
+        ..*r
     }
 }
 

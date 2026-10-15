@@ -76,7 +76,7 @@ impl Difficulty {
             Difficulty::General => Knobs {
                 reaction_ticks: 8,
                 orders_per_minute: 90,
-                think_ticks: 7,
+                think_ticks: 4,
                 doctrines: &Doctrine::ALL,
                 reserve: true,
                 morale_targeting: true,
@@ -114,7 +114,9 @@ pub struct Knobs {
     pub timed_hammer: bool,
     /// Pulls wavering regiments out of the line before they break.
     pub save_wavering: bool,
-    /// Several regiments gang up on one enemy to make local odds.
+    /// Several regiments gang up on one enemy to make local odds, each
+    /// where there is room for it beside the others (rather than pushing
+    /// into them, which throws both out of order).
     pub focus_fire: bool,
     /// Picks its ground: anchors a flank on a cliff, takes high ground,
     /// waits behind water for the enemy to cross.

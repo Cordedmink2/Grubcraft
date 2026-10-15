@@ -851,6 +851,33 @@ fn holding_the_ford_pays_off() {
     }
 }
 
+/// Outnumbered two to one by an enemy that only stands, the AI waits on
+/// its ground for a while (it expects to lose), then goes to fetch it
+/// rather than wait for ever.
+#[test]
+fn it_goes_to_fetch_an_enemy_that_never_comes() {
+    for personality in only(0..8) {
+        let drill = Drill {
+            ground: Ground::open(),
+            ai: row(&[SPEARS, SPEARS, SPEARS], 128.0, 150.0, NORTH),
+            foe: row(&[SPEARS; 6], 128.0, 60.0, SOUTH),
+            foe_plays: Foe::Idle,
+            personality,
+        };
+        let mut contact: Option<f32> = None;
+        run(drill, 300, |f| {
+            if contact.is_none() && f.of(AI).any(|r| r.engaged) {
+                contact = Some(f.seconds());
+            }
+        });
+        let first = contact.map_or("never".to_string(), |s| format!("at {s:.0} s"));
+        assert!(
+            contact.is_some_and(|s| s >= 60.0),
+            "personality {personality}: first contact {first}"
+        );
+    }
+}
+
 /// Not a drill: the AI lens (step 3) shows what the cliff drill checks.
 #[test]
 fn the_lens_shows_the_anchored_line_and_every_regiment() {

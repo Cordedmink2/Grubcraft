@@ -49,6 +49,9 @@ pub struct Want {
 const MOVE_SLACK: f32 = 2.5;
 /// Facings closer than this (cosine of about 10 degrees) count as the same.
 const FACING_SLACK: f32 = 0.985;
+/// A regiment at rest is sent on to a place moved at least this far from
+/// the one it was sent to.
+const SETTLE: f32 = 1.5;
 /// A regiment within this many tiles of its destination has arrived.
 const ARRIVED: f32 = 2.0;
 /// Ticks after an order lands before checking it is being carried out.
@@ -149,6 +152,7 @@ impl Orders {
             let needed = match prev {
                 None => true,
                 Some(s) if !same(&s.act, &w.act) => true,
+                Some(s) if now >= s.lands && moved_on(r, &s.act, &w.act) => true,
                 Some(s) => self.not_carried_out(view, r, s),
             };
             if !needed {
@@ -173,7 +177,9 @@ impl Orders {
                 }
             }
             let retries = match prev {
-                Some(s) if same(&s.act, &w.act) => s.retries + 1,
+                // Sending a regiment at rest on to its shifted place is a new
+                // order, not another try at one it stopped short of.
+                Some(s) if same(&s.act, &w.act) && !moved_on(r, &s.act, &w.act) => s.retries + 1,
                 _ => 0,
             };
             self.decided[(w.priority as usize).min(7)] += 1;
@@ -251,6 +257,17 @@ impl Orders {
     /// Orders waiting out their reaction time.
     pub fn pending(&self) -> usize {
         self.queue.len()
+    }
+}
+
+/// A small change to a move that has already arrived: worth an order once
+/// the regiment stands at rest, where on the march it would only be jitter.
+fn moved_on(r: &crate::perception::Seen, before: &Act, now: &Act) -> bool {
+    match (*before, *now) {
+        (Act::Move { to: a, .. }, Act::Move { to: b, .. }) => {
+            !r.moving && a.distance(b) >= SETTLE && r.pos.distance(b) >= SETTLE
+        }
+        _ => false,
     }
 }
 

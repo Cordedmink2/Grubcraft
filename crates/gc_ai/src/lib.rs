@@ -176,6 +176,8 @@ impl Mind {
         };
         let doing = if c.finishing {
             "finishing them off"
+        } else if c.fetching {
+            "going to fetch them"
         } else {
             c.posture.name()
         };
