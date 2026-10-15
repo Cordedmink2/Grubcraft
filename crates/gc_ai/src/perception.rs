@@ -82,7 +82,7 @@ impl UnitInfo {
 
     /// Seconds between volleys.
     pub fn reload_seconds(&self) -> f32 {
-        self.stats.reload_ticks.max(1) as f32 / TICKS_PER_SECOND as f32
+        f32::from(self.stats.reload_ticks.max(1)) / TICKS_PER_SECOND as f32
     }
 }
 
@@ -127,7 +127,7 @@ impl Seen {
 
     /// Fraction of full strength still standing.
     pub fn strength(&self) -> f32 {
-        self.models as f32 / self.full.max(1) as f32
+        f32::from(self.models) / f32::from(self.full.max(1))
     }
 
     /// Radius of a circle that holds the block.

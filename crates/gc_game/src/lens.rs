@@ -132,7 +132,7 @@ pub fn push(
             match (m.target.and_then(get), m.place) {
                 (Some(t), _) => dashes(r.pos, t.pos, color, BRIGHT, scale, out),
                 (None, Some(place)) if place.distance(r.pos) > OFF_PLACE => {
-                    dashes(r.pos, place, color, FAINT, scale, out)
+                    dashes(r.pos, place, color, FAINT, scale, out);
                 }
                 _ => {}
             }

@@ -122,7 +122,7 @@ fn attack(w: &mut World, player: u8, regiment: RegimentHandle, target: RegimentH
 fn hp(w: &World, h: RegimentHandle) -> u32 {
     w.regiments
         .model_hp(h)
-        .map_or(0, |hp| hp.iter().map(|&v| v as u32).sum())
+        .map_or(0, |hp| hp.iter().copied().map(u32::from).sum())
 }
 
 fn morale(w: &World, h: RegimentHandle) -> u8 {
@@ -185,7 +185,7 @@ fn a_regiment_in_a_wood_is_hidden_until_an_enemy_comes_close() {
         }
     }
     let t = gone_after.expect("never hidden again");
-    assert!(t >= LINGER_TICKS as u32, "faded after {t} ticks");
+    assert!(t >= u32::from(LINGER_TICKS), "faded after {t} ticks");
 }
 
 #[test]
@@ -375,7 +375,7 @@ fn charge(wood: bool) -> (World, RegimentHandle, RegimentHandle, RegimentHandle)
 fn a_charge_from_hiding_springs_an_ambush() {
     let (mut w, cav, spears, friend) = charge(true);
     let (steady, friend_steady) = (morale(&w, spears), morale(&w, friend));
-    let a = first_ambush(&mut w, SURPRISE_TICKS as u32).expect("no ambush");
+    let a = first_ambush(&mut w, u32::from(SURPRISE_TICKS)).expect("no ambush");
     assert!(!a.volley);
     assert_eq!((a.ambusher, a.victim), (cav, spears));
     assert!(w.caught_off_guard(spears));

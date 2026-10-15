@@ -134,7 +134,7 @@ impl Sounds {
                 }
                 if r.engaged && tick >= quiet_until {
                     if r.models < p.models {
-                        let losses = (p.models - r.models) as f32;
+                        let losses = f32::from(p.models - r.models);
                         let gain = 0.55 + 0.15 * losses.min(3.0);
                         self.play_at(SoundId::Clash, at, gain, 1.0, PRI_BLOWS);
                         quiet_until = tick + BLOW_COOLDOWN;
@@ -194,7 +194,7 @@ impl Sounds {
             });
         }
         for f in landed {
-            let gain = 0.5 + 0.5 * (f.shots as f32 / 16.0).min(1.0);
+            let gain = 0.5 + 0.5 * (f32::from(f.shots) / 16.0).min(1.0);
             self.play_at(SoundId::ArrowImpact, f.aim, gain, 1.0, PRI_ARROWS);
         }
     }
@@ -202,7 +202,7 @@ impl Sounds {
     fn morale_change(&self, from: MoraleState, to: MoraleState, at: Vec2) {
         match (from, to) {
             (_, MoraleState::Wavering) if !from.broken() => {
-                self.play_at(SoundId::Waver, at, 0.8, 1.2, PRI_MORALE)
+                self.play_at(SoundId::Waver, at, 0.8, 1.2, PRI_MORALE);
             }
             (_, MoraleState::Routing) => self.play_at(SoundId::RoutHorn, at, 1.0, 1.8, PRI_MORALE),
             (_, MoraleState::Shattered) => self.play_at(SoundId::Shatter, at, 1.0, 2.0, PRI_MORALE),

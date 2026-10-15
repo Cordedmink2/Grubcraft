@@ -839,7 +839,7 @@ mod tests {
     /// Where `needle` is drawn (centre of its glyphs), found in the quads.
     fn find_all(draw: &DrawList, needle: &str) -> Vec<(i32, i32)> {
         let mut found = Vec::new();
-        let want: Vec<u32> = needle.bytes().map(|b| (b - 32) as u32).collect();
+        let want: Vec<u32> = needle.bytes().map(|b| u32::from(b - 32)).collect();
         let q = &draw.quads;
         'start: for i in 0..q.len() {
             if q[i].glyph == SOLID {
@@ -864,8 +864,8 @@ mod tests {
             }
             let (a, b) = (q[i], q[j - 1]);
             found.push((
-                (a.pos[0] as i32 + b.pos[0] as i32 + b.size[0] as i32) / 2,
-                a.pos[1] as i32 + a.size[1] as i32 / 2,
+                (i32::from(a.pos[0]) + i32::from(b.pos[0]) + i32::from(b.size[0])) / 2,
+                i32::from(a.pos[1]) + i32::from(a.size[1]) / 2,
             ));
         }
         found
@@ -1134,8 +1134,8 @@ mod tests {
                 h.menu.frame(&mut h.ui);
                 h.ui.end_frame();
                 for q in &h.ui.draw.quads {
-                    let right = q.pos[0] as i32 + q.size[0] as i32;
-                    let bottom = q.pos[1] as i32 + q.size[1] as i32;
+                    let right = i32::from(q.pos[0]) + i32::from(q.size[0]);
+                    let bottom = i32::from(q.pos[1]) + i32::from(q.size[1]);
                     assert!(
                         right <= size.0 && bottom <= size.1,
                         "{screen:?} {size:?} overflows: {q:?}"

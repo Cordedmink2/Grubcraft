@@ -195,7 +195,7 @@ pub fn write_bank(sources: &[ClipSource]) -> Vec<u8> {
     let mut offset = HEADER + sources.len() * ENTRY;
     for (s, data) in sources.iter().zip(&packed) {
         blob.push(s.id as u8);
-        blob.push(s.looped as u8);
+        blob.push(u8::from(s.looped));
         blob.extend_from_slice(&[0, 0]);
         blob.extend_from_slice(&s.rate.to_le_bytes());
         blob.extend_from_slice(&(s.pcm.len() as u32).to_le_bytes());

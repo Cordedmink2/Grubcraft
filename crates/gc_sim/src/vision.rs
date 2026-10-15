@@ -424,7 +424,7 @@ impl Vision {
             }
             h.u8(self.revealed[i]);
             h.u8(self.off_guard[i]);
-            h.u8(self.was_engaged[i] as u8);
+            h.u8(u8::from(self.was_engaged[i]));
         }
     }
 }

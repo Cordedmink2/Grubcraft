@@ -77,8 +77,8 @@ fn charge(world: &World, out: &mut Vec<PlayerCommand>) {
         }
         let distance = |e: &gc_sim::RegimentView| {
             let (dx, dy) = (
-                (e.position.x - r.position.x).raw() as i64,
-                (e.position.y - r.position.y).raw() as i64,
+                i64::from((e.position.x - r.position.x).raw()),
+                i64::from((e.position.y - r.position.y).raw()),
             );
             dx * dx + dy * dy
         };
@@ -293,7 +293,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
             raised.len(),
             raised
                 .iter()
-                .map(|&u| units[u as usize].models as u32)
+                .map(|&u| u32::from(units[u as usize].models))
                 .sum::<u32>(),
         ));
         if golden.minds {
@@ -323,10 +323,10 @@ fn record(golden: &Golden) -> gc_replay::Replay {
             .regiments
             .iter()
             .filter(|r| r.engaged)
-            .map(|r| r.models as u32)
+            .map(|r| u32::from(r.models))
             .sum();
         if std::env::var_os("ENGAGED_TRACE").is_some() && world.tick_count().is_multiple_of(100) {
-            let alive: u32 = world.regiments.iter().map(|r| r.models as u32).sum();
+            let alive: u32 = world.regiments.iter().map(|r| u32::from(r.models)).sum();
             println!(
                 "t={:>3}s melee {engaged:>5} of {alive:>5}",
                 world.tick_count() / 20
@@ -403,7 +403,7 @@ fn raise(
         let raised = army::pick_army(units, factions, faction, preset, size);
         let total: u32 = raised
             .iter()
-            .map(|&u| units[u as usize].models as u32)
+            .map(|&u| u32::from(units[u as usize].models))
             .sum();
         if total >= soldiers {
             return raised;

@@ -42,7 +42,7 @@ impl Decoder {
         if nibble & 8 != 0 {
             diff = -diff;
         }
-        self.predictor = (self.predictor + diff).clamp(i16::MIN as i32, i16::MAX as i32);
+        self.predictor = (self.predictor + diff).clamp(i32::from(i16::MIN), i32::from(i16::MAX));
         self.index = (self.index + INDEX_ADJUST[(nibble & 7) as usize]).clamp(0, 88);
         self.predictor as i16
     }
@@ -55,7 +55,7 @@ pub fn encode(samples: &[i16]) -> Vec<u8> {
     let mut pending: Option<u8> = None;
     for &s in samples {
         let step = STEPS[dec.index as usize];
-        let mut diff = s as i32 - dec.predictor;
+        let mut diff = i32::from(s) - dec.predictor;
         let mut nibble = 0u8;
         if diff < 0 {
             nibble = 8;
@@ -111,11 +111,11 @@ mod tests {
         let packed = encode(&src);
         assert_eq!(packed.len(), 2000);
         let back = decode_all(&packed, src.len());
-        let signal: f64 = src.iter().map(|&s| (s as f64).powi(2)).sum();
+        let signal: f64 = src.iter().map(|&s| f64::from(s).powi(2)).sum();
         let noise: f64 = src
             .iter()
             .zip(&back)
-            .map(|(&a, &b)| (a as f64 - b as f64).powi(2))
+            .map(|(&a, &b)| (f64::from(a) - f64::from(b)).powi(2))
             .sum();
         let snr_db = 10.0 * (signal / noise).log10();
         assert!(snr_db > 25.0, "SNR only {snr_db:.1} dB");

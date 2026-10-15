@@ -148,12 +148,12 @@ impl Terrain {
         }
         let x = p.x.floor_int().clamp(0, self.tiles - 1);
         let y = p.y.floor_int().clamp(0, self.tiles - 1);
-        self.height[(y * self.tiles + x) as usize] as i32
+        i32::from(self.height[(y * self.tiles + x) as usize])
     }
 
     /// Whether `p` is in water.
     pub fn wet(&self, p: FxVec2) -> bool {
-        self.tiles != 0 && self.height(p) < self.water_level as i32
+        self.tiles != 0 && self.height(p) < i32::from(self.water_level)
     }
 
     /// Whether something at `from` fights downhill against something at `to`.
@@ -172,7 +172,7 @@ impl Terrain {
 
     /// The longest `range` can reach, from high ground.
     pub fn range_from_high_ground(range: Fx) -> Fx {
-        Fx::from_raw((range.raw() as i64 * DOWNHILL_RANGE_PERCENT as i64 / 100) as i32)
+        Fx::from_raw((i64::from(range.raw()) * i64::from(DOWNHILL_RANGE_PERCENT) / 100) as i32)
     }
 
     /// Melee damage percent for a blow from `from` landing on `to`.

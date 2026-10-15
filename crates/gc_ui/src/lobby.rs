@@ -611,7 +611,7 @@ mod tests {
             .filter(|s| s.occupied())
             .map(|s| s.color)
             .collect();
-        colours.sort();
+        colours.sort_unstable();
         colours.dedup();
         assert_eq!(colours.len(), 3);
     }

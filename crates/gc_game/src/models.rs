@@ -200,7 +200,7 @@ mod tests {
     fn embedded_models_load_and_dress_every_unit_type() {
         let models = load().unwrap();
         let data = crate::data::load();
-        for u in data.units.iter() {
+        for u in data.units {
             assert!(
                 models.by_name(u.name()).is_some(),
                 "no model for {}",
@@ -248,7 +248,7 @@ mod tests {
         assert_eq!(rows(Move::Down(1.0)).0.rows[0], die.first_row as u16);
         // A block ducks and comes back up; a stagger plays the hit clip.
         assert_eq!(rows(Move::Block(0.0)).0.rows[0], duck.first_row as u16);
-        let low = rows(Move::Block(0.5)).0.rows[0] as u32;
+        let low = u32::from(rows(Move::Block(0.5)).0.rows[0]);
         assert!(low > duck.first_row && low < duck.first_row + duck.frames / 2);
         assert_eq!(
             rows(Move::Stagger(1.0)).0.rows,

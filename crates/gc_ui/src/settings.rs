@@ -84,7 +84,7 @@ impl Default for Settings {
 impl Settings {
     /// The UI scale to draw at, with Larger text counted in.
     pub fn effective_ui_scale(&self) -> f32 {
-        let base = self.ui_scale.clamp(75, 150) as f32 / 100.0;
+        let base = f32::from(self.ui_scale.clamp(75, 150)) / 100.0;
         if self.larger_text { base * 1.25 } else { base }
     }
 

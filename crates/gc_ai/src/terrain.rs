@@ -208,7 +208,7 @@ impl Terrain {
             if x < 0 || y < 0 || x >= side || y >= side {
                 0
             } else {
-                clear[(y * side + x) as usize] as u16
+                u16::from(clear[(y * side + x) as usize])
             }
         };
         for y in 0..side {

@@ -54,14 +54,14 @@ impl Report {
             write_slot(&mut w, s);
         }
         w.u8(self.me);
-        w.var(self.desync_tick as u64);
+        w.var(u64::from(self.desync_tick));
         w.var(self.turns.len() as u64);
         for t in &self.turns {
             write_player_commands(&mut w, t);
         }
         w.var(self.hashes.len() as u64);
         for &(tick, hash) in &self.hashes {
-            w.var(tick as u64);
+            w.var(u64::from(tick));
             w.u64(hash);
         }
         w.buf

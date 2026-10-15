@@ -92,7 +92,7 @@ impl MoraleState {
 
 /// Starting (and highest) morale for a regiment of this unit, in tenths.
 pub(crate) fn fresh(stats: &UnitStats) -> i16 {
-    stats.morale as i16 * SCALE
+    i16::from(stats.morale) * SCALE
 }
 
 /// Check every regiment whose turn it is this tick.
@@ -136,30 +136,30 @@ fn check(
     tick: u32,
     map_tiles: u32,
 ) {
-    let full = regs.full_models[i].max(1) as i32;
-    let mut tenths = -(regs.losses[i] as i32 * 100 * CASUALTY_TENTHS_PER_PERCENT / full);
+    let full = i32::from(regs.full_models[i].max(1));
+    let mut tenths = -(i32::from(regs.losses[i]) * 100 * CASUALTY_TENTHS_PER_PERCENT / full);
     if regs.shock[i] & SHOCK_REAR != 0 {
-        tenths -= (REAR_SHOCK * SCALE) as i32;
+        tenths -= i32::from(REAR_SHOCK * SCALE);
     } else if regs.shock[i] & SHOCK_FLANK != 0 {
-        tenths -= (FLANK_SHOCK * SCALE) as i32;
+        tenths -= i32::from(FLANK_SHOCK * SCALE);
     }
     if regs.engaged[i].is_some() {
-        if (regs.models[i] as i32) * 2 < full {
-            tenths -= (HALF_STRENGTH_DRAIN * SCALE) as i32;
+        if i32::from(regs.models[i]) * 2 < full {
+            tenths -= i32::from(HALF_STRENGTH_DRAIN * SCALE);
         }
         let (friends, enemies) = local_strength(regs, combat, stances, vision, i);
         if enemies >= friends.max(1) * 3 {
-            tenths -= (OUTNUMBERED_3 * SCALE) as i32;
+            tenths -= i32::from(OUTNUMBERED_3 * SCALE);
         } else if enemies >= friends.max(1) * 2 {
-            tenths -= (OUTNUMBERED_2 * SCALE) as i32;
+            tenths -= i32::from(OUTNUMBERED_2 * SCALE);
         }
     } else if regs.losses[i] == 0 {
-        tenths += (RECOVERY * SCALE) as i32;
+        tenths += i32::from(RECOVERY * SCALE);
     }
     // A battered regiment never gets all its nerve back: the cap falls from
     // the unit's stat at full strength to half of it with nobody left.
-    let cap = fresh(stats) as i32 * (full + regs.models[i] as i32) / (2 * full);
-    let morale = (regs.morale[i] as i32 + tenths).clamp(0, cap) as i16;
+    let cap = i32::from(fresh(stats)) * (full + i32::from(regs.models[i])) / (2 * full);
+    let morale = (i32::from(regs.morale[i]) + tenths).clamp(0, cap) as i16;
     regs.morale[i] = morale;
     if morale > 0 {
         regs.morale_state[i] = steady_or_wavering(morale);
@@ -190,12 +190,12 @@ fn local_strength(
     let (mut friends, mut enemies) = (0u32, 0u32);
     combat.each_near(&at, p, local, Whose::Friends(owner), |j| {
         if !regs.morale_state[j].broken() {
-            friends += regs.models[j] as u32;
+            friends += u32::from(regs.models[j]);
         }
     });
     combat.each_near(&at, p, local, Whose::Enemies(owner), |j| {
         if !regs.morale_state[j].broken() && vision.sees(owner, j, regs.owner[j]) {
-            enemies += regs.models[j] as u32;
+            enemies += u32::from(regs.models[j]);
         }
     });
     (friends, enemies)
@@ -320,16 +320,16 @@ fn flee(
             near = true;
             let d = p - at.position[j];
             // Closer enemies push harder: weight by 1 / distance.
-            let len = d.length().raw().max(1) as i64;
-            away.0 += d.x.raw() as i64 * 65_536 / len;
-            away.1 += d.y.raw() as i64 * 65_536 / len;
+            let len = i64::from(d.length().raw().max(1));
+            away.0 += i64::from(d.x.raw()) * 65_536 / len;
+            away.1 += i64::from(d.y.raw()) * 65_536 / len;
         },
     );
     if near {
         regs.rout_clock[i] = 0;
     } else {
         regs.rout_clock[i] = regs.rout_clock[i].saturating_add(TICKS_PER_SECOND as u16);
-        if regs.rout_clock[i] as u32 >= RALLY_SECONDS * TICKS_PER_SECOND {
+        if u32::from(regs.rout_clock[i]) >= RALLY_SECONDS * TICKS_PER_SECOND {
             regs.target[i] = None;
             if regs.morale_state[i] == MoraleState::Routing {
                 // Rally: wavering, with a little heart back.
@@ -342,8 +342,8 @@ fn flee(
     }
     let dir = if away != (0, 0) {
         let v = FxVec2::new(
-            Fx::from_raw(away.0.clamp(i32::MIN as i64, i32::MAX as i64) as i32),
-            Fx::from_raw(away.1.clamp(i32::MIN as i64, i32::MAX as i64) as i32),
+            Fx::from_raw(away.0.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32),
+            Fx::from_raw(away.1.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32),
         );
         Angle::of_vec(v).to_vec()
     } else if let Some(t) = regs.target[i] {

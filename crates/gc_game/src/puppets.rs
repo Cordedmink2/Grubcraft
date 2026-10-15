@@ -190,7 +190,7 @@ impl Fighter {
         if self.mass < Mass::Heavy && !blade {
             return 0.0;
         }
-        (self.mass as i32 + blade as i32 - them.mass as i32).max(0) as f32
+        (self.mass as i32 + i32::from(blade) - them.mass as i32).max(0) as f32
     }
 }
 
@@ -584,8 +584,8 @@ impl Puppets {
         self.heading[r] = block.facing;
         let ranks = block.models.div_ceil(files).max(1);
         self.half[r] = Vec2::new(
-            files as f32 * block.file_spacing,
-            ranks as f32 * block.rank_spacing,
+            f32::from(files) * block.file_spacing,
+            f32::from(ranks) * block.rank_spacing,
         ) / 2.0;
         let right = Vec2::new(-block.facing.y, block.facing.x);
         let back = -block.facing;
@@ -641,7 +641,7 @@ impl Puppets {
                 let dist = to.length();
                 let pace = 0.9 + 0.2 * unit_hash(block.handle, k, 1);
                 let top = (block.speed * CATCH_UP + dist * PULL_PER_TILE) * pace;
-                let rank = (k as u16 / files) as f32;
+                let rank = f32::from(k as u16 / files);
                 let accel = ACCEL * pace / (1.0 + rank * ACCEL_FALLOFF_PER_RANK);
                 let accel = if block.routing { accel * 1.5 } else { accel };
                 let v = self.vel[i];
@@ -834,14 +834,14 @@ fn slot_offset(k: u16, files: u16, models: u16, file_spacing: f32, rank_spacing:
         files
     };
     Vec2::new(
-        (file as f32 - (in_rank as f32 - 1.0) / 2.0) * file_spacing,
-        (rank as f32 - (ranks as f32 - 1.0) / 2.0) * rank_spacing,
+        (f32::from(file) - (f32::from(in_rank) - 1.0) / 2.0) * file_spacing,
+        (f32::from(rank) - (f32::from(ranks) - 1.0) / 2.0) * rank_spacing,
     )
 }
 
 /// A stable pseudo-random value in [0, 1) per soldier and purpose.
 fn unit_hash(h: RegimentHandle, k: usize, salt: u32) -> f32 {
-    mix(h.index, h.generation as u32, k as u32, salt)
+    mix(h.index, u32::from(h.generation), k as u32, salt)
 }
 
 /// A stable value in [0, 1) for blow `blow` between two puppets, one per
@@ -1069,7 +1069,7 @@ mod tests {
             assert_eq!(dueling, 4, "the whole front rank is paired");
             for (k, s) in out[..4].iter().enumerate() {
                 let foe = p.pos[p.partner[k] as usize];
-                assert!(p.partner[k] as usize / SLOTS == 1);
+                assert_eq!(p.partner[k] as usize / SLOTS, 1);
                 let to = (foe - p.pos[k]).normalize();
                 assert!(p.facing[k].dot(to) > 0.95, "slot {k} faces away");
                 assert!(s.striking);

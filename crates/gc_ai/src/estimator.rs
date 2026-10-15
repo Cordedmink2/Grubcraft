@@ -93,15 +93,15 @@ impl Force {
             }
             let u = view.unit(r);
             let s = &u.stats;
-            let n = r.models as f32;
-            let hp = n * s.hp_per_model as f32;
+            let n = f32::from(r.models);
+            let hp = n * f32::from(s.hp_per_model);
             f.hp += hp;
-            f.hp_full += r.full as f32 * s.hp_per_model as f32;
+            f.hp_full += f32::from(r.full) * f32::from(s.hp_per_model);
             f.soldiers += n;
             if u.stalwart {
                 f.stalwart_hp += hp;
             } else {
-                f.morale += r.morale_points as f32 * n;
+                f.morale += f32::from(r.morale_points) * n;
                 morale_soldiers += n;
             }
             // Taking the enemy head on.
@@ -112,8 +112,8 @@ impl Force {
             if u.class == Class::Ranged {
                 // Archers fight in melee too, badly, if caught; the model
                 // keeps them shooting from behind the line.
-                f.ranged +=
-                    n * s.accuracy as f32 / 100.0 * s.missile_damage as f32 / u.reload_seconds();
+                f.ranged += n * f32::from(s.accuracy) / 100.0 * f32::from(s.missile_damage)
+                    / u.reload_seconds();
                 f.range = f.range.max(u.range);
             } else {
                 // The front rank (and a spear block's second); the formation
@@ -122,10 +122,12 @@ impl Force {
                     * s.weapon_room_percent(r.formation)) as f32
                     / 10_000.0;
                 f.melee_regiments += 1.0;
-                f.front_damage += front * s.melee_damage as f32;
-                f.front_damage_attack += front * s.melee_damage as f32 * s.melee_attack as f32;
+                f.front_damage += front * f32::from(s.melee_damage);
+                f.front_damage_attack +=
+                    front * f32::from(s.melee_damage) * f32::from(s.melee_attack);
                 if r.formation.can_charge() {
-                    f.charge += front * s.melee_damage as f32 * s.charge_bonus as f32 / 100.0
+                    f.charge += front * f32::from(s.melee_damage) * f32::from(s.charge_bonus)
+                        / 100.0
                         * CHARGE_SECONDS;
                 }
             }

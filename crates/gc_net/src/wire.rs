@@ -24,7 +24,7 @@ impl Writer {
     }
 
     pub fn bool(&mut self, v: bool) {
-        self.u8(v as u8);
+        self.u8(u8::from(v));
     }
 
     pub fn var(&mut self, mut v: u64) {
@@ -53,7 +53,7 @@ impl Writer {
     }
 
     pub fn fx(&mut self, v: Fx) {
-        self.ivar(v.raw() as i64);
+        self.ivar(i64::from(v.raw()));
     }
 
     pub fn vec(&mut self, v: FxVec2) {
@@ -62,8 +62,8 @@ impl Writer {
     }
 
     pub fn handle(&mut self, h: RegimentHandle) {
-        self.var(h.index as u64);
-        self.var(h.generation as u64);
+        self.var(u64::from(h.index));
+        self.var(u64::from(h.generation));
     }
 }
 
@@ -98,7 +98,7 @@ impl<'a> Reader<'a> {
         let mut v = 0u64;
         for shift in (0..64).step_by(7) {
             let b = self.u8()?;
-            v |= ((b & 0x7f) as u64) << shift;
+            v |= u64::from(b & 0x7f) << shift;
             if b & 0x80 == 0 {
                 return Some(v);
             }
@@ -164,19 +164,19 @@ impl<'a> Reader<'a> {
 
 fn write_stats(w: &mut Writer, s: &UnitStats) {
     w.fx(s.speed);
-    w.var(s.turn_rate as u64);
-    w.var(s.models as u64);
-    w.var(s.hp_per_model as u64);
-    w.var(s.files as u64);
+    w.var(u64::from(s.turn_rate));
+    w.var(u64::from(s.models));
+    w.var(u64::from(s.hp_per_model));
+    w.var(u64::from(s.files));
     w.fx(s.file_spacing);
     w.fx(s.rank_spacing);
     w.u8(s.melee_attack);
     w.u8(s.melee_defence);
-    w.var(s.melee_damage as u64);
+    w.var(u64::from(s.melee_damage));
     w.u8(s.charge_bonus);
     w.fx(s.range);
-    w.var(s.missile_damage as u64);
-    w.var(s.reload_ticks as u64);
+    w.var(u64::from(s.missile_damage));
+    w.var(u64::from(s.reload_ticks));
     w.u8(s.accuracy);
     w.u8(s.morale);
     w.u8(s.mass as u8);
@@ -217,9 +217,9 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             facing,
         } => {
             w.u8(0);
-            w.var(unit as u64);
+            w.var(u64::from(unit));
             w.vec(position);
-            w.var(facing.0 as u64);
+            w.var(u64::from(facing.0));
         }
         Command::MoveTo {
             regiment,
@@ -232,10 +232,10 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.handle(regiment);
             w.vec(target);
             match facing {
-                Some(a) => w.var(a.0 as u64 + 1),
+                Some(a) => w.var(u64::from(a.0) + 1),
                 None => w.var(0),
             }
-            w.var(files as u64);
+            w.var(u64::from(files));
             w.fx(pace);
         }
         Command::Attack { regiment, target } => {
@@ -249,7 +249,7 @@ pub fn write_command(w: &mut Writer, c: &Command) {
         }
         Command::TuneUnit { unit, stats } => {
             w.u8(4);
-            w.var(unit as u64);
+            w.var(u64::from(unit));
             write_stats(w, &stats);
         }
         Command::SetFormation {
@@ -344,20 +344,23 @@ mod tests {
         }
     }
 
+    const U_CASES: [u64; 7] = [0, 1, 127, 128, 300, u32::MAX as u64, u64::MAX];
+    const I_CASES: [i64; 8] = [0, -1, 1, -64, 64, i32::MIN as i64, i64::MAX, i64::MIN];
+
     #[test]
     fn varints_round_trip() {
         let mut w = Writer::new();
-        for x in [0u64, 1, 127, 128, 300, u32::MAX as u64, u64::MAX] {
+        for x in U_CASES {
             w.var(x);
         }
-        for x in [0i64, -1, 1, -64, 64, i32::MIN as i64, i64::MAX, i64::MIN] {
+        for x in I_CASES {
             w.ivar(x);
         }
         let mut r = Reader::new(&w.buf);
-        for x in [0u64, 1, 127, 128, 300, u32::MAX as u64, u64::MAX] {
+        for x in U_CASES {
             assert_eq!(r.var(), Some(x));
         }
-        for x in [0i64, -1, 1, -64, 64, i32::MIN as i64, i64::MAX, i64::MIN] {
+        for x in I_CASES {
             assert_eq!(r.ivar(), Some(x));
         }
         assert!(r.is_empty());

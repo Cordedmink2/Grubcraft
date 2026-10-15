@@ -227,8 +227,8 @@ impl Replay {
         let mut w = Writer::default();
         w.bytes(self.note.as_bytes());
         w.u64(self.seed);
-        w.var(self.regiments as u64);
-        w.var(self.map_tiles as u64);
+        w.var(u64::from(self.regiments));
+        w.var(u64::from(self.map_tiles));
         w.var(self.units.len() as u64);
         for u in &self.units {
             w.stats(u);
@@ -240,16 +240,16 @@ impl Replay {
         w.var(self.heights.len() as u64);
         let mut prev = 0u16;
         for &h in &self.heights {
-            w.ivar(h.wrapping_sub(prev) as i16 as i64);
+            w.ivar(i64::from(h.wrapping_sub(prev) as i16));
             prev = h;
         }
-        w.var(self.water_level as u64);
+        w.var(u64::from(self.water_level));
         w.bytes(&self.cover);
-        w.var(self.ticks as u64);
+        w.var(u64::from(self.ticks));
         w.var(self.turns.len() as u64);
         let mut prev = 0;
         for (tick, commands) in &self.turns {
-            w.var((tick - prev) as u64);
+            w.var(u64::from(tick - prev));
             prev = *tick;
             w.var(commands.len() as u64);
             for c in commands {
@@ -259,7 +259,7 @@ impl Replay {
         w.var(self.checkpoints.len() as u64);
         let mut prev = 0;
         for &(tick, hash) in &self.checkpoints {
-            w.var((tick - prev) as u64);
+            w.var(u64::from(tick - prev));
             prev = tick;
             w.u64(hash);
         }

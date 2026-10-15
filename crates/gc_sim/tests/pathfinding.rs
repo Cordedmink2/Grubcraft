@@ -71,8 +71,10 @@ fn move_to(w: &mut World, player: u8, regiment: RegimentHandle, x: i32, y: i32) 
 /// Whether the cell under `p` is blocked on `nav` (a map `tiles` across).
 fn on_blocked(nav: &[u8], tiles: i32, p: FxVec2) -> bool {
     let side = tiles * CELLS_PER_TILE;
-    let cell =
-        |v: Fx| ((v.raw() as i64 * CELLS_PER_TILE as i64) >> 16).clamp(0, side as i64 - 1) as i32;
+    let cell = |v: Fx| {
+        ((i64::from(v.raw()) * i64::from(CELLS_PER_TILE)) >> 16).clamp(0, i64::from(side) - 1)
+            as i32
+    };
     nav[(cell(p.y) * side + cell(p.x)) as usize] == BLOCKED
 }
 

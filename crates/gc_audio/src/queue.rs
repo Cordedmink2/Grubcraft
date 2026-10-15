@@ -39,13 +39,13 @@ impl Command {
                 priority,
             } => {
                 1 | (sound as u64) << 8
-                    | (gain as u64) << 16
-                    | (pan as u8 as u64) << 24
-                    | (priority as u64) << 32
+                    | u64::from(gain) << 16
+                    | u64::from(pan as u8) << 24
+                    | u64::from(priority) << 32
             }
-            Command::MusicIntensity(v) => 2 | (v as u64) << 8,
-            Command::MusicVolume(v) => 3 | (v as u64) << 8,
-            Command::MasterVolume(v) => 4 | (v as u64) << 8,
+            Command::MusicIntensity(v) => 2 | u64::from(v) << 8,
+            Command::MusicVolume(v) => 3 | u64::from(v) << 8,
+            Command::MasterVolume(v) => 4 | u64::from(v) << 8,
             Command::StopEffects => 5,
         }
     }

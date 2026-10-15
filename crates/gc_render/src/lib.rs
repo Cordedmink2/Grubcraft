@@ -231,7 +231,7 @@ impl Renderer {
             .formats
             .iter()
             .copied()
-            .find(|f| f.is_srgb())
+            .find(wgpu::TextureFormat::is_srgb)
             .unwrap_or(caps.formats[0]);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -542,7 +542,7 @@ impl Renderer {
         self.static_gpu_bytes -= self.chunk_instances.size();
         self.chunk_instances = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chunk instances"),
-            size: chunk_count as u64 * 8,
+            size: u64::from(chunk_count) * 8,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -756,7 +756,7 @@ impl Renderer {
                     pass.draw_indexed(first..first + count, base, b.first..end);
                     draw_calls += 1;
                     soldiers_drawn += end - b.first;
-                    triangles += (count / 3) as u64 * (end - b.first) as u64;
+                    triangles += u64::from(count / 3) * u64::from(end - b.first);
                 }
             }
             if !boxes.is_empty() {
@@ -1029,7 +1029,7 @@ fn make_depth(
     let bytes = if transient_saves_memory {
         0
     } else {
-        config.width as u64 * config.height as u64 * 4
+        u64::from(config.width) * u64::from(config.height) * 4
     };
     (
         texture.create_view(&wgpu::TextureViewDescriptor::default()),
@@ -1040,7 +1040,7 @@ fn make_depth(
 /// Triangle-list indices for a `quads × quads` grid of `(quads+1)²` vertices.
 fn chunk_grid_indices(quads: u32) -> Vec<u16> {
     let side = quads + 1;
-    assert!(side * side <= u16::MAX as u32 + 1);
+    assert!(side * side <= u32::from(u16::MAX) + 1);
     let mut out = Vec::with_capacity((quads * quads * 6) as usize);
     for y in 0..quads {
         for x in 0..quads {
@@ -1076,7 +1076,7 @@ fn aabb_visible(planes: &[Vec4; 6], min: Vec3, max: Vec3) -> bool {
 }
 
 fn srgb_to_linear(c: f32) -> f64 {
-    let c = c as f64;
+    let c = f64::from(c);
     if c <= 0.04045 {
         c / 12.92
     } else {
@@ -1092,7 +1092,7 @@ mod tests {
     fn grid_indices_cover_every_quad() {
         let idx = chunk_grid_indices(CHUNK_QUADS);
         assert_eq!(idx.len() as u32, CHUNK_QUADS * CHUNK_QUADS * 6);
-        let max = *idx.iter().max().unwrap() as u32;
+        let max = u32::from(*idx.iter().max().unwrap());
         assert_eq!(max, (CHUNK_QUADS + 1) * (CHUNK_QUADS + 1) - 1);
     }
 

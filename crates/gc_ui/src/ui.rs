@@ -238,10 +238,10 @@ impl Ui {
             .text(r.x, r.y + (r.h - 16) / 2, 1, theme::TEXT, label);
         self.draw.rect(track, theme::FIELD);
         self.draw.rect(
-            Rect::new(track.x, track.y, track.w * *value as i32 / 100, track.h),
+            Rect::new(track.x, track.y, track.w * i32::from(*value) / 100, track.h),
             theme::ACCENT,
         );
-        let knob_x = track.x + track.w * *value as i32 / 100;
+        let knob_x = track.x + track.w * i32::from(*value) / 100;
         let knob = Rect::new(knob_x - 5, r.y + (r.h - 22) / 2, 10, 22);
         self.draw.rect(
             knob,

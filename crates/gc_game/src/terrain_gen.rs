@@ -20,7 +20,7 @@ pub fn start_positions(tiles: u32) -> [Vec2; 4] {
 
 /// [`start_positions`] in whole tiles, for map making.
 fn start_tiles(tiles: u32) -> [(i64, i64); 4] {
-    let (q1, q3) = (tiles as i64 / 4, tiles as i64 * 3 / 4);
+    let (q1, q3) = (i64::from(tiles) / 4, i64::from(tiles) * 3 / 4);
     [(q1, q1), (q3, q1), (q1, q3), (q3, q3)]
 }
 
@@ -42,7 +42,7 @@ impl Heightmap {
         let samples_per_tile = SAMPLES_PER_TILE as u32;
         let size = tiles * samples_per_tile + 1;
         let noise = Noise { seed: seed as u32 };
-        let n = tiles as i64;
+        let n = i64::from(tiles);
         // In samples: the map's centre and the start plateaus' centres.
         let centre = n * SAMPLES_PER_TILE / 2;
         let starts = start_tiles(tiles).map(|(x, z)| (x * SAMPLES_PER_TILE, z * SAMPLES_PER_TILE));
@@ -56,8 +56,8 @@ impl Heightmap {
         let last = n * SAMPLES_PER_TILE;
 
         let mut heights = Vec::with_capacity((size * size) as usize);
-        for sz in 0..size as i64 {
-            for sx in 0..size as i64 {
+        for sz in 0..i64::from(size) {
+            for sx in 0..i64::from(size) {
                 let mut h =
                     ONE * 28 / 100 + 42 * noise.fbm(sx * ONE / 224, sz * ONE / 224, 5) / 100;
 
@@ -65,7 +65,7 @@ impl Heightmap {
                 // sin((0.8 x + 0.35 z) / 21) for x, z in tiles, as an angle
                 // in 65,536ths of a turn.
                 let turn = (80 * sx + 35 * sz) * 124_171 / 100_000;
-                let rib = ONE - Angle(turn as u16).sin().raw().abs() as i64;
+                let rib = ONE - i64::from(Angle(turn as u16).sin().raw().abs());
                 let rib2 = rib * rib / ONE;
                 let rib6 = rib2 * rib2 / ONE * rib2 / ONE;
                 if rib6 > 0 {
@@ -94,7 +94,7 @@ impl Heightmap {
                 let edge = sx.min(sz).min(last - sx).min(last - sz) * ONE / SAMPLES_PER_TILE;
                 h = h * (smoothstep(0, 10 * ONE, edge) * 85 / 100 + ONE * 15 / 100) / ONE;
 
-                heights.push((h.clamp(0, ONE) * u16::MAX as i64 / ONE) as u16);
+                heights.push((h.clamp(0, ONE) * i64::from(u16::MAX) / ONE) as u16);
             }
         }
         let mut map = Heightmap {
@@ -127,13 +127,13 @@ impl Heightmap {
 
     /// The water line, in tiles, for drawing and the computer players.
     pub fn water_level(&self) -> f32 {
-        WATER as f32 * self.max_height() / u16::MAX as f32
+        WATER as f32 * self.max_height() / f32::from(u16::MAX)
     }
 
     fn sample(&self, x: i32, z: i32) -> f32 {
         let max = self.size as i32 - 1;
         let i = (z.clamp(0, max) * self.size as i32 + x.clamp(0, max)) as usize;
-        self.heights[i] as f32 * (self.max_height() / u16::MAX as f32)
+        f32::from(self.heights[i]) * (self.max_height() / f32::from(u16::MAX))
     }
 
     /// Bilinear height in tiles at a map position in tiles (matches the shader).
@@ -181,7 +181,7 @@ impl Heightmap {
         let step = self.samples_per_tile / cells_per_tile; // samples per cell
         let side = (self.size - 1) / step;
         // Stored heights per hundredth of a tile is u16::MAX / (MAX_HEIGHT * 100).
-        let hundredths = |n: i64| (n * u16::MAX as i64 / (MAX_HEIGHT * 100)) as u32;
+        let hundredths = |n: i64| (n * i64::from(u16::MAX) / (MAX_HEIGHT * 100)) as u32;
         let cliff = hundredths(CLIFF_RISE_PER_TILE) / cells_per_tile;
         let steep = cliff / 2;
         let water = WATER as u32;
@@ -193,7 +193,7 @@ impl Heightmap {
                 let (mut lo, mut hi, mut sum, mut n) = (u32::MAX, 0, 0, 0);
                 for sz in cy * step..=(cy + 1) * step {
                     for sx in cx * step..=(cx + 1) * step {
-                        let h = self.heights[(sz * self.size + sx) as usize] as u32;
+                        let h = u32::from(self.heights[(sz * self.size + sx) as usize]);
                         lo = lo.min(h);
                         hi = hi.max(h);
                         sum += h;
@@ -226,18 +226,18 @@ impl Heightmap {
         let half = self.samples_per_tile / 2;
         // Stored samples to sim units: an integer rule, so every machine
         // agrees given the same samples.
-        let scale = MAX_HEIGHT as u64 * gc_sim::terrain::HEIGHT_UNITS as u64;
+        let scale = MAX_HEIGHT as u64 * u64::from(gc_sim::terrain::HEIGHT_UNITS);
         let mut heights = Vec::with_capacity((tiles * tiles) as usize);
         for y in 0..tiles {
             for x in 0..tiles {
                 let s = (y * self.samples_per_tile + half) * self.size
                     + x * self.samples_per_tile
                     + half;
-                let h = self.heights[s as usize] as u64 * scale / u16::MAX as u64;
+                let h = u64::from(self.heights[s as usize]) * scale / u64::from(u16::MAX);
                 heights.push(h as u16);
             }
         }
-        (heights, (WATER as u64 * scale / u16::MAX as u64) as u16)
+        (heights, (WATER as u64 * scale / u64::from(u16::MAX)) as u16)
     }
 
     /// The ground as the computer players read it: the walkable-ground
@@ -279,9 +279,10 @@ impl Heightmap {
     /// the map's edge stay open.
     fn grow_cover(&self, seed: u64) -> Vec<u8> {
         let (heights, water) = (&self.sim_heights, self.sim_water);
-        let n = ((self.size - 1) / self.samples_per_tile) as i64;
-        let at =
-            |x: i64, y: i64| heights[(y.clamp(0, n - 1) * n + x.clamp(0, n - 1)) as usize] as i64;
+        let n = i64::from((self.size - 1) / self.samples_per_tile);
+        let at = |x: i64, y: i64| {
+            i64::from(heights[(y.clamp(0, n - 1) * n + x.clamp(0, n - 1)) as usize])
+        };
         let starts = start_tiles(n as u32);
         let mut cover = Vec::with_capacity((n * n) as usize);
         for y in 0..n {
@@ -296,7 +297,7 @@ impl Heightmap {
                     (x - sx) * (x - sx) + (y - sy) * (y - sy)
                         < COVER_CLEAR_OF_STARTS * COVER_CLEAR_OF_STARTS
                 });
-                let kind = if h < water as i64
+                let kind = if h < i64::from(water)
                     || slope > COVER_STEEPEST
                     || edge < COVER_CLEAR_OF_EDGE
                     || near_start
@@ -373,7 +374,7 @@ impl Noise {
         h ^= h >> 13;
         h = h.wrapping_mul(0x5bd1_e995);
         h ^= h >> 15;
-        (h & 0xffff) as i64
+        i64::from(h & 0xffff)
     }
 
     /// Noise at a fixed-point position on a lattice one unit apart.
@@ -426,7 +427,7 @@ mod tests {
         assert_eq!(water, (hm.water_level() * 256.0) as u16);
         for (x, y) in [(3, 5), (16, 16), (40, 22), (63, 63)] {
             let want = hm.height_at(x as f32 + 0.5, y as f32 + 0.5) * 256.0;
-            let got = heights[y * 64 + x] as f32;
+            let got = f32::from(heights[y * 64 + x]);
             assert!((got - want).abs() <= 1.0, "tile {x},{y}: {got} vs {want}");
         }
     }

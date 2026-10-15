@@ -56,7 +56,7 @@ impl DoctrineLikes {
             Doctrine::SkirmishScreen => self.skirmish_screen,
             Doctrine::Ambush => self.ambush,
         };
-        v as f32 / 100.0
+        f32::from(v) / 100.0
     }
 }
 
@@ -81,23 +81,23 @@ pub struct Personality {
 impl Personality {
     /// A trait as 0 to 1.
     pub fn aggression(&self) -> f32 {
-        self.aggression as f32 / 100.0
+        f32::from(self.aggression) / 100.0
     }
 
     pub fn caution(&self) -> f32 {
-        self.caution as f32 / 100.0
+        f32::from(self.caution) / 100.0
     }
 
     pub fn patience(&self) -> f32 {
-        self.patience as f32 / 100.0
+        f32::from(self.patience) / 100.0
     }
 
     pub fn cunning(&self) -> f32 {
-        self.cunning as f32 / 100.0
+        f32::from(self.cunning) / 100.0
     }
 
     pub fn opportunism(&self) -> f32 {
-        self.opportunism as f32 / 100.0
+        f32::from(self.opportunism) / 100.0
     }
 }
 

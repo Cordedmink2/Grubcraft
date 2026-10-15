@@ -68,7 +68,7 @@ pub(crate) fn layout(text: &str, out: &mut Vec<UiQuad>) {
                     top + row as u16 * GLYPH_HEIGHT as u16,
                 ],
                 size: [GLYPH_WIDTH as u16, GLYPH_HEIGHT as u16],
-                glyph: (code - FIRST_CHAR) as u32,
+                glyph: u32::from(code - FIRST_CHAR),
                 color: [235, 238, 242, 255],
             });
         }
@@ -107,7 +107,7 @@ mod tests {
         assert_eq!(out.len(), 5);
         assert_eq!(out[0].glyph, SOLID);
         assert_eq!(out[0].size, [5 * 8, 3 * 16]);
-        assert_eq!(out[1].glyph, (b'a' - FIRST_CHAR) as u32);
+        assert_eq!(out[1].glyph, u32::from(b'a' - FIRST_CHAR));
         assert_eq!(out[4].pos[0] - out[3].pos[0], 2 * GLYPH_WIDTH as u16);
         assert_eq!(out[3].pos[1] - out[1].pos[1], GLYPH_HEIGHT as u16);
     }
@@ -116,7 +116,7 @@ mod tests {
     fn non_ascii_becomes_question_mark() {
         let mut out = Vec::new();
         layout("é", &mut out);
-        assert_eq!(out[1].glyph, (b'?' - FIRST_CHAR) as u32);
+        assert_eq!(out[1].glyph, u32::from(b'?' - FIRST_CHAR));
     }
 
     #[test]

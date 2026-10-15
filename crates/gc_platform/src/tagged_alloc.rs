@@ -106,7 +106,9 @@ fn offset_for(layout: Layout) -> usize {
 #[inline]
 fn current_tag() -> u8 {
     // `try_with` so allocations during thread teardown still work.
-    CURRENT.try_with(|c| c.get()).unwrap_or(Tag::Other as u8)
+    CURRENT
+        .try_with(std::cell::Cell::get)
+        .unwrap_or(Tag::Other as u8)
 }
 
 unsafe impl GlobalAlloc for TaggedAlloc {

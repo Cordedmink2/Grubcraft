@@ -100,7 +100,7 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
             difficulty: Difficulty::General,
             // Personalities take turns, so every one is tested.
             personality: (seed / 2) as usize + party as usize * 3,
-            seed: seed * 2 + party as u64,
+            seed: seed * 2 + u64::from(party),
         };
         match side {
             Side::Mind(difficulty) => {
@@ -161,9 +161,9 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
     let standing = |party: PlayerId| {
         let (mut left, mut all) = (0.0, 0.0);
         for r in view.regiments.iter().filter(|r| r.owner == party) {
-            all += r.full as f32;
+            all += f32::from(r.full);
             if !r.broken() {
-                left += r.models as f32;
+                left += f32::from(r.models);
             }
         }
         left / all.max(1.0)
@@ -328,7 +328,7 @@ fn print_field(view: &Perception, us: PlayerId, mind: Option<&Mind>) {
 /// One General battle, traced: against charge-straight-in, or against
 /// `AI_AGAINST=Recruit|Veteran|General`.
 #[test]
-#[ignore]
+#[ignore = "traces one battle, run by hand"]
 fn one() {
     let seed = std::env::var("AI_TRACE")
         .ok()
@@ -365,7 +365,7 @@ fn against() -> Side {
 /// Win rates over many battles, every level against charge-straight-in and
 /// against the level below.
 #[test]
-#[ignore]
+#[ignore = "slow: hundreds of arena battles, run by hand"]
 fn sweep() {
     let n = battles();
     let seeds = first_seed()..=first_seed() + n - 1;
@@ -386,7 +386,7 @@ fn sweep() {
 
 /// What a fair fight and doing nothing score, for scale.
 #[test]
-#[ignore]
+#[ignore = "slow: arena battles for scale, run by hand"]
 fn yardsticks() {
     let n = battles();
     for side in [Side::Charge, Side::Idle] {
@@ -401,7 +401,7 @@ type Tune = (&'static str, fn(&mut Knobs));
 /// `AI_AGAINST=Veteran` the opponent (charge straight in by default), and
 /// `AI_TUNE=<text>` runs only the variants whose name contains it.
 #[test]
-#[ignore]
+#[ignore = "slow: arena battles per tuning knob, run by hand"]
 fn knob_study() {
     let n = battles();
     let level = match std::env::var("AI_LEVEL").as_deref() {

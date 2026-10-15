@@ -255,7 +255,7 @@ fn a_disordered_block_fights_worse() {
                 let hp = |w: &World| -> u32 {
                     w.regiments
                         .model_hp(enemy)
-                        .map_or(0, |v| v.iter().map(|&x| x as u32).sum())
+                        .map_or(0, |v| v.iter().map(|&x| u32::from(x)).sum())
                 };
                 let before = hp(&w);
                 for _ in 0..10 * 20 {

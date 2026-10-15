@@ -44,7 +44,7 @@ fn main() -> ExitCode {
             "info" => info(file),
             _ => return usage(),
         };
-        failed += !ok as usize;
+        failed += usize::from(!ok);
     }
     if failed > 0 {
         eprintln!("{failed} of {} replays failed", files.len());
@@ -183,7 +183,7 @@ fn info(file: &Path) -> bool {
                     spawned.resize(p + 1, (0, 0));
                 }
                 spawned[p].0 += 1;
-                spawned[p].1 += replay.units.get(unit as usize).map_or(0, |u| u.models) as u32;
+                spawned[p].1 += u32::from(replay.units.get(unit as usize).map_or(0, |u| u.models));
             }
         }
     }

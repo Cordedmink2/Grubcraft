@@ -139,7 +139,7 @@ fn shrink(img: &Image, path: &Path, enc: Encoding) -> Result<Layer, String> {
         .0
         .iter()
         .map(|c| {
-            let f = |i: usize| c[i] as f32 / 255.0;
+            let f = |i: usize| f32::from(c[i]) / 255.0;
             let col = |i: usize| {
                 if enc == Encoding::Srgb {
                     srgb_to_linear(f(i))

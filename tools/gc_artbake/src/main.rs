@@ -449,7 +449,7 @@ fn bake_model(
 ) -> Result<BakedModel, String> {
     let src = load(path)?;
     let doc = &src.doc;
-    let get = |b: gltf::Buffer<'_>| src.buffers.get(b.index()).map(|v| v.as_slice());
+    let get = |b: gltf::Buffer<'_>| src.buffers.get(b.index()).map(std::vec::Vec::as_slice);
     let skel = Skeleton::new(doc);
     let rest_globals = skel.globals(&skel.rest);
 
@@ -571,7 +571,7 @@ fn bake_model(
                 let mut color = Vec3::splat(255.0) * factor.truncate();
                 if let Some(img) = texture {
                     let c = img.sample(uvs[k]);
-                    color *= Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32) / 255.0;
+                    color *= Vec3::new(f32::from(c[0]), f32::from(c[1]), f32::from(c[2])) / 255.0;
                 }
                 verts.push(Vert {
                     pos: to_model.transform_point3(positions[k]),
@@ -651,7 +651,7 @@ fn bake_model(
     // 4. Two levels of detail, each ordered for the vertex cache.
     let positions: Vec<[f32; 3]> = welded
         .iter()
-        .map(|v| v.pos.map(|c| c as f32 / POSITION_SCALE))
+        .map(|v| v.pos.map(|c| f32::from(c) / POSITION_SCALE))
         .collect();
     let adapter = meshopt::VertexDataAdapter::new(bytemuck::cast_slice(&positions), 12, 0)
         .map_err(|e| e.to_string())?;
@@ -745,11 +745,15 @@ fn quantise(
     let q = |c: f32| {
         (c * POSITION_SCALE)
             .round()
-            .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16
     };
     let n = |c: f32| (c * 127.0).round().clamp(-127.0, 127.0) as i8;
     let unorm16 = |c: f32| (c.clamp(0.0, 1.0) * 65535.0).round() as u16;
-    let color = Vec3::new(v.color[0] as f32, v.color[1] as f32, v.color[2] as f32);
+    let color = Vec3::new(
+        f32::from(v.color[0]),
+        f32::from(v.color[1]),
+        f32::from(v.color[2]),
+    );
     let (hue, saturation) = hue_saturation(color / 255.0);
     let is_team = team.iter().any(|t| t.distance(color) <= tolerance)
         || team_hue.is_some_and(|(lo, hi, sat)| hue >= lo && hue <= hi && saturation >= sat);
@@ -818,7 +822,7 @@ fn quantise_weights(
         }
     }
     b[0] = bones[0].0;
-    w[0] = 255 - w[1..].iter().map(|&x| x as u32).sum::<u32>().min(255) as u8;
+    w[0] = 255 - w[1..].iter().map(|&x| u32::from(x)).sum::<u32>().min(255) as u8;
     (b, w)
 }
 
@@ -956,7 +960,7 @@ fn sample_clip<'a>(
                 Keys::Translation(v) => trs.t = ch.key(v, a).lerp(ch.key(v, b), x),
                 Keys::Scale(v) => trs.s = ch.key(v, a).lerp(ch.key(v, b), x),
                 Keys::Rotation(v) => {
-                    trs.r = ch.key(v, a).normalize().slerp(ch.key(v, b).normalize(), x)
+                    trs.r = ch.key(v, a).normalize().slerp(ch.key(v, b).normalize(), x);
                 }
             }
         }
@@ -981,15 +985,15 @@ mod tests {
         let skin = top_weights(&[(3, 0.2), (7, 0.7), (9, 0.08), (2, 0.02)]);
         let (bones, weights) = quantise_weights(&skin);
         assert_eq!(bones, [7, 3, 9, 0]);
-        assert_eq!(weights.iter().map(|&w| w as u32).sum::<u32>(), 255);
+        assert_eq!(weights.iter().map(|&w| u32::from(w)).sum::<u32>(), 255);
         assert_eq!(weights[3], 0);
         let (_, even) = quantise_weights(&top_weights(&[(1, 0.5), (2, 0.5)]));
-        assert!(even[0] >= even[1] && even[0] as u32 + even[1] as u32 == 255);
+        assert!(even[0] >= even[1] && u32::from(even[0]) + u32::from(even[1]) == 255);
     }
 
     #[test]
     fn the_heaviest_four_of_eight_influences_are_kept() {
-        let inf: Vec<(u16, f32)> = (0..8).map(|j| (j, j as f32 + 1.0)).collect();
+        let inf: Vec<(u16, f32)> = (0..8).map(|j| (j, f32::from(j) + 1.0)).collect();
         let (bones, _) = quantise_weights(&top_weights(&inf));
         assert_eq!(bones, [7, 6, 5, 4]);
     }

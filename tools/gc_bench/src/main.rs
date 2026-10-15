@@ -241,7 +241,7 @@ fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
             spawns.push(PlayerCommand {
                 player,
                 command: Command::SpawnRegiment {
-                    unit: (player % 4) as u16,
+                    unit: u16::from(player % 4),
                     position: FxVec2::from_ints(cx + (k % 6) * 8 - 20, cy + (k / 6) * 6 - 15),
                     facing: NORTH,
                 },
@@ -311,13 +311,17 @@ fn grand_battle(opts: &Options) -> bool {
         timings.tick(&mut world, replay.commands_at(tick));
         if tick == 0 {
             regiments = world.regiments.len();
-            soldiers = world.regiments.iter().map(|r| r.models as u32).sum::<u32>();
+            soldiers = world
+                .regiments
+                .iter()
+                .map(|r| u32::from(r.models))
+                .sum::<u32>();
         }
         let in_melee: u32 = world
             .regiments
             .iter()
             .filter(|r| r.engaged)
-            .map(|r| r.models as u32)
+            .map(|r| u32::from(r.models))
             .sum();
         if in_melee > most_in_melee.0 {
             most_in_melee = (in_melee, tick + 1);

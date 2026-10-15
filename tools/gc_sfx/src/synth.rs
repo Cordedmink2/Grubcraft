@@ -645,13 +645,13 @@ mod tests {
     #[test]
     fn loops_join_without_a_click() {
         for c in all().into_iter().filter(|c| c.looped) {
-            let last = *c.pcm.last().unwrap() as i32;
-            let first = c.pcm[0] as i32;
+            let last = i32::from(*c.pcm.last().unwrap());
+            let first = i32::from(c.pcm[0]);
             // Neighbouring samples in the middle of the music differ by this much.
             let typical = c
                 .pcm
                 .windows(2)
-                .map(|w| (w[1] as i32 - w[0] as i32).abs())
+                .map(|w| (i32::from(w[1]) - i32::from(w[0])).abs())
                 .sum::<i32>()
                 / c.pcm.len() as i32;
             assert!(

@@ -77,7 +77,7 @@ pub const TUNABLES: &[Tunable] = &[
     Tunable {
         label: "charge bonus",
         show: |s| format!("{}%", s.charge_bonus),
-        nudge: |s, d| s.charge_bonus = (s.charge_bonus as i32 + d * 5).clamp(0, 255) as u8,
+        nudge: |s, d| s.charge_bonus = (i32::from(s.charge_bonus) + d * 5).clamp(0, 255) as u8,
     },
     Tunable {
         label: "range",
@@ -92,7 +92,7 @@ pub const TUNABLES: &[Tunable] = &[
     Tunable {
         label: "reload",
         show: |s| {
-            let secs = s.reload_ticks as f32 / gc_sim::TICKS_PER_SECOND as f32;
+            let secs = f32::from(s.reload_ticks) / gc_sim::TICKS_PER_SECOND as f32;
             format!("{secs:.2} s")
         },
         nudge: |s, d| s.reload_ticks = count(s.reload_ticks, d * 5).max(1),
@@ -142,8 +142,8 @@ pub const TUNABLES: &[Tunable] = &[
         label: "soldiers",
         show: |s| format!("{} (new regiments)", s.models),
         nudge: |s, d| {
-            s.models =
-                (s.models as i32 + d * 5).clamp(1, gc_sim::formation::MAX_MODELS as i32) as u16;
+            s.models = (i32::from(s.models) + d * 5)
+                .clamp(1, i32::from(gc_sim::formation::MAX_MODELS)) as u16;
             s.files = s.files.min(s.models);
         },
     },
@@ -158,11 +158,11 @@ fn fx(v: Fx) -> f32 {
 }
 
 fn percent(v: u8, d: i32) -> u8 {
-    (v as i32 + d).clamp(0, 100) as u8
+    (i32::from(v) + d).clamp(0, 100) as u8
 }
 
 fn count(v: u16, d: i32) -> u16 {
-    (v as i32 + d).clamp(0, u16::MAX as i32) as u16
+    (i32::from(v) + d).clamp(0, i32::from(u16::MAX)) as u16
 }
 
 /// Where `data/` is when the game runs from a checkout of the repository:

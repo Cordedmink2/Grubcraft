@@ -32,7 +32,7 @@ pub fn map_hash(nav: &[u8], ground: &gc_sim::Ground) -> u64 {
 /// FNV-1a over a stream of bytes.
 pub fn fnv1a(bytes: impl IntoIterator<Item = u8>) -> u64 {
     bytes.into_iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     })
 }
 
@@ -47,7 +47,7 @@ pub fn save_report(report: &gc_net::Report) -> String {
         .unwrap_or_else(|| PathBuf::from("desync-reports"));
     let path = dir.join(format!(
         "desync-{stamp}-player{}.gcdesync",
-        report.me as u32 + 1
+        u32::from(report.me) + 1
     ));
     let saved = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, report.encode()));
     let line = match saved {

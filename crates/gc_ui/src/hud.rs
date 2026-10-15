@@ -385,7 +385,7 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
         let w = if frac > 0.0 { w.max(1) } else { 0 };
         draw.rect(Rect::new(track.x, track.y, w, track.h), color);
     };
-    let health = c.models as f32 / c.max_models.max(1) as f32;
+    let health = f32::from(c.models) / f32::from(c.max_models.max(1));
     let health_color = if health < 0.35 {
         theme::BAD
     } else {
@@ -398,7 +398,7 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
         CardState::Wavering => [236, 190, 60, 255],
         CardState::Routing => theme::BAD,
     };
-    bar(draw, y, c.morale as f32 / 100.0, morale_color);
+    bar(draw, y, f32::from(c.morale) / 100.0, morale_color);
     y += 9;
     if c.state == CardState::Routing {
         let label = Rect::new(portrait.x, portrait.bottom() - 18, portrait.w, 16);
@@ -416,7 +416,7 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
 }
 
 fn luma(c: [u8; 3]) -> u32 {
-    (c[0] as u32 * 3 + c[1] as u32 * 6 + c[2] as u32) / 10
+    (u32::from(c[0]) * 3 + u32::from(c[1]) * 6 + u32::from(c[2])) / 10
 }
 
 /// A 1-pixel line from `a` to `b`, kept inside `clip`.

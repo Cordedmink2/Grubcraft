@@ -234,7 +234,7 @@ impl Battle {
 pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
     let mut me = Slot::open(0);
     me.kind = SlotKind::Human;
-    me.name = settings.player_name.clone();
+    me.name.clone_from(&settings.player_name);
     me.faction = settings.faction;
     me.color = settings.player_color % 4;
     let mut ai = Slot::open(1);
@@ -434,7 +434,7 @@ mod tests {
 
     /// Each faction's Veteran against each faction standing still.
     #[test]
-    #[ignore]
+    #[ignore = "slow: 64 full battles, run by hand"]
     fn matchups() {
         use gc_ui::lobby::Faction as F;
         for ai in F::ALL {
@@ -466,7 +466,7 @@ mod tests {
     /// and battles nobody had won after ten minutes.
     /// `cargo test -p gc_game --release faction_table -- --ignored --nocapture`
     #[test]
-    #[ignore]
+    #[ignore = "slow: the full faction balance table, run by hand"]
     fn faction_table() {
         use gc_ui::lobby::Faction as F;
         let n: u64 = std::env::var("AI_BATTLES").map_or(24, |v| v.parse().unwrap());
@@ -573,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "opens a window to watch a battle"]
     fn watch() {
         let level = |v: &str| match v {
             "Recruit" => Difficulty::Recruit,
@@ -590,7 +590,7 @@ mod tests {
                 "seed {seed}: {:?} after {} s; minds {:.3} ms a tick on average, {:.2} ms at worst",
                 played.battle.outcome,
                 played.ticks / gc_sim::TICKS_PER_SECOND,
-                played.ai_time.as_secs_f64() * 1000.0 / played.ticks.max(1) as f64,
+                played.ai_time.as_secs_f64() * 1000.0 / f64::from(played.ticks.max(1)),
                 played.ai_worst.as_secs_f64() * 1000.0,
             );
         }

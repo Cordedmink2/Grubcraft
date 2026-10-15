@@ -16,15 +16,15 @@ fn check(ip: u32, port_index: u32) -> u64 {
     h.update(b"grubcraft join code");
     h.update(&ip.to_le_bytes());
     h.update(&[port_index as u8]);
-    (h.finalize().as_bytes()[0] & 0x3f) as u64
+    u64::from(h.finalize().as_bytes()[0] & 0x3f)
 }
 
 /// The code for a host at `ip` on `port`; `None` for a port that isn't a
 /// game port.
 pub fn encode(ip: Ipv4Addr, port: u16) -> Option<String> {
-    let index = port.checked_sub(DEFAULT_PORT).filter(|&i| i < PORTS)? as u32;
+    let index = u32::from(port.checked_sub(DEFAULT_PORT).filter(|&i| i < PORTS)?);
     let ip = u32::from(ip);
-    let bits = ((ip as u64) << 8) | ((index as u64) << 6) | check(ip, index);
+    let bits = (u64::from(ip) << 8) | (u64::from(index) << 6) | check(ip, index);
     let chars: String = (0..8)
         .rev()
         .map(|i| ALPHABET[((bits >> (i * 5)) & 31) as usize] as char)
@@ -103,7 +103,7 @@ mod tests {
         let mut caught = 0;
         let mut tries = 0;
         for i in [0, 1, 2, 3, 5, 6, 7, 8] {
-            for &c in ALPHABET.iter() {
+            for &c in ALPHABET {
                 if code.as_bytes()[i] == c {
                     continue;
                 }

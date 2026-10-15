@@ -32,8 +32,8 @@ pub fn ranks(files: u16, models: u16) -> u16 {
 pub fn block_size(files: u16, models: u16, file_spacing: Fx, rank_spacing: Fx) -> (Fx, Fx) {
     let files = files.clamp(1, models.max(1));
     (
-        file_spacing * files as i32,
-        rank_spacing * ranks(files, models) as i32,
+        file_spacing * i32::from(files),
+        rank_spacing * i32::from(ranks(files, models)),
     )
 }
 
@@ -41,13 +41,13 @@ pub fn block_size(files: u16, models: u16, file_spacing: Fx, rank_spacing: Fx) -
 /// centred behind the full ones.
 pub fn slot_offset(k: u16, files: u16, models: u16, file_spacing: Fx, rank_spacing: Fx) -> FxVec2 {
     let files = files.clamp(1, models.max(1));
-    let ranks = ranks(files, models) as i32;
-    let rank = (k / files) as i32;
-    let file = (k % files) as i32;
+    let ranks = i32::from(ranks(files, models));
+    let rank = i32::from(k / files);
+    let file = i32::from(k % files);
     let in_rank = if rank == ranks - 1 {
-        models as i32 - (ranks - 1) * files as i32
+        i32::from(models) - (ranks - 1) * i32::from(files)
     } else {
-        files as i32
+        i32::from(files)
     };
     FxVec2::new(
         Fx::from_raw((file_spacing * (2 * file - (in_rank - 1))).raw() / 2),
@@ -92,7 +92,7 @@ impl GroupMember {
             file_spacing,
             rank_spacing,
             speed: Fx::from_raw(
-                (stats.speed.raw() as i64 * r.formation.pace_percent() as i64 / 100) as i32,
+                (i64::from(stats.speed.raw()) * i64::from(r.formation.pace_percent()) / 100) as i32,
             ),
         }
     }
@@ -137,12 +137,12 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
     let n = members.len() as i32;
     let mut sum = (0i64, 0i64);
     for m in members.iter() {
-        sum.0 += m.position.x.raw() as i64;
-        sum.1 += m.position.y.raw() as i64;
+        sum.0 += i64::from(m.position.x.raw());
+        sum.1 += i64::from(m.position.y.raw());
     }
     let centre = FxVec2::new(
-        Fx::from_raw((sum.0 / n as i64) as i32),
-        Fx::from_raw((sum.1 / n as i64) as i32),
+        Fx::from_raw((sum.0 / i64::from(n)) as i32),
+        Fx::from_raw((sum.1 / i64::from(n)) as i32),
     );
     let facing = order.facing.unwrap_or_else(|| {
         let travel = order.target - centre;
@@ -158,13 +158,16 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
     // Refit frontages: each regiment gets a share of the line in proportion
     // to its current width.
     if let Some(width) = order.width {
-        let current: i64 = members.iter().map(|m| m.width(m.files).raw() as i64).sum();
-        let room = (width - GROUP_GAP * (n - 1)).max(Fx::ZERO).raw() as i64;
+        let current: i64 = members
+            .iter()
+            .map(|m| i64::from(m.width(m.files).raw()))
+            .sum();
+        let room = i64::from((width - GROUP_GAP * (n - 1)).max(Fx::ZERO).raw());
         for m in members.iter_mut() {
-            let share = room * m.width(m.files).raw() as i64 / current.max(1);
-            let spacing = m.file_spacing.raw().max(1) as i64;
+            let share = room * i64::from(m.width(m.files).raw()) / current.max(1);
+            let spacing = i64::from(m.file_spacing.raw().max(1));
             let files = (share + spacing / 2) / spacing;
-            m.files = files.clamp(1, m.models.max(1) as i64) as u16;
+            m.files = files.clamp(1, i64::from(m.models.max(1))) as u16;
         }
     }
 

@@ -5,6 +5,9 @@
 //! types instead of `f32`/`f64`; see `docs/10-architecture.md`.
 
 #![no_std]
+// Float maths through inferred types or literals, which the token check in
+// `gc_sim/tests/no_floats.rs` can miss. Test modules may use floats as a reference.
+#![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
 mod sin_table;
 
@@ -109,7 +112,7 @@ impl Mul for Fx {
     type Output = Fx;
     #[inline]
     fn mul(self, rhs: Fx) -> Fx {
-        Fx(((self.0 as i64 * rhs.0 as i64) >> FRAC_BITS) as i32)
+        Fx(((i64::from(self.0) * i64::from(rhs.0)) >> FRAC_BITS) as i32)
     }
 }
 
@@ -125,7 +128,7 @@ impl Div for Fx {
     type Output = Fx;
     #[inline]
     fn div(self, rhs: Fx) -> Fx {
-        Fx((((self.0 as i64) << FRAC_BITS) / rhs.0 as i64) as i32)
+        Fx(((i64::from(self.0) << FRAC_BITS) / i64::from(rhs.0)) as i32)
     }
 }
 
@@ -196,8 +199,8 @@ impl FxVec2 {
     /// Squared length in raw units (Q32.32), without overflow for any input.
     #[inline]
     pub fn length_sq_raw(self) -> u64 {
-        let x = self.x.0 as i64;
-        let y = self.y.0 as i64;
+        let x = i64::from(self.x.0);
+        let y = i64::from(self.y.0);
         (x * x) as u64 + (y * y) as u64
     }
 
@@ -218,8 +221,8 @@ impl FxVec2 {
     #[inline]
     pub fn dot(self, rhs: FxVec2) -> Fx {
         Fx(
-            ((self.x.0 as i64 * rhs.x.0 as i64 + self.y.0 as i64 * rhs.y.0 as i64) >> FRAC_BITS)
-                as i32,
+            ((i64::from(self.x.0) * i64::from(rhs.x.0) + i64::from(self.y.0) * i64::from(rhs.y.0))
+                >> FRAC_BITS) as i32,
         )
     }
 }
@@ -269,7 +272,7 @@ impl Angle {
     pub fn sin(self) -> Fx {
         // 1024 table entries, 64 angle steps between entries, linear interpolation.
         let idx = (self.0 >> 6) as usize;
-        let frac = (self.0 & 63) as i32;
+        let frac = i32::from(self.0 & 63);
         let a = sin_table::SIN_TABLE[idx];
         let b = sin_table::SIN_TABLE[idx + 1];
         Fx(a + (((b - a) * frac) >> 6))
@@ -294,18 +297,18 @@ impl Angle {
     /// Direction of `v` (integer `atan2`), or [`Angle::ZERO`] for a zero vector.
     /// Exact to one step of the sine table's interpolation.
     pub fn of_vec(v: FxVec2) -> Angle {
-        let x = (v.x.0 as i64).abs();
-        let y = (v.y.0 as i64).abs();
+        let x = i64::from(v.x.0).abs();
+        let y = i64::from(v.y.0).abs();
         if x == 0 && y == 0 {
             return Angle::ZERO;
         }
         // First quadrant: find the smallest a in [0, quarter] with
         // sin(a) * x >= cos(a) * y. The left side minus the right rises with a.
-        let (mut lo, mut hi) = (0u32, Angle::QUARTER.0 as u32);
+        let (mut lo, mut hi) = (0u32, u32::from(Angle::QUARTER.0));
         while lo < hi {
             let mid = (lo + hi) / 2;
             let a = Angle(mid as u16);
-            if a.sin().0 as i64 * x >= a.cos().0 as i64 * y {
+            if i64::from(a.sin().0) * x >= i64::from(a.cos().0) * y {
                 hi = mid;
             } else {
                 lo = mid + 1;
@@ -329,8 +332,8 @@ impl Angle {
 
     /// Turn toward `to` by at most `max_step`, never overshooting.
     pub fn turn_toward(self, to: Angle, max_step: u16) -> Angle {
-        let d = self.delta_to(to) as i32;
-        let step = max_step as i32;
+        let d = i32::from(self.delta_to(to));
+        let step = i32::from(max_step);
         if d.abs() <= step {
             to
         } else {
@@ -429,10 +432,10 @@ mod tests {
 
     #[test]
     fn trig_matches_float_reference() {
-        for step in 0..=u16::MAX as u32 {
+        for step in 0..=u32::from(u16::MAX) {
             let a = Angle(step as u16);
-            let expected = (step as f64 / 65536.0 * core::f64::consts::TAU).sin();
-            let got = a.sin().raw() as f64 / 65536.0;
+            let expected = (f64::from(step) / 65536.0 * core::f64::consts::TAU).sin();
+            let got = f64::from(a.sin().raw()) / 65536.0;
             assert!(
                 (got - expected).abs() < 5e-5,
                 "angle {step}: {got} vs {expected}"
@@ -469,8 +472,9 @@ mod tests {
                 continue;
             }
             let a = Angle::of_vec(v);
-            let expected = (v.y.0 as f64).atan2(v.x.0 as f64) / core::f64::consts::TAU * 65536.0;
-            let err = (a.0 as f64 - expected).rem_euclid(65536.0);
+            let expected =
+                f64::from(v.y.0).atan2(f64::from(v.x.0)) / core::f64::consts::TAU * 65536.0;
+            let err = (f64::from(a.0) - expected).rem_euclid(65536.0);
             let err = err.min(65536.0 - err);
             assert!(err <= 4.0, "{v:?}: got {} expected {expected}", a.0);
         }

@@ -532,7 +532,7 @@ impl Lan {
                 Err(e) if e.kind() == ErrorKind::WouldBlock => break,
                 // ICMP "port unreachable" from a peer that left shows up as
                 // an error on some systems; silence handles it.
-                Err(_) => continue,
+                Err(_) => {}
             }
         }
         self.check_silence(now);
@@ -834,7 +834,7 @@ impl Lan {
                             name
                         };
                         peer.slot = Some(slot);
-                        peer.name = name.clone();
+                        peer.name.clone_from(&name);
                         peer.drop_at = None;
                         let taken: Vec<u8> = h
                             .lobby
@@ -950,7 +950,7 @@ impl Lan {
                 c.game = Some(ClientGame {
                     map: HostMap { seed, map_hash },
                     me: you,
-                    delay: input_delay as u32,
+                    delay: u32::from(input_delay),
                     on_drop: settings.on_drop,
                     wait: None,
                     ready: VecDeque::new(),
@@ -982,13 +982,17 @@ impl Lan {
             Msg::Bye { reason } => self.lose_host(reason),
             Msg::Delay { turns } => {
                 if let Some(g) = &mut c.game {
-                    g.delay = turns as u32;
+                    g.delay = u32::from(turns);
                 }
             }
             Msg::Wait { who, seconds } => {
                 if let Some(g) = &mut c.game {
-                    g.wait = (!who.is_empty())
-                        .then(|| (who, Instant::now() + Duration::from_secs(seconds as u64)));
+                    g.wait = (!who.is_empty()).then(|| {
+                        (
+                            who,
+                            Instant::now() + Duration::from_secs(u64::from(seconds)),
+                        )
+                    });
                 }
             }
             Msg::Desync { tick } if c.game.is_some() => {
@@ -1079,7 +1083,7 @@ impl Lan {
             // Turns restart from now: none piled up during the pause.
             g.go_at = now.checked_sub(length * g.handed);
         }
-        g.waiting_for = who.clone();
+        g.waiting_for.clone_from(&who);
         for p in h.peers.iter_mut().filter(|p| !p.gone) {
             p.link.send(&Msg::Wait {
                 who: who.clone(),
@@ -1610,7 +1614,7 @@ impl Network for Lan {
                 _ => {
                     let why = self.events.iter().rev().find_map(|e| match e {
                         NetEvent::Left(why) => Some(why.clone()),
-                        _ => None,
+                        NetEvent::Started(_) => None,
                     });
                     self.events.clear();
                     return Err(NetError::Refused(why.unwrap_or_else(|| "Refused".into())));
@@ -1781,7 +1785,7 @@ fn parse_address(target: &str) -> Result<SocketAddr, NetError> {
     with_port
         .to_socket_addrs()
         .ok()
-        .and_then(|mut a| a.find(|a| a.is_ipv4()))
+        .and_then(|mut a| a.find(std::net::SocketAddr::is_ipv4))
         .ok_or_else(|| {
             NetError::BadAddress(format!(
                 "\"{target}\" is not an address or join code. Type the code the host's lobby shows, or their IP, like 192.168.1.20."

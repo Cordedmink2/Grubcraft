@@ -43,7 +43,7 @@ impl Writer {
     }
 
     pub fn fx(&mut self, v: Fx) {
-        self.ivar(v.raw() as i64);
+        self.ivar(i64::from(v.raw()));
     }
 
     pub fn vec(&mut self, v: FxVec2) {
@@ -52,25 +52,25 @@ impl Writer {
     }
 
     pub fn handle(&mut self, h: RegimentHandle) {
-        self.var(h.index as u64);
-        self.var(h.generation as u64);
+        self.var(u64::from(h.index));
+        self.var(u64::from(h.generation));
     }
 
     pub fn stats(&mut self, s: &UnitStats) {
         self.fx(s.speed);
-        self.var(s.turn_rate as u64);
-        self.var(s.models as u64);
-        self.var(s.hp_per_model as u64);
-        self.var(s.files as u64);
+        self.var(u64::from(s.turn_rate));
+        self.var(u64::from(s.models));
+        self.var(u64::from(s.hp_per_model));
+        self.var(u64::from(s.files));
         self.fx(s.file_spacing);
         self.fx(s.rank_spacing);
         self.u8(s.melee_attack);
         self.u8(s.melee_defence);
-        self.var(s.melee_damage as u64);
+        self.var(u64::from(s.melee_damage));
         self.u8(s.charge_bonus);
         self.fx(s.range);
-        self.var(s.missile_damage as u64);
-        self.var(s.reload_ticks as u64);
+        self.var(u64::from(s.missile_damage));
+        self.var(u64::from(s.reload_ticks));
         self.u8(s.accuracy);
         self.u8(s.morale);
         self.u8(s.mass as u8);
@@ -86,9 +86,9 @@ impl Writer {
                 facing,
             } => {
                 self.u8(0);
-                self.var(unit as u64);
+                self.var(u64::from(unit));
                 self.vec(position);
-                self.var(facing.0 as u64);
+                self.var(u64::from(facing.0));
             }
             Command::MoveTo {
                 regiment,
@@ -100,8 +100,8 @@ impl Writer {
                 self.u8(1);
                 self.handle(regiment);
                 self.vec(target);
-                self.var(facing.map_or(0, |a| a.0 as u64 + 1));
-                self.var(files as u64);
+                self.var(facing.map_or(0, |a| u64::from(a.0) + 1));
+                self.var(u64::from(files));
                 self.fx(pace);
             }
             Command::Attack { regiment, target } => {
@@ -115,7 +115,7 @@ impl Writer {
             }
             Command::TuneUnit { unit, stats } => {
                 self.u8(4);
-                self.var(unit as u64);
+                self.var(u64::from(unit));
                 self.stats(&stats);
             }
             Command::SetFormation {
@@ -160,7 +160,7 @@ impl<'a> Reader<'a> {
         let mut v = 0u64;
         for shift in (0..64).step_by(7) {
             let b = self.u8()?;
-            v |= ((b & 0x7f) as u64) << shift;
+            v |= u64::from(b & 0x7f) << shift;
             if b & 0x80 == 0 {
                 return Some(v);
             }

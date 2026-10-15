@@ -109,10 +109,10 @@ impl Link {
     pub fn packet(&mut self, now: Instant) -> Vec<u8> {
         let mut w = Writer::new();
         header(&mut w, Kind::Link);
-        w.var(self.millis(now) as u64);
+        w.var(u64::from(self.millis(now)));
         match self.echo {
             Some((stamp, at)) => {
-                w.var(stamp as u64 + 1);
+                w.var(u64::from(stamp) + 1);
                 w.var(now.duration_since(at).as_millis() as u64);
             }
             None => w.var(0),
@@ -255,7 +255,7 @@ mod tests {
         let mut got = Vec::new();
         let mut next = 0;
         for step in 0..400u32 {
-            let now = t0 + Duration::from_millis(step as u64 * 10);
+            let now = t0 + Duration::from_millis(u64::from(step) * 10);
             if step % 3 == 0 && next < 200 {
                 a.send(&notice(next));
                 next += 1;

@@ -205,7 +205,7 @@ impl Regiments {
         hp.fill(0);
         hp[..stats.models as usize].fill(stats.hp_per_model);
         self.speed[i] = Fx::from_raw(stats.speed.raw() / TICKS_PER_SECOND as i32);
-        self.turn[i] = (stats.turn_rate / TICKS_PER_SECOND).clamp(1, u16::MAX as u32) as u16;
+        self.turn[i] = (stats.turn_rate / TICKS_PER_SECOND).clamp(1, u32::from(u16::MAX)) as u16;
         self.target[i] = None;
         self.target_facing[i] = None;
         self.pace[i] = self.speed[i];
@@ -241,7 +241,8 @@ impl Regiments {
             }
             let old_speed = self.speed[i];
             self.speed[i] = Fx::from_raw(stats.speed.raw() / TICKS_PER_SECOND as i32);
-            self.turn[i] = (stats.turn_rate / TICKS_PER_SECOND).clamp(1, u16::MAX as u32) as u16;
+            self.turn[i] =
+                (stats.turn_rate / TICKS_PER_SECOND).clamp(1, u32::from(u16::MAX)) as u16;
             // A regiment marching at full speed keeps doing so; a slower
             // ordered pace is kept, but never above the new top speed.
             self.pace[i] = if self.pace[i] == old_speed {
@@ -370,11 +371,11 @@ impl Regiments {
         let hp = &mut self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize];
         while amount > 0 && self.models[i] > 0 {
             let k = self.models[i] as usize - 1;
-            if hp[k] as u32 > amount {
+            if u32::from(hp[k]) > amount {
                 hp[k] -= amount as u16;
                 amount = 0;
             } else {
-                amount -= hp[k] as u32;
+                amount -= u32::from(hp[k]);
                 hp[k] = 0;
                 self.models[i] -= 1;
             }
@@ -458,7 +459,7 @@ impl Regiments {
                     Fx::from_raw(pace.raw() / 2).max(Fx::from_raw(1))
                 } else {
                     let travel = Angle::of_vec(delta);
-                    let off = self.facing[i].delta_to(travel) as i32;
+                    let off = i32::from(self.facing[i].delta_to(travel));
                     self.facing[i] = self.facing[i].turn_toward(travel, turn);
                     if off.abs() > TURN_BEFORE_MARCH {
                         continue;
@@ -467,6 +468,7 @@ impl Regiments {
                 };
                 let step = terrain.wading(step, self.position[i]);
                 let step = crate::combat::pushing(step, self.crowd[i]);
+                debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
                 let here = self.position[i];
                 let arriving = dist <= step;
                 let dir = if dist.raw() > 0 {
@@ -495,7 +497,7 @@ impl Regiments {
                         Ok(_) => {}
                         Err(gap) => {
                             let ticks = gap.raw() / step.raw().max(1);
-                            self.clear[i] = ticks.clamp(0, CLEAR_TICKS as i32) as u8;
+                            self.clear[i] = ticks.clamp(0, i32::from(CLEAR_TICKS)) as u8;
                         }
                     }
                 }
@@ -529,7 +531,7 @@ impl Regiments {
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
         h.u32(self.len() as u32);
         for i in 0..self.alive.len() {
-            h.u8(self.alive[i] as u8);
+            h.u8(u8::from(self.alive[i]));
             h.u16(self.generation[i]);
             if !self.alive[i] {
                 continue;

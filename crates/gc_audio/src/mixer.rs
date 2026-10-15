@@ -73,7 +73,7 @@ impl Cursor {
             byte >> 4
         };
         self.next += 1;
-        Some(self.decoder.decode(nibble) as f32 * (1.0 / 32768.0))
+        Some(f32::from(self.decoder.decode(nibble)) * (1.0 / 32768.0))
     }
 
     /// The next output sample, `step` source samples further on (linear
@@ -181,9 +181,9 @@ impl Mixer {
                 pan,
                 priority,
             } => self.play(sound, gain, pan, priority),
-            Command::MusicIntensity(v) => self.intensity_target = v as f32 / 255.0,
-            Command::MusicVolume(v) => self.set_music_volume(v as f32 / 255.0),
-            Command::MasterVolume(v) => self.master = v as f32 / 255.0,
+            Command::MusicIntensity(v) => self.intensity_target = f32::from(v) / 255.0,
+            Command::MusicVolume(v) => self.set_music_volume(f32::from(v) / 255.0),
+            Command::MasterVolume(v) => self.master = f32::from(v) / 255.0,
             Command::StopEffects => {
                 for v in &mut self.voices {
                     v.active = false;
@@ -219,7 +219,7 @@ impl Mixer {
         let Some(clip) = self.bank.clip(sound) else {
             return;
         };
-        let score = (priority as u32) << 8 | gain as u32;
+        let score = u32::from(priority) << 8 | u32::from(gain);
         let same = self
             .voices
             .iter()
@@ -250,8 +250,8 @@ impl Mixer {
             self.meter.dropped.fetch_add(1, Ordering::Relaxed);
             return;
         };
-        let level = gain as f32 / 255.0 * EFFECT_LEVEL;
-        let pan = pan as f32 / 127.0;
+        let level = f32::from(gain) / 255.0 * EFFECT_LEVEL;
+        let pan = f32::from(pan) / 127.0;
         self.age = self.age.wrapping_add(1);
         self.voices[i] = Voice {
             sound,

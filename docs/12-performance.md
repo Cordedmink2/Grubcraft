@@ -127,7 +127,7 @@ Scenarios replayed headless (sim) and rendered with a scripted camera (frame):
 | `cold-start` | Launch to menu, menu to match |
 
 **Built so far:** three scenarios, gating tick p99 (≤ 2 ms), sim heap (≤ 8 MB) and allocations per tick (0). CI runs all three on every pull request. The first two run on a 256-tile ridged test map (`gc_sim::scenario::ribs_map`; `--open` runs them on an open plane instead).
-- `drill`: four scripted players with 300 regiments each, ordering moves and group moves and fighting, for 12,000 ticks. With pathfinding (M1 step 6) it measured about 0.75 to 0.9 ms p99 (0.5 ms on the open plane); since friends push through each other slowly and fall into disorder (2026-10-15) it runs about 1.35 times slower a tick (about 0.75 ms p99 on CI's Linux runner, 1.4 ms in the noisier cloud build container), with 2.7 MB of sim heap (the nav grid and portal graph are most of it) and 0 allocations, in the cloud build container.
+- `drill`: four scripted players with 300 regiments each, ordering moves and group moves and fighting, for 12,000 ticks. With pathfinding (M1 step 6) it measured about 0.75 to 0.9 ms p99 (0.5 ms on the open plane); since friends push through each other slowly and fall into disorder (2026-10-15) it runs about 1.35 times slower a tick (about 0.75 ms p99 on CI's Linux runner, 1.4 ms in the noisier cloud build container); the M1 performance pass took about 12% back (about 1.2 ms in the cloud container, see [the performance log](perf-log.md)), with 2.7 MB of sim heap (the nav grid and portal graph are most of it) and 0 allocations, in the cloud build container.
 - `pathing-storm`: 120 regiments ordered across the map in the same tick. It also gates how long the last one waits for its route (≤ 40 ticks, 2 s); today about 17 ticks, at about 0.45 ms p99.
 
 - `field-8000pt-2v2` (headless half): the recorded battle `replays/field-8000pt-2v2.gcr` played back. Four armies of about 1,500 soldiers (276 regiments, 6,052 soldiers; points arrive with the army builder, so "8,000 points" means 1,500 soldiers for now) on a generated 384-tile map with hills and rivers, every regiment ordered to attack the nearest enemy each second. Up to about 2,000 soldiers are in melee at once and half the field falls in the first minute. It measures about 0.05 ms p50, 0.3 ms p99 and 0.7 ms at worst a tick, 5.2 MB of sim heap and 0 allocations, in the cloud build container. The frame half (puppets and rendering of the same battle) needs in-game replay playback (M2 step 6) and a real GPU, so it is measured on Mario's machines.
@@ -141,7 +141,7 @@ The other scenarios need features that don't exist yet (a recorded hour-long 4-p
 
 ### The loop
 1. Each milestone ends with a **performance pass**: profile the benchmark suite, list the top three costs.
-2. Optimise them, measure, and record before/after numbers in `docs/perf-log.md` (started at the first milestone performance pass; until then, numbers are in each pull request).
+2. Optimise them, measure, and record before/after numbers in [the performance log](perf-log.md) (started with the M1 pass on 2026-10-15).
 3. Tighten budgets when there is headroom. Budgets only ever go down.
 
 ### Optimisation backlog (ideas to try when the numbers ask for it)

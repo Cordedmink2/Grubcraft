@@ -189,7 +189,7 @@ fn the_estimator_calls_eight_drill_battles_in_ten() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "slow: many arena battles, run by hand"]
 fn calls() {
     let n: u64 = std::env::var("AI_BATTLES")
         .ok()

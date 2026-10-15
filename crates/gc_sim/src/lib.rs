@@ -8,6 +8,9 @@
 //! - Iterate in index order; never iterate a hash map.
 
 #![no_std]
+// Float maths through inferred types or literals, which the token check in
+// `tests/no_floats.rs` can miss. Test modules may use floats as a reference.
+#![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
 extern crate alloc;
 
@@ -154,7 +157,7 @@ impl Formation {
             Formation::Loose => 150,
             Formation::ShieldWall => 70,
         };
-        Fx::from_raw((spacing.raw() as i64 * percent / 100).max(1) as i32)
+        Fx::from_raw((i64::from(spacing.raw()) * percent / 100).max(1) as i32)
     }
 
     /// Whether the soldiers stand closer than usual.
@@ -330,9 +333,9 @@ impl UnitStats {
     /// front rank, and for spears and pikes the second rank at
     /// [`SECOND_RANK_PERCENT`].
     pub fn front_fighters_percent(&self, files: u16, models: u16) -> u64 {
-        let front = files.min(models) as u64;
+        let front = u64::from(files.min(models));
         let second = if self.reach {
-            front.min(models as u64 - front)
+            front.min(u64::from(models) - front)
         } else {
             0
         };
@@ -354,7 +357,7 @@ impl UnitStats {
     /// its own, plus what close order gives or gaps cost. A shield wall
     /// guards its front only.
     pub fn melee_defence_in(&self, formation: Formation, front: bool) -> i32 {
-        self.melee_defence as i32
+        i32::from(self.melee_defence)
             + match formation {
                 Formation::ShieldWall if !front => 0,
                 f if f.close() => TIGHT_DEFENCE,

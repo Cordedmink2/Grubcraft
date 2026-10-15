@@ -94,7 +94,7 @@ pub struct DrawList {
 }
 
 fn clamp16(v: i32) -> u16 {
-    v.clamp(0, u16::MAX as i32) as u16
+    v.clamp(0, i32::from(u16::MAX)) as u16
 }
 
 impl DrawList {
@@ -153,7 +153,7 @@ impl DrawList {
             self.push(Quad {
                 pos: [clamp16(gx), clamp16(y)],
                 size: [clamp16(CELL_W * scale), clamp16(CELL_H * scale)],
-                glyph: (code - FIRST_CHAR) as u32,
+                glyph: u32::from(code - FIRST_CHAR),
                 color,
             });
         }
@@ -177,7 +177,7 @@ mod tests {
         d.text(10, 20, 2, [255; 4], "a b");
         assert_eq!(d.quads.len(), 2);
         assert_eq!(d.quads[0].size, [16, 32]);
-        assert_eq!(d.quads[0].glyph, (b'a' - 32) as u32);
+        assert_eq!(d.quads[0].glyph, u32::from(b'a' - 32));
         assert_eq!(d.quads[1].pos, [10 + 2 * 16, 20]);
     }
 
@@ -185,7 +185,7 @@ mod tests {
     fn non_ascii_becomes_question_mark() {
         let mut d = DrawList::default();
         d.text(0, 0, 1, [255; 4], "é");
-        assert_eq!(d.quads[0].glyph, (b'?' - 32) as u32);
+        assert_eq!(d.quads[0].glyph, u32::from(b'?' - 32));
     }
 
     #[test]

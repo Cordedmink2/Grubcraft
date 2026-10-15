@@ -27,6 +27,7 @@ Read in order the first time; afterwards each document stands alone.
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |
+| — | [Performance log](perf-log.md) | Before and after numbers from each milestone's performance pass |
 
 ## Conventions
 
