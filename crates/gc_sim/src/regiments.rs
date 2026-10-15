@@ -420,6 +420,27 @@ impl Regiments {
         true
     }
 
+    /// Put a regiment straight down at `position` (deployment): no march,
+    /// no order left over. `files` 0 keeps its frontage. Returns its slot.
+    pub fn place(
+        &mut self,
+        h: RegimentHandle,
+        position: FxVec2,
+        facing: Angle,
+        files: u16,
+    ) -> Option<usize> {
+        let i = self.resolve(h)?;
+        self.position[i] = position;
+        self.facing[i] = facing;
+        if files != 0 {
+            self.files[i] = files.clamp(1, self.models[i].max(1));
+        }
+        self.target[i] = None;
+        self.target_facing[i] = None;
+        self.attack_target[i] = None;
+        Some(i)
+    }
+
     /// Order a regiment to attack an enemy regiment: melee regiments close
     /// in and fight, ranged ones move into range and shoot.
     pub fn attack(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {

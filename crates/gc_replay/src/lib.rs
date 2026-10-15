@@ -35,10 +35,11 @@ use codec::{Reader, Writer};
 
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older replays are refused
-/// with [`Error::Format`], except format 3, which is format 4 without the
-/// champions flag (read as no champions), and format 2, which is format 3
-/// without the cover layer (read as a map with no woods or grass).
-pub const FORMAT: u16 = 4;
+/// with [`Error::Format`], except format 4, which is format 5 without the
+/// deployment commands, format 3, which is format 4 without the champions
+/// flag (read as no champions), and format 2, which is format 3 without
+/// the cover layer (read as a map with no woods or grass).
+pub const FORMAT: u16 = 5;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.

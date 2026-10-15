@@ -260,6 +260,12 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.handle(regiment);
             w.u8(formation as u8);
         }
+        Command::DeployZone { center, radius } => {
+            w.u8(6);
+            w.vec(center);
+            w.fx(radius);
+        }
+        Command::Ready => w.u8(7),
     }
 }
 
@@ -295,6 +301,11 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             regiment: r.handle()?,
             formation: Formation::from_u8(r.u8()?)?,
         },
+        6 => Command::DeployZone {
+            center: r.vec()?,
+            radius: r.fx()?,
+        },
+        7 => Command::Ready,
         _ => return None,
     })
 }
@@ -409,6 +420,11 @@ mod tests {
                 regiment: h(7, 3),
                 formation: Formation::ShieldWall,
             },
+            Command::DeployZone {
+                center: FxVec2::new(Fx::from_raw(-5), Fx::from_int(200)),
+                radius: Fx::from_int(30),
+            },
+            Command::Ready,
         ];
         let pcs: Vec<PlayerCommand> = cmds
             .iter()

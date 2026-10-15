@@ -134,7 +134,7 @@ Crates marked *(later)* don't exist yet. Until `gc_present` is needed, interpola
 11. Victory checks.
 12. State hash (every 10 ticks) and snapshot publish.
 
-**Built so far:** commands (including the sandbox's `RemoveRegiment` and `TuneUnit`, and `SetFormation`), then combat's contact, charge and chase checks, then route planning (budgeted searches), then movement and turning along the routes, then melee blows and volleys, then morale, then the champions' challenge, then vision (on maps with woods and tall grass: who sees each regiment, springing ambushes, ending chases after targets gone out of sight; see [Fog of war](#fog-of-war)). The state hash is computed on request (the determinism test checks it every 600 ticks); snapshots come with M2.
+**Built so far:** commands (including the sandbox's `RemoveRegiment` and `TuneUnit`, and `SetFormation`), then combat's contact, charge and chase checks, then route planning (budgeted searches), then movement and turning along the routes, then melee blows and volleys, then morale, then the champions' challenge, then vision (on maps with woods and tall grass: who sees each regiment, springing ambushes, ending chases after targets gone out of sight; see [Fog of war](#fog-of-war)). While a Field Battle's armies deploy (`gc_sim::deploy`), a tick applies its commands and does nothing else. The state hash is computed on request (the determinism test checks it every 600 ticks); snapshots come with M2.
 
 ### Spatial partitioning
 A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt incrementally (entities move bucket only when they cross a boundary). Used for collision, targeting, vision and area effects.

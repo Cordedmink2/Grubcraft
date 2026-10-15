@@ -3,9 +3,11 @@
 //! who holds the field at the end.
 
 use gc_ai::army::{self, Preset};
+use gc_ai::perception::{fx, to_fx_vec, v2};
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
+use gc_fixed::Fx;
 use gc_sim::champions::{HEART, Outcome};
-use gc_sim::{Challenge, PlayerCommand, PlayerId, UnitStats, World};
+use gc_sim::{Challenge, Command, PlayerCommand, PlayerId, UnitStats, World};
 use gc_ui::Settings;
 use gc_ui::lobby::{LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind};
 use glam::Vec2;
@@ -84,12 +86,17 @@ pub fn set_out(
     let perspective = if setup.seed.is_some() { 0 } else { me };
     let starts = battle_starts(&teams, perspective, plateaus);
     let middle = plateaus.iter().copied().sum::<Vec2>() / 4.0;
+    // People get a deployment phase; computer players alone don't need one.
+    let deployment = players.iter().any(|s| s.kind == SlotKind::Human);
     let mut set = SetOut {
         parties: Vec::with_capacity(players.len()),
         me: me as PlayerId,
         my_start: starts.get(me).copied().unwrap_or(middle),
         my_forward: Vec2::NEG_Y,
     };
+    // Every zone goes out before any army or Ready, so the deployment can't
+    // end before a late zone arrives when the setup spans several turns.
+    let (mut spawns, mut ready) = (Vec::new(), Vec::new());
     for (i, slot) in players.iter().enumerate() {
         let party = i as PlayerId;
         let faction = Faction::from_index(slot.faction.index() as u8);
@@ -129,13 +136,79 @@ pub fn set_out(
         }
         if deploy {
             let placed = army::deploy(units, &raised, starts[i], forward, minds.terrain());
-            army::spawn_commands(party, &placed, out);
+            if deployment {
+                out.push(PlayerCommand {
+                    player: party,
+                    command: Command::DeployZone {
+                        center: to_fx_vec(starts[i]),
+                        radius: Fx::from_int(zone_radius(&placed, starts[i])),
+                    },
+                });
+            }
+            army::spawn_commands(party, &placed, &mut spawns);
+            // The computer keeps the standard deployment.
+            if deployment && slot.kind == SlotKind::Ai {
+                ready.push(PlayerCommand {
+                    player: party,
+                    command: Command::Ready,
+                });
+            }
         }
         if let Some(mind) = mind {
             minds.add(mind);
         }
     }
+    out.append(&mut spawns);
+    out.append(&mut ready);
     set
+}
+
+/// While `player` deploys, slide a planned group order (its `MoveTo`s, which
+/// place regiments while deploying) as a whole until every regiment's spot
+/// is inside their zone, so a line drawn past the edge keeps its shape
+/// instead of being refused.
+pub fn shift_into_zone(world: &World, player: PlayerId, commands: &mut [Command]) {
+    let Some(zone) = world.deploy_zone(player) else {
+        return;
+    };
+    let centre = v2(zone.center);
+    let room = (fx(zone.radius) - 1.0).max(0.0);
+    let mut shift = Vec2::ZERO;
+    // A few passes settle a line that sticks out on more than one side.
+    for _ in 0..4 {
+        for c in commands.iter() {
+            if let Command::MoveTo { target, .. } = *c {
+                let out = v2(target) + shift - centre;
+                let excess = out.length() - room;
+                if excess > 0.0 {
+                    shift -= out.normalize_or_zero() * excess;
+                }
+            }
+        }
+    }
+    if shift == Vec2::ZERO {
+        return;
+    }
+    for c in commands {
+        if let Command::MoveTo { target, .. } = c {
+            *target = to_fx_vec(v2(*target) + shift);
+        }
+    }
+}
+
+/// Smallest deployment zone, as a radius in tiles.
+const MIN_ZONE: i32 = 24;
+/// Room in a deployment zone around the standard deployment, tiles.
+const ZONE_MARGIN: f32 = 10.0;
+
+/// A deployment zone round `start` that holds the standard deployment
+/// `placed` with room to spare.
+fn zone_radius(placed: &[army::Placement], start: Vec2) -> i32 {
+    let reach = placed
+        .iter()
+        .map(|p| p.position.distance(start))
+        .fold(0.0, f32::max);
+    ((reach + ZONE_MARGIN).ceil() as i32).max(MIN_ZONE)
 }
 
 /// Where each party of a Field Battle starts, from the map's four start
@@ -241,6 +314,11 @@ impl Battle {
         if self.outcome.is_some() {
             return false;
         }
+        // Nobody sees the enemy while the armies deploy.
+        if world.deploying() {
+            self.held = None;
+            return false;
+        }
         let now = world.tick_count();
         self.held = match (self.held, holding_the_field(world)) {
             // Allies take turns being the first regiment standing.
@@ -254,7 +332,7 @@ impl Battle {
         if now - since < HOLD_TICKS {
             return false;
         }
-        let secs = now / gc_sim::TICKS_PER_SECOND;
+        let secs = world.battle_ticks() / gc_sim::TICKS_PER_SECOND;
         let time = format!("{}:{:02}", secs / 60, secs % 60);
         let won = !world.hostile(self.me, p);
         self.won = Some(won);
@@ -356,6 +434,19 @@ mod tests {
         }
     }
 
+    /// The real game data's unit stats, factions and points, as `set_out`
+    /// takes them.
+    fn tables(data: &gc_data::GameData) -> (Vec<UnitStats>, Vec<Faction>, Vec<u32>) {
+        let units = data.units.iter().map(crate::sandbox::stats_of).collect();
+        let factions = data
+            .units
+            .iter()
+            .map(|u| Faction::from_index(u.faction() as u8))
+            .collect();
+        let points = data.units.iter().map(|u| u32::from(u.points)).collect();
+        (units, factions, points)
+    }
+
     /// A lobby setup: slot `k` is `who[k]` (None for you), on team
     /// `teams[k]`, everyone Ember Clans so the armies match.
     fn lobby(who: &[Option<Difficulty>], teams: &[u8]) -> MatchStart {
@@ -405,13 +496,7 @@ mod tests {
     #[test]
     fn armies_are_what_was_built_within_the_budget() {
         let data = crate::data::load();
-        let units: Vec<UnitStats> = data.units.iter().map(crate::sandbox::stats_of).collect();
-        let factions: Vec<Faction> = data
-            .units
-            .iter()
-            .map(|u| Faction::from_index(u.faction() as u8))
-            .collect();
-        let points: Vec<u32> = data.units.iter().map(|u| u32::from(u.points)).collect();
+        let (units, factions, points) = tables(&data);
         let (yari, _) = data.unit_by_name("Yari Ashigaru").unwrap();
         let (yumi, _) = data.unit_by_name("Yumi Ashigaru").unwrap();
         let (pikes, _) = data.unit_by_name("Bone Pikes").unwrap();
@@ -461,17 +546,101 @@ mod tests {
         assert!(spent(&armies[1]) <= 2_000);
     }
 
+    /// People get a deployment zone round their army and place regiments
+    /// inside it; computer players are ready at once, and a battle of
+    /// computers alone has no deployment.
+    #[test]
+    fn people_deploy_and_computers_are_ready_at_once() {
+        let data = crate::data::load();
+        let (units, factions, points) = tables(&data);
+        let heightmap = Heightmap::generate(3, MAP);
+        let nav = heightmap.nav_costs();
+        let start = |setup: &MatchStart| {
+            let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
+            let mut world = World::new(&MatchSetup {
+                seed: 3,
+                capacities: Capacities::default(),
+                units: &units,
+                map_tiles: MAP,
+                nav: &nav,
+                teams: &teams,
+                ground: heightmap.ground(),
+                champions: false,
+            });
+            let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+            let mut out = Vec::new();
+            set_out(
+                setup,
+                &units,
+                &factions,
+                &points,
+                start_positions(MAP),
+                3,
+                true,
+                &mut minds,
+                &mut out,
+            );
+            let stats = world.tick(&out);
+            assert_eq!(stats.commands_rejected, 0);
+            world
+        };
+
+        let world = start(&lobby(
+            &[Some(Difficulty::Recruit), Some(Difficulty::Recruit)],
+            &[0, 1],
+        ));
+        assert!(!world.deploying(), "computers alone don't deploy");
+
+        let mut world = start(&lobby(&[None, Some(Difficulty::Veteran)], &[0, 1]));
+        assert!(world.deploying());
+        assert!(!world.deploy_ready(0) && world.deploy_ready(1));
+        for r in world.regiments.iter() {
+            let zone = world.deploy_zone(r.owner).unwrap();
+            assert!(zone.contains(r.position), "{r:?}");
+        }
+        // A line drawn past the zone's edge slides in whole.
+        let mine = world.regiments.iter().find(|r| r.owner == 0).unwrap();
+        let zone = world.deploy_zone(0).unwrap();
+        let edge = v2(zone.center) + Vec2::new(fx(zone.radius) + 5.0, 0.0);
+        let mut line = [0.0, 6.0].map(|dy| Command::MoveTo {
+            regiment: mine.handle,
+            target: to_fx_vec(edge + Vec2::new(0.0, dy)),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        });
+        shift_into_zone(&world, 0, &mut line);
+        let [a, b] = line.map(|c| match c {
+            Command::MoveTo { target, .. } => target,
+            _ => unreachable!(),
+        });
+        assert!(zone.contains(a) && zone.contains(b));
+        assert!(((v2(b) - v2(a)) - Vec2::new(0.0, 6.0)).length() < 0.01);
+        // While deploying, that order puts the regiment straight down there.
+        let (handle, facing) = (mine.handle, mine.facing);
+        let open = world.nav().walkable(a);
+        world.tick(&[
+            PlayerCommand {
+                player: 0,
+                command: line[0],
+            },
+            PlayerCommand {
+                player: 0,
+                command: Command::Ready,
+            },
+        ]);
+        assert!(!world.deploying());
+        if open {
+            let r = world.regiments.get(handle).unwrap();
+            assert_eq!((r.position, r.facing), (a, facing));
+        }
+    }
+
     /// Play `setup` on the generated map with the real game data, the human
     /// side standing still, for at most `minutes`.
     fn play(setup: &MatchStart, seed: u64, minutes: u32) -> Played {
         let data = crate::data::load();
-        let units: Vec<UnitStats> = data.units.iter().map(crate::sandbox::stats_of).collect();
-        let factions: Vec<Faction> = data
-            .units
-            .iter()
-            .map(|u| Faction::from_index(u.faction() as u8))
-            .collect();
-        let points: Vec<u32> = data.units.iter().map(|u| u32::from(u.points)).collect();
+        let (units, factions, points) = tables(&data);
         let heightmap = Heightmap::generate(seed, MAP);
         let nav = heightmap.nav_costs();
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
@@ -504,6 +673,16 @@ mod tests {
             &mut out,
         );
         world.tick(&out);
+        // The people are happy with the standard deployment.
+        let ready: Vec<PlayerCommand> = (0..setup.players.len())
+            .filter(|&p| setup.players[p].kind == SlotKind::Human)
+            .map(|p| PlayerCommand {
+                player: p as PlayerId,
+                command: Command::Ready,
+            })
+            .collect();
+        world.tick(&ready);
+        assert!(!world.deploying());
         let fielded = (0..setup.players.len())
             .map(|p| {
                 world
