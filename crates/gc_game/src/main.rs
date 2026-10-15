@@ -708,7 +708,13 @@ impl App {
             version: online::version(),
             data_hash: game_data.short_hash(),
             seed: opts.seed,
-            map_hash: online::map_hash(&nav),
+            map_hash: online::map_hash(
+                &nav,
+                &gc_sim::Ground {
+                    heights: &heights,
+                    water_level,
+                },
+            ),
         });
         let menu = Menu::new(lan, settings, settings_path, &online::version());
         let show_menu = opts
@@ -1954,7 +1960,13 @@ impl Running {
         if self.online.is_some() {
             // A joiner checks its map came out the same as the host's
             // before saying it is ready.
-            let mine = online::map_hash(&nav);
+            let mine = online::map_hash(
+                &nav,
+                &gc_sim::Ground {
+                    heights: &heights,
+                    water_level,
+                },
+            );
             let lan = self.menu.net();
             let result = match lan.host_map() {
                 Some(host) if host.map_hash != mine => Err(format!(
