@@ -71,7 +71,9 @@ Tests: three `Lan`s in one process play 300 turns over real UDP on this machine,
 
 **Built in step 6a (2026-10-15):** replays in the game (see [Save, load and replays](#save-load-and-replays)), and desync reports are replay files. No protocol change.
 
-**Next steps for M2:** (6c) sim snapshots, and with them resyncing a diverged player and a faster rejoin; (7) packaging.
+**Built in step 7 (2026-10-15):** packaging, with no protocol change. One zip per platform, each with a read-me that explains the firewall (Windows) and local network (Mac) prompts LAN play depends on. See [release checklist](release-checklist.md).
+
+**Next steps for M2:** (6c) sim snapshots, and with them resyncing a diverged player and a faster rejoin.
 
 ## Session flow
 

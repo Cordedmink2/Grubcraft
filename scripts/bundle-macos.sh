@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build Grubcraft.app as a universal (Apple Silicon + Intel) binary, ad-hoc
 # signed for personal distribution, and zip it to target/Grubcraft-macOS.zip.
-# First launch on a friend's Mac: right-click the app, choose Open, confirm.
+# First launch on a friend's Mac: right-click the app, choose Open, confirm
+# (the zip's "Read me.txt" says so).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -45,5 +46,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 codesign --force --deep --sign - "$APP"
-(cd target && rm -f Grubcraft-macOS.zip && ditto -c -k --keepParent Grubcraft.app Grubcraft-macOS.zip)
+# The zip holds the app and a read-me side by side.
+STAGE=target/macos-package
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+ditto "$APP" "$STAGE/Grubcraft.app"
+cp packaging/readme-macos.txt "$STAGE/Read me.txt"
+(cd "$STAGE" && rm -f ../Grubcraft-macOS.zip && ditto -c -k . ../Grubcraft-macOS.zip)
 echo "Built target/Grubcraft-macOS.zip ($(lipo -archs "$APP/Contents/MacOS/grubcraft"))"

@@ -1,0 +1,64 @@
+name: Release
+
+# Push a tag like v0.2.0 to build both zips and attach them to a GitHub
+# Release for that tag. The version shown in the game comes from
+# crates/gc_game/Cargo.toml and build.rs (the commit), not from the tag.
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  mac-app:
+    name: macOS universal app
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/bundle-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Grubcraft-macOS
+          path: target/Grubcraft-macOS.zip
+
+  windows-exe:
+    name: Windows build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/bundle-windows.ps1
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Grubcraft-Windows
+          path: target/Grubcraft-Windows.zip
+
+  publish:
+    name: GitHub Release
+    needs: [mac-app, windows-exe]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            dist/Grubcraft-macOS/Grubcraft-macOS.zip \
+            dist/Grubcraft-Windows/Grubcraft-Windows.zip \
+            --title "Grubcraft $TAG" \
+            --generate-notes
