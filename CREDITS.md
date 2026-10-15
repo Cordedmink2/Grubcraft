@@ -8,13 +8,13 @@ The soldier models baked into `assets/models.pak` (see `assets-src/models.ron`).
 
 | Model | Author | Licence | Dresses |
 |---|---|---|---|
-| Ninja (Ultimate Monsters) | Quaternius | CC0 | Yari Ashigaru |
+| Yari Ashigaru, made for Grubcraft on the Farmer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | Yari Ashigaru |
 | Ranger (LowPoly RPG Characters) | Quaternius | CC0 | Yumi Ashigaru |
 | Alien (Ultimate Monsters) | Quaternius | CC0 | Shardlings (stand-in) |
 | Orc Skull (Ultimate Monsters) | Quaternius | CC0 | Bone Pikes (stand-in) |
 | Alien Bug | CDmir | CC0 | Skitterlings |
 
-All are simplified and recoloured by the baker (team colours, fewer triangles).
+The stand-ins are simplified and recoloured by the baker (team colours, fewer triangles).
 
 ## Credit required (CC-BY)
 

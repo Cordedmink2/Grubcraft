@@ -867,3 +867,16 @@ e27e3acf826e9f5cad021c647bd3ce6f1c82d2aaa3530c03ee442df4828a710e  quaternius/ult
 ffe686b0f0e7a2fb968ea9829358f059df903d2a60c9a94bd3516b1c3d42b7c4  quaternius/ultimate-monsters/Big/glTF/Tribal.gltf
 ab60f4fbc1c2e1fdc3ed4f63023dc2185240dbd55751df568099557b29af6fd5  quaternius/ultimate-monsters/Big/glTF/Yeti.gltf
 ```
+
+## Made for Grubcraft (shared project folder, `assets-src/grubcraft/`)
+
+Built in Blender on the Quaternius Farmer body and rig, so they stay out of the repo with the other Quaternius-derived files. Scripts: `design/faction-looks/ashigaru-test/source/` in the shared folder.
+
+```
+00a459d30d89f2798837eb1ec68f23d1abd1d1913f2c47c0e9017e0233cb90ff  grubcraft/yari-ashigaru/yari-ashigaru.glb
+a5794578da8b93512643c5c3e7e3cb3be11f829c166ae345ba84cf23e33067fb  grubcraft/yari-ashigaru/albedo.png
+af92e332e0dca7315bb677e4ae508f7692ccac6ce47056292466557efb9b37f9  grubcraft/yari-ashigaru/emissive.png
+2162cc4df9a8e8345af173edcf72e074ded3818576c96217934b552ea2130f5b  grubcraft/yari-ashigaru/normal.png
+33eaa7f76427af9534cedb2187d1d3d83d9a21179786c78b88bbeddbbf116f56  grubcraft/yari-ashigaru/orm.png
+14379d257d7141a56e46c55cbf9631805d6300d7763269c8c2d3efbafaf5279f  grubcraft/yari-ashigaru/team.png
+```

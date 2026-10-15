@@ -1,9 +1,12 @@
 //! Soldier models on the GPU: every model's vertices and indices in one
-//! buffer each, the bone animation texture, and one instanced draw per model
-//! and level of detail.
+//! buffer each, the bone animation texture, the material texture array, and
+//! one instanced draw per model and level of detail.
 
 use bytemuck::{Pod, Zeroable};
-use gc_assets::model::{BONE_TEXELS_PER_ROW, ModelVertex, Models};
+use gc_assets::model::{
+    BONE_TEXELS_PER_ROW, LAYERS_PER_MATERIAL, ModelVertex, Models, TEXELS_PER_LAYER, TEXTURE_MIPS,
+    TEXTURE_SIZE,
+};
 
 /// Fixed capacity of the soldier instance buffer; never reallocated.
 pub const MAX_SOLDIER_INSTANCES: usize = 65_536;
@@ -43,13 +46,16 @@ pub(crate) struct ModelGpu {
     pub vertices: wgpu::Buffer,
     pub indices: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
-    /// Per model: first vertex, and (first index, count) per level of detail.
-    pub ranges: Vec<(i32, [[u32; 2]; 2])>,
+    /// Per model: first vertex, (first index, count) per level of detail,
+    /// and whether it is textured.
+    pub ranges: Vec<(i32, [[u32; 2]; 2], bool)>,
     pub gpu_bytes: u64,
 }
 
 pub(crate) struct SoldiersGpu {
+    /// For models painted in vertex colours.
     pub pipeline: wgpu::RenderPipeline,
+    pub textured_pipeline: wgpu::RenderPipeline,
     pub bones_layout: wgpu::BindGroupLayout,
     pub instances: wgpu::Buffer,
     pub models: Option<ModelGpu>,
@@ -62,79 +68,111 @@ pub(crate) fn make(
     format: wgpu::TextureFormat,
     depth: wgpu::TextureFormat,
 ) -> SoldiersGpu {
+    let materials = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2Array,
+            multisampled: false,
+        },
+        count: None,
+    };
     let bones_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("bones"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
+        label: Some("soldier models"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
             },
-            count: None,
-        }],
+            // The material array seen as sRGB (colour layers) and as linear
+            // (the normal layer).
+            materials(1),
+            materials(2),
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("soldiers"),
         bind_group_layouts: &[Some(world_layout), Some(&bones_layout)],
         immediate_size: 0,
     });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("soldiers"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_soldier"),
-            compilation_options: Default::default(),
-            buffers: &[
-                Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<ModelVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    // Position and team weight, bones, weights, normal,
-                    // tangent, colour, texture coordinate.
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Sint16x4, 1 => Uint8x4, 2 => Unorm8x4, 3 => Snorm8x4,
-                        4 => Snorm8x4, 5 => Unorm8x4, 6 => Unorm16x2
-                    ],
-                }),
-                Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<SoldierInstance>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![
-                        7 => Float32x2, 8 => Float32x2, 9 => Uint16x2, 10 => Unorm8x4,
-                        11 => Unorm8x4, 12 => Float32, 13 => Float32
-                    ],
-                }),
-            ],
-        },
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            // The low-poly packs model cloaks and blades as single faces.
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: depth,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: Default::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_soldier"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
+    let pipeline = |label, vs, fs, cull_mode| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some(vs),
+                compilation_options: Default::default(),
+                buffers: &[
+                    Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<ModelVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        // Position and team weight, bones, weights, normal,
+                        // tangent, colour, texture coordinate.
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Sint16x4, 1 => Uint8x4, 2 => Unorm8x4, 3 => Snorm8x4,
+                            4 => Snorm8x4, 5 => Unorm8x4, 6 => Unorm16x2
+                        ],
+                    }),
+                    Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<SoldierInstance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &wgpu::vertex_attr_array![
+                            7 => Float32x2, 8 => Float32x2, 9 => Uint16x2, 10 => Unorm8x4,
+                            11 => Unorm8x4, 12 => Float32, 13 => Float32
+                        ],
+                    }),
+                ],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: depth,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some(fs),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    // The low-poly packs model cloaks and blades as single faces; textured
+    // models are built closed, so their back faces can be skipped.
+    let textured_pipeline = pipeline(
+        "textured soldiers",
+        "vs_soldier_textured",
+        "fs_soldier_textured",
+        Some(wgpu::Face::Back),
+    );
+    let pipeline = pipeline("soldiers", "vs_soldier", "fs_soldier", None);
     let instances = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("soldier instances"),
         size: (MAX_SOLDIER_INSTANCES * size_of::<SoldierInstance>()) as u64,
@@ -143,6 +181,7 @@ pub(crate) fn make(
     });
     SoldiersGpu {
         pipeline,
+        textured_pipeline,
         bones_layout,
         instances,
         models: None,
@@ -212,24 +251,131 @@ pub(crate) fn upload(
         size,
     );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let materials = upload_materials(device, queue, m);
+    let array_view = |format| {
+        materials.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(format),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        })
+    };
+    let srgb_view = array_view(wgpu::TextureFormat::Rgba8UnormSrgb);
+    let linear_view = array_view(wgpu::TextureFormat::Rgba8Unorm);
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("soldier materials"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        anisotropy_clamp: 4,
+        ..Default::default()
+    });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("bones"),
+        label: Some("soldier models"),
         layout: bones_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(&view),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&srgb_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&linear_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
     });
     let ranges = m
         .models
         .iter()
-        .map(|r| (r.first_vertex as i32, r.lods))
+        .map(|r| {
+            let textured = m
+                .vertices
+                .get(r.first_vertex as usize)
+                .is_some_and(|v| v.material > 0);
+            (r.first_vertex as i32, r.lods, textured)
+        })
         .collect();
     ModelGpu {
-        gpu_bytes: vertices.size() + indices.size() + (texels.len() * 8) as u64,
+        gpu_bytes: vertices.size()
+            + indices.size()
+            + (texels.len() * 8) as u64
+            + (m.textures.len() * 4) as u64,
         vertices,
         indices,
         bind_group,
         ranges,
     }
+}
+
+/// The material texture array, every layer with its mips; a single blank
+/// texel when no model is textured, since the binding must exist.
+fn upload_materials(device: &wgpu::Device, queue: &wgpu::Queue, m: &Models<'_>) -> wgpu::Texture {
+    let layers = (m.materials() * LAYERS_PER_MATERIAL) as u32;
+    let (side, mips) = if layers == 0 {
+        (1, 1)
+    } else {
+        (TEXTURE_SIZE, TEXTURE_MIPS)
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("soldier materials"),
+        size: wgpu::Extent3d {
+            width: side,
+            height: side,
+            depth_or_array_layers: layers.max(1),
+        },
+        mip_level_count: mips,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
+    });
+    if layers == 0 {
+        return texture;
+    }
+    for (layer, texels) in m
+        .textures
+        .as_chunks::<TEXELS_PER_LAYER>()
+        .0
+        .iter()
+        .enumerate()
+    {
+        let mut offset = 0;
+        for mip in 0..TEXTURE_MIPS {
+            let side = TEXTURE_SIZE >> mip;
+            let count = (side * side) as usize;
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: mip,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: layer as u32,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&texels[offset..offset + count]),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(side * 4),
+                    rows_per_image: Some(side),
+                },
+                wgpu::Extent3d {
+                    width: side,
+                    height: side,
+                    depth_or_array_layers: 1,
+                },
+            );
+            offset += count;
+        }
+    }
+    texture
 }

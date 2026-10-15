@@ -731,15 +731,23 @@ impl Renderer {
                 draw_calls += 1;
             }
             if let (Some(models), false) = (&self.soldiers.models, soldiers.is_empty()) {
-                pass.set_pipeline(&self.soldiers.pipeline);
                 pass.set_bind_group(1, &models.bind_group, &[]);
                 pass.set_vertex_buffer(0, models.vertices.slice(..));
                 pass.set_vertex_buffer(1, self.soldiers.instances.slice(..));
                 pass.set_index_buffer(models.indices.slice(..), wgpu::IndexFormat::Uint16);
+                let mut textured_now = None;
                 for b in batches {
-                    let Some(&(base, lods)) = models.ranges.get(b.model as usize) else {
+                    let Some(&(base, lods, textured)) = models.ranges.get(b.model as usize) else {
                         continue;
                     };
+                    if textured_now != Some(textured) {
+                        pass.set_pipeline(if textured {
+                            &self.soldiers.textured_pipeline
+                        } else {
+                            &self.soldiers.pipeline
+                        });
+                        textured_now = Some(textured);
+                    }
                     let [first, count] = lods[(b.lod as usize).min(1)];
                     let end = (b.first + b.count).min(soldiers.len() as u32);
                     if b.first >= end || count == 0 {

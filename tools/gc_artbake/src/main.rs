@@ -24,13 +24,15 @@
 //!                   [--out assets/models.pak] [--report]
 //! `--report` prints each model's most common colours, for choosing team colours.
 
+mod textures;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use gc_assets::model::{
-    BONE_TEXELS_PER_ROW, BONES_PER_VERTEX, ClipKind, ClipRecord, MAX_BONES, ModelRecord,
-    ModelTables, ModelVertex, NAME_BYTES, POSITION_SCALE, f16_bits,
+    BONE_TEXELS_PER_ROW, BONES_PER_VERTEX, ClipKind, ClipRecord, MAX_BONES, MAX_MATERIALS,
+    ModelRecord, ModelTables, ModelVertex, NAME_BYTES, POSITION_SCALE, f16_bits,
 };
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 use serde::Deserialize;
@@ -70,6 +72,10 @@ struct ModelConfig {
     clips: HashMap<String, String>,
     /// Triangle budgets for the full and the reduced level of detail.
     lod_triangles: (usize, usize),
+    /// Painted texture maps, for models whose detail is in textures rather
+    /// than vertex colours.
+    #[serde(default)]
+    textures: Option<textures::TextureConfig>,
 }
 
 fn default_team_tolerance() -> f32 {
@@ -123,22 +129,44 @@ fn run(opts: &Options) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", opts.config.display()))?;
     let config: Config =
         ron::from_str(&text).map_err(|e| format!("{}: {e}", opts.config.display()))?;
+    let resolve = |src: &str| -> Result<PathBuf, String> {
+        if let Some(p) = src.strip_prefix("shared:") {
+            Ok(opts.shared.join(p))
+        } else if let Some(p) = src.strip_prefix("repo:") {
+            Ok(opts.repo_src.join(p))
+        } else {
+            Err(format!("{src}: must start with shared: or repo:"))
+        }
+    };
     let mut tables = ModelTables::default();
     for m in &config.models {
-        let path = if let Some(p) = m.source.strip_prefix("shared:") {
-            opts.shared.join(p)
-        } else if let Some(p) = m.source.strip_prefix("repo:") {
-            opts.repo_src.join(p)
-        } else {
-            return Err(format!(
-                "{}: source must start with shared: or repo:",
-                m.name
-            ));
+        let path = resolve(&m.source).map_err(|e| format!("{}: {e}", m.name))?;
+        // A painted albedo map also gives the vertex colours (for the report
+        // and anything drawn without textures).
+        let albedo = match &m.textures {
+            Some(t) => {
+                let path = resolve(&t.albedo).map_err(|e| format!("{}: {e}", m.name))?;
+                let img = textures::load_png(&path).map_err(|e| format!("{}: {e}", m.name))?;
+                Some((img, path))
+            }
+            None => None,
         };
-        let baked =
-            bake_model(m, &path).map_err(|e| format!("{} ({}): {e}", m.name, path.display()))?;
+        let mut baked = bake_model(m, &path, albedo.as_ref().map(|a| &a.0))
+            .map_err(|e| format!("{} ({}): {e}", m.name, path.display()))?;
         if opts.report {
             report(&baked);
+        }
+        if let (Some(cfg), Some((albedo, albedo_path))) = (&m.textures, &albedo) {
+            let material = tables.materials();
+            if material >= MAX_MATERIALS {
+                return Err(format!("{}: more than {MAX_MATERIALS} materials", m.name));
+            }
+            let texels = textures::bake(cfg, albedo, albedo_path, resolve)
+                .map_err(|e| format!("{}: {e}", m.name))?;
+            tables.textures.extend_from_slice(&texels);
+            for v in &mut baked.verts {
+                v.material = material as u8 + 1;
+            }
         }
         baked.append_to(&mut tables, &m.name)?;
     }
@@ -150,13 +178,14 @@ fn run(opts: &Options) -> Result<(), String> {
     }
     std::fs::write(&opts.out, &bytes).map_err(|e| format!("{}: {e}", opts.out.display()))?;
     println!(
-        "wrote {} ({} KB): {} models, {} vertices, {} triangles at full detail, {} bone rows",
+        "wrote {} ({} KB): {} models, {} vertices, {} triangles at full detail, {} bone rows, {} materials",
         opts.out.display(),
         bytes.len() / 1024,
         tables.models.len(),
         tables.vertices.len(),
         tables.models.iter().map(|m| m.lods[0][1] / 3).sum::<u32>(),
         tables.bones.len() / BONE_TEXELS_PER_ROW as usize,
+        tables.materials(),
     );
     Ok(())
 }
@@ -413,7 +442,11 @@ impl Skeleton {
     }
 }
 
-fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
+fn bake_model(
+    cfg: &ModelConfig,
+    path: &Path,
+    albedo: Option<&Image>,
+) -> Result<BakedModel, String> {
     let src = load(path)?;
     let doc = &src.doc;
     let get = |b: gltf::Buffer<'_>| src.buffers.get(b.index()).map(|v| v.as_slice());
@@ -505,12 +538,14 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
             let material = prim.material();
             let pbr = material.pbr_metallic_roughness();
             let factor = Vec4::from(pbr.base_color_factor());
-            let texture = pbr
-                .base_color_texture()
-                .and_then(|t| src.images.get(t.texture().source().index()))
-                .and_then(|i| i.as_ref());
+            let texture = albedo.or_else(|| {
+                pbr.base_color_texture()
+                    .and_then(|t| src.images.get(t.texture().source().index()))
+                    .and_then(|i| i.as_ref())
+            });
 
             let base = verts.len() as u32;
+            let mut mirrored = false;
             for k in 0..positions.len() {
                 let (bones, to_model) = match influences.get(k) {
                     Some(inf) if skinned => (top_weights(inf), bind_space),
@@ -520,6 +555,7 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
                         (rigid_skin(bone as u8), to_model)
                     }
                 };
+                mirrored = to_model.determinant() < 0.0;
                 let tangent = tangents.as_ref().map_or(Vec4::ZERO, |t| {
                     let dir = to_model
                         .transform_vector3(t[k].truncate())
@@ -546,14 +582,24 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
                     bones,
                 });
             }
+            let first = indices.len();
             match reader.read_indices() {
                 Some(i) => indices.extend(i.into_u32().map(|i| base + i)),
                 None => indices.extend(base..verts.len() as u32),
+            }
+            if mirrored {
+                // Keep the outside counter-clockwise, as back-face culling expects.
+                for tri in indices[first..].as_chunks_mut::<3>().0 {
+                    tri.swap(1, 2);
+                }
             }
         }
     }
     if indices.is_empty() {
         return Err("no triangles".into());
+    }
+    if cfg.textures.is_some() && verts.iter().any(|v| v.tangent == Vec4::ZERO) {
+        return Err("a textured model needs tangents (export them with the glTF)".into());
     }
 
     // 2. Into game space: face +z, feet on the ground, `height` tall.
@@ -609,19 +655,20 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
         .collect();
     let adapter = meshopt::VertexDataAdapter::new(bytemuck::cast_slice(&positions), 12, 0)
         .map_err(|e| e.to_string())?;
+    let textured = cfg.textures.is_some();
     let simplify = |indices: &[u32], tris: usize| -> Vec<u32> {
         if indices.len() / 3 <= tris {
             return indices.to_vec();
         }
-        let mut out = meshopt::simplify(
-            indices,
-            &adapter,
-            tris * 3,
-            0.05,
-            meshopt::SimplifyOptions::Permissive,
-            None,
-        );
-        if out.len() / 3 > tris * 5 / 4 {
+        // Texture seams must hold, or reduced triangles would span unrelated
+        // parts of the atlas; vertex-coloured models may collapse across them.
+        let options = if textured {
+            meshopt::SimplifyOptions::None
+        } else {
+            meshopt::SimplifyOptions::Permissive
+        };
+        let mut out = meshopt::simplify(indices, &adapter, tris * 3, 0.05, options, None);
+        if !textured && out.len() / 3 > tris * 5 / 4 {
             // Attribute seams can stop the careful simplifier early.
             out = meshopt::simplify_sloppy(indices, &adapter, tris * 3, 0.1, None);
         }
@@ -710,7 +757,7 @@ fn quantise(
     ModelVertex {
         pos: [q(v.pos.x), q(v.pos.y), q(v.pos.z)],
         team: if is_team { 255 } else { 0 },
-        _pad: 0,
+        material: 0,
         bones,
         weights,
         normal: [n(v.normal.x), n(v.normal.y), n(v.normal.z), 0],

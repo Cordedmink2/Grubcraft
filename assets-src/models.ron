@@ -3,21 +3,31 @@
 // dresses, exactly as in data/units.ron. Sources marked `shared:` live in the
 // project's shared assets folder because their packs may not be
 // redistributed raw (docs/16-art-sourcing.md); `repo:` sources are in
-// assets-src/ here. Clip kinds: Idle, Walk, Run, Attack, Attack2, Hit, Die,
-// Cheer, Shoot, Block.
+// assets-src/ here. `textures` lists painted maps for models whose detail
+// is in textures rather than vertex colours. Clip kinds: Idle, Walk, Run,
+// Attack, Attack2, Hit, Die, Cheer, Shoot, Block (a model without a Block clip
+// guards with its Idle).
 (
     models: [
         (
             name: "Yari Ashigaru",
-            source: "shared:quaternius/ultimate-monsters/Big/glTF/Ninja.gltf",
-            height: 1.15,
-            team: ["#1d1d1d", "#1e1f22"],
+            // Made for Grubcraft in Blender on Quaternius's Farmer body and
+            // rig (docs/09-art-and-audio.md, Fidelity); the spear rides the
+            // right wrist.
+            source: "shared:grubcraft/yari-ashigaru/yari-ashigaru.glb",
+            height: 1.6,
             clips: {
-                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Weapon",
-                "Attack2": "Punch", "Hit": "HitReact", "Die": "Death", "Cheer": "Wave",
-                "Block": "Duck",
+                "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash",
+                "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
             },
-            lod_triangles: (1400, 500),
+            lod_triangles: (8400, 1800),
+            textures: Some((
+                albedo: "shared:grubcraft/yari-ashigaru/albedo.png",
+                team: Some("shared:grubcraft/yari-ashigaru/team.png"),
+                normal: Some("shared:grubcraft/yari-ashigaru/normal.png"),
+                orm: Some("shared:grubcraft/yari-ashigaru/orm.png"),
+                emissive: Some("shared:grubcraft/yari-ashigaru/emissive.png"),
+            )),
         ),
         (
             name: "Yumi Ashigaru",
