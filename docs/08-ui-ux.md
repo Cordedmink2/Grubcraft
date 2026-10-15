@@ -71,6 +71,8 @@ Structures use the same grid for production. Workers' build menu is one sub-page
 - **Silhouettes first:** every unit type is identifiable by outline at the furthest zoom before Commander View.
 - **Ground decals** show formation previews while dragging, attack ranges on hover, chord triangles, vein networks, ability areas.
 - **Combat text is off by default.** Damage numbers clutter battles. You read the battle through models falling and banners tilting.
+- **Woods and tall grass hide regiments** ([20 · Ambushes](20-ambushes.md#reading-it-on-screen)). Enemies your side can't see aren't drawn and can't be clicked; your own hidden regiments (and your allies') carry a moss-green flag above the treetops, so you always know which of yours the enemy can't see. When an ambush is sprung, by you or on you, an **Ambush!** message names who caught whom, with a war drum and a horn.
+- **Built so far (ambushes, 2026-10-15):** trees and tall-grass tufts on the generated maps (the Commander View leaves the grass out), unseen enemies not drawn or picked, the moss-green flag (scaled up in the Commander View), the Ambush! message and sound, and `V` in the sandbox to show every regiment, hidden or not (sandbox only, never in a Field Battle or a network match, and starting one switches it off). Not yet: last-seen ghosts and the hidden tooltip ([20](20-ambushes.md#build-plan), step B).
 
 ## Onboarding
 

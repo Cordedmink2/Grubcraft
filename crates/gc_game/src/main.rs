@@ -37,6 +37,10 @@
 //! Regiments find their own way around cliffs and deep water; a selected
 //! regiment's route shows as a dotted line, and G shows the ground no
 //! regiment can cross.
+//! Woods and tall grass hide regiments (docs/20-ambushes.md): enemies your
+//! side can't see aren't drawn, yours that the enemy can't see carry a
+//! moss-green flag, and a sprung ambush shows an "AMBUSH!" message with a
+//! drum and horn. V in the sandbox shows every regiment, hidden or not.
 //! Ctrl (or Cmd) + a number key saves the selection as a control group; the
 //! number recalls it (Shift adds it), and pressing it twice quickly centres
 //! the camera on it.
@@ -83,6 +87,7 @@ mod online;
 mod profile;
 mod puppets;
 mod sandbox;
+mod scenery;
 mod sounds;
 mod terrain_gen;
 
@@ -162,6 +167,11 @@ const ATTACK_MARK: Duration = Duration::from_millis(700);
 /// or shattered (grey). Height above the ground and size, in tiles.
 const BANNER_LIFT: f32 = 1.9;
 const BANNER_SIZE: [f32; 3] = [0.12, 0.8, 0.7];
+/// The flag over a regiment of yours that no enemy can see
+/// (docs/20-ambushes.md): moss green, above the treetops.
+const HIDDEN_FLAG: [f32; 3] = [0.9, 0.5, 0.12];
+const HIDDEN_LIFT: f32 = 3.4;
+const HIDDEN_COLOR: [u8; 4] = [95, 150, 70, 120];
 /// Fallen soldiers kept on the field at once.
 const MAX_CORPSES: usize = 8192;
 /// Dots along a selected regiment's route: spacing and size, in tiles.
@@ -393,6 +403,10 @@ struct Running {
     /// Marks over ground no regiment can cross, and whether to show them (G).
     blocked_marks: Vec<BoxInstance>,
     show_blocked: bool,
+    /// The map's trees and tall grass.
+    scenery: scenery::Scenery,
+    /// Sandbox: draw regiments hidden from the side you command too (V).
+    reveal_all: bool,
     /// Data hash and size, for the overlay.
     data_label: String,
     seed: u64,
@@ -703,8 +717,10 @@ impl App {
             .collect();
         let capacities = Capacities::default();
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
-        let (heights, water_level) = tagged_alloc::scope(Tag::Map, || heightmap.sim_ground());
         let blocked_marks = blocked_marks(&nav, MAP_TILES);
+        let scenery = tagged_alloc::scope(Tag::Render, || {
+            scenery::Scenery::new(&heightmap.cover, MAP_TILES, opts.seed)
+        });
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
             (
                 World::new(&MatchSetup {
@@ -714,10 +730,7 @@ impl App {
                     map_tiles: MAP_TILES,
                     nav: &nav,
                     teams: &[],
-                    ground: gc_sim::Ground {
-                        heights: &heights,
-                        water_level,
-                    },
+                    ground: heightmap.ground(),
                 }),
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
@@ -768,13 +781,7 @@ impl App {
             version: online::version(),
             data_hash: game_data.short_hash(),
             seed: opts.seed,
-            map_hash: online::map_hash(
-                &nav,
-                &gc_sim::Ground {
-                    heights: &heights,
-                    water_level,
-                },
-            ),
+            map_hash: online::map_hash(&nav, &heightmap.ground()),
         });
         let menu = Menu::new(lan, settings, settings_path, &online::version());
         let show_menu = opts
@@ -845,6 +852,8 @@ impl App {
             lens: false,
             blocked_marks,
             show_blocked: false,
+            scenery,
+            reveal_all: false,
             data_label: format!(
                 "{:016x}   {} unit types",
                 game_data.short_hash(),
@@ -1058,6 +1067,16 @@ impl ApplicationHandler for App {
                         }
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
+                        }
+                        // Seeing through the woods is for the sandbox only.
+                        KeyCode::KeyV
+                            if down
+                                && !event.repeat
+                                && r.battle.is_none()
+                                && r.online.is_none() =>
+                        {
+                            r.reveal_all = !r.reveal_all;
+                            r.sandbox.dirty = true;
                         }
                         KeyCode::KeyF if down && !event.repeat => r.cycle_formation(),
                         KeyCode::KeyL if down && !event.repeat => {
@@ -1409,6 +1428,8 @@ impl Running {
             .regiments
             .iter()
             .filter(|r| r.owner != self.sandbox.side)
+            // Orders can only name regiments your side can see.
+            .filter(|r| self.world.sees(self.sandbox.side, r.handle))
             .filter_map(|r| {
                 let stats = &self.unit_stats[r.unit as usize];
                 let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
@@ -1575,7 +1596,24 @@ impl Running {
             art.clear();
         }
         self.mark_shooting();
+        self.scenery.push(
+            self.camera.focus,
+            self.camera.distance,
+            !self.commander,
+            &mut self.instances,
+        );
+        let viewer = self.sandbox.side;
+        // Flags and banners grow as the Commander View pulls back, so they
+        // stay readable.
+        let zoom = if self.commander {
+            (self.camera.distance / COMMANDER_IN).max(1.0)
+        } else {
+            1.0
+        };
         for r in self.world.regiments.iter() {
+            // Enemies hidden in woods and tall grass aren't drawn (their
+            // soldiers keep marching out of sight, below).
+            let seen = self.reveal_all || self.world.sees(viewer, r.handle);
             let cur = from_fx_vec(r.position);
             let cur_facing = angle_vec(r.facing);
             let (pos, facing) = match self.prev_positions[r.handle.index as usize] {
@@ -1590,7 +1628,7 @@ impl Running {
             let stats = &self.unit_stats[r.unit as usize];
             let (file_spacing, rank_spacing) = stats.spacing(r.formation);
             let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
-            if selected || marked == Some(r.handle) {
+            if seen && (selected || marked == Some(r.handle)) {
                 let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
                 self.instances.push(BoxInstance {
                     pos: pos.to_array(),
@@ -1620,6 +1658,22 @@ impl Running {
                 charge: r.charge,
                 fighter: fighter_of(stats, &r),
             };
+            if !seen {
+                self.puppets
+                    .update(&block, r.owner, game_dt.as_secs_f32(), |_| {});
+                continue;
+            }
+            // Your regiments that no enemy can see carry a moss-green flag
+            // above the treetops.
+            if !self.world.hostile(viewer, r.owner) && self.world.hidden(r.handle) {
+                self.instances.push(BoxInstance {
+                    pos: pos.to_array(),
+                    facing: facing.to_array(),
+                    size: HIDDEN_FLAG.map(|v| v * zoom),
+                    color: HIDDEN_COLOR,
+                    lift: HIDDEN_LIFT * zoom,
+                });
+            }
             let blink = self.started.elapsed().as_millis() % 600 < 300;
             let banner = match r.morale {
                 MoraleState::Steady => None,
@@ -1649,11 +1703,9 @@ impl Running {
                     color: [235, 230, 210, 0],
                     lift: 0.0,
                 });
-                // Banners grow as the camera pulls back, so they stay readable.
-                let k = (self.camera.distance / COMMANDER_IN).max(1.0);
                 let side = Vec2::new(facing.y, -facing.x);
-                let pole = COMMANDER_POLE.map(|v| v * k);
-                let flag_size = COMMANDER_FLAG.map(|v| v * k);
+                let pole = COMMANDER_POLE.map(|v| v * zoom);
+                let flag_size = COMMANDER_FLAG.map(|v| v * zoom);
                 self.instances.push(BoxInstance {
                     pos: pos.to_array(),
                     facing: facing.to_array(),
@@ -1752,11 +1804,13 @@ impl Running {
         if self.lens && !self.minds.is_empty() {
             let lenses = lens::lenses(&self.minds);
             let parties = &self.parties;
+            let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
             lens::push(
                 &lenses,
                 &self.minds,
                 lens::scale_for(self.camera.distance),
                 |p| color_of(parties, p),
+                |h| reveal || world.sees(viewer, h),
                 &mut self.instances,
             );
         }
@@ -1841,10 +1895,62 @@ impl Running {
         if let Some(sounds) = &mut self.sounds {
             tagged_alloc::scope(Tag::Audio, || sounds.observe(&self.world, &self.camera));
         }
+        self.alert_ambushes();
         let took = t0.elapsed();
         self.stats.tick_time += took;
         self.stats.tick_max = self.stats.tick_max.max(took);
         self.stats.ticks += 1;
+    }
+
+    /// Tell the player about an ambush sprung on or by their side in the
+    /// last tick (the latest, if several), with a drum roll and a horn.
+    fn alert_ambushes(&mut self) {
+        let side = self.sandbox.side;
+        let name = |u: gc_sim::UnitId| self.unit_names[u as usize].as_str();
+        let whose = |p: PlayerId| party_name(&self.parties, p) + "'s";
+        let news = self.world.ambushes().iter().rev().find_map(|a| {
+            let by = self.world.regiments.get(a.ambusher)?;
+            let on = self.world.regiments.get(a.victim)?;
+            let text = if !self.world.hostile(side, on.owner) {
+                let how = if a.volley {
+                    "shot from hiding at"
+                } else {
+                    "burst out of hiding on"
+                };
+                let theirs = if on.owner == side {
+                    "your".to_string()
+                } else {
+                    whose(on.owner)
+                };
+                format!(
+                    "AMBUSH! {} {} {how} {theirs} {}",
+                    whose(by.owner),
+                    name(by.unit),
+                    name(on.unit)
+                )
+            } else if !self.world.hostile(side, by.owner) {
+                let ours = if by.owner == side {
+                    "Your".to_string()
+                } else {
+                    whose(by.owner)
+                };
+                format!(
+                    "AMBUSH! {ours} {} caught {} {} off guard",
+                    name(by.unit),
+                    whose(on.owner),
+                    name(on.unit)
+                )
+            } else {
+                return None;
+            };
+            Some((text, from_fx_vec(on.position)))
+        });
+        if let Some((text, at)) = news {
+            if let Some(s) = &self.sounds {
+                s.ambush(at);
+            }
+            self.say(text);
+        }
     }
 
     /// A network match: send this machine's orders, then simulate every
@@ -2062,7 +2168,6 @@ impl Running {
         }
         self.online = net_seed.map(|_| online::Online::new(self.menu.net().is_host()));
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
-        let (heights, water_level) = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_ground());
         let teams: Vec<u8> = match &kind {
             MatchKind::Battle(setup) => setup.players.iter().map(|s| s.team).collect(),
             _ => Vec::new(),
@@ -2075,16 +2180,15 @@ impl Running {
                 map_tiles: MAP_TILES,
                 nav: &nav,
                 teams: &teams,
-                ground: gc_sim::Ground {
-                    heights: &heights,
-                    water_level,
-                },
+                ground: self.heightmap.ground(),
             })
         });
         self.minds = tagged_alloc::scope(Tag::Ai, || Minds::new(self.heightmap.ai_terrain(&nav)));
         self.matches += 1;
         self.drill = None;
         self.sandbox = Sandbox::new(matches!(kind, MatchKind::Sandbox));
+        // Seeing through the woods stays in the sandbox.
+        self.reveal_all &= matches!(kind, MatchKind::Sandbox);
         self.parties = sandbox_parties();
         self.battle = None;
         self.speed = NORMAL_SPEED;
@@ -2105,13 +2209,7 @@ impl Running {
         if self.online.is_some() {
             // A joiner checks its map came out the same as the host's
             // before saying it is ready.
-            let mine = online::map_hash(
-                &nav,
-                &gc_sim::Ground {
-                    heights: &heights,
-                    water_level,
-                },
-            );
+            let mine = online::map_hash(&nav, &self.heightmap.ground());
             let lan = self.menu.net();
             let result = match lan.host_map() {
                 Some(host) if host.map_hash != mine => Err(format!(
@@ -2145,6 +2243,9 @@ impl Running {
         });
         let nav = self.heightmap.nav_costs();
         self.blocked_marks = blocked_marks(&nav, MAP_TILES);
+        self.scenery = tagged_alloc::scope(Tag::Render, || {
+            scenery::Scenery::new(&self.heightmap.cover, MAP_TILES, seed)
+        });
     }
 
     /// Raise and deploy every side's army for a lobby Field Battle, and put
@@ -2797,6 +2898,13 @@ impl Running {
             },
             self.formation_line(),
         ]);
+        if self.battle.is_none() {
+            lines.push(if self.reveal_all {
+                "woods    V: hide what this side can't see (now showing everything)".to_string()
+            } else {
+                "woods    V: show regiments hidden from this side".to_string()
+            });
+        }
         if sb.tuning {
             let on_field = self
                 .world

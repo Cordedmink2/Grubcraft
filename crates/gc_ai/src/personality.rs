@@ -44,6 +44,7 @@ pub struct DoctrineLikes {
     pub hammer_and_anvil: u8,
     pub refused_flank: u8,
     pub skirmish_screen: u8,
+    pub ambush: u8,
 }
 
 impl DoctrineLikes {
@@ -53,6 +54,7 @@ impl DoctrineLikes {
             Doctrine::HammerAndAnvil => self.hammer_and_anvil,
             Doctrine::RefusedFlank => self.refused_flank,
             Doctrine::SkirmishScreen => self.skirmish_screen,
+            Doctrine::Ambush => self.ambush,
         };
         v as f32 / 100.0
     }
@@ -127,6 +129,7 @@ pub fn parse(source: &str) -> Result<Vec<Personality>, String> {
             d.hammer_and_anvil,
             d.refused_flank,
             d.skirmish_screen,
+            d.ambush,
         ];
         if traits.iter().chain(&likes).any(|&v| v > 100) {
             return Err(format!("{}: traits run from 0 to 100", p.name));

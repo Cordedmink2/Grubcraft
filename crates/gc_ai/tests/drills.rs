@@ -214,6 +214,7 @@ fn run(drill: Drill, seconds: u32, mut watch: impl FnMut(&Field)) -> Option<Play
         ground: gc_sim::Ground {
             heights: &sim_heights,
             water_level: (WATER_LEVEL * per_tile) as u16,
+            cover: &[],
         },
     });
     let mut out: Vec<PlayerCommand> = Vec::new();

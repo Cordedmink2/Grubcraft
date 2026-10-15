@@ -184,6 +184,20 @@ const GOLDENS: &[Golden] = &[
         minds: true,
         extra: tuning,
     },
+    // Woods and tall grass in play (docs/20-ambushes.md): regiments hide,
+    // are spotted, and spring ambushes, so the vision rules are checked on
+    // every platform too.
+    Golden {
+        name: "field-woods-1v1",
+        seed: 0xd9,
+        map_tiles: 256,
+        sides: &[side(Brood, General, 0), side(Choir, General, 1)],
+        soldiers: 0,
+        rows: 1,
+        minutes: 5,
+        minds: true,
+        extra: no_extra,
+    },
     // The `gc_bench` grand battle: about 6,000 soldiers, all four armies
     // charging into one brawl in the middle. Until the army builder brings
     // points, an "8,000 point" army is 1,500 soldiers.
@@ -232,7 +246,6 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         .collect();
     let heightmap = Heightmap::generate(golden.seed, golden.map_tiles);
     let nav = heightmap.nav_costs();
-    let (heights, water_level) = heightmap.sim_ground();
     let teams: Vec<u8> = golden.sides.iter().map(|s| s.team).collect();
     let setup = MatchSetup {
         seed: golden.seed,
@@ -241,10 +254,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         map_tiles: golden.map_tiles,
         nav: &nav,
         teams: &teams,
-        ground: gc_sim::Ground {
-            heights: &heights,
-            water_level,
-        },
+        ground: heightmap.ground(),
     };
     let mut world = World::new(&setup);
     let mut minds = Minds::new(heightmap.ai_terrain(&nav));
@@ -296,11 +306,13 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     let limit = golden.minutes * 60 * gc_sim::TICKS_PER_SECOND;
     let mut held: Option<(PlayerId, u32)> = None;
     let mut most_engaged = (0, 0);
+    let mut ambushes = 0;
     while world.tick_count() < limit {
         out.clear();
         minds.tick(&world, &mut out);
         (golden.extra)(&world, &mut out);
         rec.tick(&mut world, &out);
+        ambushes += world.ambushes().len();
         if std::env::var_os("AI_TRACE").is_some() && world.tick_count().is_multiple_of(400) {
             println!("t={}s", world.tick_count() / 20);
             for m in minds.iter() {
@@ -359,7 +371,8 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     };
     let note = format!(
         "{}: Field Battle recorded from gc_game's goldens.rs, seed {:#x}, {}-tile map; {}; \
-         {}:{:02}, {ending}; most soldiers in melee at once {} (at {}:{:02})",
+         {}:{:02}, {ending}; most soldiers in melee at once {} (at {}:{:02}); \
+         ambushes sprung {ambushes}",
         golden.name,
         golden.seed,
         golden.map_tiles,

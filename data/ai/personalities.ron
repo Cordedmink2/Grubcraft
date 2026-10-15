@@ -20,7 +20,7 @@
         summary: "Holds strong ground, receives your attack, counterattacks with cavalry; honourable",
         aggression: 30, caution: 65, patience: 75, cunning: 35, opportunism: 40,
         greed: 30, honour: 90, vengefulness: 40,
-        doctrines: (hold_the_line: 80, hammer_and_anvil: 55, refused_flank: 40, skirmish_screen: 45),
+        doctrines: (hold_the_line: 80, hammer_and_anvil: 55, refused_flank: 40, skirmish_screen: 45, ambush: 30),
         army: Defensive,
     ),
     (
@@ -29,7 +29,7 @@
         summary: "Fast cavalry raids on your workers and a flanking hammer in every battle",
         aggression: 75, caution: 30, patience: 25, cunning: 80, opportunism: 70,
         greed: 40, honour: 55, vengefulness: 60,
-        doctrines: (hold_the_line: 30, hammer_and_anvil: 85, refused_flank: 60, skirmish_screen: 40),
+        doctrines: (hold_the_line: 30, hammer_and_anvil: 85, refused_flank: 60, skirmish_screen: 40, ambush: 70),
         army: Aggressive,
     ),
     (
@@ -38,7 +38,7 @@
         summary: "Relentless early swarm pressure, envelopment, feeds on every battlefield",
         aggression: 90, caution: 15, patience: 10, cunning: 45, opportunism: 80,
         greed: 60, honour: 20, vengefulness: 50,
-        doctrines: (hold_the_line: 15, hammer_and_anvil: 80, refused_flank: 35, skirmish_screen: 10),
+        doctrines: (hold_the_line: 15, hammer_and_anvil: 80, refused_flank: 35, skirmish_screen: 10, ambush: 55),
         army: Aggressive,
     ),
     (
@@ -47,7 +47,7 @@
         summary: "Expands quietly, evolves the exact counter to your army, strikes late",
         aggression: 35, caution: 55, patience: 80, cunning: 65, opportunism: 55,
         greed: 85, honour: 30, vengefulness: 35,
-        doctrines: (hold_the_line: 55, hammer_and_anvil: 60, refused_flank: 55, skirmish_screen: 30),
+        doctrines: (hold_the_line: 55, hammer_and_anvil: 60, refused_flank: 55, skirmish_screen: 30, ambush: 85),
         army: Balanced,
     ),
     (
@@ -56,7 +56,7 @@
         summary: "Greedy chords, Phase Shift defence, wins by economy",
         aggression: 25, caution: 70, patience: 70, cunning: 40, opportunism: 35,
         greed: 90, honour: 60, vengefulness: 25,
-        doctrines: (hold_the_line: 75, hammer_and_anvil: 30, refused_flank: 45, skirmish_screen: 65),
+        doctrines: (hold_the_line: 75, hammer_and_anvil: 30, refused_flank: 45, skirmish_screen: 65, ambush: 25),
         army: Defensive,
     ),
     (
@@ -65,7 +65,7 @@
         summary: "Harasses your economy, lens-line battles with precise refraction",
         aggression: 60, caution: 40, patience: 45, cunning: 85, opportunism: 65,
         greed: 45, honour: 40, vengefulness: 55,
-        doctrines: (hold_the_line: 35, hammer_and_anvil: 55, refused_flank: 70, skirmish_screen: 75),
+        doctrines: (hold_the_line: 35, hammer_and_anvil: 55, refused_flank: 70, skirmish_screen: 75, ambush: 75),
         army: Balanced,
     ),
     (
@@ -74,7 +74,7 @@
         summary: "Opportunist: lets others bleed, collects the tithe, then buys an army",
         aggression: 35, caution: 60, patience: 65, cunning: 60, opportunism: 95,
         greed: 80, honour: 35, vengefulness: 30,
-        doctrines: (hold_the_line: 60, hammer_and_anvil: 45, refused_flank: 65, skirmish_screen: 40),
+        doctrines: (hold_the_line: 60, hammer_and_anvil: 45, refused_flank: 65, skirmish_screen: 40, ambush: 60),
         army: Balanced,
     ),
     (
@@ -83,7 +83,7 @@
         summary: "A dead wall that never breaks, a slow grinding attrition war",
         aggression: 45, caution: 50, patience: 85, cunning: 20, opportunism: 40,
         greed: 55, honour: 70, vengefulness: 70,
-        doctrines: (hold_the_line: 90, hammer_and_anvil: 25, refused_flank: 35, skirmish_screen: 30),
+        doctrines: (hold_the_line: 90, hammer_and_anvil: 25, refused_flank: 35, skirmish_screen: 30, ambush: 15),
         army: Defensive,
     ),
 ]

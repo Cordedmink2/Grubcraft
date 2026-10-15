@@ -2,13 +2,16 @@
 
 | Term | Meaning |
 |---|---|
+| **Ambush** | A hidden regiment striking an enemy whose side hadn't seen it until moments before: the victim loses 20 morale and is caught off guard. See [20](20-ambushes.md) |
 | **Army tray** | The row of regiment cards at the bottom of the screen |
 | **Bloodseep** | A rich, temporary seep opened by a Titan Tremor |
 | **Campaign** | The planned third mode: a world map of the Reach played over several game nights, with seasons, hosts and the peoples you meet. See [19](19-campaign.md) |
+| **Caught off guard** | An ambush's victim for 6 seconds afterwards: its blows deal 70% damage |
 | **Chord** | A Choir triangle of three linked Resonators; boosts seeps inside it |
 | **Chronicle** | The campaign's history: one line per thing that mattered, each battle linked to its replay |
 | **Commander View** | Far-zoom view where regiments are drawn as banner blocks instead of soldiers |
 | **Conquest** | The primary mode: base building and war |
+| **Cover** | Woods and tall grass, one byte a tile on the map; regiments standing in it can be hidden |
 | **Creep camp** | Neutral Titan-spawn monsters guarding resources; give experience and items |
 | **Desync** | When two machines' simulations diverge; detected by state hashes |
 | **Difficulty** | How well an AI player thinks (Recruit, Veteran, General, Warlord); never cheats. See also *Handicap* |
@@ -27,6 +30,7 @@
 | **Guest commander** | A player not in a campaign battle who takes command of one of its other sides (an ally's host, a company, a settlement's militia) |
 | **Hamlet** | A neutral Grubfolk settlement: trade, hire, or raid |
 | **Handicap** | A lobby setting for any slot, human or AI: income from 50% to 150% |
+| **Hidden** | A regiment in cover that no enemy has spotted: enemies can't see, target or order attacks on it. Yours carry a moss-green flag |
 | **Host** | An army on the campaign map, led by a hero; up to three per player |
 | **Let the generals fight** | Resolving a campaign battle by having the battle AI command every side in the real simulation at full speed |
 | **Liking, trust, fear** | How one party feels about another: liking and trust are made of fading memories of what was done; fear is worked out from nearby strength |
@@ -56,6 +60,7 @@
 | **Seat** | A faction's home region and capital on the campaign map |
 | **Seep** | A Grub source on the map |
 | **Shrine** | Capturable neutral point giving vision and a small aura |
+| **Spotting** | Seeing a hidden regiment by coming close: within 4 tiles of a still regiment in a wood (10 if it moves), 3 in tall grass; what one regiment spots, its whole side sees |
 | **Stance** | What a party's units do about another party: Hostile, Wary, Neutral, Friendly, Allied (or Serving, for hired mercenaries) |
 | **Tempo** | Lobby setting that scales gather and build speed |
 | **Titan** | The dead god whose body is the map |

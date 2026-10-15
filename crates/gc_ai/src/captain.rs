@@ -27,6 +27,11 @@
 //!
 //! The simulation's own reflexes (fighting back, pressing into a melee,
 //! routing) run underneath for everyone; the Captain only gives orders.
+//!
+//! On a map with woods and tall grass the Captain sees only what its side
+//! sees, and can lay an ambush ([`ambush`]).
+
+mod ambush;
 
 use gc_fixed::Pcg32;
 use gc_sim::{MoraleState, PlayerId, RegimentHandle};
@@ -41,7 +46,7 @@ use crate::perception::{Class, Perception, Seen, Side, TICKS, right_of};
 use crate::personality::Personality;
 use crate::terrain::Terrain;
 
-/// Battle-plan templates (docs/18-ai.md, "Doctrines"). The first four are
+/// Battle-plan templates (docs/18-ai.md, "Doctrines"). The first five are
 /// built; the rest of the table arrives with the factions and terrain that
 /// need them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -55,14 +60,18 @@ pub enum Doctrine {
     RefusedFlank,
     /// Archers in front, falling back through the line as the enemy closes.
     SkirmishScreen,
+    /// Hammer and anvil with the hammers hidden in woods or tall grass,
+    /// striking once the enemy comes on (docs/20-ambushes.md).
+    Ambush,
 }
 
 impl Doctrine {
-    pub const ALL: [Doctrine; 4] = [
+    pub const ALL: [Doctrine; 5] = [
         Doctrine::HoldTheLine,
         Doctrine::HammerAndAnvil,
         Doctrine::RefusedFlank,
         Doctrine::SkirmishScreen,
+        Doctrine::Ambush,
     ];
 
     pub fn name(self) -> &'static str {
@@ -71,6 +80,7 @@ impl Doctrine {
             Doctrine::HammerAndAnvil => "Hammer and anvil",
             Doctrine::RefusedFlank => "Refused flank",
             Doctrine::SkirmishScreen => "Skirmish screen",
+            Doctrine::Ambush => "Ambush",
         }
     }
 }
@@ -96,6 +106,8 @@ pub enum Role {
     Hunter,
     /// Pulled back to get its nerve back.
     Recover,
+    /// Hides in cover and waits to spring an ambush; a hammer once sprung.
+    Ambusher,
 }
 
 impl Role {
@@ -109,6 +121,7 @@ impl Role {
             Role::Reserve => "reserve",
             Role::Hunter => "hunter",
             Role::Recover => "recovering",
+            Role::Ambusher => "ambusher",
         }
     }
 }
@@ -365,6 +378,8 @@ pub struct Captain {
     /// harm (wavering, beside others shaken). Line regiments in reach go
     /// for it first.
     pub focus: Option<RegimentHandle>,
+    /// Where its ambushers hide, with the Ambush doctrine.
+    ambush: ambush::Plan,
 }
 
 impl Default for Captain {
@@ -409,6 +424,7 @@ impl Captain {
             next_ground: 0,
             ground_note: String::new(),
             focus: None,
+            ambush: ambush::Plan::default(),
         }
     }
 
@@ -441,6 +457,8 @@ impl Captain {
     pub fn think(&mut self, ctx: &mut Ctx, wants: &mut Vec<Want>) {
         let view = ctx.view;
         self.sync_members(ctx);
+        // Once anyone has come to blows it is too late to slip into hiding.
+        self.ambush.joined |= view.regiments.iter().any(|r| r.engaged);
         let ours: Vec<&Seen> = self
             .members
             .iter()
@@ -491,7 +509,8 @@ impl Captain {
     fn beaten(&mut self, ctx: &mut Ctx, ours: &[&Seen], fighting: &[&Seen]) -> bool {
         let view = ctx.view;
         let mine = Force::of(view, ours.iter().copied()).soldiers;
-        let theirs = Force::of(view, fighting.iter().copied()).soldiers;
+        // Not while enemies it lost sight of may still be standing.
+        let theirs = Force::of(view, fighting.iter().copied().chain(view.remembered())).soldiers;
         let share = if self.finishing {
             REFORM_SHARE
         } else {
@@ -692,6 +711,11 @@ impl Captain {
         let theirs = Force::of(view, fighting.iter().copied());
         let margin = self.estimate.map_or(0.0, |e| e.margin);
         let p = ctx.persona;
+        let hammers = (shock > 0 && line + ranged > 0).then(|| {
+            0.4 + 0.4 * (shock as f32 / 3.0).min(1.0)
+                + if shock > their_shock { 0.2 } else { 0.0 }
+                + 0.3 * p.cunning()
+        });
         let mut best: Option<(f32, Doctrine)> = None;
         for &d in ctx.knobs.doctrines {
             let fit = match d {
@@ -703,14 +727,10 @@ impl Captain {
                     } + if margin < 0.0 { 0.2 } else { 0.0 }
                         + 0.2 * p.caution()
                 }
-                Doctrine::HammerAndAnvil => {
-                    if shock == 0 || line + ranged == 0 {
-                        continue;
-                    }
-                    0.4 + 0.4 * (shock as f32 / 3.0).min(1.0)
-                        + if shock > their_shock { 0.2 } else { 0.0 }
-                        + 0.3 * p.cunning()
-                }
+                Doctrine::HammerAndAnvil => match hammers {
+                    Some(fit) => fit,
+                    None => continue,
+                },
                 Doctrine::RefusedFlank => {
                     if line < 4 {
                         continue;
@@ -727,6 +747,13 @@ impl Captain {
                         0.0
                     }
                 }
+                // Hammer and anvil with the hammers hidden (or, with no fast
+                // troops, the ends of the line): scores on top of it when
+                // there is somewhere to hide.
+                Doctrine::Ambush => match self.ambush_fit(ctx, ours, fighting, (line, shock)) {
+                    Some(extra) => hammers.unwrap_or(0.4 + 0.3 * p.cunning()) + extra,
+                    None => continue,
+                },
             };
             let jitter = ctx.rng.below(1000) as f32 / 1000.0 * 0.15;
             let stick = if !self.doctrine_chosen || d != self.doctrine {
@@ -807,6 +834,14 @@ impl Captain {
             shock.sort_by(by_middle);
             line = shock.split_off(0);
             shock = line.split_off(line.len() - keep);
+        }
+        // The Ambush doctrine with no fast troops hides line regiments
+        // instead: those already sent into hiding, then the outermost.
+        if self.doctrine == Doctrine::Ambush && shock.is_empty() {
+            let hiding = |k: usize| self.ambush.has(self.members[k].handle);
+            line.sort_by(|&a, &b| hiding(b).cmp(&hiding(a)).then(by_middle(&b, &a)));
+            let n = ambush::line_ambushers(line.len());
+            shock = line.drain(..n).collect();
         }
         // The reserve: a line regiment from near the middle, if there are
         // enough to spare one.
@@ -949,6 +984,7 @@ impl Captain {
             let slot = Vec2::new(0.0, line_depth + RESERVE_BACK + depth[k] * 0.5);
             self.assign(k, Role::Reserve, slot);
         }
+        self.lay_ambush(ctx);
 
         // The formation marches at the pace of its slowest foot regiment.
         let slowest = line
@@ -1237,14 +1273,19 @@ impl Captain {
             // They are coming: receive them where we stand, unless keen to
             // meet them in the open.
             let coming = self.closing > 1.0 && gap < 60.0;
-            let meet = p.aggression() >= 0.7 && gap > 45.0;
+            let meet = p.aggression() >= 0.7 && gap > 45.0 && !self.lying_in_wait();
             // Outshot only matters once their archers can reach us.
             let under_fire = theirs.ranged > 0.0 && gap < theirs.range + 2.0;
             let outshot = theirs.ranged > mine.ranged * 1.15 && under_fire;
             let out_of_range = mine.ranged > 0.0 && gap > our_range;
             let losing = margin < LOSING;
             let patience = 3.0 + 25.0 * p.patience() - 10.0 * p.aggression()
-                + if margin > 0.25 { -5.0 } else { 0.0 };
+                + if margin > 0.25 { -5.0 } else { 0.0 }
+                + if self.lying_in_wait() {
+                    ambush::WAIT_LONGER
+                } else {
+                    0.0
+                };
             let waited = (now - self.standoff_since) as f32 / TICKS;
             // Water between the armies: whoever crosses comes out of it a
             // regiment at a time, so wait for them, unless clearly the
@@ -1272,7 +1313,9 @@ impl Captain {
                 // pieces with no falling back left is the exception.
                 outshot && self.withdrawals >= WITHDRAWALS
             } else {
-                outshot || out_of_range || waited > patience.max(0.0)
+                // Ambushers lying in wait need the enemy to come to them,
+                // archers in range or not.
+                outshot || (out_of_range && !self.lying_in_wait()) || waited > patience.max(0.0)
             };
             let want = if advance {
                 Posture::Advance
@@ -1354,7 +1397,8 @@ impl Captain {
             let Some(r) = ctx.view.get(m.handle) else {
                 continue;
             };
-            if r.broken() || r.engaged || m.lost {
+            // Ambushers stay hidden while nothing is in sight.
+            if r.broken() || r.engaged || m.lost || m.role == Role::Ambusher {
                 continue;
             }
             let mut m = m;
@@ -1524,6 +1568,9 @@ impl Captain {
                 }
                 Role::Battery | Role::Screen => {
                     self.archer_role(ctx, &mut m, r, fighting, foes, &on, pace, wants);
+                }
+                Role::Ambusher => {
+                    self.ambusher_role(ctx, &mut m, r, ours, fighting, wants);
                 }
             }
             if m.target != before_target {

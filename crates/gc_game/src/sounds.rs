@@ -226,6 +226,14 @@ impl Sounds {
         self.audio.play(sound, gain * near * near, pan, priority);
     }
 
+    /// An ambush sprung on or by the side you command: a war-drum roll and
+    /// a horn, loud wherever the camera is, panned towards it.
+    pub fn ambush(&self, at: Vec2) {
+        let pan = ((at - self.focus).dot(self.right) / self.hearing.max(1.0)).clamp(-1.0, 1.0);
+        self.audio.play(SoundId::Charge, 1.0, pan, PRI_MORALE);
+        self.audio.play(SoundId::RoutHorn, 0.6, pan, PRI_MORALE);
+    }
+
     /// Interface click: full volume, centred.
     pub fn ui(&self, sound: UiSound) {
         let id = match sound {

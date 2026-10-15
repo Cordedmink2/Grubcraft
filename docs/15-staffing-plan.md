@@ -106,6 +106,7 @@ The engine thread (currently running) stays Opus and builds the eight steps in o
 | Terrain rules: high ground and fords in the sim | Opus (sim combat thread) | | **Done (2026-10-13)** by its own thread, in parallel with the unit balance pass (unit data) and `gc_net` (LAN), touching only the sim's combat and movement and one new `MatchSetup` field |
 | Regiments queue instead of stacking in tight ground | Opus (sim combat thread) | | **Done (2026-10-13)** by the same thread, in the sim's movement and combat only, with no `MatchSetup` change |
 | Soldier fighting, stage 1: duel pairs and living formations ([09 · Art and Audio](09-art-and-audio.md#animation)) | Opus | | **Done (2026-10-15)** by its own thread, in `gc_game`'s puppets only (presentation, no sim change) |
+| Ambushes, step A: hiding in woods and tall grass, spotting, springing, the AI's Ambush doctrine ([20 · Ambushes](20-ambushes.md)) | Opus (sim rules are Opus work) | | **Done (2026-10-15)** by its own thread: a new `vision.rs` system in the sim plus small hooks in combat and morale, woods on the generated maps, the on-screen cues, and the AI's fair sight and Ambush doctrine, coordinated with the terrain, AI and LAN threads |
 | Exit: 2v2 over home Wi-Fi, zero desyncs | Opus reads desync reports | **Mario and friends** play it | |
 
 ### M3 · First Harvest: the first agent team

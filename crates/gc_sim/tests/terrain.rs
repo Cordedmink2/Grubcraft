@@ -48,6 +48,7 @@ fn world_on(seed: u64, units: &[UnitStats], heights: &[u16]) -> World {
         ground: Ground {
             heights,
             water_level: WATER_LEVEL,
+            cover: &[],
         },
     })
 }

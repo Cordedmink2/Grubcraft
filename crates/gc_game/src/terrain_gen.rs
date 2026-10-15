@@ -27,6 +27,12 @@ pub struct Heightmap {
     pub max_height: f32,
     pub water_level: f32,
     pub heights: Vec<u16>,
+    /// The simulation's tile heights and water line ([`Heightmap::sim_ground`]).
+    sim_heights: Vec<u16>,
+    sim_water: u16,
+    /// Woods and tall grass, one [`gc_sim::Cover`] byte per tile, row by
+    /// row (see [`Heightmap::grow_cover`]).
+    pub cover: Vec<u8>,
 }
 
 impl Heightmap {
@@ -67,12 +73,28 @@ impl Heightmap {
                 heights.push((h.clamp(0.0, 1.0) * u16::MAX as f32) as u16);
             }
         }
-        Heightmap {
+        let mut map = Heightmap {
             samples_per_tile,
             size,
             max_height,
             water_level: 0.17 * max_height,
             heights,
+            sim_heights: Vec::new(),
+            sim_water: 0,
+            cover: Vec::new(),
+        };
+        (map.sim_heights, map.sim_water) = map.sim_ground();
+        map.cover = map.grow_cover(seed);
+        map
+    }
+
+    /// The ground the simulation plays on: tile heights, the water line,
+    /// and the woods and tall grass.
+    pub fn ground(&self) -> gc_sim::Ground<'_> {
+        gc_sim::Ground {
+            heights: &self.sim_heights,
+            water_level: self.sim_water,
+            cover: &self.cover,
         }
     }
 
@@ -157,7 +179,7 @@ impl Heightmap {
     /// in [`gc_sim::terrain::HEIGHT_UNITS`] per tile, and the water line in
     /// the same units. The same tile-centre heights the minds read
     /// ([`Heightmap::ai_terrain`]), so both agree on what is high and wet.
-    pub fn sim_ground(&self) -> (Vec<u16>, u16) {
+    fn sim_ground(&self) -> (Vec<u16>, u16) {
         let tiles = (self.size - 1) / self.samples_per_tile;
         let half = self.samples_per_tile / 2;
         let per_tile = gc_sim::terrain::HEIGHT_UNITS as f32;
@@ -188,8 +210,104 @@ impl Heightmap {
                 heights.push(self.height_at(x as f32 + 0.5, y as f32 + 0.5));
             }
         }
-        gc_ai::Terrain::new(nav, tiles).with_heights(heights, self.water_level)
+        gc_ai::Terrain::new(nav, tiles)
+            .with_heights(heights, self.water_level)
+            .with_cover(self.cover.clone())
     }
+}
+
+/// Woods and tall grass stay this far from the start plateaus' centres
+/// (tiles), so armies deploy in the open and see each other.
+const COVER_CLEAR_OF_STARTS: i64 = 34;
+/// ... and this far from the map's edge.
+const COVER_CLEAR_OF_EDGE: i64 = 10;
+/// Ground steeper than this (height units per tile) grows no wood or grass.
+const COVER_STEEPEST: i64 = 150;
+/// Noise levels (0 to 65,535) above which woods grow, below that by the
+/// fringe tall grass rings them, and above which grass fills a meadow.
+const WOOD_LEVEL: i64 = 42_000;
+const GRASS_FRINGE: i64 = 2_200;
+const MEADOW_LEVEL: i64 = 46_500;
+
+impl Heightmap {
+    /// Woods and tall grass, one [`gc_sim::Cover`] byte per tile, row by
+    /// row (docs/20-ambushes.md). Integer rules over the simulation's tile
+    /// heights and the seed, so every machine that agrees on the heights
+    /// agrees on the cover. Woods grow in clumps on dry, gentle ground, ringed
+    /// by tall grass; more grass fills a few meadows. The start plateaus and
+    /// the map's edge stay open.
+    fn grow_cover(&self, seed: u64) -> Vec<u8> {
+        let (heights, water) = (&self.sim_heights, self.sim_water);
+        let n = ((self.size - 1) / self.samples_per_tile) as i64;
+        let at =
+            |x: i64, y: i64| heights[(y.clamp(0, n - 1) * n + x.clamp(0, n - 1)) as usize] as i64;
+        let starts = start_positions(n as u32).map(|s| (s.x as i64, s.y as i64));
+        let mut cover = Vec::with_capacity((n * n) as usize);
+        for y in 0..n {
+            for x in 0..n {
+                let h = at(x, y);
+                let slope = (at(x + 1, y) - at(x - 1, y))
+                    .abs()
+                    .max((at(x, y + 1) - at(x, y - 1)).abs())
+                    / 2;
+                let edge = x.min(y).min(n - 1 - x).min(n - 1 - y);
+                let near_start = starts.iter().any(|&(sx, sy)| {
+                    (x - sx) * (x - sx) + (y - sy) * (y - sy)
+                        < COVER_CLEAR_OF_STARTS * COVER_CLEAR_OF_STARTS
+                });
+                let kind = if h < water as i64
+                    || slope > COVER_STEEPEST
+                    || edge < COVER_CLEAR_OF_EDGE
+                    || near_start
+                {
+                    gc_sim::Cover::Open
+                } else {
+                    let wood = cover_noise(seed, 0, x, y);
+                    if wood > WOOD_LEVEL {
+                        gc_sim::Cover::Wood
+                    } else if wood > WOOD_LEVEL - GRASS_FRINGE
+                        || cover_noise(seed, 1, x, y) > MEADOW_LEVEL
+                    {
+                        gc_sim::Cover::Grass
+                    } else {
+                        gc_sim::Cover::Open
+                    }
+                };
+                cover.push(kind as u8);
+            }
+        }
+        cover
+    }
+}
+
+/// Smooth integer value noise, 0 to 65,535: two octaves (28 and 11 tiles).
+fn cover_noise(seed: u64, layer: u64, x: i64, y: i64) -> i64 {
+    (2 * value_noise(seed, layer, x, y, 28) + value_noise(seed, layer + 16, x, y, 11)) / 3
+}
+
+/// Value noise on a lattice `cell` tiles apart, smoothly interpolated, all
+/// in integers.
+fn value_noise(seed: u64, layer: u64, x: i64, y: i64, cell: i64) -> i64 {
+    let lattice = |cx: i64, cy: i64| -> i64 {
+        let mut h = (cx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ (cy as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+            ^ seed.wrapping_mul(0x1656_67B1_9E37_79F9)
+            ^ layer.wrapping_mul(0x27D4_EB2F_1656_67C5);
+        h ^= h >> 31;
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= h >> 29;
+        (h & 0xFFFF) as i64
+    };
+    const ONE: i64 = 4096;
+    let ease = |f: i64| {
+        let t = f * ONE / cell;
+        t * t * (3 * ONE - 2 * t) / (ONE * ONE)
+    };
+    let (cx, cy) = (x.div_euclid(cell), y.div_euclid(cell));
+    let (u, v) = (ease(x.rem_euclid(cell)), ease(y.rem_euclid(cell)));
+    let top = lattice(cx, cy) * (ONE - u) + lattice(cx + 1, cy) * u;
+    let bottom = lattice(cx, cy + 1) * (ONE - u) + lattice(cx + 1, cy + 1) * u;
+    (top * (ONE - v) + bottom * v) / (ONE * ONE)
 }
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
@@ -263,6 +381,31 @@ mod tests {
             let want = hm.height_at(x as f32 + 0.5, y as f32 + 0.5) * 256.0;
             let got = heights[y * 64 + x] as f32;
             assert!((got - want).abs() <= 1.0, "tile {x},{y}: {got} vs {want}");
+        }
+    }
+
+    #[test]
+    fn woods_and_grass_grow_in_sensible_amounts() {
+        for seed in [1, 2, 3, 42, 777] {
+            let hm = Heightmap::generate(seed, 256);
+            let cover = &hm.cover;
+            assert_eq!(cover.len(), 256 * 256);
+            assert_eq!(
+                *cover,
+                Heightmap::generate(seed, 256).cover,
+                "cover isn't repeatable"
+            );
+            let share = |c: gc_sim::Cover| {
+                cover.iter().filter(|&&v| v == c as u8).count() as f32 * 100.0 / cover.len() as f32
+            };
+            let (wood, grass) = (share(gc_sim::Cover::Wood), share(gc_sim::Cover::Grass));
+            println!("seed {seed}: wood {wood:.1}%, grass {grass:.1}%");
+            assert!((4.0..18.0).contains(&wood), "seed {seed}: {wood}% wood");
+            assert!((3.0..14.0).contains(&grass), "seed {seed}: {grass}% grass");
+            // The start plateaus are open.
+            for (x, y) in [(64, 64), (192, 64), (64, 192), (192, 192)] {
+                assert_eq!(cover[y * 256 + x], gc_sim::Cover::Open as u8);
+            }
         }
     }
 

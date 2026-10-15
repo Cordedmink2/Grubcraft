@@ -22,17 +22,20 @@ mod regiments;
 pub mod scenario;
 pub mod stances;
 pub mod terrain;
+pub mod vision;
 
 pub use hash::StateHasher;
 pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
-pub use terrain::{Ground, Terrain};
+pub use terrain::{Cover, Ground, Terrain};
+pub use vision::Ambush;
 
 use combat::Combat;
 use formation::MAX_MODELS;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 use nav::Nav;
+use vision::Vision;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -377,8 +380,9 @@ pub struct MatchSetup<'a> {
     /// Each party's team (see [`Stances`]): allies share a number. Empty
     /// means every party fights every other.
     pub teams: &'a [u8],
-    /// The map's heights and water line, for the terrain rules (see
-    /// [`terrain`]). [`Ground::FLAT`] means flat, dry ground.
+    /// The map's heights, water line and cover, for the terrain rules (see
+    /// [`terrain`]) and hiding (see [`vision`]). [`Ground::FLAT`] means
+    /// flat, dry, open ground.
     pub ground: Ground<'a>,
 }
 
@@ -404,7 +408,8 @@ pub enum Command {
         pace: Fx,
     },
     /// Close with an enemy regiment and fight it (melee), or move into range
-    /// and shoot it (ranged).
+    /// and shoot it (ranged). The target must be one the player's side can
+    /// see (see [`vision`]).
     Attack {
         regiment: RegimentHandle,
         target: RegimentHandle,
@@ -448,11 +453,15 @@ pub struct World {
     nav: Nav,
     stances: Stances,
     terrain: Terrain,
+    vision: Vision,
     pub regiments: Regiments,
 }
 
 impl World {
     pub fn new(setup: &MatchSetup) -> World {
+        let stances = Stances::from_teams(setup.teams);
+        let terrain = Terrain::new(&setup.ground, setup.map_tiles);
+        let vision = Vision::new(setup.capacities.regiments as usize, &terrain, &stances);
         World {
             tick: 0,
             rng: Pcg32::new(setup.seed, streams::WORLD),
@@ -465,8 +474,9 @@ impl World {
                 setup.map_tiles,
                 setup.capacities.regiments as usize,
             ),
-            stances: Stances::from_teams(setup.teams),
-            terrain: Terrain::new(&setup.ground, setup.map_tiles),
+            stances,
+            terrain,
+            vision,
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
@@ -515,6 +525,7 @@ impl World {
             &self.units,
             &self.stances,
             &self.terrain,
+            &self.vision,
             self.tick,
             &mut self.combat_rng,
         );
@@ -523,8 +534,16 @@ impl World {
             &self.combat,
             &self.units,
             &self.stances,
+            &self.vision,
             self.tick,
             self.map_tiles,
+        );
+        self.vision.update(
+            &mut self.regiments,
+            &self.combat,
+            &self.units,
+            &self.stances,
+            &self.terrain,
         );
         self.tick += 1;
         stats
@@ -540,9 +559,20 @@ impl World {
                 let Some(stats) = self.units.get(unit as usize) else {
                     return false;
                 };
-                self.regiments
+                let Some(h) = self
+                    .regiments
                     .spawn(pc.player, unit, position, facing, stats)
-                    .is_some()
+                else {
+                    return false;
+                };
+                // Hidden or seen from the moment it is placed.
+                self.vision.start(
+                    &self.regiments,
+                    &self.units,
+                    &self.terrain,
+                    h.index as usize,
+                );
+                true
             }
             Command::MoveTo {
                 regiment,
@@ -568,7 +598,9 @@ impl World {
             Command::Attack { regiment, target } => {
                 match (self.regiments.owner(regiment), self.regiments.owner(target)) {
                     (Some(owner), Some(enemy))
-                        if owner == pc.player && self.stances.hostile(owner, enemy) =>
+                        if owner == pc.player
+                            && self.stances.hostile(owner, enemy)
+                            && self.sees(owner, target) =>
                     {
                         self.regiments.attack(regiment, target)
                     }
@@ -607,9 +639,38 @@ impl World {
         self.stances.hostile(a, b)
     }
 
-    /// The ground's heights and water, and what they do in a fight.
+    /// The ground's heights, water and cover, and what they do in a fight.
     pub fn terrain(&self) -> &Terrain {
         &self.terrain
+    }
+
+    /// Whether `party`'s side can see regiment `h` (see [`vision`]). Always
+    /// true on a map with no cover, and for a party's own and its allies'
+    /// regiments; false for a regiment that is gone.
+    pub fn sees(&self, party: PlayerId, h: RegimentHandle) -> bool {
+        self.regiments
+            .resolve(h)
+            .is_some_and(|i| self.vision.sees(party, i, self.regiments.owner[i]))
+    }
+
+    /// Whether regiment `h` is hidden from every enemy of its owner.
+    pub fn hidden(&self, h: RegimentHandle) -> bool {
+        self.regiments
+            .resolve(h)
+            .is_some_and(|i| self.vision.hidden(i, self.regiments.owner[i]))
+    }
+
+    /// Whether regiment `h` is caught off guard by an ambush: its blows deal
+    /// less damage for a few seconds.
+    pub fn caught_off_guard(&self, h: RegimentHandle) -> bool {
+        self.regiments
+            .resolve(h)
+            .is_some_and(|i| self.vision.off_guard(i))
+    }
+
+    /// The ambushes sprung in the last tick.
+    pub fn ambushes(&self) -> &[Ambush] {
+        self.vision.ambushes()
     }
 
     /// The walkable ground and the route searches in progress.
@@ -648,6 +709,7 @@ impl World {
         self.regiments.hash_into(&mut h);
         self.combat.hash_into(&mut h);
         self.nav.hash_into(&mut h);
+        self.vision.hash_into(&self.regiments, &mut h);
         h.finish()
     }
 

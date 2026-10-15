@@ -1,5 +1,6 @@
 //! What the ground does in a fight (docs/05-combat.md, "Terrain"): high
-//! ground and fords.
+//! ground and fords, and the woods and tall grass regiments hide in
+//! (docs/20-ambushes.md; the hiding itself is [`crate::vision`]).
 //!
 //! The match hands the simulation one height per tile, taken at the tile's
 //! centre, and the water line. From those:
@@ -10,8 +11,11 @@
 //!   [`WADING_SPEED_PERCENT`] of its pace, takes [`WADING_DAMAGE_PERCENT`]
 //!   melee damage, and can't charge.
 //!
+//! - **Cover:** each tile is open, tall grass or wood ([`Cover`]).
+//!
 //! Heights are integers ([`HEIGHT_UNITS`] per tile), so every machine
-//! agrees. A match with no heights is flat, dry ground.
+//! agrees. A match with no heights is flat, dry ground; one with no cover
+//! has nowhere to hide.
 
 use alloc::vec::Vec;
 
@@ -31,7 +35,29 @@ pub const WADING_SPEED_PERCENT: i32 = 60;
 /// Melee damage taken standing in water, percent.
 pub const WADING_DAMAGE_PERCENT: u64 = 120;
 
-/// The map's heights, as the match setup gives them.
+/// What covers a tile, for hiding (see [`crate::vision`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Cover {
+    Open = 0,
+    /// Hides regiments standing still.
+    Grass = 1,
+    /// Hides regiments standing or marching.
+    Wood = 2,
+}
+
+impl Cover {
+    /// The cover a map byte stands for; anything unknown is open ground.
+    pub fn from_u8(v: u8) -> Cover {
+        match v {
+            1 => Cover::Grass,
+            2 => Cover::Wood,
+            _ => Cover::Open,
+        }
+    }
+}
+
+/// The map's heights, water and cover, as the match setup gives them.
 #[derive(Clone, Copy, Debug)]
 pub struct Ground<'a> {
     /// Ground height at each tile's centre, row by row, in
@@ -41,13 +67,18 @@ pub struct Ground<'a> {
     /// Ground lower than this is water (deep water is also blocked in
     /// the nav grid; the rest is fords and shallows).
     pub water_level: u16,
+    /// What covers each tile, row by row, as [`Cover`] bytes. Empty means
+    /// open ground everywhere; otherwise there must be one per tile of the
+    /// map, or the map is taken as having no cover.
+    pub cover: &'a [u8],
 }
 
 impl Ground<'static> {
-    /// Flat, dry ground: no terrain effects.
+    /// Flat, dry, open ground: no terrain effects.
     pub const FLAT: Ground<'static> = Ground {
         heights: &[],
         water_level: 0,
+        cover: &[],
     };
 }
 
@@ -56,23 +87,52 @@ pub struct Terrain {
     tiles: i32,
     height: Vec<u16>,
     water_level: u16,
+    /// Map edge in tiles when the map has cover, else 0.
+    cover_tiles: i32,
+    cover: Vec<u8>,
 }
 
 impl Terrain {
     pub(crate) fn new(ground: &Ground, map_tiles: u32) -> Terrain {
         let n = map_tiles as usize;
+        let (cover_tiles, cover) = if n > 0 && ground.cover.len() == n * n {
+            (map_tiles as i32, ground.cover.to_vec())
+        } else {
+            (0, Vec::new())
+        };
         if n == 0 || ground.heights.len() != n * n {
             return Terrain {
                 tiles: 0,
                 height: Vec::new(),
                 water_level: 0,
+                cover_tiles,
+                cover,
             };
         }
         Terrain {
             tiles: map_tiles as i32,
             height: ground.heights.to_vec(),
             water_level: ground.water_level,
+            cover_tiles,
+            cover,
         }
+    }
+
+    /// Whether the map has any cover to hide in.
+    pub fn has_cover(&self) -> bool {
+        self.cover_tiles != 0
+    }
+
+    /// What covers the tile `p` is on (open off the map or with no cover).
+    pub fn cover(&self, p: FxVec2) -> Cover {
+        if self.cover_tiles == 0 {
+            return Cover::Open;
+        }
+        let (x, y) = (p.x.floor_int(), p.y.floor_int());
+        if x < 0 || y < 0 || x >= self.cover_tiles || y >= self.cover_tiles {
+            return Cover::Open;
+        }
+        Cover::from_u8(self.cover[(y * self.cover_tiles + x) as usize])
     }
 
     /// Whether the match has heights at all.

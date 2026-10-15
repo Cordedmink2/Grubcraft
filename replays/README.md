@@ -1,11 +1,12 @@
 # Golden replays
 
-Recorded battles that the simulation must keep playing exactly as recorded. Each `.gcr` file holds a match's setup (seed, unit table, teams, map) and every command of the battle, plus the simulation's state hash once a second. Playing one back must give the same hashes, on every machine. See [10 · Architecture](../docs/10-architecture.md#testing-strategy) and the `gc_replay` crate.
+Recorded battles that the simulation must keep playing exactly as recorded. Each `.gcr` file holds a match's setup (seed, unit table, teams, map, and since format 3 its woods and tall grass) and every command of the battle, plus the simulation's state hash once a second. Playing one back must give the same hashes, on every machine. See [10 · Architecture](../docs/10-architecture.md#testing-strategy) and the `gc_replay` crate.
 
 | Replay | What it is |
 |---|---|
 | `field-1v1.gcr` | Ember Clans (Veteran AI) against Brood (General AI), ten regiments each, on a generated 256-tile map |
 | `field-2v2.gcr` | Ember Clans and Carrion Concord against Brood and Choir, all computer players, ten regiments each |
+| `field-woods-1v1.gcr` | Brood against Choir (both General AI) on a generated map with woods and tall grass: regiments hide and are spotted, and six ambushes are sprung ([20 · Ambushes](../docs/20-ambushes.md)) |
 | `sandbox-tuning.gcr` | Ember Clans against Carrion Concord, with a stat change at 1:00 and a regiment removed at 1:30, so every kind of command is covered |
 | `field-8000pt-2v2.gcr` | The `gc_bench` grand battle: four armies of about 1,500 soldiers on a 384-tile map, every regiment charging the nearest enemy |
 

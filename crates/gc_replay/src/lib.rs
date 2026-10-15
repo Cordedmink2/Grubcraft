@@ -2,7 +2,8 @@
 //!
 //! The simulation is deterministic, so a match is fully described by how it
 //! started and the commands of every tick. A [`Replay`] stores exactly that:
-//! the match setup (seed, unit table, teams, walkable ground, heights) and
+//! the match setup (seed, unit table, teams, walkable ground, heights,
+//! woods and tall grass) and
 //! the command stream, plus the simulation's state hash once a second of
 //! game time. Playing it back rebuilds the same world tick for tick; the
 //! hashes say whether it still does.
@@ -34,8 +35,11 @@ use codec::{Reader, Writer};
 
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older replays are refused
-/// with [`Error::Format`].
-pub const FORMAT: u16 = 2;
+/// with [`Error::Format`], except format 2, which is format 3 without the
+/// cover layer (read as a map with no woods or grass).
+pub const FORMAT: u16 = 3;
+/// The oldest format this build still reads.
+const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
 pub const EXTENSION: &str = "gcr";
 /// State hashes are kept every this many ticks (one second of game time).
@@ -59,6 +63,8 @@ pub struct Replay {
     /// Heights and water line, as [`Ground`].
     pub heights: Vec<u16>,
     pub water_level: u16,
+    /// Woods and tall grass, as [`Ground::cover`] (empty: none).
+    pub cover: Vec<u8>,
     /// Ticks recorded.
     pub ticks: u32,
     /// The commands of each tick that had any, in tick order.
@@ -140,6 +146,7 @@ impl Replay {
             ground: Ground {
                 heights: &self.heights,
                 water_level: self.water_level,
+                cover: &self.cover,
             },
         }
     }
@@ -237,6 +244,7 @@ impl Replay {
             prev = h;
         }
         w.var(self.water_level as u64);
+        w.bytes(&self.cover);
         w.var(self.ticks as u64);
         w.var(self.turns.len() as u64);
         let mut prev = 0;
@@ -267,7 +275,7 @@ impl Replay {
             return Err(Error::NotAReplay);
         }
         let format = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if format != FORMAT {
+        if !(OLDEST_FORMAT..=FORMAT).contains(&format) {
             return Err(Error::Format(format));
         }
         let packed = &bytes[6..];
@@ -280,10 +288,10 @@ impl Replay {
         }
         let body = lz4_flex::decompress_size_prepended(packed)
             .map_err(|_| Error::Corrupt("compressed body"))?;
-        Replay::read_body(&mut Reader::new(&body)).ok_or(Error::Corrupt("body"))
+        Replay::read_body(&mut Reader::new(&body), format).ok_or(Error::Corrupt("body"))
     }
 
-    fn read_body(r: &mut Reader) -> Option<Replay> {
+    fn read_body(r: &mut Reader, format: u16) -> Option<Replay> {
         // Counts are checked against the bytes left before allocating.
         let note = String::from_utf8(r.bytes()?.to_vec()).ok()?;
         let seed = r.u64()?;
@@ -311,6 +319,14 @@ impl Replay {
             heights.push(prev);
         }
         let water_level = r.var_as()?;
+        let cover = if format >= 3 {
+            r.bytes()?.to_vec()
+        } else {
+            Vec::new()
+        };
+        if !cover.is_empty() && cover.len() != (map_tiles as usize).pow(2) {
+            return None;
+        }
         let ticks = r.var_as()?;
         let n: usize = r.var_as()?;
         let mut turns = Vec::with_capacity(n.min(r.remaining()));
@@ -348,6 +364,7 @@ impl Replay {
             nav,
             heights,
             water_level,
+            cover,
             ticks,
             turns,
             checkpoints,
@@ -385,6 +402,12 @@ impl Recorder {
                 nav: setup.nav.to_vec(),
                 heights: setup.ground.heights.to_vec(),
                 water_level: setup.ground.water_level,
+                // Cover that doesn't fit the map is none, as in the sim.
+                cover: if setup.ground.cover.len() == (setup.map_tiles as usize).pow(2) {
+                    setup.ground.cover.to_vec()
+                } else {
+                    Vec::new()
+                },
                 ticks: 0,
                 turns: Vec::new(),
                 checkpoints: vec![(0, world.state_hash())],
@@ -432,6 +455,10 @@ mod tests {
     fn record() -> Replay {
         let nav = ribs_map(64);
         let heights: Vec<u16> = (0..64u32 * 64).map(|i| (i * 37 % 900) as u16).collect();
+        // Woods and tall grass in 8-tile squares, so hiding is recorded too.
+        let cover: Vec<u8> = (0..64u32 * 64)
+            .map(|i| ((i % 64 / 8 + i / 64 / 8) % 3) as u8)
+            .collect();
         let setup = MatchSetup {
             seed: 7,
             capacities: Capacities { regiments: 64 },
@@ -442,6 +469,7 @@ mod tests {
             ground: Ground {
                 heights: &heights,
                 water_level: 200,
+                cover: &cover,
             },
         };
         let mut world = World::new(&setup);

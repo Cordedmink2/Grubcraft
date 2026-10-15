@@ -106,14 +106,14 @@ Routing regiments are slower than their pursuers, so a rout is a real loss, but 
 | Terrain | Effect |
 |---|---|
 | High ground | +15% ranged range and +10% melee damage when fighting downhill |
-| Forest | Conceals non-moving units from beyond 4 tiles; cavalry slowed 30%; ranged accuracy reduced |
-| Tall grass | Conceals infantry that are not attacking |
+| Forest | Hides regiments until an enemy comes within 4 tiles (10 while they march); cavalry slowed 30%; ranged accuracy reduced |
+| Tall grass | Hides regiments standing still until an enemy comes within 3 tiles |
 | River ford / shallows | Slow (−40%); units in water take +20% melee damage |
 | Road | +15% speed |
 | Cliff / rib-ridge | Impassable except to air and Burrowers |
 | Bog | Slow, no charges |
 
-**Built so far (terrain rules):** high ground and fords work as in the table. "Higher" means the regiment's tile stands at least half a tile above its foe's; the ranged bonus counts only against targets that far below the archers. A regiment whose centre is in water wades at 60% pace, takes 20% more melee damage, and can't charge (it reaches the bank with no charge bonus). Steep slopes still cost routes but don't slow the march; forest, grass, roads and bogs come with the map tile types.
+**Built so far (terrain rules):** high ground and fords work as in the table. "Higher" means the regiment's tile stands at least half a tile above its foe's; the ranged bonus counts only against targets that far below the archers. A regiment whose centre is in water wades at 60% pace, takes 20% more melee damage, and can't charge (it reaches the bank with no charge bonus). Steep slopes still cost routes but don't slow the march. Woods and tall grass hide regiments, as the table says, with the full rules for spotting and springing ambushes in [20 · Ambushes](20-ambushes.md#the-battle-rules); the forest's slow-down and arrow cover come later, and roads and bogs come with the map tile types.
 
 ## Ranged combat
 

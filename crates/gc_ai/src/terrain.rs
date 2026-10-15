@@ -3,9 +3,11 @@
 //! map's heights when the game has them.
 //!
 //! It answers "can a regiment stand here?", "is this blocked?", "is this
-//! water?" and "how high is it?". What a battle line makes of those (flank
-//! anchors, high ground, fords) is worked out in [`crate::ground`].
+//! water?", "how high is it?" and "is it wooded?". What a battle line makes
+//! of those (flank anchors, high ground, fords) is worked out in
+//! [`crate::ground`]; where to hide, in the Captain's ambush plans.
 
+use gc_sim::Cover;
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE, CLEARANCE};
 use glam::Vec2;
 
@@ -23,6 +25,9 @@ pub struct Terrain {
     /// Ground lower than this is under water: deep water is blocked, the
     /// rest is a ford.
     water_level: f32,
+    /// Woods and tall grass per tile, row by row, as `gc_sim::Ground::cover`;
+    /// empty when the map has none.
+    cover: Vec<u8>,
 }
 
 impl Terrain {
@@ -35,6 +40,7 @@ impl Terrain {
             clear: Vec::new(),
             height: Vec::new(),
             water_level: f32::MIN,
+            cover: Vec::new(),
         }
     }
 
@@ -51,6 +57,7 @@ impl Terrain {
             clear: vec![0; nav.len()],
             height: Vec::new(),
             water_level: f32::MIN,
+            cover: Vec::new(),
         };
         t.measure_clearance();
         t
@@ -66,6 +73,35 @@ impl Terrain {
             self.water_level = water_level;
         }
         self
+    }
+
+    /// Add the map's woods and tall grass, one byte per tile as the
+    /// simulation has them (`gc_sim::Ground::cover`). Ignored if there isn't
+    /// one per tile.
+    pub fn with_cover(mut self, cover: Vec<u8>) -> Terrain {
+        let n = self.map_tiles as usize;
+        if cover.len() == n * n && n > 0 {
+            self.cover = cover;
+        }
+        self
+    }
+
+    /// Whether the map has woods or tall grass anywhere.
+    pub fn has_cover(&self) -> bool {
+        !self.cover.is_empty()
+    }
+
+    /// The cover at `p`: open off the map and where the map has none.
+    pub fn cover(&self, p: Vec2) -> Cover {
+        let n = self.map_tiles as i32;
+        if self.cover.is_empty() || p.x < 0.0 || p.y < 0.0 {
+            return Cover::Open;
+        }
+        let (x, y) = (p.x as i32, p.y as i32);
+        if x >= n || y >= n {
+            return Cover::Open;
+        }
+        Cover::from_u8(self.cover[(y * n + x) as usize])
     }
 
     /// Ground height at `p`, tiles (0 where the map has none).

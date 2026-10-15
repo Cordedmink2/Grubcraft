@@ -46,8 +46,12 @@ static GLOBAL: Counting = Counting;
 
 #[test]
 fn ticking_never_allocates() {
-    // On the ridged map, so route searches run too.
+    // On the ridged map, so route searches run too, with woods and tall
+    // grass in a checker of 16-tile squares, so regiments hide and spot.
     let nav = ribs_map(256);
+    let cover: Vec<u8> = (0..256 * 256)
+        .map(|i| (((i % 256) / 16 + (i / 256) / 16) % 3) as u8)
+        .collect();
     let mut world = World::new(&MatchSetup {
         seed: 7,
         capacities: Capacities::default(),
@@ -55,8 +59,13 @@ fn ticking_never_allocates() {
         map_tiles: 256,
         nav: &nav,
         teams: &[],
-        ground: gc_sim::Ground::FLAT,
+        ground: gc_sim::Ground {
+            heights: &[],
+            water_level: 0,
+            cover: &cover,
+        },
     });
+    assert!(world.terrain().has_cover());
     let mut drill = Drill::new(7);
     let mut commands = Vec::with_capacity(512);
     for _ in 0..1_000 {

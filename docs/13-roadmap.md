@@ -36,6 +36,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - `gc_net`: UDP transport, encryption, host-sequenced lockstep, adaptive input delay. *Built: lockstep in step 1, the adaptive delay in step 2, encryption in step 3.*
 - LAN discovery, Host/Join screens, lobby, version gate. *Built, with join codes and a lobby password since step 3.*
 - Field Battle mode: army builder with points, deployment phase, victory conditions, 2 battle maps.
+- Ambushes: woods and tall grass that hide regiments, spotting, and the morale shock of a sprung ambush; the AI plays fair with them and lays its own ([20 · Ambushes](20-ambushes.md)). *Built (2026-10-15): step A, the battle rules, the woods on the maps, the on-screen cues and the AI's Ambush doctrine. Steps B (unit traits, forest slow-down) and C (fog of war, with M3) follow.*
 - Teams: teammates are allied, through one hostility test that reads a stance table filled from the lobby ([18 · AI](18-ai.md#engine-hooks), hook 1). *Built with AI-1 step 1: lobby teams reach the sim and teammates don't fight.*
 - AI track: the battle AI (phases AI-1 and AI-2), so any Field Battle or sandbox slot can be an AI opponent or ally. *AI-1 built (2026-10-13): the battle AI at three levels, reading the ground, and the AI lens (`L`). AI-2 (rehearsal and the Warlord level) is next ([18 · AI](18-ai.md#build-plan)).*
 - Terrain rules for battle maps: high ground and fords ([05 · Combat](05-combat.md#terrain)). *Built (2026-10-13): fighting downhill and shooting from high ground, slow wading, no charging out of a river, extra blows on waders. Friendly regiments queue in fords and passes instead of stacking (built the same day).*
@@ -55,7 +56,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Ember Clans economy and Honor; Brood veins, larvae, metamorphosis, Reclaimers.
 - Unit, hero and ability data for all four factions is already drafted in `data/rosters/` ([17 · Unit Rosters](17-unit-rosters.md)); M3 bakes it into the game.
 - Heroes: levelling, abilities from the effect-primitive system, items, altar revive.
-- Fog of war, minimap, army tray, command grid, edge notifications.
+- Fog of war (built on the ambush vision rules, [20](20-ambushes.md#from-hidden-regiments-to-fog-of-war)), minimap, army tray, command grid, edge notifications.
 - Annihilation and Titan's Heart victories.
 - One Duel map (Ribcage Pass) and one Warfield map (The Four Teeth).
 - AI track: Conquest AI for the Ember Clans and the Brood; AI allies answer pings; the AI arena (AI-3).

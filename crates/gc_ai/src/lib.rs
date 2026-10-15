@@ -71,6 +71,9 @@ pub struct Mind {
     next_think: u32,
     next_slip: u32,
     wants: Vec<Want>,
+    /// What its side sees, with the enemies it remembers (on a map with
+    /// cover).
+    sight: Perception,
 }
 
 impl Mind {
@@ -104,6 +107,7 @@ impl Mind {
             next_think: config.party as u32 % knobs.think_ticks.max(1),
             next_slip: 0,
             wants: Vec::new(),
+            sight: Perception::new(),
         }
     }
 
@@ -184,7 +188,8 @@ impl Mind {
     }
 }
 
-/// The minds of a match, sharing one look at the world per tick.
+/// The minds of a match, sharing one look at the world per tick (on a map
+/// with cover, each takes its own look at what its side sees).
 pub struct Minds {
     view: Perception,
     terrain: Terrain,
@@ -229,7 +234,8 @@ impl Minds {
         &self.terrain
     }
 
-    /// The last look at the world.
+    /// The last look at the world, all of it (minds on a map with cover
+    /// think on what their side sees).
     pub fn view(&self) -> &Perception {
         &self.view
     }
@@ -241,8 +247,18 @@ impl Minds {
             return;
         }
         self.view.capture(world);
+        // Regiments hidden in cover are hidden from the computer players
+        // too (docs/20-ambushes.md).
+        let fair = world.terrain().has_cover();
         for m in &mut self.minds {
-            m.tick(&self.view, &self.terrain, out);
+            if fair {
+                let mut sight = std::mem::take(&mut m.sight);
+                sight.capture_for(world, m.party);
+                m.tick(&sight, &self.terrain, out);
+                m.sight = sight;
+            } else {
+                m.tick(&self.view, &self.terrain, out);
+            }
         }
     }
 }

@@ -19,7 +19,7 @@ pub fn version() -> String {
     format!("{} {}", env!("CARGO_PKG_VERSION"), env!("GRUBCRAFT_COMMIT"))
 }
 
-/// A fingerprint of a map's walkable ground (FNV-1a), so a joiner whose
+/// A fingerprint of a map's walkable ground, hills, water and cover (FNV-1a), so a joiner whose
 /// map came out differently finds out before the battle starts.
 pub fn map_hash(nav: &[u8], ground: &gc_sim::Ground) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -31,6 +31,7 @@ pub fn map_hash(nav: &[u8], ground: &gc_sim::Ground) -> u64 {
     for v in ground.heights.iter().chain([&ground.water_level]) {
         v.to_le_bytes().into_iter().for_each(&mut eat);
     }
+    ground.cover.iter().for_each(|&b| eat(b));
     h ^ nav.len() as u64
 }
 
@@ -149,11 +150,25 @@ mod tests {
         let ground = |heights, water_level| gc_sim::Ground {
             heights,
             water_level,
+            cover: &[],
         };
         let base = map_hash(&a, &ground(&heights, 2));
         assert_ne!(base, map_hash(&a, &ground(&raised, 2)));
         assert_ne!(base, map_hash(&a, &ground(&heights, 3)));
         assert_ne!(base, map_hash(&a, &flat));
+        // And so do the woods and tall grass.
+        let wood = vec![2u8; 1000];
+        let mut grass = wood.clone();
+        grass[500] = 1;
+        let covered = |cover| gc_sim::Ground {
+            cover,
+            ..ground(&heights, 2)
+        };
+        assert_ne!(base, map_hash(&a, &covered(&wood)));
+        assert_ne!(
+            map_hash(&a, &covered(&wood)),
+            map_hash(&a, &covered(&grass))
+        );
     }
 
     #[test]

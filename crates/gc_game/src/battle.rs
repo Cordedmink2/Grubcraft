@@ -148,17 +148,28 @@ pub fn battle_starts(teams: &[u8], me: usize, plateaus: [Vec2; 4]) -> Vec<Vec2> 
 }
 
 /// The side left holding the field: some side with regiments still
-/// fighting, when everyone else still fighting is its ally. None while
-/// enemies still face each other, or nobody stands.
+/// fighting in sight, when every enemy still fighting is out of its sight.
+/// None while enemies still face each other, or nobody stands.
+///
+/// Regiments hidden in woods or tall grass don't hold the field
+/// (docs/20-ambushes.md): an army whose regiments in sight have all broken
+/// has lost it, however many it still has hiding, so a beaten army's
+/// survivors rallying in a wood don't drag a battle on. Two armies that
+/// are both out of each other's sight are still facing each other. With no
+/// enemy left standing at all, hiding doesn't matter.
 pub fn holding_the_field(world: &World) -> Option<PlayerId> {
-    let mut standing = world
-        .regiments
-        .iter()
-        .filter(|r| r.models > 0 && !r.morale.broken());
-    let first = standing.next()?.owner;
-    standing
-        .all(|r| !world.hostile(first, r.owner))
-        .then_some(first)
+    let standing = || {
+        world
+            .regiments
+            .iter()
+            .filter(|r| r.models > 0 && !r.morale.broken())
+    };
+    standing().map(|r| r.owner).find(|&p| {
+        let foes = || standing().filter(|e| world.hostile(p, e.owner));
+        let alone = foes().next().is_none();
+        standing().any(|r| r.owner == p && (alone || !world.hidden(r.handle)))
+            && foes().all(|e| !world.sees(p, e.handle))
+    })
 }
 
 /// A lobby Field Battle under way: whose side this machine plays, and how
@@ -323,7 +334,6 @@ mod tests {
             .collect();
         let heightmap = Heightmap::generate(seed, MAP);
         let nav = heightmap.nav_costs();
-        let (heights, water_level) = heightmap.sim_ground();
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
         let mut world = World::new(&MatchSetup {
             seed,
@@ -332,10 +342,7 @@ mod tests {
             map_tiles: MAP,
             nav: &nav,
             teams: &teams,
-            ground: gc_sim::Ground {
-                heights: &heights,
-                water_level,
-            },
+            ground: heightmap.ground(),
         });
         let mut minds = Minds::new(heightmap.ai_terrain(&nav));
         let mut out = Vec::new();
@@ -509,6 +516,60 @@ mod tests {
         for row in rows {
             println!("{row}");
         }
+    }
+
+    #[test]
+    fn a_winner_hidden_in_a_wood_holds_the_field_once_nobody_stands_against_it() {
+        // A wood over the west half of a small map.
+        let cover: Vec<u8> = (0..64 * 64)
+            .map(|i| {
+                if i % 64 < 32 {
+                    gc_sim::Cover::Wood as u8
+                } else {
+                    0
+                }
+            })
+            .collect();
+        let units = gc_sim::scenario::DRILL_UNITS;
+        let mut world = World::new(&MatchSetup {
+            seed: 1,
+            capacities: Capacities::default(),
+            units: &units,
+            map_tiles: 64,
+            nav: &[],
+            teams: &[],
+            ground: gc_sim::Ground {
+                heights: &[],
+                water_level: 0,
+                cover: &cover,
+            },
+        });
+        let spawn = |player, x| PlayerCommand {
+            player,
+            command: gc_sim::Command::SpawnRegiment {
+                unit: 0,
+                position: gc_fixed::FxVec2::new(
+                    gc_fixed::Fx::from_int(x),
+                    gc_fixed::Fx::from_int(32),
+                ),
+                facing: gc_fixed::Angle(0),
+            },
+        };
+        world.tick(&[spawn(0, 12), spawn(1, 52)]);
+        // The enemy in the open sees nothing of the hidden army: it holds.
+        assert_eq!(holding_the_field(&world), Some(1));
+        let enemy = world
+            .regiments
+            .iter()
+            .find(|r| r.owner == 1)
+            .unwrap()
+            .handle;
+        world.tick(&[PlayerCommand {
+            player: 1,
+            command: gc_sim::Command::RemoveRegiment { regiment: enemy },
+        }]);
+        // Nobody left against it: hiding doesn't matter.
+        assert_eq!(holding_the_field(&world), Some(0));
     }
 
     #[test]

@@ -23,6 +23,7 @@ Read in order the first time; afterwards each document stands alone.
 | 17 | [Unit Rosters](17-unit-rosters.md) | Every unit, summon and hero for all four factions: stats, costs, abilities, counters, and the data schema they need |
 | 18 | [AI](18-ai.md) | Computer opponents and allies, battle tactics, difficulty and personalities; the relations system (stance, liking, trust, memories) and the minds of hamlets, mercenaries and factions met while exploring |
 | 19 | [Campaign and Exploration](19-campaign.md) | Exploring inside a match (frontier sites, first contact), and the Campaign: a world map of the Reach played over several game nights, with seasons, hosts, the peoples you meet, relations over time, and battles fought or handed to the generals |
+| 20 | [Ambushes](20-ambushes.md) | Hiding in woods and tall grass, spotting, springing an ambush and its morale shock, keeping it readable and fair, counterplay, faction leanings, the AI's Ambush doctrine, and the road to fog of war and campaign ambushes |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |

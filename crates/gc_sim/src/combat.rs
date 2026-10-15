@@ -24,6 +24,7 @@ use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_REAR, WAVERING_DAMAGE_PERCEN
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments, Strike, hash_handle};
 use crate::terrain::Terrain;
+use crate::vision::{OFF_GUARD_DAMAGE_PERCENT, Vision};
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
 
 /// Ticks between a regiment's melee blows.
@@ -83,16 +84,16 @@ impl Side {
 
 /// A regiment's footprint as an oriented rectangle.
 #[derive(Clone, Copy, Debug)]
-struct Block {
-    centre: FxVec2,
-    forward: FxVec2,
-    right: FxVec2,
-    half_width: Fx,
-    half_depth: Fx,
+pub(crate) struct Block {
+    pub(crate) centre: FxVec2,
+    pub(crate) forward: FxVec2,
+    pub(crate) right: FxVec2,
+    pub(crate) half_width: Fx,
+    pub(crate) half_depth: Fx,
 }
 
 impl Block {
-    fn of(regs: &Regiments, units: &[UnitStats], i: usize) -> Block {
+    pub(crate) fn of(regs: &Regiments, units: &[UnitStats], i: usize) -> Block {
         Block::at(regs, units, i, regs.position[i])
     }
 
@@ -111,7 +112,7 @@ impl Block {
     }
 
     /// Radius of a circle that holds the block.
-    fn radius(&self) -> Fx {
+    pub(crate) fn radius(&self) -> Fx {
         self.half_width + self.half_depth
     }
 
@@ -121,7 +122,7 @@ impl Block {
     }
 
     /// Separating-axis test with `gap` of slack between the edges.
-    fn touches(&self, other: &Block, gap: Fx) -> bool {
+    pub(crate) fn touches(&self, other: &Block, gap: Fx) -> bool {
         let d = other.centre - self.centre;
         [self.forward, self.right, other.forward, other.right]
             .iter()
@@ -187,6 +188,8 @@ pub struct Combat {
     seen: Vec<Cell<u32>>,
     search: Cell<u32>,
     volleys: Volleys,
+    /// Volleys loosed this tick: (shooter, target), for vision.
+    loosed: Vec<(RegimentHandle, RegimentHandle)>,
 }
 
 /// Where every regiment is, borrowed field by field from [`Regiments`] so a
@@ -197,6 +200,19 @@ pub(crate) struct Placement<'a> {
     pub position: &'a [FxVec2],
     pub stances: &'a Stances,
 }
+
+/// Borrow where everyone is without borrowing the rest of the pool.
+macro_rules! placement {
+    ($regs:expr, $stances:expr) => {
+        $crate::combat::Placement {
+            alive: &$regs.alive,
+            owner: &$regs.owner,
+            position: &$regs.position,
+            stances: $stances,
+        }
+    };
+}
+pub(crate) use placement;
 
 /// Whose regiments a search around a point visits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -271,7 +287,13 @@ impl Combat {
                 accuracy: vec![0; MAX_VOLLEYS],
                 free: (0..MAX_VOLLEYS as u32).rev().collect(),
             },
+            loosed: Vec::with_capacity(regiment_capacity),
         }
+    }
+
+    /// The volleys loosed in the last tick: (shooter, target).
+    pub(crate) fn loosed(&self) -> &[(RegimentHandle, RegimentHandle)] {
+        &self.loosed
     }
 
     /// Volleys in flight, in pool order.
@@ -287,6 +309,12 @@ impl Combat {
                 impact_tick: v.impact[i],
                 shots: v.shots[i],
             })
+    }
+
+    /// The radius of the biggest block on the field at the start of this
+    /// tick (the circle that holds it).
+    pub(crate) fn max_radius(&self) -> Fx {
+        self.max_radius
     }
 
     fn bucket_of(cx: i32, cy: i32) -> usize {
@@ -675,15 +703,18 @@ impl Combat {
     }
 
     /// Blows, volleys and deaths, after everyone has moved this tick.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn after_move(
         &mut self,
         regs: &mut Regiments,
         units: &[UnitStats],
         stances: &Stances,
         terrain: &Terrain,
+        vision: &Vision,
         tick: u32,
         rng: &mut Pcg32,
     ) {
+        self.loosed.clear();
         // Melee.
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
@@ -735,7 +766,7 @@ impl Combat {
             let ground = terrain.melee_percent(regs.position[i], regs.position[j]);
             // In u128: the extra factors would overflow u64 for big blows.
             // With every new factor at 100 this is exactly the old formula.
-            let expected = (fighters as u128
+            let mut expected = (fighters as u128
                 * hit
                 * attacker.melee_damage as u128
                 * side.damage_percent() as u128
@@ -746,6 +777,10 @@ impl Combat {
                 / (100 * 100 * 100 * 100 * 100 * 100)) as u64
                 * ground
                 / 100;
+            // Caught off guard by an ambush.
+            if vision.off_guard(i) {
+                expected = expected * OFF_GUARD_DAMAGE_PERCENT / 100;
+            }
             deal(regs, units, j, expected, side, rng);
         }
 
@@ -763,7 +798,7 @@ impl Combat {
             {
                 continue;
             }
-            let Some(j) = self.pick_target(regs, stances, terrain, i, stats.range) else {
+            let Some(j) = self.pick_target(regs, stances, terrain, vision, i, stats.range) else {
                 continue;
             };
             let to = regs.position[j] - regs.position[i];
@@ -777,13 +812,19 @@ impl Combat {
             };
             let v = v as usize;
             let flight = (to.length().raw() / MISSILE_SPEED.raw()).max(1) as u32;
-            let vs = &mut self.volleys;
-            vs.alive[v] = true;
-            vs.owner[v] = regs.owner[i];
-            vs.target[v] = RegimentHandle {
+            let target = RegimentHandle {
                 index: j as u32,
                 generation: regs.generation[j],
             };
+            let shooter = RegimentHandle {
+                index: i as u32,
+                generation: regs.generation[i],
+            };
+            self.loosed.push((shooter, target));
+            let vs = &mut self.volleys;
+            vs.alive[v] = true;
+            vs.owner[v] = regs.owner[i];
+            vs.target[v] = target;
             vs.from[v] = regs.position[i];
             vs.aim[v] = regs.position[j];
             vs.launch[v] = tick;
@@ -840,17 +881,24 @@ impl Combat {
         }
     }
 
+    /// The enemy a ranged regiment shoots: the one it was told to attack if
+    /// in range, else the nearest in range. Only enemies its side can see;
+    /// and while hidden from an enemy, it holds its fire at that enemy
+    /// unless ordered to shoot it (docs/20-ambushes.md).
     fn pick_target(
         &self,
         regs: &Regiments,
         stances: &Stances,
         terrain: &Terrain,
+        vision: &Vision,
         i: usize,
         range: Fx,
     ) -> Option<usize> {
         let me = regs.position[i];
+        let owner = regs.owner[i];
         if let Some(j) = regs.attack_target[i].and_then(|t| regs.resolve(t))
             && (regs.position[j] - me).length() <= terrain.range(range, me, regs.position[j])
+            && vision.sees(owner, j, regs.owner[j])
         {
             return Some(j);
         }
@@ -861,8 +909,13 @@ impl Combat {
         } else {
             Terrain::range_from_high_ground(range)
         };
-        self.near_enemies(me, reach, regs.owner[i], |j| {
-            if !regs.alive[j] || !stances.hostile(regs.owner[i], regs.owner[j]) {
+        self.near_enemies(me, reach, owner, |j| {
+            if !regs.alive[j]
+                || !stances.hostile(owner, regs.owner[j])
+                || !vision.sees(owner, j, regs.owner[j])
+                // A hidden archer holds its fire at enemies who can't see it.
+                || !vision.sees(regs.owner[j], i, owner)
+            {
                 return;
             }
             let d = (regs.position[j] - me).length_sq_raw();
