@@ -1,10 +1,22 @@
-// Carrion Concord roster: every unit, summon, hero and Tithe contract, with
+// Carrion Concord roster: every building, unit, summon, hero and Tithe contract, with
 // first-pass numbers. Design data for Conquest (M3): the game does not read
 // this file yet. Readable copy and rationale: docs/17-unit-rosters.md.
 //
 // Each `stats` block uses exactly the fields of a data/units.ron entry (see
 // the comment at the top of that file) so it can move into the game
 // unchanged; tools/gc_bake/tests/rosters.rs bakes every block to prove it.
+//
+// Building fields (docs/21-buildings.md): name, role (Main, Outpost, Housing,
+// Economy, Production, Tech, Heroes, Defence, Wall), tier (the main-building
+// tier needed to build it), upgrades_from (main-building tiers 2 and 3:
+// Some(the building it upgrades), with the upgrade's cost and time), cost,
+// build_time (seconds at Standard tempo), hp, armour (Fortified, Structure,
+// Living), footprint (tiles across and deep), supply (cap it adds), flags
+// (DropOffGrub, DropOffMarrow, PowersField, AntiAir), attack (towers: range in
+// tiles, damage per shot, seconds between shots, shots per volley) and effect
+// (plain words). starting_buildings are what a player starts Conquest with
+// (docs/04-economy.md). A unit's `from: Building("...")` names one of these
+// buildings.
 //
 // Unit fields: tier (1 to 3; 0 for summoned units), class, cost (Grub and
 // Marrow), supply, train_time (seconds; for Brood evolutions the cocoon
@@ -63,6 +75,142 @@
             ),
         ],
     ),
+    starting_buildings: ["Counting House"],
+    buildings: [
+        (
+            name: "Counting House",
+            role: Main,
+            tier: 1,
+            cost: (grub: 400, marrow: 0),
+            build_time: 120.0,
+            hp: 2800,
+            armour: Fortified,
+            footprint: (5, 5),
+            supply: 12,
+            flags: [DropOffMarrow],
+            effect: "Main building. Trains Clerks and Caravans. Caravan routes start here, and Clerks bring Marrow here.",
+        ),
+        (
+            name: "Exchange",
+            role: Main,
+            tier: 2,
+            upgrades_from: Some("Counting House"),
+            cost: (grub: 300, marrow: 100),
+            build_time: 60.0,
+            hp: 3600,
+            armour: Fortified,
+            footprint: (5, 5),
+            supply: 22,
+            flags: [DropOffMarrow],
+            effect: "Tier 2: Gravewardens, Debt Collectors, Lantern Wraiths and a second hero.",
+        ),
+        (
+            name: "Grand Bourse",
+            role: Main,
+            tier: 3,
+            upgrades_from: Some("Exchange"),
+            cost: (grub: 600, marrow: 250),
+            build_time: 90.0,
+            hp: 4400,
+            armour: Fortified,
+            footprint: (5, 5),
+            supply: 32,
+            flags: [DropOffMarrow],
+            effect: "Tier 3: monsters, top upgrades and a third hero.",
+        ),
+        (
+            name: "Waystation",
+            role: Outpost,
+            tier: 1,
+            cost: (grub: 200, marrow: 0),
+            build_time: 60.0,
+            hp: 1200,
+            armour: Structure,
+            footprint: (4, 4),
+            flags: [DropOffMarrow],
+            effect: "Your own trade post for caravan routes (half rate), and a Marrow drop-off for expansions.",
+        ),
+        (
+            name: "Tenement",
+            role: Housing,
+            tier: 1,
+            cost: (grub: 80, marrow: 0),
+            build_time: 25.0,
+            hp: 650,
+            armour: Structure,
+            footprint: (3, 3),
+            supply: 10,
+            effect: "Housing.",
+        ),
+        (
+            name: "Reliquary",
+            role: Economy,
+            tier: 1,
+            cost: (grub: 75, marrow: 0),
+            build_time: 20.0,
+            hp: 400,
+            armour: Structure,
+            footprint: (2, 2),
+            effect: "Every model that dies within 12 tiles, on any side, pays 1 Tithe. Can be built anywhere you have vision.",
+        ),
+        (
+            name: "Ossuary",
+            role: Production,
+            tier: 1,
+            cost: (grub: 150, marrow: 0),
+            build_time: 50.0,
+            hp: 1400,
+            armour: Structure,
+            footprint: (4, 4),
+            effect: "Raises the undead: Bone Pikes, Gravewardens, and at tier 3 the Mausoleum Engine and the Insolvent.",
+        ),
+        (
+            name: "Guildhall",
+            role: Production,
+            tier: 1,
+            cost: (grub: 160, marrow: 0),
+            build_time: 50.0,
+            hp: 1400,
+            armour: Structure,
+            footprint: (4, 4),
+            effect: "Trains living infantry and cavalry. Living regiments reinforce near it.",
+        ),
+        (
+            name: "Lantern Spire",
+            role: Production,
+            tier: 2,
+            cost: (grub: 160, marrow: 50),
+            build_time: 55.0,
+            hp: 1000,
+            armour: Structure,
+            footprint: (3, 3),
+            effect: "Trains Lantern Wraiths.",
+        ),
+        (
+            name: "Tollgate",
+            role: Defence,
+            tier: 1,
+            cost: (grub: 140, marrow: 0),
+            build_time: 40.0,
+            hp: 1000,
+            armour: Fortified,
+            footprint: (2, 2),
+            flags: [AntiAir],
+            attack: Some((range: 30.0, damage: 5, reload: 2.0, shots: 2)),
+            effect: "Two crossbows that shoot at ground and air. Every 4 damage it deals earns 1 Grub.",
+        ),
+        (
+            name: "Vault of Names",
+            role: Heroes,
+            tier: 1,
+            cost: (grub: 150, marrow: 0),
+            build_time: 50.0,
+            hp: 1200,
+            armour: Structure,
+            footprint: (3, 3),
+            effect: "Hires and revives heroes.",
+        ),
+    ],
     units: [
         (
             tier: 1,

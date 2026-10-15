@@ -20,6 +20,9 @@ const ROSTERS: &[(&str, FactionDef)] = &[
 struct Roster {
     faction: FactionDef,
     meter: Meter,
+    /// What a player starts Conquest with (docs/04-economy.md).
+    starting_buildings: Vec<String>,
+    buildings: Vec<Building>,
     units: Vec<Unit>,
     heroes: Vec<Hero>,
 }
@@ -30,6 +33,71 @@ struct Meter {
     name: String,
     max: u16,
     abilities: Vec<Ability>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Building {
+    name: String,
+    role: Role,
+    /// The main-building tier needed to build it.
+    tier: u8,
+    /// Main-building tiers 2 and 3: the building this one upgrades.
+    #[serde(default)]
+    upgrades_from: Option<String>,
+    cost: Cost,
+    /// Seconds at Standard tempo.
+    build_time: f64,
+    hp: u16,
+    armour: Armour,
+    /// Tiles across and deep.
+    footprint: (u8, u8),
+    #[serde(default)]
+    supply: u8,
+    #[serde(default)]
+    flags: Vec<BuildingFlag>,
+    #[serde(default)]
+    attack: Option<Attack>,
+    effect: String,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+enum Role {
+    Main,
+    Outpost,
+    Housing,
+    Economy,
+    Production,
+    Tech,
+    Heroes,
+    Defence,
+    Wall,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+enum Armour {
+    Fortified,
+    Structure,
+    Living,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+enum BuildingFlag {
+    DropOffGrub,
+    DropOffMarrow,
+    /// Choir: powers buildings around it. Every other Choir building needs
+    /// power to work.
+    PowersField,
+    AntiAir,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Attack {
+    range: f64,
+    damage: u16,
+    reload: f64,
+    shots: u8,
 }
 
 #[derive(Deserialize)]
@@ -423,6 +491,232 @@ fn live_units_are_in_the_rosters() {
             names.contains(&n.name),
             "{} is missing from the rosters",
             n.name
+        );
+    }
+}
+
+/// Every building besides the main building that adds supply, and how much,
+/// as docs/04-economy.md lists it.
+const SUPPLY: [(&str, u8); 6] = [
+    ("Farmstead", 10),
+    ("Outpost Hall", 6),
+    ("Pustule", 8),
+    ("Resonator", 4),
+    ("Siphon", 4),
+    ("Tenement", 10),
+];
+
+/// Tier upgrades of the main building (docs/04-economy.md, "Tech tiers"):
+/// Grub, Marrow, seconds.
+const TIER_UPGRADES: [(u16, u16, f64); 2] = [(300, 100, 60.0), (600, 250, 90.0)];
+
+/// Every faction starts Conquest on this supply cap (docs/04-economy.md).
+const STARTING_SUPPLY: u8 = 12;
+
+#[test]
+fn buildings_follow_the_design_rules() {
+    let rosters: Vec<_> = ROSTERS
+        .iter()
+        .map(|&(file, faction)| (file, faction, load(file)))
+        .collect();
+    // Towers outrange every regiment except artillery, siege and monsters, so
+    // archers can't shoot one down from beyond its reach.
+    let outranged = rosters
+        .iter()
+        .flat_map(|(_, _, r)| &r.units)
+        .filter(|u| !matches!(u.class, Class::Artillery | Class::Siege | Class::Monster))
+        .filter_map(|u| u.stats.ranged.as_ref().map(|g| g.range))
+        .fold(0.0, f64::max);
+    let mut supply_of = BTreeMap::new();
+    for &(file, faction, ref r) in &rosters {
+        let brood = faction == FactionDef::Brood;
+        let by_name: BTreeMap<&str, &Building> =
+            r.buildings.iter().map(|b| (b.name.as_str(), b)).collect();
+
+        for b in &r.buildings {
+            let at = format!("{file}: {}", b.name);
+            assert!(
+                supply_of.insert(b.name.clone(), b.supply).is_none(),
+                "{at}: name used twice"
+            );
+            assert!((1..=3).contains(&b.tier), "{at}: tier 1 to 3");
+            assert!(
+                b.cost.grub > 0 && b.hp > 0,
+                "{at}: needs a cost and hit points"
+            );
+            assert!(b.build_time > 0.0, "{at}: needs a build time");
+            assert!(!b.effect.trim().is_empty(), "{at}: no effect text");
+            if b.tier == 1 {
+                assert_eq!(b.cost.marrow, 0, "{at}: tier-1 buildings cost no Marrow");
+            }
+            let (across, deep) = b.footprint;
+            if b.role == Role::Wall {
+                assert!(
+                    across.min(deep) == 1 && across.max(deep) <= 3,
+                    "{at}: walls are 1 tile thick"
+                );
+            } else {
+                assert!(
+                    (2..=5).contains(&across) && (2..=5).contains(&deep),
+                    "{at}: 2 to 5 tiles a side"
+                );
+            }
+            assert_eq!(
+                b.role == Role::Defence,
+                b.attack.is_some(),
+                "{at}: towers and only towers shoot"
+            );
+            if let Some(a) = &b.attack {
+                assert!(
+                    a.reload > 0.0 && a.damage > 0 && a.shots > 0,
+                    "{at}: attack"
+                );
+                assert!(a.range >= outranged, "{at}: archers outrange it");
+            }
+            assert!(
+                !b.flags.contains(&BuildingFlag::AntiAir) || b.attack.is_some(),
+                "{at}: shoots at air without an attack"
+            );
+            if b.role != Role::Main && b.supply > 0 {
+                assert!(
+                    SUPPLY.iter().any(|(n, _)| *n == b.name),
+                    "{at}: adds supply docs/04 doesn't list"
+                );
+            }
+            assert!(
+                b.upgrades_from.is_none() || b.role == Role::Main,
+                "{at}: only main buildings upgrade"
+            );
+            // Brood structures are all Living; nobody else's are. Elsewhere
+            // halls, towers and walls are Fortified.
+            assert_eq!(b.armour == Armour::Living, brood, "{at}: armour");
+            if !brood && matches!(b.role, Role::Main | Role::Defence | Role::Wall) {
+                assert_eq!(b.armour, Armour::Fortified, "{at}: armour");
+            }
+            assert!(
+                !b.flags.contains(&BuildingFlag::PowersField) || faction == FactionDef::Choir,
+                "{at}: only the Choir powers fields"
+            );
+        }
+
+        // The main building: one at tier 1, upgraded twice.
+        let mains: Vec<&Building> = r
+            .buildings
+            .iter()
+            .filter(|b| b.role == Role::Main)
+            .collect();
+        assert_eq!(
+            mains.len(),
+            3,
+            "{file}: a main building and its two upgrades"
+        );
+        let base = mains
+            .iter()
+            .find(|b| b.upgrades_from.is_none())
+            .expect("tier-1 main building");
+        assert_eq!(base.tier, 1, "{file}: the main building starts at tier 1");
+        let mut prev = *base;
+        for (tier, &(grub, marrow, time)) in (2..).zip(&TIER_UPGRADES) {
+            let next = mains
+                .iter()
+                .find(|b| b.upgrades_from.as_deref() == Some(prev.name.as_str()))
+                .unwrap_or_else(|| panic!("{file}: nothing upgrades {}", prev.name));
+            let at = format!("{file}: {}", next.name);
+            assert_eq!(next.tier, tier, "{at}: tier");
+            assert_eq!(
+                (next.cost.grub, next.cost.marrow),
+                (grub, marrow),
+                "{at}: cost differs from docs/04"
+            );
+            assert_eq!(next.build_time, time, "{at}: time differs from docs/04");
+            assert_eq!(
+                next.supply,
+                prev.supply + 10,
+                "{at}: each tier adds 10 supply"
+            );
+            assert!(next.hp > prev.hp, "{at}: upgrades add hit points");
+            assert_eq!(
+                next.flags, prev.flags,
+                "{at}: keeps what the tier below does"
+            );
+            prev = next;
+        }
+        // An expansion takes the same drop-offs as the main building.
+        for b in r.buildings.iter().filter(|b| b.role == Role::Outpost) {
+            assert_eq!(
+                b.flags, base.flags,
+                "{file}: {}: drop-offs differ from the main building",
+                b.name
+            );
+        }
+
+        let start: u8 = r
+            .starting_buildings
+            .iter()
+            .map(|n| {
+                by_name
+                    .get(n.as_str())
+                    .unwrap_or_else(|| panic!("{file}: no building {n}"))
+                    .supply
+            })
+            .sum();
+        assert_eq!(start, STARTING_SUPPLY, "{file}: starting supply");
+        assert!(
+            r.starting_buildings.contains(&base.name),
+            "{file}: a player starts with the main building"
+        );
+
+        assert!(
+            r.buildings
+                .iter()
+                .any(|b| b.flags.contains(&BuildingFlag::AntiAir)),
+            "{file}: nothing can shoot at air"
+        );
+
+        // Units and heroes come from buildings that exist, no earlier than the
+        // building can stand.
+        let mut heroes = r.buildings.iter().filter(|b| b.role == Role::Heroes);
+        let hero_building = heroes.next().expect("a hero building");
+        assert!(heroes.next().is_none(), "{file}: one hero building");
+        assert_eq!(
+            hero_building.tier, 1,
+            "{file}: the first hero is hired at tier 1"
+        );
+        for h in &r.heroes {
+            assert_eq!(
+                h.hired_at, hero_building.name,
+                "{file}: {} is hired elsewhere",
+                h.stats.name
+            );
+        }
+        let mut trains = BTreeSet::new();
+        for u in &r.units {
+            if let From::Building(name) = &u.from {
+                let at = format!("{file}: {}", u.stats.name);
+                let b = by_name
+                    .get(name.as_str())
+                    .unwrap_or_else(|| panic!("{at}: no building {name}"));
+                assert!(
+                    matches!(b.role, Role::Main | Role::Production | Role::Heroes),
+                    "{at}: {name} does not train units"
+                );
+                assert!(b.tier <= u.tier, "{at}: trained before {name} can be built");
+                trains.insert(name.as_str());
+            }
+        }
+        for b in r.buildings.iter().filter(|b| b.role == Role::Production) {
+            assert!(
+                trains.contains(b.name.as_str()),
+                "{file}: {} trains nothing",
+                b.name
+            );
+        }
+    }
+    for (name, supply) in SUPPLY {
+        assert_eq!(
+            supply_of.get(name),
+            Some(&supply),
+            "{name}: supply differs from docs/04"
         );
     }
 }

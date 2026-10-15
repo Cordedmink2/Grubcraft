@@ -1,10 +1,22 @@
-// Brood roster: every unit, summon, hero and Larvae, with
+// Brood roster: every building, unit, summon, hero and Larvae, with
 // first-pass numbers. Design data for Conquest (M3): the game does not read
 // this file yet. Readable copy and rationale: docs/17-unit-rosters.md.
 //
 // Each `stats` block uses exactly the fields of a data/units.ron entry (see
 // the comment at the top of that file) so it can move into the game
 // unchanged; tools/gc_bake/tests/rosters.rs bakes every block to prove it.
+//
+// Building fields (docs/21-buildings.md): name, role (Main, Outpost, Housing,
+// Economy, Production, Tech, Heroes, Defence, Wall), tier (the main-building
+// tier needed to build it), upgrades_from (main-building tiers 2 and 3:
+// Some(the building it upgrades), with the upgrade's cost and time), cost,
+// build_time (seconds at Standard tempo), hp, armour (Fortified, Structure,
+// Living), footprint (tiles across and deep), supply (cap it adds), flags
+// (DropOffGrub, DropOffMarrow, PowersField, AntiAir), attack (towers: range in
+// tiles, damage per shot, seconds between shots, shots per volley) and effect
+// (plain words). starting_buildings are what a player starts Conquest with
+// (docs/04-economy.md). A unit's `from: Building("...")` names one of these
+// buildings.
 //
 // Unit fields: tier (1 to 3; 0 for summoned units), class, cost (Grub and
 // Marrow), supply, train_time (seconds; for Brood evolutions the cocoon
@@ -23,6 +35,127 @@
         max: 15,
         abilities: [],
     ),
+    starting_buildings: ["Hive"],
+    buildings: [
+        (
+            name: "Hive",
+            role: Main,
+            tier: 1,
+            cost: (grub: 300, marrow: 0),
+            build_time: 100.0,
+            hp: 2600,
+            armour: Living,
+            footprint: (5, 5),
+            supply: 12,
+            effect: "Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 10 tiles around it.",
+        ),
+        (
+            name: "Great Hive",
+            role: Main,
+            tier: 2,
+            upgrades_from: Some("Hive"),
+            cost: (grub: 300, marrow: 100),
+            build_time: 60.0,
+            hp: 3400,
+            armour: Living,
+            footprint: (5, 5),
+            supply: 22,
+            effect: "Tier 2: evolutions, Drone-Moths, the Broodmother Bulk and a second hero.",
+        ),
+        (
+            name: "Throne Hive",
+            role: Main,
+            tier: 3,
+            upgrades_from: Some("Great Hive"),
+            cost: (grub: 600, marrow: 250),
+            build_time: 90.0,
+            hp: 4200,
+            armour: Living,
+            footprint: (5, 5),
+            supply: 32,
+            effect: "Tier 3: monsters, top upgrades and a third hero.",
+        ),
+        (
+            name: "Pustule",
+            role: Housing,
+            tier: 1,
+            cost: (grub: 40, marrow: 0),
+            build_time: 20.0,
+            hp: 400,
+            armour: Living,
+            footprint: (2, 2),
+            supply: 8,
+            effect: "Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering.",
+        ),
+        (
+            name: "Hatchery Pit",
+            role: Economy,
+            tier: 1,
+            cost: (grub: 120, marrow: 0),
+            build_time: 40.0,
+            hp: 900,
+            armour: Living,
+            footprint: (3, 3),
+            effect: "Holds 3 more larvae and spawns its own every 12 s.",
+        ),
+        (
+            name: "Chrysalis Chamber",
+            role: Tech,
+            tier: 2,
+            cost: (grub: 150, marrow: 50),
+            build_time: 50.0,
+            hp: 1100,
+            armour: Living,
+            footprint: (3, 3),
+            effect: "Unlocks evolutions: tier-1 regiments can cocoon into their tier-2 forms anywhere on the field.",
+        ),
+        (
+            name: "Moth Roost",
+            role: Production,
+            tier: 2,
+            cost: (grub: 150, marrow: 40),
+            build_time: 50.0,
+            hp: 1000,
+            armour: Living,
+            footprint: (3, 3),
+            effect: "Lets larvae hatch into Drone-Moths.",
+        ),
+        (
+            name: "Gorge",
+            role: Production,
+            tier: 2,
+            cost: (grub: 180, marrow: 60),
+            build_time: 60.0,
+            hp: 1300,
+            armour: Living,
+            footprint: (4, 4),
+            effect: "Lets larvae hatch into Broodmother Bulks and, at tier 3, the Colossus Maw.",
+        ),
+        (
+            name: "Spine Mound",
+            role: Defence,
+            tier: 1,
+            cost: (grub: 100, marrow: 0),
+            build_time: 35.0,
+            hp: 900,
+            armour: Living,
+            footprint: (2, 2),
+            flags: [AntiAir],
+            attack: Some((range: 30.0, damage: 10, reload: 2.0, shots: 1)),
+            effect: "Flings spines at ground and air.",
+        ),
+        (
+            name: "Queen's Chamber",
+            role: Heroes,
+            tier: 1,
+            cost: (grub: 140, marrow: 0),
+            build_time: 45.0,
+            hp: 1100,
+            armour: Living,
+            footprint: (3, 3),
+            effect: "Hatches and revives heroes.",
+        ),
+    ],
     units: [
         (
             tier: 1,
