@@ -495,11 +495,14 @@ fn live_units_are_in_the_rosters() {
     }
 }
 
-/// Supply from each faction's housing, as docs/04-economy.md lists it.
-const HOUSING: [(&str, u8); 4] = [
+/// Every building besides the main building that adds supply, and how much,
+/// as docs/04-economy.md lists it.
+const SUPPLY: [(&str, u8); 6] = [
     ("Farmstead", 10),
+    ("Outpost Hall", 6),
     ("Pustule", 8),
     ("Resonator", 4),
+    ("Siphon", 4),
     ("Tenement", 10),
 ];
 
@@ -512,9 +515,20 @@ const STARTING_SUPPLY: u8 = 12;
 
 #[test]
 fn buildings_follow_the_design_rules() {
+    let rosters: Vec<_> = ROSTERS
+        .iter()
+        .map(|&(file, faction)| (file, faction, load(file)))
+        .collect();
+    // Towers outrange every regiment except artillery, siege and monsters, so
+    // archers can't shoot one down from beyond its reach.
+    let outranged = rosters
+        .iter()
+        .flat_map(|(_, _, r)| &r.units)
+        .filter(|u| !matches!(u.class, Class::Artillery | Class::Siege | Class::Monster))
+        .filter_map(|u| u.stats.ranged.as_ref().map(|g| g.range))
+        .fold(0.0, f64::max);
     let mut supply_of = BTreeMap::new();
-    for &(file, faction) in ROSTERS {
-        let r = load(file);
+    for &(file, faction, ref r) in &rosters {
         let brood = faction == FactionDef::Brood;
         let by_name: BTreeMap<&str, &Building> =
             r.buildings.iter().map(|b| (b.name.as_str(), b)).collect();
@@ -554,17 +568,19 @@ fn buildings_follow_the_design_rules() {
             );
             if let Some(a) = &b.attack {
                 assert!(
-                    a.range > 0.0 && a.reload > 0.0 && a.damage > 0 && a.shots > 0,
+                    a.reload > 0.0 && a.damage > 0 && a.shots > 0,
                     "{at}: attack"
                 );
+                assert!(a.range >= outranged, "{at}: archers outrange it");
             }
-            if !matches!(
-                b.role,
-                Role::Main | Role::Outpost | Role::Housing | Role::Economy
-            ) {
-                assert_eq!(
-                    b.supply, 0,
-                    "{at}: only halls, housing and Resonators add supply"
+            assert!(
+                !b.flags.contains(&BuildingFlag::AntiAir) || b.attack.is_some(),
+                "{at}: shoots at air without an attack"
+            );
+            if b.role != Role::Main && b.supply > 0 {
+                assert!(
+                    SUPPLY.iter().any(|(n, _)| *n == b.name),
+                    "{at}: adds supply docs/04 doesn't list"
                 );
             }
             assert!(
@@ -662,6 +678,10 @@ fn buildings_follow_the_design_rules() {
         let mut heroes = r.buildings.iter().filter(|b| b.role == Role::Heroes);
         let hero_building = heroes.next().expect("a hero building");
         assert!(heroes.next().is_none(), "{file}: one hero building");
+        assert_eq!(
+            hero_building.tier, 1,
+            "{file}: the first hero is hired at tier 1"
+        );
         for h in &r.heroes {
             assert_eq!(
                 h.hired_at, hero_building.name,
@@ -692,7 +712,7 @@ fn buildings_follow_the_design_rules() {
             );
         }
     }
-    for (name, supply) in HOUSING {
+    for (name, supply) in SUPPLY {
         assert_eq!(
             supply_of.get(name),
             Some(&supply),

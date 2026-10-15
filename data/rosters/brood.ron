@@ -60,7 +60,7 @@
             armour: Living,
             footprint: (5, 5),
             supply: 22,
-            effect: "Tier 2: elite infantry, cavalry, air, artillery and a second hero.",
+            effect: "Tier 2: evolutions, Drone-Moths, the Broodmother Bulk and a second hero.",
         ),
         (
             name: "Throne Hive",
@@ -141,7 +141,7 @@
             armour: Living,
             footprint: (2, 2),
             flags: [AntiAir],
-            attack: Some((range: 14.0, damage: 10, reload: 2.0, shots: 1)),
+            attack: Some((range: 30.0, damage: 10, reload: 2.0, shots: 1)),
             effect: "Flings spines at ground and air.",
         ),
         (

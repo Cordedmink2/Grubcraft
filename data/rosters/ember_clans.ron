@@ -103,7 +103,7 @@
             footprint: (5, 5),
             supply: 22,
             flags: [DropOffGrub, DropOffMarrow],
-            effect: "Tier 2: elite infantry, cavalry, air, artillery and a second hero.",
+            effect: "Tier 2: samurai, cavalry, rocket carts, War Kites and a second hero.",
         ),
         (
             name: "Daimyo's Citadel",
@@ -232,7 +232,7 @@
             armour: Fortified,
             footprint: (2, 2),
             flags: [AntiAir],
-            attack: Some((range: 16.0, damage: 5, reload: 2.0, shots: 2)),
+            attack: Some((range: 32.0, damage: 5, reload: 2.0, shots: 2)),
             effect: "Two archers that shoot at ground and air.",
         ),
         (

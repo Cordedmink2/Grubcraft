@@ -102,7 +102,7 @@
             footprint: (5, 5),
             supply: 22,
             flags: [DropOffMarrow],
-            effect: "Tier 2: elite infantry, cavalry, air, artillery and a second hero.",
+            effect: "Tier 2: Gravewardens, Debt Collectors, Lantern Wraiths and a second hero.",
         ),
         (
             name: "Grand Bourse",
@@ -196,7 +196,7 @@
             armour: Fortified,
             footprint: (2, 2),
             flags: [AntiAir],
-            attack: Some((range: 15.0, damage: 5, reload: 2.0, shots: 2)),
+            attack: Some((range: 30.0, damage: 5, reload: 2.0, shots: 2)),
             effect: "Two crossbows that shoot at ground and air. Every 4 damage it deals earns 1 Grub.",
         ),
         (

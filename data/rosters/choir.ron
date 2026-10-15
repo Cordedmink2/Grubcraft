@@ -93,7 +93,7 @@
             footprint: (4, 4),
             supply: 14,
             flags: [PowersField],
-            effect: "Tier 2: elite infantry, cavalry, air, artillery and a second hero.",
+            effect: "Tier 2: Harmonic Walkers, Glass Striders, Skyglass, the Conductor and a second hero.",
         ),
         (
             name: "Grand Organ",
@@ -178,7 +178,7 @@
             armour: Fortified,
             footprint: (2, 2),
             flags: [AntiAir],
-            attack: Some((range: 14.0, damage: 10, reload: 2.0, shots: 1)),
+            attack: Some((range: 30.0, damage: 10, reload: 2.0, shots: 1)),
             effect: "A beam that hits ground and air. Every 20 s it tolls, silencing enemy abilities within 10 tiles for 5 s.",
         ),
         (
