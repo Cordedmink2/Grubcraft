@@ -8,7 +8,7 @@ A four-player LAN real-time strategy game where Warcraft III's base-building mee
 
 ## Status
 
-M0 (foundations) is done apart from a test run on a Windows PC. M1 (regiments on a field) is in progress: formations, soldiers on screen, controls, melee and arrows, morale, pathfinding, the sandbox, real art, the Commander View and the menus and lobby screens are built. The first battle AI is in: you can fight computer opponents at three levels in a Field Battle from the lobby, or hand any sandbox side to the computer. It reads the ground, anchoring its line on cliffs and waiting behind rivers, and `L` shows what it is thinking. The ground matters in a fight: regiments fighting downhill hit harder, archers on high ground shoot further, and regiments wading a ford are slow, can't charge and take heavier blows. In fords and passes, friendly regiments queue behind each other instead of piling into one lump. See the [roadmap](docs/13-roadmap.md). Start with the [design documents](docs/README.md).
+M0 (foundations) is done apart from a test run on a Windows PC. All eight M1 steps (regiments on a field) are built: formations, soldiers on screen, controls, melee and arrows, morale, pathfinding, the sandbox, real art and the Commander View, plus the menus and lobby screens. What's left for the M1 exit is measuring it: golden replays, the big-battle benchmark and a 3,000-soldier, 60 fps check on real machines. M2 (LAN battle) has started: up to four machines on one network can play a Field Battle together (see Playing with friends below). Soldiers in the front rank pair off and duel, and blocks move like bodies, easing into step and swaying when they stand. The first battle AI is in: you can fight computer opponents at three levels in a Field Battle from the lobby, or hand any sandbox side to the computer. It reads the ground, anchoring its line on cliffs and waiting behind rivers, and `L` shows what it is thinking. The ground matters in a fight: regiments fighting downhill hit harder, archers on high ground shoot further, and regiments wading a ford are slow, can't charge and take heavier blows. In fords and passes, friendly regiments queue behind each other instead of piling into one lump. See the [roadmap](docs/13-roadmap.md). Start with the [design documents](docs/README.md).
 
 ## Building and running
 
@@ -45,6 +45,7 @@ To measure memory on your machine: `cargo run --release -p gc_game -- --frames 6
 | `crates/gc_platform` | Memory accounting and OS process stats |
 | `crates/gc_render` | wgpu renderer (Metal, DirectX 12, Vulkan) |
 | `crates/gc_ui` | Menus, lobby and settings screens (immediate-mode UI, no GPU code) |
+| `crates/gc_net` | LAN play: UDP transport, finding games on the network, the lobby protocol and host-sequenced lockstep turns |
 | `crates/gc_ai` | Computer players: battle tactics, difficulty levels and personalities; they read the sim and send ordinary commands |
 | `crates/gc_game` | The game application |
 | `tools/gc_bake` | Baker: compiles `data/*.ron` (and later art and audio) into the asset pack |

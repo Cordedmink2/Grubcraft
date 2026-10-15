@@ -82,7 +82,7 @@ The engine thread (currently running) stays Opus and builds the eight steps in o
 | 5 Morale and routing | **Opus alone** (merged) | Haiku `test-writer`, `bench-runner` | Cascading rout is emergent and easy to get subtly wrong |
 | 6 Pathfinding: nav grid, sectors, flow fields | Opus (merged; waypoint routes rather than flow fields, see 10 · Architecture) | Haiku `bench-runner` (path cost per tick), `test-writer` (grid edge cases) | Deterministic and performance critical at once |
 | 7 Sandbox: place armies, slow-mo, hot-reload stats | Opus (merged; built in one thread, panels on the overlay text until the `gc_ui` widgets land) | **Sonnet `feature-builder`** for moving the panels to `gc_ui` | First clean seam where Sonnet can build inside the thread |
-| 8 Real art: CC0 kits, bone animation textures, Commander View | Opus for the VAT format and renderer integration (in review; built in one thread, with a Rust glTF baker `gc_artbake` instead of a Blender script) | Sonnet `feature-builder` for the Blender export script and `gc_bake` importer; Haiku sources CC0 packs and logs licences | The pipeline is a well-scoped tool; licence checks are pure bookkeeping |
+| 8 Real art: CC0 kits, bone animation textures, Commander View | Opus for the VAT format and renderer integration (merged; built in one thread, with a Rust glTF baker `gc_artbake` instead of a Blender script) | Sonnet `feature-builder` for the Blender export script and `gc_bake` importer; Haiku sources CC0 packs and logs licences | The pipeline is a well-scoped tool; licence checks are pure bookkeeping |
 | Golden replays and `field-8000pt-2v2` benchmark | Opus designs the scenario | Haiku records goldens, wires the bench into CI | |
 | Exit: 3,000-soldier sandbox at 60 fps | Opus investigates frame time | Haiku `bench-runner`; **Mario** judges the feel | "Feels like Shogun" is Mario's call |
 
@@ -92,12 +92,12 @@ The engine thread (currently running) stays Opus and builds the eight steps in o
 
 | Workstream | Lead | Helpers | Notes |
 |---|---|---|---|
-| `gc_net`: UDP transport, encryption, host-sequenced lockstep, adaptive input delay | **Opus alone** | Haiku `test-writer` for packet codec round-trips | The highest-risk system in the game; also gets a dedicated security review (Opus `Plan` subagent) of the encryption |
+| `gc_net`: UDP transport, encryption, host-sequenced lockstep, adaptive input delay | **Opus alone** | Haiku `test-writer` for packet codec round-trips | The highest-risk system in the game; also gets a dedicated security review (Opus `Plan` subagent) of the encryption. **Step 1 done (2026-10-15)** by its own Opus thread (LAN multiplayer): transport, discovery, lobby protocol and lockstep; adaptive input delay and encryption are steps 2 and 3 ([11 · Networking](11-networking.md)) |
 | Network chaos test (latency, jitter, loss on loopback) | Opus | Haiku runs the soak and summarises | |
 | Desync detection and report files | **Opus alone**, high effort | | Debugging a desync is the archetypal Opus task |
 | Cross-platform determinism CI on golden replays | Opus decides what's hashed | Sonnet writes the macOS/Windows CI jobs; Haiku `ci-triage` | |
 | Replays: record and play back | Opus (format is versioned and hashed) | Haiku tests for round-trip | |
-| LAN discovery, Host/Join screens, lobby, version gate | Opus defines the lobby protocol | **Sonnet** builds the screens, as a `feature-builder` subagent or a second thread once the protocol is frozen | First point where a parallel Sonnet thread is reasonable: it only touches `gc_ui` and `gc_game`. **Started early (2026-10-12):** a Sonnet thread built the screens against a stub `Network` trait; `gc_net` still has to implement it |
+| LAN discovery, Host/Join screens, lobby, version gate | Opus defines the lobby protocol | **Sonnet** builds the screens, as a `feature-builder` subagent or a second thread once the protocol is frozen | First point where a parallel Sonnet thread is reasonable: it only touches `gc_ui` and `gc_game`. **Started early (2026-10-12):** a Sonnet thread built the screens against a stub `Network` trait; `gc_net` implements it since M2 step 1 (2026-10-15) |
 | Field Battle mode: army builder, deployment, victory conditions | Opus for victory rules and deployment in the sim | Sonnet for the army builder UI; Haiku `data-entry` for point costs | |
 | Two battle maps | Sonnet | Haiku validates with `gc_mapcheck` once it exists | |
 | Packaging: Mac `.app` (ad-hoc signed), Windows `.exe`, zips | **Sonnet** | Haiku writes the release checklist | Platform plumbing with a clear finish line |
@@ -105,6 +105,7 @@ The engine thread (currently running) stays Opus and builds the eight steps in o
 | Battle AI (`gc_ai`, AI-1 and AI-2 in [18 · AI](18-ai.md#build-plan)) | **Opus, extra-high effort**, as a parallel thread | Haiku `test-writer` writes the drills; Sonnet `feature-builder` builds the AI lens overlay | Safe to run beside the engine thread: it adds a new crate and only reads the sim's public API. The rehearsal hooks (copy a battle area, spawn with state) go through the engine thread. **Step 1 of 3 built (2026-10-12)** by an Opus extra-high-effort thread: the crate, tactics, difficulty levels, personalities, and the lobby and sandbox wiring. **Steps 2 and 3 built (2026-10-13)** by the same thread: the drills were written there too, as they shaped the tactics, and the AI lens was small enough not to need a Sonnet hand-off |
 | Terrain rules: high ground and fords in the sim | Opus (sim combat thread) | | **Done (2026-10-13)** by its own thread, in parallel with the unit balance pass (unit data) and `gc_net` (LAN), touching only the sim's combat and movement and one new `MatchSetup` field |
 | Regiments queue instead of stacking in tight ground | Opus (sim combat thread) | | **Done (2026-10-13)** by the same thread, in the sim's movement and combat only, with no `MatchSetup` change |
+| Soldier fighting, stage 1: duel pairs and living formations ([09 · Art and Audio](09-art-and-audio.md#animation)) | Opus | | **Done (2026-10-15)** by its own thread, in `gc_game`'s puppets only (presentation, no sim change) |
 | Exit: 2v2 over home Wi-Fi, zero desyncs | Opus reads desync reports | **Mario and friends** play it | |
 
 ### M3 · First Harvest: the first agent team
