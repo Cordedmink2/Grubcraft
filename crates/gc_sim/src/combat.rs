@@ -44,6 +44,38 @@ const REFERENCE_AREA_PER_SOLDIER: i64 = (Fx::ONE.raw() as i64 * 64) / 100;
 /// A marching regiment stops short of a friendly block it would overlap by
 /// more than this, in tiles (see [`Combat::friend_in_the_way`]).
 const CROWDING: Fx = Fx::from_ratio(1, 4);
+/// A regiment overlapping a friendly block by more than this, in tiles, is
+/// pushing through it (or being pushed through): it slows and falls into
+/// disorder. Neighbours in a line brushing or wheeling into each other
+/// overlap less than this.
+pub const PUSHING: Fx = Fx::ONE;
+/// A regiment out of order takes this long to re-form once clear (3 s).
+pub const DISORDER_TICKS: u8 = 3 * TICKS_PER_SECOND as u8;
+/// At full disorder a regiment deals this much less melee damage, and
+/// takes this much more, in percent.
+pub const DISORDER_PERCENT: u64 = 20;
+/// Each regiment measures how deep it overlaps its friends every this many
+/// ticks (staggered by index; 0.2 s, short against the 3 s it takes to
+/// re-form).
+const CROWD_EVERY: u32 = 4;
+/// Pushing into friends slows a regiment to this share of its pace, in
+/// percent, once it is [`PUSH_RAMP`] past [`CROWDING`] deep.
+const PUSH_PERCENT: i64 = 40;
+const PUSH_RAMP: Fx = Fx::ONE;
+/// Overlap past which neither the slowdown nor the disorder grows: the
+/// crowd check stops looking once it finds this much, and stores no more.
+const SATURATED: Fx = Fx::from_raw(CROWDING.raw() + PUSH_RAMP.raw());
+
+/// `step` slowed for pushing `crowd` tiles deep into friendly blocks:
+/// untouched up to [`CROWDING`], then down to [`PUSH_PERCENT`] of it.
+pub(crate) fn pushing(step: Fx, crowd: Fx) -> Fx {
+    if crowd <= CROWDING {
+        return step;
+    }
+    let deep = (crowd - CROWDING).min(PUSH_RAMP).raw() as i64;
+    let percent = 100 - (100 - PUSH_PERCENT) * deep / PUSH_RAMP.raw() as i64;
+    Fx::from_raw((step.raw() as i64 * percent / 100) as i32).max(Fx::from_raw(1))
+}
 /// It waits this long behind a friend that is only standing or waiting,
 /// then walks through, so no order is stuck for good. Friends locked in
 /// melee are never walked through.
@@ -399,13 +431,6 @@ impl Combat {
         whose: Whose,
         mut f: impl FnMut(usize),
     ) {
-        let search = self.search.get().wrapping_add(1);
-        self.search.set(search);
-        if search == 0 {
-            // Wrapped: forget every old mark so none can match by accident.
-            self.seen.iter().for_each(|c| c.set(u32::MAX));
-        }
-        let (x0, y0, x1, y1) = Self::cells(p, range);
         let (owner, friends) = match whose {
             Whose::Enemies(owner) => (owner, false),
             Whose::Friends(owner) => (owner, true),
@@ -418,18 +443,64 @@ impl Combat {
             !(1 << (owner as usize % OWNER_SLOTS))
         };
         let range_sq = range.raw() as i64 * range.raw() as i64;
+        self.each_filed_once(p, range, slots, regs.alive, |j| {
+            if regs.stances.hostile(owner, regs.owner[j]) != friends
+                && ((regs.position[j] - p).length_sq_raw() as i64) <= range_sq
+            {
+                f(j);
+            }
+        });
+    }
+
+    /// Call `f` for every other live friend of `i` whose bounding circle
+    /// touches `i`'s. Any block overlapping `i`'s shares a point inside `i`'s
+    /// circle, and every regiment is filed in each cell its circle touches,
+    /// so only the cells under `i`'s own circle need looking in.
+    fn each_friend_touching(
+        &self,
+        regs: &Regiments,
+        stances: &Stances,
+        i: usize,
+        mut f: impl FnMut(usize),
+    ) {
+        let p = regs.position[i];
+        let owner = regs.owner[i];
+        let slots = stances.friend_slots(owner, OWNER_SLOTS);
+        self.each_filed_once(p, self.radius[i], slots, &regs.alive, |j| {
+            let r = (self.radius[i] + self.radius[j]).raw() as u64;
+            if j != i
+                && !stances.hostile(owner, regs.owner[j])
+                && (regs.position[j] - p).length_sq_raw() <= r * r
+            {
+                f(j);
+            }
+        });
+    }
+
+    /// Call `f` once for every live regiment filed in a grid cell within
+    /// `radius` of `p` under one of the owner `slots` (a bit mask), or in
+    /// `big`.
+    fn each_filed_once(
+        &self,
+        p: FxVec2,
+        radius: Fx,
+        slots: u32,
+        alive: &[bool],
+        mut f: impl FnMut(usize),
+    ) {
+        let search = self.search.get().wrapping_add(1);
+        self.search.set(search);
+        if search == 0 {
+            // Wrapped: forget every old mark so none can match by accident.
+            self.seen.iter().for_each(|c| c.set(u32::MAX));
+        }
         let mut visit = |j: usize| {
-            if self.seen[j].get() == search || !regs.alive[j] {
-                return;
-            }
-            self.seen[j].set(search);
-            if regs.stances.hostile(owner, regs.owner[j]) == friends {
-                return;
-            }
-            if ((regs.position[j] - p).length_sq_raw() as i64) <= range_sq {
+            if self.seen[j].get() != search && alive[j] {
+                self.seen[j].set(search);
                 f(j);
             }
         };
+        let (x0, y0, x1, y1) = Self::cells(p, radius);
         for y in y0..=y1 {
             for x in x0..=x1 {
                 let b = Self::bucket_of(x, y) * OWNER_SLOTS;
@@ -603,8 +674,10 @@ impl Combat {
         units: &[UnitStats],
         stances: &Stances,
         terrain: &Terrain,
+        tick: u32,
     ) {
         self.build_grid(regs, units);
+        self.crowding(regs, stances, tick);
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 continue;
@@ -651,12 +724,13 @@ impl Combat {
             if let Some((_, j)) = best {
                 if !was_engaged {
                     // Hitting home at speed is a charge, but nobody charges
-                    // out of a river, or from behind a shield wall. A fight
-                    // ends any march.
+                    // out of a river, from behind a shield wall, or while
+                    // pushing through friends. A fight ends any march.
                     let charging = regs.target[i].is_some()
                         && regs.pace[i].raw() * 4 >= regs.speed[i].raw() * 3
                         && !terrain.wet(regs.position[i])
-                        && regs.formation[i].can_charge();
+                        && regs.formation[i].can_charge()
+                        && regs.crowd[i] <= CROWDING;
                     if charging {
                         regs.charge[i] = CHARGE_TICKS;
                     }
@@ -698,6 +772,40 @@ impl Combat {
             } else {
                 regs.target[i] = Some(regs.position[j]);
                 regs.target_facing[i] = None;
+            }
+        }
+    }
+
+    /// How deep each regiment overlaps friendly blocks (`crowd`, measured
+    /// every [`CROWD_EVERY`] ticks), and the disorder that follows from it:
+    /// full while overlapping by more than [`PUSHING`], fading over
+    /// [`DISORDER_TICKS`] once clear. Routers neither crowd nor are
+    /// crowded (they are past caring about order).
+    fn crowding(&self, regs: &mut Regiments, stances: &Stances, tick: u32) {
+        for i in 0..regs.alive.len() {
+            if !regs.alive[i] {
+                continue;
+            }
+            if regs.morale_state[i].broken() {
+                regs.crowd[i] = Fx::ZERO;
+                regs.disorder[i] = 0;
+                continue;
+            }
+            if (tick + i as u32).is_multiple_of(CROWD_EVERY) {
+                let me = self.blocks[i];
+                let mut deepest = Fx::ZERO;
+                self.each_friend_touching(regs, stances, i, |j| {
+                    // Deeper than this changes nothing (see `SATURATED`).
+                    if deepest < SATURATED && !regs.morale_state[j].broken() {
+                        deepest = deepest.max(me.overlap(&self.blocks[j]));
+                    }
+                });
+                regs.crowd[i] = deepest.min(SATURATED);
+            }
+            if regs.crowd[i] > PUSHING {
+                regs.disorder(i);
+            } else {
+                regs.disorder[i] = regs.disorder[i].saturating_sub(1);
             }
         }
     }
@@ -764,6 +872,10 @@ impl Combat {
             let heart = heart_percent(regs.morale_state[i]) as u128;
             let room = attacker.weapon_room_percent(regs.formation[i]) as u128;
             let ground = terrain.melee_percent(regs.position[i], regs.position[j]);
+            let (shaken, exposed) = (
+                100 - disorder_percent(regs.disorder[i]),
+                100 + disorder_percent(regs.disorder[j]),
+            );
             // In u128: the extra factors would overflow u64 for big blows.
             // With every new factor at 100 this is exactly the old formula.
             let mut expected = (fighters as u128
@@ -776,6 +888,10 @@ impl Combat {
                 * 256
                 / (100 * 100 * 100 * 100 * 100 * 100)) as u64
                 * ground
+                / 100
+                * shaken
+                / 100
+                * exposed
                 / 100;
             // Caught off guard by an ambush.
             if vision.off_guard(i) {
@@ -947,6 +1063,12 @@ impl Combat {
             h.u8(v.accuracy[i]);
         }
     }
+}
+
+/// How much worse, in percent, a regiment this far out of order fights:
+/// [`DISORDER_PERCENT`] at full disorder, fading as it re-forms.
+fn disorder_percent(disorder: u8) -> u64 {
+    DISORDER_PERCENT * disorder as u64 / DISORDER_TICKS as u64
 }
 
 /// Percent chance a melee blow with `attack` lands on a soldier with

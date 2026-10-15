@@ -323,3 +323,41 @@ fn same_map_same_hashes() {
     };
     assert_eq!(run(), run());
 }
+
+#[test]
+fn routes_across_open_country_keep_their_line_through_portals() {
+    // A rock just short of the goal hides it, so the route goes through the
+    // portal graph; on the open ground before it, the block should keep to
+    // its own line rather than funnel to wherever the portals sit (their
+    // middles are 8 tiles apart, so a neighbour could be marched into).
+    // Once marching south (across edges between sectors above and below)
+    // and once east (across edges between sectors side by side).
+    for east in [false, true] {
+        let flip = |x: i32, y: i32| if east { (y, x) } else { (x, y) };
+        let rock = |x: i32, y: i32| {
+            let (x, y) = flip(x, y);
+            (106..114).contains(&x) && (196..202).contains(&y)
+        };
+        let nav = map(128, rock);
+        let mut w = world_on(128, &nav, &DRILL_UNITS);
+        let (sx, sy) = flip(56, 20);
+        let r = spawn(&mut w, 0, SPEARS, sx, sy, SOUTH);
+        let (gx, gy) = flip(56, 106);
+        move_to(&mut w, 0, r, gx, gy);
+        let route = w.route(r).to_vec();
+        // (How far along the march, how far across it.)
+        let along = |p: &FxVec2| if east { (p.x, p.y) } else { (p.y, p.x) };
+        let open_country: Vec<_> = route
+            .iter()
+            .filter(|p| along(p).0 < Fx::from_int(94))
+            .collect();
+        assert!(open_country.len() >= 2, "east {east}: {route:?}");
+        for p in open_country {
+            assert!(
+                (along(p).1 - Fx::from_int(56)).abs() <= Fx::from_ratio(3, 2),
+                "east {east}: waypoint off the line: {route:?}"
+            );
+        }
+        walk(&mut w, &nav, 128, r, 20 * 200);
+    }
+}

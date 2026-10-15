@@ -69,6 +69,12 @@ A regiment's weapons decide which formation suits it, so the Formation order is 
 - Ranks re-form only out of the fight: a regiment locked in melee keeps its formation, and a routing one drops back to Line and takes no formation orders until it rallies. A group order with a shield wall in it marches at the wall's pace.
 - Each unit also has a **mass** (light, medium or heavy: swarms and flyers light, cavalry and monsters heavy), which decides how hard it shoves in a locked melee once lines that push arrive.
 
+## Pushing through friends
+
+Friendly regiments can march into and through each other, but it costs them. A block pushing more than a quarter tile into a friend slows, down to 40% of its pace once it is a tile and a quarter deep. Untangling is as slow as pushing in, and nobody charges while pushing through friends. While two friendly blocks overlap by more than a tile, both fall into **disorder** (even locked in the same fight: stacking two blocks on one front costs them both): their ranks break, they deal 20% less melee damage and take 20% more, and once clear they take 3 seconds to re-form (the penalty fades as they do). Blocks in a line that only brush or wheel into each other stay in order. On screen a disordered block's soldiers break ranks, mill about and look around, and a ragged amber outline marks it. Routers neither slow nor fall into disorder (they are past caring). In fords and narrow passes regiments queue behind a friend holding its ground instead (see [10 · Architecture](10-architecture.md#pathfinding)).
+
+**Built so far (2026-10-15):** as described. Other rules can disorder a regiment too (the sim's `Regiments::disorder`), which the Mount & Blade work uses.
+
 ## Morale
 
 The core of Shogun-style battles: armies lose because they *break*, not because every soldier dies.

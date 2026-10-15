@@ -2,6 +2,7 @@
 //! to pass beside a friend holding its ground waits behind it.
 
 use gc_fixed::{Angle, Fx, FxVec2};
+use gc_sim::combat::DISORDER_TICKS;
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::{
@@ -34,8 +35,12 @@ fn nav(corridor: bool) -> Vec<u8> {
 }
 
 fn world(nav: &[u8]) -> World {
+    seeded_world(nav, 3)
+}
+
+fn seeded_world(nav: &[u8], seed: u64) -> World {
     World::new(&MatchSetup {
-        seed: 3,
+        seed,
         capacities: Capacities { regiments: 64 },
         units: &fearless(),
         map_tiles: MAP as u32,
@@ -179,4 +184,91 @@ fn marching_friends_pass_through_each_other() {
     }
     assert_eq!(w.regiments.position(a), Some(FxVec2::from_ints(32, 40)));
     assert_eq!(w.regiments.position(b), Some(FxVec2::from_ints(32, 20)));
+}
+
+/// Ticks for `b` to march 30 tiles north, with or without a friend standing
+/// in the way.
+fn march_time(friend_in_the_way: bool) -> u32 {
+    let mut w = world(&nav(false));
+    if friend_in_the_way {
+        spawn(&mut w, 0, 32, 30, NORTH);
+    }
+    let b = spawn(&mut w, 0, 32, 45, NORTH);
+    order(&mut w, move_to(b, 32, 15));
+    for t in 0..60 * 20 {
+        w.tick(&[]);
+        if !w.regiments.get(b).unwrap().moving {
+            return t;
+        }
+    }
+    panic!("never arrived");
+}
+
+#[test]
+fn pushing_through_a_friend_is_slow() {
+    let free = march_time(false);
+    let pushing = march_time(true);
+    // Through a block a few tiles deep, at down to 40% pace: a second or
+    // two lost, not a stop.
+    assert!(
+        pushing > free + 20 && pushing < free + 10 * 20,
+        "{pushing} ticks pushing through vs {free} free"
+    );
+}
+
+#[test]
+fn friends_pushing_through_each_other_fall_out_of_order_and_re_form() {
+    let mut w = world(&nav(false));
+    let standing = spawn(&mut w, 0, 32, 30, NORTH);
+    let b = spawn(&mut w, 0, 32, 45, NORTH);
+    order(&mut w, move_to(b, 32, 10));
+    let mut both = false;
+    for _ in 0..30 * 20 {
+        w.tick(&[]);
+        let (s, m) = (
+            w.regiments.get(standing).unwrap(),
+            w.regiments.get(b).unwrap(),
+        );
+        both |= s.disorder == DISORDER_TICKS && m.disorder == DISORDER_TICKS;
+    }
+    assert!(both, "never both disordered while overlapping");
+    // Long clear of each other: back in order.
+    assert_eq!(w.regiments.get(standing).unwrap().disorder, 0);
+    assert_eq!(w.regiments.get(b).unwrap().disorder, 0);
+}
+
+#[test]
+fn a_disordered_block_fights_worse() {
+    // Hit points the enemy loses in ten seconds to the friend, with and
+    // without a second friendly block standing most of the way inside the
+    // friend's
+    // (too far back to reach the enemy itself).
+    let enemy_losses = |crowded: bool| -> u32 {
+        (1..=4)
+            .map(|seed| {
+                let mut w = seeded_world(&[], seed);
+                let enemy = spawn(&mut w, 1, 32, 20, SOUTH);
+                let _friend = spawn(&mut w, 0, 32, 23, NORTH);
+                if crowded {
+                    spawn(&mut w, 0, 32, 24, NORTH);
+                }
+                let hp = |w: &World| -> u32 {
+                    w.regiments
+                        .model_hp(enemy)
+                        .map_or(0, |v| v.iter().map(|&x| x as u32).sum())
+                };
+                let before = hp(&w);
+                for _ in 0..10 * 20 {
+                    w.tick(&[]);
+                }
+                before - hp(&w)
+            })
+            .sum()
+    };
+    let calm = enemy_losses(false);
+    let crowded = enemy_losses(true);
+    assert!(
+        crowded * 100 <= calm * 85 && crowded * 100 >= calm * 70,
+        "{crowded} with a friend inside its block vs {calm} without"
+    );
 }
