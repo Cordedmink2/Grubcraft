@@ -65,7 +65,7 @@ grubcraft/
 │  ├─ gc_net/        transport, lockstep turns, lobby protocol, discovery
 │  ├─ gc_present/    interpolation, soldier puppets, effects triggers       (later)
 │  ├─ gc_render/     wgpu renderer: terrain, instancing, VAT, fog, UI batch
-│  ├─ gc_ui/         game UI (immediate mode; menus, lobby, settings built)
+│  ├─ gc_ui/         game UI (immediate mode; menus, lobby, settings, battle HUD minimap and army tray built)
 │  ├─ gc_audio/      mixer, voices, ADPCM decoder, music layers, cpal output
 │  ├─ gc_assets/     pack format, mmap loader, asset ids
 │  ├─ gc_platform/   per-OS glue: paths, local-network permission, memory stats
@@ -289,6 +289,8 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 
 ## UI framework
 - Our own **immediate-mode UI** in `gc_ui`: layout in Rust code, rendered as one batched draw, with an MSDF font atlas baked offline (crisp at any UI scale from one small atlas).
+
+**Built so far (battle HUD):** `gc_ui::hud` draws the bottom bar the same way, from plain data: the game gives it the ground colours, the dots, the camera's view and one `Card` per regiment (`HudData`), plus the mouse (`HudInput`), and gets back `HudEvent`s (jump, order, select, centre) that `gc_game/src/hud.rs` turns into camera moves, selections and orders. It has no sim or GPU types, so it is unit tested headlessly.
 
 **Built so far (menus and lobby):** `gc_ui` has no GPU code: each frame `gc_game` feeds it the mouse and keys (`UiInput`), a `Menu` lays out and draws its current screen into a list of `Quad`s (a rectangle or a glyph, in UI pixels), and `gc_render` draws them in one instanced call (`Renderer::set_ui`, the same pipeline as the dev overlay, drawn under it). Text uses the dev overlay's 8 × 16 bitmap font at whole-number sizes; the MSDF font comes later. Screens: main menu, Play (host card and join card), lobby, settings; all are unit tested by clicking through them headlessly. The lobby model (`Slot`, `LobbySettings`, `MatchStart`) and the `Network` trait in `gc_ui::lobby` are the contract with the netcode: `Menu<N: Network>` is generic over it, the game runs it on `gc_net::Lan` (LAN hosting and joining, see [11 · Networking](11-networking.md#transport)), and the tests run it on `LocalNetwork`, a practice lobby on one machine. A `MatchStart` with a `seed` is a network match. Starting a lobby match builds a Field Battle from `MatchStart` (`gc_game/src/battle.rs`): each slot becomes a party with its team in the stance table, its colour and an army from its faction, and each AI slot gets a mind at its level. Settings are RON in the user config folder (`~/Library/Application Support/Grubcraft/` on a Mac, `%APPDATA%\Grubcraft\` on Windows), overridable with `GRUBCRAFT_SETTINGS`.
 - Immediate mode suits a UI that is mostly views over game state; no retained widget tree to keep in sync.

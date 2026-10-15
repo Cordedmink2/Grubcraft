@@ -11,6 +11,7 @@
 //! one machine that the menu tests run on.
 
 pub mod draw;
+pub mod hud;
 pub mod lobby;
 pub mod menu;
 pub mod settings;

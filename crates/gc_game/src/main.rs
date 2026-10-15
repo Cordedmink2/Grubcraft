@@ -21,6 +21,9 @@
 //! take the team colour. Zoom far out and the Commander View replaces them
 //! with one block and banner per regiment.
 //!
+//! The bottom bar has a minimap (click or drag to move the camera, right-click
+//! to send the selection there) and an army tray of regiment cards (click to
+//! select, Shift-click to toggle, double-click to centre).
 //! Orders: left-click one of your regiments to select it, or left-drag a box around
 //! several; Shift adds or removes. Right-click the ground to march the
 //! selection there side by side, facing the way they travel; right-drag to
@@ -81,6 +84,7 @@ mod credits;
 mod data;
 #[cfg(test)]
 mod goldens;
+mod hud;
 mod lens;
 mod models;
 mod online;
@@ -422,6 +426,8 @@ struct Running {
     ui: Ui,
     ui_input: UiInput,
     ui_quads: Vec<UiQuad>,
+    /// The in-battle bar: minimap and army tray.
+    hud: hud::HudState,
     menu_open: bool,
     /// Whether a match has started (the sim is frozen until then).
     match_started: bool,
@@ -778,6 +784,8 @@ impl App {
                 .join(", ")
         );
 
+        let mut hud_state = hud::HudState::default();
+        hud_state.set_terrain(&heightmap, MAP_TILES);
         let settings_path = gc_ui::settings::settings_path();
         let settings = settings_path
             .as_deref()
@@ -871,6 +879,7 @@ impl App {
             ui: Ui::new(),
             ui_input: UiInput::default(),
             ui_quads: Vec::with_capacity(512),
+            hud: hud_state,
             menu_open: show_menu,
             match_started: !show_menu,
             online: None,
@@ -945,13 +954,20 @@ impl ApplicationHandler for App {
                 r.renderer.resize(size.width, size.height);
                 r.camera.aspect = r.renderer.aspect_ratio();
             }
-            WindowEvent::Focused(f) => r.input.focused = f,
+            WindowEvent::Focused(f) => {
+                r.input.focused = f;
+                // A button let go outside the window never reports it.
+                r.hud.reset();
+            }
             WindowEvent::ModifiersChanged(m) => {
                 r.input.alt = m.state().alt_key();
                 r.input.shift = m.state().shift_key();
                 r.input.command = m.state().control_key() || m.state().super_key();
             }
-            WindowEvent::CursorLeft { .. } => r.input.cursor = None,
+            WindowEvent::CursorLeft { .. } => {
+                r.input.cursor = None;
+                r.hud.reset();
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 if let (Some(prev), Some(_)) = (r.input.cursor, r.input.middle_down) {
                     let size = r.window.inner_size();
@@ -966,6 +982,8 @@ impl ApplicationHandler for App {
                 }
                 r.input.cursor = Some(position);
             }
+            // Over the bar the wheel is not the camera's.
+            WindowEvent::MouseWheel { .. } if r.hud_wants_mouse() => {}
             WindowEvent::MouseWheel { delta, .. } => match delta {
                 MouseScrollDelta::LineDelta(_, y) => r.camera.zoom(0.88f32.powf(y)),
                 // Trackpads send pixel deltas: two-finger scroll pans, as in
@@ -1160,6 +1178,20 @@ impl Running {
                 }
                 self.input.middle_down = None;
             }
+            // The bar at the bottom takes its own clicks.
+            // A click that starts on the bar stays the bar's until it ends.
+            (MouseButton::Left, ElementState::Pressed) if self.hud_wants_mouse() => {
+                self.hud.press_left();
+            }
+            (MouseButton::Left, ElementState::Released) if self.hud.left_captured() => {
+                self.hud.release_left();
+            }
+            (MouseButton::Right, ElementState::Pressed) if self.hud_wants_mouse() => {
+                self.hud.press_right();
+            }
+            (MouseButton::Right, ElementState::Released) if self.hud.right_captured() => {
+                self.hud.release_right();
+            }
             (MouseButton::Left, ElementState::Pressed) => {
                 self.input.left_down = self.input.cursor;
             }
@@ -1183,12 +1215,7 @@ impl Running {
                     .ground_under_cursor()
                     .and_then(|p| self.nearest_own(p, 6.0))
                 {
-                    match self.selected.iter().position(|&s| s == h) {
-                        Some(i) => {
-                            self.selected.swap_remove(i);
-                        }
-                        None => self.selected.push(h),
-                    }
+                    self.toggle_selected(h);
                 }
                 if !self.selected.is_empty() {
                     self.ui_sound(sounds::UiSound::Select);
@@ -1222,15 +1249,7 @@ impl Running {
                         width: None,
                     })
                 }) {
-                    self.plan_order(order);
-                    if !self.group_commands.is_empty() {
-                        self.ui_sound(sounds::UiSound::Move);
-                    }
-                    self.human_orders
-                        .extend(self.group_commands.iter().map(|&command| PlayerCommand {
-                            player: self.sandbox.side,
-                            command,
-                        }));
+                    self.issue_group_order(order);
                 }
                 self.input.right_down = None;
             }
@@ -1284,6 +1303,29 @@ impl Running {
             t += step;
         }
         None
+    }
+
+    /// Send the selection to carry out `order`.
+    fn issue_group_order(&mut self, order: GroupOrder) {
+        self.plan_order(order);
+        if !self.group_commands.is_empty() {
+            self.ui_sound(sounds::UiSound::Move);
+        }
+        self.human_orders
+            .extend(self.group_commands.iter().map(|&command| PlayerCommand {
+                player: self.sandbox.side,
+                command,
+            }));
+    }
+
+    /// Add `h` to the selection, or take it out if it is already in.
+    fn toggle_selected(&mut self, h: RegimentHandle) {
+        match self.selected.iter().position(|&s| s == h) {
+            Some(i) => {
+                self.selected.swap_remove(i);
+            }
+            None => self.selected.push(h),
+        }
     }
 
     /// Expand a group order for the current selection into
@@ -1422,8 +1464,7 @@ impl Running {
                 .map(from_fx_vec)
                 .sum();
             let centre = sum / self.control_groups[n].len() as f32;
-            self.camera.focus = centre;
-            self.camera.focus_height = self.heightmap.height_at(centre.x, centre.y);
+            self.look_at(centre);
         }
     }
 
@@ -1836,6 +1877,8 @@ impl Running {
 
         if self.menu_open {
             self.run_menu();
+        } else if self.match_started {
+            self.run_hud();
         } else {
             self.renderer.clear_ui();
         }
@@ -2085,6 +2128,7 @@ impl Running {
         self.input.left_down = None;
         self.input.right_down = None;
         self.input.middle_down = None;
+        self.hud.reset();
     }
 
     fn menu_key(&mut self, key: &winit::event::KeyEvent) {
@@ -2108,28 +2152,13 @@ impl Running {
 
     /// Draw this frame's menu and carry out what it asks for.
     fn run_menu(&mut self) {
-        let scale = self.ui_scale();
-        let size = self.window.inner_size();
-        let screen = (
-            (size.width as f32 / scale) as i32,
-            (size.height as f32 / scale) as i32,
-        );
+        let (screen, scale) = self.ui_screen();
         let mut input = std::mem::take(&mut self.ui_input);
-        input.mouse = self.input.cursor.map_or((-1, -1), |c| {
-            ((c.x as f32 / scale) as i32, (c.y as f32 / scale) as i32)
-        });
+        input.mouse = self.ui_cursor();
         self.ui.begin_frame(input, screen);
         let action = self.menu.frame(&mut self.ui);
         self.ui.end_frame();
-        self.ui_quads.clear();
-        self.ui_quads
-            .extend(self.ui.draw.quads.iter().map(|q| UiQuad {
-                pos: q.pos,
-                size: q.size,
-                glyph: q.glyph,
-                color: q.color,
-            }));
-        self.renderer.set_ui(&self.ui_quads, scale);
+        hud::upload_ui(&mut self.renderer, &mut self.ui_quads, &self.ui.draw, scale);
         match action {
             MenuAction::None | MenuAction::SettingsChanged => {}
             MenuAction::Resume => self.close_menu(),
@@ -2257,6 +2286,7 @@ impl Running {
                 heights: &hm.heights,
             })
         });
+        self.hud.set_terrain(&self.heightmap, MAP_TILES);
         let nav = self.heightmap.nav_costs();
         self.blocked_marks = blocked_marks(&nav, MAP_TILES);
         self.scenery = tagged_alloc::scope(Tag::Render, || {
@@ -2509,7 +2539,8 @@ impl Running {
             if c.y <= EDGE_SCROLL_PX {
                 dy += 1.0
             }
-            if c.y >= size.height as f64 - EDGE_SCROLL_PX {
+            // The bar fills the bottom edge during a match.
+            if c.y >= size.height as f64 - EDGE_SCROLL_PX && !self.match_started {
                 dy -= 1.0
             }
         }
