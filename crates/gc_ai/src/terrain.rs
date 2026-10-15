@@ -271,6 +271,7 @@ mod tests {
             nav: &nav,
             teams: &[],
             ground: gc_sim::Ground::FLAT,
+            champions: false,
         });
         let t = Terrain::new(&nav, 256);
         for y in (3..253).step_by(3) {

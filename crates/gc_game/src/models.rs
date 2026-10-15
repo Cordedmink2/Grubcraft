@@ -147,6 +147,7 @@ impl Clips {
         let standing = |pose: Option<Pose>| Some((pose?, false));
         match fight {
             Move::Guard => standing(self.pose(model, Action::Idle, seconds)),
+            Move::Cheer => standing(self.pose(model, Action::Cheer, seconds)),
             Move::Swing { at, alt } => {
                 let attack = if alt { Action::Attack2 } else { Action::Attack };
                 standing(self.at(model, attack, at))

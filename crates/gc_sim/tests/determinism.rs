@@ -64,6 +64,7 @@ fn run_on(nav: &[u8], ground: Ground) -> Vec<(u32, u64)> {
         nav,
         teams: &[],
         ground,
+        champions: false,
     });
     let mut drill = Drill::new(SEED);
     let mut commands = Vec::with_capacity(512);
@@ -139,6 +140,7 @@ fn different_seed_different_hash() {
         nav: &[],
         teams: &[],
         ground: gc_sim::Ground::FLAT,
+        champions: false,
     });
     let b = World::new(&MatchSetup {
         seed: 2,
@@ -148,6 +150,7 @@ fn different_seed_different_hash() {
         nav: &[],
         teams: &[],
         ground: gc_sim::Ground::FLAT,
+        champions: false,
     });
     assert_ne!(a.state_hash(), b.state_hash());
     a.tick(&[]);

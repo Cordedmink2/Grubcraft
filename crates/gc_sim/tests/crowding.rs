@@ -47,6 +47,7 @@ fn seeded_world(nav: &[u8], seed: u64) -> World {
         nav,
         teams: &[],
         ground: Ground::FLAT,
+        champions: false,
     })
 }
 

@@ -76,6 +76,7 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
         nav: &[],
         teams: &[],
         ground: gc_sim::Ground::FLAT,
+        champions: false,
     });
     let terrain = Terrain::open(MAP);
     // Two armies facing each other across 70 to 100 tiles of open ground.

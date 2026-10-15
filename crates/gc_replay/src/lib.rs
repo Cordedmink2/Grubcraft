@@ -35,9 +35,10 @@ use codec::{Reader, Writer};
 
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older replays are refused
-/// with [`Error::Format`], except format 2, which is format 3 without the
-/// cover layer (read as a map with no woods or grass).
-pub const FORMAT: u16 = 3;
+/// with [`Error::Format`], except format 3, which is format 4 without the
+/// champions flag (read as no champions), and format 2, which is format 3
+/// without the cover layer (read as a map with no woods or grass).
+pub const FORMAT: u16 = 4;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -65,6 +66,8 @@ pub struct Replay {
     pub water_level: u16,
     /// Woods and tall grass, as [`Ground::cover`] (empty: none).
     pub cover: Vec<u8>,
+    /// Whether champions may duel before battle, as [`MatchSetup::champions`].
+    pub champions: bool,
     /// Ticks recorded.
     pub ticks: u32,
     /// The commands of each tick that had any, in tick order.
@@ -148,6 +151,7 @@ impl Replay {
                 water_level: self.water_level,
                 cover: &self.cover,
             },
+            champions: self.champions,
         }
     }
 
@@ -245,6 +249,7 @@ impl Replay {
         }
         w.var(u64::from(self.water_level));
         w.bytes(&self.cover);
+        w.bool(self.champions);
         w.var(u64::from(self.ticks));
         w.var(self.turns.len() as u64);
         let mut prev = 0;
@@ -327,6 +332,7 @@ impl Replay {
         if !cover.is_empty() && cover.len() != (map_tiles as usize).pow(2) {
             return None;
         }
+        let champions = format >= 4 && r.bool()?;
         let ticks = r.var_as()?;
         let n: usize = r.var_as()?;
         let mut turns = Vec::with_capacity(n.min(r.remaining()));
@@ -365,6 +371,7 @@ impl Replay {
             heights,
             water_level,
             cover,
+            champions,
             ticks,
             turns,
             checkpoints,
@@ -408,6 +415,7 @@ impl Recorder {
                 } else {
                     Vec::new()
                 },
+                champions: setup.champions,
                 ticks: 0,
                 turns: Vec::new(),
                 checkpoints: vec![(0, world.state_hash())],
@@ -471,6 +479,7 @@ mod tests {
                 water_level: 200,
                 cover: &cover,
             },
+            champions: false,
         };
         let mut world = World::new(&setup);
         let mut rec = Recorder::new(&setup, &world, "test drill");

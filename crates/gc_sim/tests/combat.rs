@@ -26,6 +26,7 @@ fn world() -> World {
         nav: &[],
         teams: &[],
         ground: gc_sim::Ground::FLAT,
+        champions: false,
     })
 }
 
@@ -145,6 +146,7 @@ fn charges_hit_harder_than_standing_fights() {
             nav: &[],
             teams: &[],
             ground: gc_sim::Ground::FLAT,
+            champions: false,
         })
     };
     // Charge in from 14 tiles away, then fight for 3 s.

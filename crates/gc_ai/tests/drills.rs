@@ -216,6 +216,7 @@ fn run(drill: Drill, seconds: u32, mut watch: impl FnMut(&Field)) -> Option<Play
             water_level: (WATER_LEVEL * per_tile) as u16,
             cover: &[],
         },
+        champions: false,
     });
     let mut out: Vec<PlayerCommand> = Vec::new();
     spawn_commands(AI, &drill.ai, &mut out);

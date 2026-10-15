@@ -9,7 +9,9 @@
 //!   when fighting while badly outnumbered nearby;
 //! - it recovers when the regiment is out of the fight and losing nobody, up
 //!   to the unit's stat scaled by how much of the regiment is left (half the
-//!   stat for a regiment that has lost almost everyone).
+//!   stat for a regiment that has lost almost everyone), raised or lowered
+//!   for the rest of the battle when its side's champion wins or loses
+//!   (see [`crate::champions`]).
 //!
 //! Below [`WAVER_BELOW`] points a regiment is *wavering* and deals less
 //! damage. At zero it *routs*: it breaks off, ignores orders and runs from
@@ -25,7 +27,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::combat::{Combat, Whose, placement};
 use crate::regiments::Regiments;
 use crate::vision::Vision;
-use crate::{Formation, RegimentHandle, Stances, TICKS_PER_SECOND, UnitStats};
+use crate::{Formation, Stances, TICKS_PER_SECOND, UnitStats};
 
 /// Morale is kept in tenths of a point.
 pub const SCALE: i16 = 10;
@@ -157,9 +159,11 @@ fn check(
         tenths += i32::from(RECOVERY * SCALE);
     }
     // A battered regiment never gets all its nerve back: the cap falls from
-    // the unit's stat at full strength to half of it with nobody left.
-    let cap = i32::from(fresh(stats)) * (full + i32::from(regs.models[i])) / (2 * full);
-    let morale = (i32::from(regs.morale[i]) + tenths).clamp(0, cap) as i16;
+    // the unit's stat at full strength to half of it with nobody left. A
+    // champion's win or loss raises or lowers it for the rest of the battle.
+    let cap = i32::from(fresh(stats)) * (full + i32::from(regs.models[i])) / (2 * full)
+        + i32::from(regs.party_morale[regs.owner[i] as usize]);
+    let morale = (i32::from(regs.morale[i]) + tenths).clamp(0, cap.max(1)) as i16;
     regs.morale[i] = morale;
     if morale > 0 {
         regs.morale_state[i] = steady_or_wavering(morale);
@@ -201,18 +205,20 @@ fn local_strength(
     (friends, enemies)
 }
 
-/// Regiment `i` loses `points` of morale at once (an ambush), down to no
-/// less than a tenth of a point: its own next check decides whether it
-/// breaks. Routers and regiments that never rout are left alone.
-pub(crate) fn shake(regs: &mut Regiments, i: usize, points: i16) {
-    lose(&mut regs.morale[i], &mut regs.morale_state[i], points);
+/// Regiment `i` gains `points` of morale at once (a champion's win), or
+/// loses them if negative (an ambush), down to no less than a tenth of a
+/// point: its own next check decides whether it breaks, and a gain may go
+/// above its ceiling until that check caps it. Routers and regiments that
+/// never rout are left alone.
+pub(crate) fn shift(regs: &mut Regiments, i: usize, points: i16) {
+    adjust(&mut regs.morale[i], &mut regs.morale_state[i], points);
 }
 
-fn lose(morale: &mut i16, state: &mut MoraleState, points: i16) {
+fn adjust(morale: &mut i16, state: &mut MoraleState, points: i16) {
     if state.broken() || *morale <= 0 {
         return;
     }
-    *morale = (*morale - points * SCALE).max(1);
+    *morale = morale.saturating_add(points * SCALE).max(1);
     *state = steady_or_wavering(*morale);
 }
 
@@ -232,7 +238,7 @@ pub(crate) fn shake_friends(
     let state = &mut regs.morale_state;
     combat.each_near(&at, p, Fx::from_int(tiles), Whose::Friends(owner), |j| {
         if j != i {
-            lose(&mut morale[j], &mut state[j], points);
+            adjust(&mut morale[j], &mut state[j], -points);
         }
     });
 }
@@ -268,10 +274,7 @@ fn rout(
 
     // Friends nearby are shaken; the enemies who broke them take heart. The
     // friends' own checks decide whether they break in turn.
-    let me = RegimentHandle {
-        index: i as u32,
-        generation: regs.generation[i],
-    };
+    let me = regs.handle(i);
     shake_friends(regs, combat, stances, i, ROUT_SHOCK_TILES, ROUT_SHOCK);
     let (p, owner, near) = (
         regs.position[i],
@@ -283,10 +286,8 @@ fn rout(
     let state = &mut regs.morale_state;
     let engaged = &regs.engaged;
     combat.each_near(&at, p, near, Whose::Enemies(owner), |j| {
-        if engaged[j] == Some(me) && !state[j].broken() && morale[j] > 0 {
-            // May go above the unit's stat until its next check caps it.
-            morale[j] = morale[j].saturating_add(VICTORY_BOOST * SCALE);
-            state[j] = steady_or_wavering(morale[j]);
+        if engaged[j] == Some(me) {
+            adjust(&mut morale[j], &mut state[j], VICTORY_BOOST);
         }
     });
     flee(regs, combat, stances, vision, i, map_tiles);

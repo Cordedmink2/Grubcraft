@@ -86,12 +86,14 @@ Each regiment has a **morale** value. It drops from:
 - Terror units (monsters, some abilities)
 - Being outnumbered locally
 - Their general (any hero) dying nearby
+- Their side's champion falling in a duel before battle ([below](#champions-before-battle))
 
 It rises from:
 - Nearby heroes (leadership aura)
 - Winning the local fight, routing enemies
 - Veterancy
 - Holding a Shrine, faction effects (Honor Edicts, Heartbeat)
+- Their side's champion winning a duel before battle
 
 ### Morale states
 | State | Effect |
@@ -143,6 +145,18 @@ Warcraft III's best idea, kept:
 - Leadership aura: friendly regiments nearby have higher morale. A dead hero shakes nearby morale.
 - Dead heroes can be revived at the hero altar for Grub, Marrow and time.
 - One hero available at tier 1, two at tier 2, three at tier 3.
+
+## Champions before battle
+
+Before the lines meet, each side may send out its best fighter to duel the other's, as in Mount & Blade ([decision 27](14-decisions-needed.md#battle-feel-from-mount--blade-decided-2026-10-15), research note MB-4). It is a chance event in battles with at least one computer player, allowed by the lobby option **Champions before AI battles** (on by default).
+
+- **When:** the first time two enemy regiments that can see each other come within 60 tiles, with both sides able to send a champion, there is an even chance that champions come out. It happens at most once a battle, and never once the battle has begun (a regiment of either side fighting in melee or losing soldiers, to arrows too).
+- **Who:** until heroes reach the simulation (M3), a side's champion is a soldier of its best fighting regiment near the front: the highest melee attack plus defence among its regiments within 25 tiles of the one nearest the enemy that are not fighting, broken or hiding in cover ([20 · Ambushes](20-ambushes.md); a champion would give them away) and have at least two soldiers. Then a hero will be the champion.
+- **The duel:** the two run to the point halfway between their regiments and trade blows, one swing each in turn. A blow lands with the battle's usual chance to hit (50 + attack − defence, kept between 10% and 90%); a man it lands on reels and loses his next swing, and the third blow to land kills. The whole duel is decided by the match's dice when the challenge is called, so every machine and every replay sees the same fight.
+- **The stakes:** when the last blow lands, every regiment on the winner's side gains 6 morale, and the side keeps them as a higher ceiling for the battle (regiments it brings on later too); every regiment on the loser's side loses 6 from its morale and the side from its ceiling (never routing from it alone). The loser's regiment loses him.
+- **No result:** if neither falls within 30 swings they part. If the battle starts around them first (a regiment of either side fights in melee or loses soldiers), or a champion's regiment breaks or is destroyed, the duel is lost in the battle. Neither changes anything.
+- **The armies don't wait:** a challenge is a moment in the battle, not a pause. Computer players whose side has a champion out halt their advance and watch while he fights, without using up their patience; a human can attack through it, with arrows or in melee, at the cost of whatever the duel would have given.
+- **On screen:** the battle panel announces the challenge and its result for eight seconds. The two champions run out of their ranks, fight blow by blow with the duel moves (swing, parry or block, stagger), and the winner cheers over the fallen man before both rejoin the battle.
 
 ## Counters (soft rock-paper-scissors)
 

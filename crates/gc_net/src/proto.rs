@@ -14,7 +14,7 @@ use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 4;
+pub const PROTOCOL: u8 = 5;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -212,6 +212,7 @@ pub(crate) fn write_settings(w: &mut Writer, s: &LobbySettings) {
         .iter()
         .position(|&d| d == s.on_drop)
         .unwrap_or(0) as u8);
+    w.bool(s.champions);
 }
 
 pub(crate) fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
@@ -220,6 +221,7 @@ pub(crate) fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
         mode: *GameMode::ALL.get(r.u8()? as usize)?,
         tempo: *Tempo::ALL.get(r.u8()? as usize)?,
         on_drop: *OnDrop::ALL.get(r.u8()? as usize)?,
+        champions: r.bool()?,
     })
 }
 
@@ -522,7 +524,10 @@ mod tests {
         round_trip(Msg::Start {
             seed: 7,
             map_hash: u64::MAX,
-            settings: LobbySettings::default(),
+            settings: LobbySettings {
+                champions: false,
+                ..LobbySettings::default()
+            },
             players: slots[..2].to_vec(),
             you: 1,
             input_delay: 2,

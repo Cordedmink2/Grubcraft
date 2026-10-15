@@ -8,6 +8,7 @@ Recorded battles that the simulation must keep playing exactly as recorded. Each
 | `field-2v2.gcr` | Ember Clans and Carrion Concord against Brood and Choir, all computer players, ten regiments each |
 | `field-woods-1v1.gcr` | Brood against Choir (both General AI) on a generated map with woods and tall grass: regiments hide and are spotted, and six ambushes are sprung ([20 · Ambushes](../docs/20-ambushes.md)) |
 | `sandbox-tuning.gcr` | Ember Clans against Carrion Concord, with a stat change at 1:00 and a regiment removed at 1:30, so every kind of command is covered |
+| `field-champions-1v1.gcr` | Ember Clans against Choir, both Veteran AI, with champions allowed: two champions duel between the lines and one kills the other before the armies close (replay format 4) |
 | `field-8000pt-2v2.gcr` | The `gc_bench` grand battle: four armies of about 1,500 soldiers on a 384-tile map, every regiment charging the nearest enemy |
 
 `cargo run --release -p gc_replay -- info replays` describes each one.

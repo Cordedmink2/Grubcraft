@@ -21,6 +21,7 @@
 use gc_ai::army::{self, Placement};
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
 use gc_replay::Recorder;
+use gc_sim::champions::Outcome;
 use gc_sim::{
     Capacities, Command, Formation, MatchSetup, PlayerCommand, PlayerId, UnitStats, World,
 };
@@ -52,6 +53,9 @@ struct Golden {
     minds: bool,
     /// Commands added to the computer players' at some ticks.
     extra: fn(&World, &mut Vec<PlayerCommand>),
+    /// Whether champions may duel before battle, as the lobby allows by
+    /// default in battles with computer players.
+    champions: bool,
 }
 
 const fn side(faction: Faction, level: Difficulty, team: u8) -> Side {
@@ -153,6 +157,7 @@ const GOLDENS: &[Golden] = &[
         minutes: 5,
         minds: true,
         extra: no_extra,
+        champions: false,
     },
     Golden {
         name: "field-2v2",
@@ -169,6 +174,7 @@ const GOLDENS: &[Golden] = &[
         minutes: 5,
         minds: true,
         extra: no_extra,
+        champions: false,
     },
     Golden {
         name: "sandbox-tuning",
@@ -183,6 +189,7 @@ const GOLDENS: &[Golden] = &[
         minutes: 3,
         minds: true,
         extra: tuning,
+        champions: false,
     },
     // Woods and tall grass in play (docs/20-ambushes.md): regiments hide,
     // are spotted, and spring ambushes, so the vision rules are checked on
@@ -197,6 +204,7 @@ const GOLDENS: &[Golden] = &[
         minutes: 5,
         minds: true,
         extra: no_extra,
+        champions: false,
     },
     // The `gc_bench` grand battle: about 6,000 soldiers, all four armies
     // charging into one brawl in the middle. Until the army builder brings
@@ -216,6 +224,20 @@ const GOLDENS: &[Golden] = &[
         minutes: 5,
         minds: false,
         extra: charge,
+        champions: false,
+    },
+    // Champions come out before the armies close, and one kills the other.
+    Golden {
+        name: "field-champions-1v1",
+        seed: 0xc4a1,
+        map_tiles: 256,
+        sides: &[side(EmberClans, Veteran, 0), side(Choir, Veteran, 1)],
+        soldiers: 0,
+        rows: 1,
+        minutes: 4,
+        minds: true,
+        extra: no_extra,
+        champions: true,
     },
 ];
 
@@ -255,6 +277,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         nav: &nav,
         teams: &teams,
         ground: heightmap.ground(),
+        champions: golden.champions,
     };
     let mut world = World::new(&setup);
     let mut minds = Minds::new(heightmap.ai_terrain(&nav));
@@ -369,10 +392,24 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         }
         _ => "cut at the time limit".into(),
     };
+    let champions = world.challenge().map_or(String::new(), |c| {
+        let at = gc_ai::lens::clock(c.decided());
+        match c.outcome(u32::MAX) {
+            Outcome::Killed { .. } => format!("; champions duel to a kill at {at}"),
+            Outcome::Parted => format!("; champions duel to a draw at {at}"),
+            _ => format!("; the champions' duel is cut short at {at}"),
+        }
+    });
+    assert_eq!(
+        champions.is_empty(),
+        !golden.champions,
+        "{}: champions should come out exactly when allowed",
+        golden.name
+    );
     let note = format!(
         "{}: Field Battle recorded from gc_game's goldens.rs, seed {:#x}, {}-tile map; {}; \
          {}:{:02}, {ending}; most soldiers in melee at once {} (at {}:{:02}); \
-         ambushes sprung {ambushes}",
+         ambushes sprung {ambushes}{champions}",
         golden.name,
         golden.seed,
         golden.map_tiles,

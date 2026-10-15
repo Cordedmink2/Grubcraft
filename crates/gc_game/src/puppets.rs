@@ -11,12 +11,15 @@
 //! blows (docs/09-art-and-audio.md, "Animation"). Each blow is parried,
 //! blocked, staggers its man or crushes through his guard, with the odds the
 //! simulation uses; a heavier charge knocks men off their feet; and when the
-//! simulation takes a soldier, his man deals the killing blow. None of this
-//! feeds back into the simulation, so it may use floats and frame time.
+//! simulation takes a soldier, his man deals the killing blow. When the
+//! simulation calls out champions before a battle, one man steps out of each
+//! champion's regiment, runs to the spot between the lines and plays out
+//! the duel the simulation rolled, blow by blow. None of this feeds back
+//! into the simulation, so it may use floats and frame time.
 
 use gc_sim::combat::{CHARGE_TICKS, hit_percent};
 use gc_sim::formation::MAX_MODELS;
-use gc_sim::{Mass, RegimentHandle};
+use gc_sim::{Challenge, Mass, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
 const SLOTS: usize = MAX_MODELS as usize;
@@ -113,6 +116,11 @@ const DISORDER_LOOK_RATE: f32 = 0.8;
 /// Fallen soldiers stay on the field this long, in seconds, then sink away.
 const CORPSE_SECONDS: f32 = 20.0;
 const CORPSE_SINK_SECONDS: f32 = 3.0;
+/// Champions run out at this pace, in tiles per second: a little faster
+/// than the simulation allows for, so they are there when the duel starts.
+const CHAMPION_RUN: f32 = 5.5;
+/// The winning champion cheers this long before he walks back, in seconds.
+const CHEER_SECONDS: f32 = 2.5;
 
 /// One regiment as the renderer sees it this frame, already interpolated.
 #[derive(Clone, Copy, Debug)]
@@ -225,6 +233,8 @@ pub enum Move {
     Stagger(f32),
     /// Knocked off his feet by a charge or a crushing blow, and getting up.
     Down(f32),
+    /// A champion who has won his duel.
+    Cheer,
 }
 
 /// What a blow did to a soldier, or the killing blow he is dealing, which
@@ -271,6 +281,87 @@ pub struct Corpse {
     pub sink: f32,
 }
 
+/// A champion's moves at a moment of his duel: what he is doing outside his
+/// swings, as [`Puppets::acting`] gives it, and his swing (how far through
+/// it, and which of his swings it is).
+type DuelMoves = (Option<(Act, f32)>, Option<(f32, f32)>);
+
+/// The champions' duel the simulation called, as the puppets play it.
+#[derive(Clone, Copy, Debug)]
+struct Duel {
+    challenge: Challenge,
+    /// Where they fight.
+    spot: Vec2,
+    /// The puppet each side sent out, or `NONE` (none to send, or fallen).
+    champion: [u32; 2],
+    /// The simulation's time, in ticks (interpolated between them).
+    now: f32,
+}
+
+impl Duel {
+    /// Whether champion `side` is out between the lines: until the duel is
+    /// abandoned, the loser falls, they part, or the winner has cheered.
+    fn out(&self, side: usize) -> bool {
+        let c = &self.challenge;
+        let ends = c.ends() as f32;
+        c.abandoned.is_none()
+            && match c.winner {
+                Some(w) if w as usize == side => {
+                    self.now < ends + CHEER_SECONDS * TICKS_PER_SECOND as f32
+                }
+                // He falls when the simulation takes him (see `fall`).
+                Some(_) => self.now < ends + TICKS_PER_SECOND as f32,
+                None => self.now < ends,
+            }
+    }
+
+    /// What champion `side` is doing now, by the rolled duel, as a soldier
+    /// in a melee duel would: reeling from each of the other's blows that
+    /// lands and parrying (or, with a shield, blocking) the rest, and his
+    /// own swing on each of his beats (how far through it, and which of his
+    /// swings it is).
+    fn moves(&self, side: usize, shield: bool) -> DuelMoves {
+        let c = &self.challenge;
+        let (mut act, mut swing) = (None, None);
+        let since_meet = self.now - c.meet as f32;
+        if since_meet < 0.0 || self.now >= c.ends() as f32 {
+            return (act, swing);
+        }
+        let beat = (since_meet / gc_sim::champions::BEAT_TICKS as f32) as u8;
+        // A blow's moves last less than the two beats between one man's
+        // swings, so only the beats either side of this one matter.
+        for b in beat.saturating_sub(1)..=beat.saturating_add(1) {
+            if !c.swings(b) {
+                continue;
+            }
+            // Seconds since the blow of beat `b` landed (negative before).
+            let since = (self.now - c.blow_tick(b) as f32) / TICKS_PER_SECOND as f32;
+            if b as usize % 2 == side {
+                let at = since / SWING_SECONDS + BLOW_AT;
+                if (0.0..1.0).contains(&at) {
+                    swing = Some((at, f32::from(b / 2)));
+                }
+            } else {
+                let a = match () {
+                    _ if c.lands(b) => Act::Stagger,
+                    _ if shield => Act::Block,
+                    _ => Act::Parry,
+                };
+                let f = since / a.seconds();
+                if (0.0..1.0).contains(&f) {
+                    act = Some((a, f));
+                }
+            }
+        }
+        (act, swing)
+    }
+
+    /// Whether champion `side` has won and is cheering.
+    fn cheering(&self, side: usize) -> bool {
+        self.challenge.winner == Some(side as u8) && self.now >= self.challenge.ends() as f32
+    }
+}
+
 /// Puppet state for every regiment slot in the pool: `MAX_MODELS` soldiers
 /// per regiment, by pool index. Allocated once.
 pub struct Puppets {
@@ -313,6 +404,9 @@ pub struct Puppets {
     time: f32,
     /// The last frame's step, in seconds.
     dt: f32,
+    duel: Option<Duel>,
+    /// The tick the duel the puppets are done with was called.
+    duel_over: Option<u32>,
 }
 
 impl Puppets {
@@ -343,6 +437,8 @@ impl Puppets {
             next_corpse: 0,
             time: 0.0,
             dt: 0.0,
+            duel: None,
+            duel_over: None,
         }
     }
 
@@ -404,6 +500,72 @@ impl Puppets {
         }
         self.fighting = fighting;
         self.near = near;
+    }
+
+    /// Follow the champions' duel, if the simulation has called one; `now`
+    /// is its time in ticks, interpolated. Each side sends out the man in
+    /// the middle of its regiment's front rank. Call once a frame, before
+    /// the updates.
+    pub fn champions(&mut self, challenge: Option<&Challenge>, now: f32) {
+        let Some(&challenge) = challenge else {
+            (self.duel, self.duel_over) = (None, None);
+            return;
+        };
+        if self.duel_over == Some(challenge.called) {
+            return;
+        }
+        let duel = match self.duel {
+            Some(d) => Duel {
+                challenge,
+                now,
+                ..d
+            },
+            None => Duel {
+                challenge,
+                spot: crate::from_fx_vec(challenge.spot),
+                champion: challenge.champions.map(|h| {
+                    let r = h.index as usize;
+                    if self.owner[r] != Some(h) || self.models[r] == 0 {
+                        return NONE;
+                    }
+                    (r * SLOTS + self.front(r) / 2) as u32
+                }),
+                now,
+            },
+        };
+        // Once neither is out between the lines, the puppets are done with it.
+        if duel.out(0) || duel.out(1) {
+            self.duel = Some(duel);
+        } else {
+            self.duel = None;
+            self.duel_over = Some(challenge.called);
+        }
+    }
+
+    /// Regiment `r`'s champion while he is out between the lines: the
+    /// duel, his side and his puppet.
+    fn champion_of(&self, r: usize) -> Option<(Duel, usize, usize)> {
+        let d = self.duel?;
+        let side = d
+            .challenge
+            .champions
+            .iter()
+            .position(|h| h.index as usize == r)?;
+        let i = d.champion[side];
+        (i != NONE && d.out(side)).then_some((d, side, i as usize))
+    }
+
+    /// Where champion `side` stands to fight: beside the spot, on his own
+    /// side of it.
+    fn stance(&self, d: &Duel, side: usize) -> Vec2 {
+        let [a, b] = d.challenge.champions.map(|h| self.centre[h.index as usize]);
+        let toward_b = (b - a).normalize_or(Vec2::Y);
+        let half = toward_b * (DUEL_GAP / 2.0);
+        if side == 0 {
+            d.spot - half
+        } else {
+            d.spot + half
+        }
     }
 
     /// The nearest front-rank soldier of the regiments `near` within reach
@@ -600,6 +762,7 @@ impl Puppets {
                 SLOT_JITTER + DISORDER_JITTER * mess,
             )
         };
+        let champion_here = self.champion_of(r);
         for k in 0..models {
             let i = r * SLOTS + k;
             let local = slot_offset(
@@ -617,20 +780,36 @@ impl Puppets {
                 let wander = Vec2::from_angle(self.time * DISORDER_RATE * tau + p);
                 slot += wander * (DISORDER_DRIFT * mess * (0.5 + unit_hash(block.handle, k, 8)));
             }
-            // A dueling soldier closes on his man, on a leash from his slot;
-            // one knocked down lies where he fell.
+            // A champion out between the lines faces the other; a dueling
+            // soldier closes on his man, on a leash from his slot; one
+            // knocked down lies where he fell.
+            let champion = champion_here
+                .filter(|&(_, _, c)| c == i)
+                .map(|(d, side, _)| (d, side));
             let j = self.partner[i];
-            let foe = (j != NONE && !block.routing).then(|| self.pos[j as usize]);
-            let acting = self.acting(i).filter(|_| !block.routing);
+            let foe = match champion {
+                Some((d, side)) => match d.champion[1 - side] {
+                    NONE => Some(d.spot),
+                    other => Some(self.pos[other as usize]),
+                },
+                None => (j != NONE && !block.routing).then(|| self.pos[j as usize]),
+            };
+            // A champion's moves come from the rolled duel.
+            let duel = champion.map(|(d, side)| d.moves(side, block.fighter.shield));
+            let acting = match duel {
+                Some((act, _)) => act,
+                None => self.acting(i).filter(|_| !block.routing),
+            };
             let down = matches!(acting, Some((Act::Down, _)));
-            let target = match foe {
+            let target = match (champion, foe) {
+                (Some((d, side)), _) => self.stance(&d, side),
                 _ if down => self.pos[i],
-                Some(f) => {
+                (None, Some(f)) => {
                     let gap = (self.pos[i] - f).normalize_or(back);
                     let spot = f + gap * DUEL_GAP;
                     slot + (spot - slot).clamp_length_max(DUEL_LEASH)
                 }
-                None => slot,
+                (None, None) => slot,
             };
             if fresh {
                 self.pos[i] = target;
@@ -640,13 +819,17 @@ impl Puppets {
                 let to = target - self.pos[i];
                 let dist = to.length();
                 let pace = 0.9 + 0.2 * unit_hash(block.handle, k, 1);
-                let top = (block.speed * CATCH_UP + dist * PULL_PER_TILE) * pace;
+                let top = if champion.is_some() {
+                    CHAMPION_RUN
+                } else {
+                    (block.speed * CATCH_UP + dist * PULL_PER_TILE) * pace
+                };
                 let rank = f32::from(k as u16 / files);
                 let accel = ACCEL * pace / (1.0 + rank * ACCEL_FALLOFF_PER_RANK);
                 let accel = if block.routing { accel * 1.5 } else { accel };
                 let v = self.vel[i];
                 let pull = if dist > SETTLED { to } else { Vec2::ZERO };
-                let carry = if down {
+                let carry = if down || champion.is_some() {
                     Vec2::ZERO
                 } else {
                     self.drift[r] * LEAD
@@ -676,12 +859,19 @@ impl Puppets {
             let speed = if fresh { 0.0 } else { self.vel[i].length() };
             let mut pos = self.pos[i];
             let mut facing = self.facing[i];
-            let striking = block.engaged && (k as u16) < files * 2;
+            let striking = block.engaged && (k as u16) < files * 2 && champion.is_none();
             let phase = unit_hash(block.handle, k, 5);
             let dueling = foe.is_some() && striking;
             let beat = dueling.then(|| Self::beat(i, j as usize, self.time));
-            let swing = beat.and_then(|b| Some((self.swing(i, b)?, b)));
+            let swing = match duel {
+                Some((_, swing)) => swing,
+                None => beat.and_then(|b| Some((self.swing(i, b)?, b))),
+            };
+            // A champion stands on guard once he has reached his place.
+            let on_guard =
+                dueling || champion.is_some() && self.pos[i].distance_squared(target) < 0.25;
             let fight = match (acting, swing) {
+                _ if champion.is_some_and(|(d, side)| d.cheering(side)) => Some(Move::Cheer),
                 (Some((Act::Kill, f)), _) => Some(Move::Swing { at: f, alt: false }),
                 (Some((Act::Down, f)), _) => Some(Move::Down(f)),
                 (Some((Act::Stagger, f)), _) => Some(Move::Stagger(f)),
@@ -691,7 +881,7 @@ impl Puppets {
                 }),
                 (Some((Act::Block, f)), _) => Some(Move::Block(f)),
                 (Some((Act::Parry, f)), _) => Some(Move::Parry(f)),
-                _ if dueling => Some(Move::Guard),
+                _ if on_guard => Some(Move::Guard),
                 _ => None,
             };
             let reeling = acting.is_some_and(|(act, _)| act.reels());
@@ -703,7 +893,7 @@ impl Puppets {
                 let lunge = unit_hash(block.handle, k, 4);
                 let swing = ((self.time * LUNGE_RATE + lunge) * tau).sin();
                 pos += facing * LUNGE * swing.max(0.0);
-            } else if speed < 0.15 && !block.routing {
+            } else if speed < 0.15 && !block.routing && champion.is_none() {
                 // At rest: shift weight and glance about.
                 let p = unit_hash(block.handle, k, 6) * tau;
                 let sway = (self.time * 0.9 + p).sin() + 0.5 * (self.time * 2.3 + p * 1.7).sin();
@@ -728,7 +918,8 @@ impl Puppets {
     /// under arrows) drops, and the soldier from the emptied slot takes his
     /// place and walks up to fill the gap. In melee the man who falls is one
     /// locked in a duel, if any are, and his man swings the killing blow: he
-    /// stands until it lands.
+    /// stands until it lands. A champion who has lost his duel falls to the
+    /// other's last blow; one still fighting is never taken from the ranks.
     fn fall(&mut self, block: &Block, owner: u8, models: usize) {
         let r = block.handle.index as usize;
         let base = r * SLOTS;
@@ -741,18 +932,29 @@ impl Puppets {
                 gone + 1
             };
             let roll = unit_hash(block.handle, gone, self.time.to_bits());
+            let slain = self.slain_champion(r);
+            let champion = self.champion_of(r).map(|(_, _, c)| c);
+            let out = |k: usize| champion == Some(base + k);
             // Best a man and his partner fighting each other, then any man
-            // with a partner.
+            // with a partner, else anyone not out as a champion.
             let partner = |k: usize| self.partner[base + k] as usize;
-            let pick = nth_of(pool, roll, |k| {
-                partner(k) != NONE as usize && self.partner[partner(k)] as usize == base + k
-            })
-            .or_else(|| nth_of(pool, roll, |k| partner(k) != NONE as usize))
-            .unwrap_or(((roll * pool as f32) as usize).min(gone));
+            let pick = slain
+                .map(|(champion, _)| champion - base)
+                .or_else(|| {
+                    nth_of(pool, roll, |k| {
+                        partner(k) != NONE as usize && self.partner[partner(k)] as usize == base + k
+                    })
+                })
+                .or_else(|| nth_of(pool, roll, |k| partner(k) != NONE as usize && !out(k)))
+                .or_else(|| nth_of(pool, roll, |k| !out(k)))
+                .unwrap_or(gone);
             let (victim, last) = (base + pick, base + gone);
-            let killer = self.partner[victim] as usize;
+            let killer = slain.map_or(self.partner[victim] as usize, |(_, killer)| killer);
             let blow_in = if killer == NONE as usize {
                 None
+            } else if slain.is_some() {
+                // The other champion's last blow has landed.
+                Some(0.0)
             } else {
                 match self.acting(killer) {
                     // His man is reeling or down and can't strike: he just
@@ -791,7 +993,31 @@ impl Puppets {
             // Whoever steps into the gap finds his own man next frame.
             self.partner[victim] = NONE;
             self.partner[last] = NONE;
+            if let Some(d) = &mut self.duel {
+                for c in &mut d.champion {
+                    if *c == victim as u32 {
+                        *c = NONE;
+                    } else if *c == last as u32 {
+                        // A champion in the last slot moved into the gap.
+                        *c = victim as u32;
+                    }
+                }
+            }
         }
+    }
+
+    /// The champion of regiment `r` who has lost his duel and is due to
+    /// fall, and the champion who killed him: (puppet, killer puppet).
+    fn slain_champion(&self, r: usize) -> Option<(usize, usize)> {
+        let d = self.duel.as_ref()?;
+        let c = &d.challenge;
+        let w = c.winner? as usize;
+        let lost = d.champion[1 - w];
+        (c.abandoned.is_none()
+            && c.champions[1 - w].index as usize == r
+            && lost != NONE
+            && d.now >= c.ends() as f32 - 1.0)
+            .then_some((lost as usize, d.champion[w] as usize))
     }
 
     /// Every fallen soldier still on the field.
@@ -1346,5 +1572,124 @@ mod tests {
         assert_eq!(downed(Medium, Medium), 0);
         assert_eq!(downed(Medium, Light), 0);
         assert_eq!(downed(Heavy, Heavy), 0);
+    }
+
+    /// Two regiments 30 tiles apart whose champions fight: champion 0
+    /// lands the blows of beats 0, 2 and 4 (each costing the other his
+    /// next swing) and kills champion 1.
+    fn champions_called() -> (Block, Block, Challenge) {
+        let a = block(0, Vec2::new(0.0, 30.0), Vec2::NEG_Y, false);
+        let b = block(1, Vec2::ZERO, Vec2::Y, false);
+        let c = Challenge {
+            champions: [a.handle, b.handle],
+            spot: gc_fixed::FxVec2::from_ints(0, 15),
+            sides: [0, 1],
+            called: 0,
+            meet: 100,
+            beats: 5,
+            landed: 0b10101,
+            winner: Some(0),
+            abandoned: None,
+        };
+        (a, b, c)
+    }
+
+    #[test]
+    fn champions_run_out_fight_and_the_loser_falls() {
+        let mut p = Puppets::new(2, 4);
+        let (a, mut b, c) = champions_called();
+        let tick = TICKS_PER_SECOND as f32 * FRAME;
+        let mut now = -tick;
+        let mut seen = Vec::new();
+        let step = |p: &mut Puppets, a: &Block, b: &Block, now: f32| {
+            p.advance(FRAME);
+            p.champions((now >= 0.0).then_some(&c), now);
+            let mut out = Vec::new();
+            p.update(a, 0, FRAME, |s| out.push(s));
+            p.update(b, 1, FRAME, |s| out.push(s));
+            out
+        };
+        // Settle in the ranks, then the challenge is called.
+        while now < c.meet as f32 {
+            seen = step(&mut p, &a, &b, now);
+            now += tick;
+        }
+        let [x, y] = p.duel.unwrap().champion.map(|i| i as usize);
+        assert_eq!((x / SLOTS, y / SLOTS), (0, 1));
+        // They have run out and face each other at the spot.
+        let sx = seen[x];
+        assert!(sx.pos.distance(Vec2::new(0.0, 15.5)) < 0.3, "{:?}", sx.pos);
+        assert!(
+            p.pos[y].distance(Vec2::new(0.0, 14.5)) < 0.3,
+            "{:?}",
+            p.pos[y]
+        );
+        assert!(sx.facing.dot(Vec2::NEG_Y) > 0.9);
+        // Beat by beat: 0 swings and lands, 1 reels and loses his swing, ...
+        let mut moves = [vec![None], vec![None]];
+        while now < c.ends() as f32 {
+            let out = step(&mut p, &a, &b, now);
+            moves[0].push(out[x % SLOTS].fight);
+            moves[1].push(out[8 + y % SLOTS].fight);
+            now += tick;
+        }
+        let swings = |m: &[Option<Move>]| {
+            m.windows(2)
+                .filter(|w| {
+                    matches!(w[1], Some(Move::Swing { .. }))
+                        && !matches!(w[0], Some(Move::Swing { .. }))
+                })
+                .count()
+        };
+        assert_eq!(swings(&moves[0]), 3, "{:?}", moves[0]);
+        assert_eq!(swings(&moves[1]), 0, "a reeling man swung: {:?}", moves[1]);
+        assert!(moves[1].iter().any(|m| matches!(m, Some(Move::Stagger(_)))));
+        // The simulation takes the loser as the last blow lands: he falls at
+        // the spot, facing his killer, and the winner cheers.
+        b.models -= 1;
+        let out = step(&mut p, &a, &b, now);
+        let corpse = p.corpses().next().expect("the loser fell");
+        assert!(
+            corpse.pos.distance(Vec2::new(0.0, 14.5)) < 0.3,
+            "{corpse:?}"
+        );
+        assert_eq!(corpse.owner, 1);
+        assert!(corpse.facing.dot(Vec2::Y) > 0.9, "{corpse:?}");
+        assert_eq!(out[x % SLOTS].fight, Some(Move::Cheer));
+        // Then he walks back to his place in the ranks.
+        for _ in 0..(CHEER_SECONDS / FRAME) as usize + 10 {
+            now += tick;
+            step(&mut p, &a, &b, now);
+        }
+        assert!(p.champion_of(0).is_none());
+        for _ in 0..600 {
+            now += tick;
+            step(&mut p, &a, &b, now);
+        }
+        assert!(p.pos[x].distance(a.centre) < 3.0, "{:?}", p.pos[x]);
+    }
+
+    #[test]
+    fn soldiers_fall_around_a_champion_still_fighting() {
+        let mut p = Puppets::new(2, 4);
+        let (a, b, c) = champions_called();
+        let mut a = a;
+        p.champions(None, 0.0);
+        p.advance(FRAME);
+        p.update(&a, 0, FRAME, |_| {});
+        p.update(&b, 1, FRAME, |_| {});
+        p.champions(Some(&c), 110.0);
+        let x = p.duel.unwrap().champion[0];
+        for lost in 1..=4 {
+            a.models -= 1;
+            p.advance(FRAME);
+            p.update(&a, 0, FRAME, |_| {});
+            assert_eq!(p.corpses().count(), lost);
+            assert!(
+                p.corpses()
+                    .all(|c| c.pos.distance(Vec2::new(0.0, 15.5)) > 1.0)
+            );
+            assert_eq!(p.duel.unwrap().champion[0], x);
+        }
     }
 }

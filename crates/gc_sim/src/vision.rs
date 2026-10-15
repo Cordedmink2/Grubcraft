@@ -312,16 +312,16 @@ impl Vision {
         volley: bool,
     ) {
         if volley {
-            morale::shake(regs, j, VOLLEY_SHOCK);
+            morale::shift(regs, j, -VOLLEY_SHOCK);
         } else {
-            morale::shake(regs, j, AMBUSH_SHOCK);
+            morale::shift(regs, j, -AMBUSH_SHOCK);
             self.off_guard[j] = OFF_GUARD_TICKS;
             morale::shake_friends(regs, combat, stances, j, RIPPLE_TILES, AMBUSH_RIPPLE);
         }
         if self.ambushes.len() < MAX_AMBUSHES {
             self.ambushes.push(Ambush {
-                ambusher: handle(regs, i),
-                victim: handle(regs, j),
+                ambusher: regs.handle(i),
+                victim: regs.handle(j),
                 volley,
             });
         }
@@ -426,12 +426,5 @@ impl Vision {
             h.u8(self.off_guard[i]);
             h.u8(u8::from(self.was_engaged[i]));
         }
-    }
-}
-
-fn handle(regs: &Regiments, i: usize) -> RegimentHandle {
-    RegimentHandle {
-        index: i as u32,
-        generation: regs.generation[i],
     }
 }

@@ -356,6 +356,8 @@ pub struct Captain {
     withdrawn_at: Option<u32>,
     withdrawals: u32,
     standoff_since: u32,
+    /// Tick it began watching its side's champion fight, while it does.
+    watching_since: Option<u32>,
     /// Since when it has been waiting, expecting to lose, with the enemy
     /// not coming and nobody fighting.
     waiting_since: Option<u32>,
@@ -440,6 +442,7 @@ impl Captain {
             withdrawn_at: None,
             withdrawals: 0,
             standoff_since: 0,
+            watching_since: None,
             waiting_since: None,
             posture_since: 0,
             distance_then: None,
@@ -1335,6 +1338,19 @@ impl Captain {
                 } else {
                     0.0
                 };
+            // Its side's champion is fighting between the lines: stand and
+            // watch. The time spent watching doesn't use up its patience.
+            let watching = view
+                .champions
+                .is_some_and(|sides| sides.iter().any(|&s| !view.hostile(ctx.party, s)));
+            match (watching, self.watching_since) {
+                (true, None) => self.watching_since = Some(now),
+                (false, Some(since)) => {
+                    self.standoff_since = (self.standoff_since + (now - since)).min(now);
+                    self.watching_since = None;
+                }
+                _ => {}
+            }
             let waited = (now - self.standoff_since) as f32 / TICKS;
             // Water between the armies: whoever crosses comes out of it a
             // regiment at a time, so wait for them, unless clearly the
@@ -1351,7 +1367,7 @@ impl Captain {
                 );
             }
             let behind_water = self.river.is_some() && !self.crossing;
-            let advance = if behind_water {
+            let advance = if behind_water || watching {
                 false
             } else if only_archers {
                 true
@@ -1385,7 +1401,7 @@ impl Captain {
             // Give each posture a moment before changing it again, so the
             // line doesn't stop and start with every look.
             let settled = now >= self.posture_since + POSTURE_TICKS;
-            if want != self.posture && settled {
+            if want != self.posture && (settled || watching) {
                 self.posture = want;
                 if want == Posture::Advance && self.covered != 0.0 {
                     // Leaving its cover behind: hammers on both wings again.
@@ -1393,8 +1409,14 @@ impl Captain {
                     self.relayout = true;
                 }
                 if want == Posture::Hold {
-                    // Halt where the line stands now.
-                    self.standoff_since = now;
+                    // Halt where the line stands now; one halting to watch
+                    // keeps the patience it had left.
+                    if watching {
+                        ctx.journal
+                            .note(now, "Halting to watch the champions".to_string());
+                    } else {
+                        self.standoff_since = now;
+                    }
                     let our_c = centroid(ours);
                     self.anchor = ctx
                         .terrain

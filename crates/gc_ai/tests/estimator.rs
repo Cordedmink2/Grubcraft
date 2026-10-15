@@ -89,6 +89,7 @@ fn fight(seed: u64) -> Battle {
         nav: &[],
         teams: &[],
         ground: gc_sim::Ground::FLAT,
+        champions: false,
     });
     let mid = Vec2::splat(128.0);
     let mut out: Vec<PlayerCommand> = Vec::new();

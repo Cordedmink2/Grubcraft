@@ -19,6 +19,10 @@ impl Writer {
         self.buf.push(v);
     }
 
+    pub fn bool(&mut self, v: bool) {
+        self.u8(u8::from(v));
+    }
+
     /// Unsigned LEB128.
     pub fn var(&mut self, mut v: u64) {
         while v >= 0x80 {
@@ -154,6 +158,14 @@ impl<'a> Reader<'a> {
 
     pub fn u8(&mut self) -> Option<u8> {
         Some(self.take(1)?[0])
+    }
+
+    pub fn bool(&mut self) -> Option<bool> {
+        match self.u8()? {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        }
     }
 
     pub fn var(&mut self) -> Option<u64> {

@@ -64,6 +64,7 @@ fn ticking_never_allocates() {
             water_level: 0,
             cover: &cover,
         },
+        champions: true,
     });
     assert!(world.terrain().has_cover());
     let mut drill = Drill::new(7);

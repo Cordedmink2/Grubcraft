@@ -198,7 +198,7 @@ fn info(file: &Path) -> bool {
         size as f64 / 1024.0
     );
     println!(
-        "  seed {:#x}, {} tiles across, {} unit types, {}{}{}",
+        "  seed {:#x}, {} tiles across, {} unit types, {}{}{}{}",
         replay.seed,
         replay.map_tiles,
         replay.units.len(),
@@ -214,6 +214,11 @@ fn info(file: &Path) -> bool {
         },
         if replay.cover.iter().any(|&c| c != 0) {
             ", with woods and tall grass"
+        } else {
+            ""
+        },
+        if replay.champions {
+            ", champions allowed"
         } else {
             ""
         }

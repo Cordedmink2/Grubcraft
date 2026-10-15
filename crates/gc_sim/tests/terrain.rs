@@ -50,6 +50,7 @@ fn world_on(seed: u64, units: &[UnitStats], heights: &[u16]) -> World {
             water_level: WATER_LEVEL,
             cover: &[],
         },
+        champions: false,
     })
 }
 

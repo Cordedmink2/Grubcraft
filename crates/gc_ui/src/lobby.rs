@@ -135,6 +135,9 @@ pub struct LobbySettings {
     pub tempo: Tempo,
     /// If a player drops out of a network match.
     pub on_drop: OnDrop,
+    /// Whether champions may duel between the lines before a battle with a
+    /// computer player (a chance, not every time).
+    pub champions: bool,
 }
 
 impl Default for LobbySettings {
@@ -144,6 +147,7 @@ impl Default for LobbySettings {
             mode: GameMode::FieldBattle,
             tempo: Tempo::Normal,
             on_drop: OnDrop::Wait,
+            champions: true,
         }
     }
 }

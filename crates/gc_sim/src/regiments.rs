@@ -66,6 +66,10 @@ const CLEAR_TICKS: u8 = 8;
 /// Every array is allocated to full capacity up front; spawning and freeing
 /// only flip flags and push/pop a free list that never grows past capacity.
 pub struct Regiments {
+    /// Morale tenths added to (or taken from) the ceiling of every regiment
+    /// of each party for the rest of the battle, by its side's champion
+    /// winning or losing (see [`crate::champions`]). By party id.
+    pub(crate) party_morale: Vec<i16>,
     pub(crate) alive: Vec<bool>,
     pub(crate) generation: Vec<u16>,
     pub(crate) owner: Vec<PlayerId>,
@@ -157,6 +161,7 @@ impl Regiments {
             full_models: vec![0; n],
             morale: vec![0; n],
             morale_state: vec![MoraleState::Steady; n],
+            party_morale: vec![0; PlayerId::MAX as usize + 1],
             losses: vec![0; n],
             shock: vec![0; n],
             rout_clock: vec![0; n],
@@ -288,6 +293,14 @@ impl Regiments {
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.free.push(h.index);
         true
+    }
+
+    /// The handle of the regiment in slot `i`.
+    pub(crate) fn handle(&self, i: usize) -> RegimentHandle {
+        RegimentHandle {
+            index: i as u32,
+            generation: self.generation[i],
+        }
     }
 
     pub(crate) fn resolve(&self, h: RegimentHandle) -> Option<usize> {
@@ -529,6 +542,14 @@ impl Regiments {
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
+        // Only the parties it is set for, so worlds without champions hash
+        // as they did before them.
+        for (party, &bonus) in self.party_morale.iter().enumerate() {
+            if bonus != 0 {
+                h.u8(party as u8);
+                h.u16(bonus as u16);
+            }
+        }
         h.u32(self.len() as u32);
         for i in 0..self.alive.len() {
             h.u8(u8::from(self.alive[i]));
