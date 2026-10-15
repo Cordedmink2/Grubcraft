@@ -50,7 +50,7 @@ Keys follow the fixed 4 × 3 command grid; abilities take the middle row (see [0
 
 - Regiments take time to turn. Big blocks turn slowly; cavalry and swarms turn fast.
 - **Charges** add a bonus proportional to speed at impact, then fade over a few seconds. Charging braced spears into the front is suicide; charging archers in the rear wins battles.
-- A regiment engaged in melee is **locked**. It can only disengage with Retreat (taking free hits) or by routing.
+- A regiment engaged in melee is **locked**. It can only disengage with Retreat (taking free hits) or by routing, though a stronger foe can drive it back ([Lines that push](#lines-that-push)).
 
 ## Weapons and formations
 
@@ -67,13 +67,25 @@ A regiment's weapons decide which formation suits it, so the Formation order is 
 - **Swing room:** big swings need space. Cramped in Tight order or a shield wall they lose a fifth of their damage; in Loose order they keep their defence, because the gaps are what they fight in.
 - **Shield wall:** the strongest answer to archers (arrows from the front do 30% damage, and the front holds better in melee), but the regiment marches at half pace, can't charge, and is no better than a Line when hit in the flank or rear. Only regiments with shields can form one.
 - Ranks re-form only out of the fight: a regiment locked in melee keeps its formation, and a routing one drops back to Line and takes no formation orders until it rallies. A group order with a shield wall in it marches at the wall's pace.
-- Each unit also has a **mass** (light, medium or heavy: swarms and flyers light, cavalry and monsters heavy), which decides how hard it shoves in a locked melee once lines that push arrive.
+- Each unit also has a **mass** (light, medium or heavy: swarms and flyers light, cavalry and monsters heavy), which decides how hard it shoves in a locked melee ([Lines that push](#lines-that-push)).
 
 ## Pushing through friends
 
 Friendly regiments can march into and through each other, but it costs them. A block pushing more than a quarter tile into a friend slows, down to 40% of its pace once it is a tile and a quarter deep. Untangling is as slow as pushing in, and nobody charges while pushing through friends. While two friendly blocks overlap by more than a tile, both fall into **disorder** (even locked in the same fight: stacking two blocks on one front costs them both): their ranks break, they deal 20% less melee damage and take 20% more, and once clear they take 3 seconds to re-form (the penalty fades as they do). Blocks in a line that only brush or wheel into each other stay in order. On screen a disordered block's soldiers break ranks, mill about and look around, and a ragged amber outline marks it. Routers neither slow nor fall into disorder (they are past caring). In fords and narrow passes regiments queue behind a friend holding its ground instead (see [10 · Architecture](10-architecture.md#pathfinding)).
 
 **Built so far (2026-10-15):** as described. Other rules can disorder a regiment too (the sim's `Regiments::disorder`), which the Mount & Blade work uses.
+
+## Lines that push
+
+A locked melee is not a standing trade of blows: the side winning it drives the other back, so a battle line visibly bends where it is losing, and a commander can see where to send reserves without reading a number (adapted from Mount & Blade, [decision 24](14-decisions-needed.md#battle-feel-from-mount--blade-decided-2026-10-15)).
+
+- **Who is winning:** each regiment keeps a running tally of the melee damage it has dealt and taken over the last few seconds, each blow weighted by the striker's **mass**: a heavy blow (cavalry, monsters) counts four times a light one (swarms), a medium one twice. The tally is read once a second, after the regiment's own blow, so both sides have always struck the same number of times, and it starts afresh whenever the regiment's foe changes.
+- **Giving ground:** a regiment taking up to half as much again as it deals holds on; past that it steps back, faster the worse it is losing, up to 0.4 tiles a second once it takes four times what it deals. It backs straight away from the side its foe is on (from a frontal fight, straight back; from a flank attack, sideways), wading slower in water. The enemies fighting it follow step for step, and so does anyone fighting *them*, so the fight moves as one and nobody breaks contact and charges back in. Only a foe that is fighting it back, winning its own fight and free to step forward drives a regiment back; in a scrum of three or more where the foe in front is itself losing (say, to a regiment in its rear) nobody is pushed.
+- **Evenly matched lines hold:** two equal regiments trading blows stay where they are. At equal blows a heavy regiment drives a light one back at full pace and a medium one at about a third of it.
+- **Pinned:** a regiment driven back onto something it can't back into is crushed against it instead: a friendly block it would push more than a tile into, an enemy block behind it, a cliff or other blocked ground, the water behind a river bank it stands on, or the map's edge (anywhere along its rear edge, corners included). It stops, falls into **disorder** (as [Pushing through friends](#pushing-through-friends): 20% less damage dealt, 20% more taken) and loses 3 morale for every second in which it is pinned. Fighting with a river or your own reserves at your back is a real risk now.
+- Routers, and regiments not in melee, are never pushed.
+
+**Built so far (2026-10-15):** as described. Soldiers on screen keep facing their man as their block gives ground, so a pushed line steps backwards; a pinned one breaks ranks under the amber disorder outline. Computer players don't yet read a bending line to send reserves.
 
 ## Morale
 
@@ -85,6 +97,7 @@ Each regiment has a **morale** value. It drops from:
 - Nearby friendly regiments routing
 - Terror units (monsters, some abilities)
 - Being outnumbered locally
+- Being pinned in melee with nowhere to give ground ([Lines that push](#lines-that-push))
 - Their general (any hero) dying nearby
 - Their side's champion falling in a duel before battle ([below](#champions-before-battle))
 
@@ -189,7 +202,8 @@ The simulation models each regiment as a formation (position, facing, width, dep
 **Built so far (M1 step 5):**
 - **Fighting:** melee with flank, rear and charge multipliers, locked melee, casualties from the back, and arrow volleys that hit dense blocks harder. The orders are move, move-and-face (right-drag), attack and formation.
 - **Weapons and formations (2026-10-15):** reach, swing room, shields and mass work as in [Weapons and formations](#weapons-and-formations). The formation key is `F` for now, because `R` reloads the unit data in the sandbox. Of today's five Field Battle regiments the Yari Ashigaru and Bone Pikes have reach, the Shardlings have swing room and the Skitterlings are light; none carries shields yet, so the Shield wall needs a roster unit with shields (Chitin Guard, Shellbacks, Gravewardens) or the sandbox's stats panel. Computer players don't change formation yet.
-- **Morale:** Steady, Wavering, Routing and Shattered work as described above, driven by casualties, flank and rear hits, being outnumbered nearby, and nearby routs. Winning a fight lifts morale. Routers are slower than their pursuers and rally after 10 s with no enemy within 20 tiles. A second rout within 2 minutes shatters a regiment; with no structures yet, a shattered regiment runs, then stands for good. Concord undead (the Bone Pikes) never rout. A battered regiment never recovers its full morale.
+- **Lines that push (2026-10-15):** as in [Lines that push](#lines-that-push).
+- **Morale:** Steady, Wavering, Routing and Shattered work as described above, driven by casualties, flank and rear hits, being outnumbered nearby, being pinned, and nearby routs. Winning a fight lifts morale. Routers are slower than their pursuers and rally after 10 s with no enemy within 20 tiles. A second rout within 2 minutes shatters a regiment; with no structures yet, a shattered regiment runs, then stands for good. Concord undead (the Bone Pikes) never rout. A battered regiment never recovers its full morale.
 - **Not yet:** heroes, terror and veterancy as morale sources, the other faction exceptions, and Conquest's gentler rules. The Hold, Charge, Skirmish/Brace, Run and Retreat orders, the Column and Wedge formations, terrain beyond high ground and fords (see [Terrain](#terrain)), air, heroes, counters and veterancy also come later.
 
 The exact formulas are in [10 · Architecture](10-architecture.md#formations-and-combat).

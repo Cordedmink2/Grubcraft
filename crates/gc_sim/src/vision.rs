@@ -204,7 +204,7 @@ impl Vision {
             if !regs.alive[i] {
                 continue;
             }
-            let engaged = regs.engaged[i].and_then(|h| regs.resolve(h));
+            let engaged = regs.foe(i);
             if let Some(j) = engaged
                 && !self.was_engaged[i]
                 && self.surprises(i, regs.owner[j])

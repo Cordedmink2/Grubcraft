@@ -176,7 +176,7 @@ A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Gnawer | 1 | Worker | 50 / 0 | 1 | 12 | Hive | 1 × 18 | 1 | 3.25 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 15 | |
-| Skitterlings | 1 | Light | 100 / 0 | 3 | 18 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 50 / 25 / 3 | 40 | 57 | |
+| Skitterlings | 1 | Light | 100 / 0 | 3 | 18 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 50 / 25 / 3 | 40 | 63 | |
 | Chitin Guard | 1 | Heavy | 130 / 0 | 4 | 22 | Hive | 12 × 16 | 6 | 2.75 | 70 | 0.9 / 1.0 | 30 / 55 / 4 | 15 | 60 | |
 | Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hive | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
 | Spitters | 2 | Ranged | 60 / 20 | 3 | 15 | Skitterlings | 16 × 7 | 8 | 3.5 | 100 | 0.8 / 0.9 | 20 / 15 / 2 | 5 | 45 | 22, 3, 3.0 s, 35% |
@@ -354,7 +354,7 @@ Merchant-necromancers: cheap undead that never break, beside living specialists 
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Ledger Clerk | 1 | Worker | 50 / 0 | 1 | 12 | Counting House | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 25 | |
 | Caravan | 1 | Support | 75 / 0 | 2 | 20 | Counting House | 1 × 220 | 1 | 2.25 | 45 | 2.5 / 3.5 | 0 / 10 / 1 | 0 | 30 | |
-| Bone Pikes | 1 | Spear | 90 / 0 | 3 | 18 | Ossuary | 19 × 7 | 10 | 2.75 | 45 | 0.7 / 0.9 | 28 / 54 / 2 | 10 | — | |
+| Bone Pikes | 1 | Spear | 90 / 0 | 3 | 18 | Ossuary | 19 × 7 | 10 | 2.75 | 45 | 0.7 / 0.9 | 28 / 52 / 2 | 10 | — | |
 | Crossbow Auditors | 1 | Ranged | 140 / 0 | 4 | 24 | Guildhall | 12 × 9 | 6 | 3.0 | 70 | 0.8 / 1.0 | 20 / 25 / 2 | 0 | 55 | 26, 7, 6.0 s, 40% |
 | Gravewardens (new) | 2 | Heavy | 170 / 40 | 5 | 30 | Ossuary | 12 × 18 | 6 | 2.5 | 55 | 0.9 / 1.0 | 45 / 50 / 6 | 15 | — | |
 | Debt Collectors | 2 | Cavalry | 190 / 50 | 5 | 34 | Guildhall | 6 × 34 | 3 | 6.0 | 120 | 1.5 / 2.1 | 45 / 40 / 7 | 70 | 65 | |
@@ -483,23 +483,25 @@ A Field Battle army is ten regiments from the faction's roster (see [06 · Game 
 | Bone Pikes | 20 × 8, speed 2.5, spacing 0.55, Def 50 | 19 × 7, speed 2.75, spacing 0.7, Def 55 (fewer hit points, harder to hit, looser block, a little quicker) |
 | Yumi Ashigaru | unchanged | |
 
-Two Veteran AIs, one per faction, on the generated map with the terrain rules (high ground and fords, [05 · Combat](05-combat.md)), 192 battles a pair (seeds 2001 to 2192, ends swapped every battle); the first faction's wins, after the weapon room retune below:
+Two Veteran AIs, one per faction, on the generated map with the terrain rules (high ground and fords, [05 · Combat](05-combat.md)), 192 battles a pair (seeds 2001 to 2192, ends swapped every battle); the first faction's wins on today's rules, after the [lines that push retune](#lines-that-push-retune) below (champions off; with them allowed no pair moves by more than 6 points):
 
 | | Brood | Choir | Carrion Concord |
 |---|---|---|---|
-| **Ember Clans** | 59% | 42% | 53% |
-| **Brood** | | 45% | 54% |
+| **Ember Clans** | 51% | 44% | 49% |
+| **Brood** | | 42% | 57% |
 | **Choir** | | | 56% |
 
-**Weapon room retune (2026-10-15).** Reach gave the spear regiments half their second rank as extra blows, so the Yari Ashigaru went from 30 / 45 / 3 to 27 / 45 / 2 and the Bone Pikes from 25 / 55 / 3 to 28 / 54 / 2. Before the retune the table read 50%, 47%, 61% / 45%, 53% / 53%. On seeds 1 to 96 it now reads 60%, 51%, 52% / 36%, 52% / 54% (the Brood against the Choir was 36% there before the retune too). These knobs are steep too: a Bone Pikes defence of 53 or 55 instead of 54 moved the Concord's matchups by 10 to 20 points.
+**Weapon room retune (2026-10-15).** Reach gave the spear regiments half their second rank as extra blows, so the Yari Ashigaru went from 30 / 45 / 3 to 27 / 45 / 2 and the Bone Pikes from 25 / 55 / 3 to 28 / 54 / 2. Before the retune the table read 50%, 47%, 61% / 45%, 53% / 53%, and after it 59%, 42%, 53% / 45%, 54% / 56%. On seeds 1 to 96 it now reads 60%, 51%, 52% / 36%, 52% / 54% (the Brood against the Choir was 36% there before the retune too). These knobs are steep too: a Bone Pikes defence of 53 or 55 instead of 54 moved the Concord's matchups by 10 to 20 points.
 
 Seeds 1 to 96 gave every pair between 48% and 57% except the Brood against the Choir (36%). Once the terrain rules arrived the Concord fell behind the Clans (66%), so the Bone Pikes got a little faster (2.6 to 2.75). One Yumi fewer evens the Clans and the Concord further, but then a Veteran in the Clans mirror on one test seed beats the army in front of it and never marches on the survivors who rallied and scattered (an AI gap, not balance), so the Yumi stay at 16. Results move in big steps: one Bone Pike more or less per regiment swings Concord matchups by 20 to 30 points, because it changes which AI expects to win and so which side attacks. Since the generated maps have woods and tall grass ([20 · Ambushes](20-ambushes.md#built-so-far), 2026-10-15) the same seeds give Clans v Brood 60%, Clans v Choir 62%, Clans v Concord 52%, Brood v Choir 57%, Brood v Concord 52% and Choir v Concord 47% (with the weapons of PR #35): the table above is without them, and the Choir needs a look on maps with woods. Re-run the table after any change to these stats or to combat: `AI_BATTLES=192 AI_FROM=2001 cargo test -p gc_game --release faction_table -- --ignored --nocapture` (`AI_PAIR=Brood` or `AI_PAIR=Brood,Choir` narrows it).
 
 **Champions (2026-10-15).** The same 192 battles a pair on today's rules (woods and tall grass, [20 · Ambushes](20-ambushes.md); friends pushing through each other; the battle AI's latest update), without champions and then with them allowed ([05 · Champions before battle](05-combat.md#champions-before-battle); the lobby default): Ember Clans against the Brood 58% then 54%, against the Choir 52% then 51%, against the Concord 38% then 37%; the Brood against the Choir 33% then 35%, against the Concord 32% then 33%; the Choir against the Concord 40% then 41%. Champions come out in about half the battles and move no pair by more than 4 points. The Concord now wins 60% to 68% of its battles against everyone, and the Brood a third against the Choir, with or without champions: that came with the rule changes before the champions, so the table is due another balance pass.
 
+<a id="lines-that-push-retune"></a>**Lines that push retune (2026-10-15).** [Lines that push](05-combat.md#lines-that-push) widened the gap at first (Ember Clans against the Brood 62%, the Choir 46%, the Concord 23%; the Brood against the Choir 29%, the Concord 20%; the Choir against the Concord 31%, on 96 battles a pair): the shove goes to whoever already wins the exchange, which the hard-to-hit Bone Pikes usually do, and being pinned costs the living heart while the dead never rout. So the Bone Pikes went from defence 54 to 52 and the Skitterlings from morale 57 to 63 (the swarm holds a little longer before it breaks). Before the deployment phase and the army builder arrived on main that gave every pair 46% to 54%; the table above is the same run on today's main (armies deploy first): every pair between 42% and 57% without champions, and with them Ember Clans against the Brood 47%, the Choir 50%, the Concord 51%; the Brood against the Choir 42%, the Concord 54%; the Choir against the Concord 56%. The Choir is now a little ahead (the Brood wins 42% against it) and is the one to watch. Both knobs are steep: a Bone Pikes defence of 51 gave the Concord's opponents 52% to 64% and 53 gave them 39% to 55%, and Skitterlings morale 65 left the Clans 40% against the Brood while 62 gave them 62%.
+
 ### Weapon flags and mass
 
-Since unit schema 6 (2026-10-15) every stats block in `data/units.ron` needs `points`, what the regiment costs from a Field Battle army's budget (400 for all five today; roster entries without it are read as 400). Since unit schema 5 (October 2026) each stats block can carry the [weapons and formations](05-combat.md#weapons-and-formations) flags: `reach: true` (spears and pikes: the second rank fights at half strength, and they strike as lines meet), `swing_room: true` (big swinging weapons: cramped in Tight order and a shield wall, no defence lost in Loose), `shield: true` (can form a shield wall), and `mass: Light` or `mass: Heavy` (Medium when left out; light and heavy decide who gives ground when lines push, once that arrives). Anything not written is off.
+Since unit schema 6 (2026-10-15) every stats block in `data/units.ron` needs `points`, what the regiment costs from a Field Battle army's budget (400 for all five today; roster entries without it are read as 400). Since unit schema 5 (October 2026) each stats block can carry the [weapons and formations](05-combat.md#weapons-and-formations) flags: `reach: true` (spears and pikes: the second rank fights at half strength, and they strike as lines meet), `swing_room: true` (big swinging weapons: cramped in Tight order and a shield wall, no defence lost in Loose), `shield: true` (can form a shield wall), and `mass: Light` or `mass: Heavy` (Medium when left out; light and heavy decide who gives ground when [lines push](05-combat.md#lines-that-push)). Anything not written is off.
 
 | Flag | Regiments |
 |---|---|

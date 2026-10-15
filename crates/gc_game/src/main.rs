@@ -1858,6 +1858,12 @@ impl Running {
                             Some(fight) => clips.fight(model, fight, seconds),
                             None => {
                                 let action = soldier_action(&s, &block, shooting);
+                                // Giving ground: the walk played backwards.
+                                let seconds = if s.backing && action == Action::Walk {
+                                    -seconds
+                                } else {
+                                    seconds
+                                };
                                 clips.pose(model, action, seconds).map(|p| (p, false))
                             }
                         };

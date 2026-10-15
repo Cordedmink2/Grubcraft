@@ -231,7 +231,7 @@
                 melee_defence: 25,
                 melee_damage: 3,
                 charge_bonus: 40,
-                morale: 57,
+                morale: 63,
                 mass: Light,
             ),
         ),

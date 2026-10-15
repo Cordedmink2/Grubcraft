@@ -209,6 +209,9 @@ pub struct Soldier {
     pub facing: Vec2,
     /// How fast he moved this frame, in tiles per second.
     pub speed: f32,
+    /// Moving against the way he faces: giving ground with his face to the
+    /// enemy, so he steps backwards.
+    pub backing: bool,
     /// In a fighting front rank, striking at the enemy.
     pub striking: bool,
     /// What he is doing in a duel: paired with an enemy soldier and trading
@@ -905,6 +908,9 @@ impl Puppets {
                 pos,
                 facing,
                 speed,
+                // Clearly backwards, so a sideways shuffle doesn't flip
+                // the walk back and forth.
+                backing: self.vel[i].dot(facing) < -0.5 * speed,
                 striking,
                 fight,
                 phase,
