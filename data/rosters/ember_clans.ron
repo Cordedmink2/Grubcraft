@@ -127,8 +127,8 @@
             stats: (
                 name: "Yari Ashigaru",
                 faction: EmberClans,
-                models: 24,
-                hp_per_model: 10,
+                models: 28,
+                hp_per_model: 8,
                 files: 8,
                 speed: 3.0,
                 turn_rate: 60.0,

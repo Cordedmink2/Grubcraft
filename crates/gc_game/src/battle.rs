@@ -219,8 +219,7 @@ impl Battle {
 }
 
 /// `--battle`: you against one AI of `level`, as the lobby would set it up.
-/// The AI plays your faction, since the factions' stats aren't balanced
-/// against each other yet.
+/// The AI plays your faction.
 pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
     let mut me = Slot::open(0);
     me.kind = SlotKind::Human;
@@ -451,6 +450,64 @@ mod tests {
                     sizes[0]
                 );
             }
+        }
+    }
+
+    /// The balance table (docs/17-unit-rosters.md, "Field Battle balance"): each pair of
+    /// factions, two Veterans, `AI_BATTLES` battles a pair (default 24),
+    /// swapping ends every battle. Prints the first faction's wins, losses
+    /// and battles nobody had won after ten minutes.
+    /// `cargo test -p gc_game --release faction_table -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn faction_table() {
+        use gc_ui::lobby::Faction as F;
+        let n: u64 = std::env::var("AI_BATTLES").map_or(24, |v| v.parse().unwrap());
+        let from: u64 = std::env::var("AI_FROM").map_or(1, |v| v.parse().unwrap());
+        let mut pairs = Vec::new();
+        for (i, &a) in F::ALL.iter().enumerate() {
+            for &b in &F::ALL[i + 1..] {
+                pairs.push((a, b));
+            }
+        }
+        // `AI_PAIR=Brood` plays only the pairs with the Brood in them,
+        // `AI_PAIR=Brood,Choir` only that one.
+        if let Ok(only) = std::env::var("AI_PAIR") {
+            pairs.retain(|(a, b)| only.split(',').all(|f| f == a.name() || f == b.name()));
+        }
+        let rows: Vec<String> = std::thread::scope(|s| {
+            let jobs: Vec<_> = pairs
+                .iter()
+                .map(|&(a, b)| {
+                    s.spawn(move || {
+                        let (mut won, mut lost) = (0, 0);
+                        for seed in from..from + n {
+                            let mut setup =
+                                lobby(&[Some(Difficulty::Veteran), Some(Difficulty::Veteran)], &[0, 1]);
+                            // `a` takes slot 0 (whose result `won` is) on even seeds.
+                            let a_first = seed % 2 == 0;
+                            setup.players[0].faction = if a_first { a } else { b };
+                            setup.players[1].faction = if a_first { b } else { a };
+                            match play(&setup, seed, 10).battle.won {
+                                Some(w) if w == a_first => won += 1,
+                                Some(_) => lost += 1,
+                                None => {}
+                            }
+                        }
+                        format!(
+                            "{:>15} v {:<15} won {won:>3}, lost {lost:>3}, undecided {:>3}  ({:.0}%)",
+                            a.name(),
+                            b.name(),
+                            n - won - lost,
+                            100.0 * won as f64 / n as f64
+                        )
+                    })
+                })
+                .collect();
+            jobs.into_iter().map(|j| j.join().unwrap()).collect()
+        });
+        for row in rows {
+            println!("{row}");
         }
     }
 

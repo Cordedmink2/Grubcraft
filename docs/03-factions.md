@@ -90,7 +90,7 @@ Clan regiments get +15% defence while in a tight formation and not moving, and t
 | Unit | Tier | Models | Cost (Grub/Marrow) | Role and signature |
 |---|---|---|---|---|
 | Hands | 1 | 1 | 50 / 0 | Worker |
-| Yari Ashigaru | 1 | 24 | 120 / 0 | Spear line. **Brace** vs cavalry |
+| Yari Ashigaru | 1 | 28 | 120 / 0 | Spear line. **Brace** vs cavalry |
 | Yumi Ashigaru | 1 | 16 | 130 / 0 | Archers. **Fire Arrows** toggle for burning buildings |
 | Battering Ram | 1 | 1 | 100 / 0 | Siege, only hits buildings |
 | Katana Samurai | 2 | 16 | 160 / 40 | Elite melee, high morale, **Kiai** shout breaks enemy morale |
@@ -154,7 +154,7 @@ Chitin Guard ─┬─▶ Mantid Reapers (anti-cavalry, high damage)
 | Unit | Tier | Models | Cost (Grub/Marrow) | Role and signature |
 |---|---|---|---|---|
 | Gnawer | 1 | 1 | 50 / 0 | Worker, burrows in seeps, consumed to build |
-| Skitterlings | 1 | 24 | 100 / 0 | Fast, fragile swarm; evolves |
+| Skitterlings | 1 | 32 | 100 / 0 | Fast, fragile swarm; evolves |
 | Chitin Guard | 1 | 12 | 130 / 0 | Armoured melee anchor; evolves |
 | Reclaimer | 1 | 1 | 75 / 0 | Eats corpses into Grub, slow heal aura |
 | Drone-Moths | 2 | 6 | 120 / 30 | Air scouts, spore bombs, reveal burrowed units |
@@ -215,7 +215,7 @@ Choir beam weapons pass *through* allied crystal units and split. A Prism Lancer
 | Unit | Tier | Models | Cost (Grub/Marrow) | Role and signature |
 |---|---|---|---|---|
 | Tuner | 1 | 1 | 60 / 0 | Builder and repairer |
-| Shardlings | 1 | 12 | 110 / 0 | Light melee; shatter on death for small area damage |
+| Shardlings | 1 | 14 | 110 / 0 | Light melee; shatter on death for small area damage |
 | Prism Lancers | 1 | 10 | 140 / 0 | Beam ranged; **Refraction** through allied crystal |
 | Harmonic Walkers | 2 | 6 | 170 / 50 | Tanky tripods, **Sonic Pulse** knockback breaks enemy formations |
 | Skyglass | 2 | 4 | 130 / 40 | Fast fragile air, strong anti-air |
@@ -278,7 +278,7 @@ Concord undead regiments ignore morale entirely. Instead they **crumble**: they 
 |---|---|---|---|---|
 | Ledger Clerk | 1 | 1 | 50 / 0 | Worker |
 | Caravan | 1 | 1 | 75 / 0 | Trade unit; no attack |
-| Bone Pikes | 1 | 20 | 90 / 0 | Undead pike line, cheap, never routs |
+| Bone Pikes | 1 | 19 | 90 / 0 | Undead pike line, cheap, never routs |
 | Crossbow Auditors | 1 | 12 | 140 / 0 | Living, armour-piercing ranged |
 | Gravewardens | 2 | 12 | 170 / 40 | Undead heavy infantry, shrugs off flank and rear hits (added in 17) |
 | Debt Collectors | 2 | 6 | 190 / 50 | Bone-horse heavy cavalry; hits on buildings steal Grub |

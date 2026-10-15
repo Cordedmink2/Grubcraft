@@ -4,7 +4,7 @@ Every regiment, worker, summon and hero for all four factions, with first-pass s
 
 The numbers live as data in `data/rosters/*.ron`, one file per faction, and the tables here are a readable copy of them. Where the two disagree, the data files win. A test (`tools/gc_bake/tests/rosters.rs`) checks every roster entry against the same rules the baker applies to `data/units.ron`, so each stat block can be moved into the game unchanged.
 
-**Built so far:** this is design data only. The game reads `data/units.ron`, which holds five of these regiments (Yari Ashigaru, Yumi Ashigaru, Skitterlings, Shardlings, Bone Pikes); their roster entries copy its numbers as of M1 step 6, and `units.ron` stays the live copy for those five until the rosters are baked. Costs, supply, tiers, abilities, heroes and every class rule below need the Conquest systems of M3 before they do anything; [Schema proposals](#schema-proposals) lists what the engine needs to add.
+**Built so far:** this is design data only. The game reads `data/units.ron`, which holds five of these regiments (Yari Ashigaru, Yumi Ashigaru, Skitterlings, Shardlings, Bone Pikes); their roster entries copy its numbers as of the [Field Battle balance pass](#field-battle-balance), and `units.ron` stays the live copy for those five until the rosters are baked. Costs, supply, tiers, abilities, heroes and every class rule below need the Conquest systems of M3 before they do anything; [Schema proposals](#schema-proposals) lists what the engine needs to add.
 
 ## How to read the tables
 
@@ -74,7 +74,7 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Hands | 1 | Worker | 50 / 0 | 1 | 12 | Clan Hall | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 20 | |
-| Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 24 × 10 | 8 | 3.0 | 60 | 0.75 / 0.85 | 30 / 45 / 3 | 20 | 60 | |
+| Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 28 × 8 | 8 | 3.0 | 60 | 0.75 / 0.85 | 30 / 45 / 3 | 20 | 60 | |
 | Yumi Ashigaru | 1 | Ranged | 130 / 0 | 3 | 22 | Dojo | 16 × 8 | 8 | 3.0 | 70 | 0.8 / 1.0 | 15 / 20 / 2 | 5 | 50 | 30, 4, 4.0 s, 30% |
 | Battering Ram | 1 | Siege | 100 / 0 | 4 | 25 | Ember Workshop | 1 × 300 | 1 | 2.0 | 45 | 1.5 / 3.0 | 20 / 10 / 40 | 0 | 50 | |
 | Katana Samurai | 2 | Heavy | 160 / 40 | 5 | 30 | Dojo | 16 × 14 | 8 | 3.0 | 75 | 0.8 / 0.9 | 55 / 45 / 5 | 30 | 80 | |
@@ -176,7 +176,7 @@ A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Gnawer | 1 | Worker | 50 / 0 | 1 | 12 | Hive | 1 × 18 | 1 | 3.25 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 15 | |
-| Skitterlings | 1 | Light | 100 / 0 | 3 | 18 | Hive | 24 × 6 | 6 | 4.0 | 120 | 0.8 / 0.8 | 40 / 20 / 2 | 40 | 45 | |
+| Skitterlings | 1 | Light | 100 / 0 | 3 | 18 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 50 / 25 / 3 | 40 | 57 | |
 | Chitin Guard | 1 | Heavy | 130 / 0 | 4 | 22 | Hive | 12 × 16 | 6 | 2.75 | 70 | 0.9 / 1.0 | 30 / 55 / 4 | 15 | 60 | |
 | Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hive | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
 | Spitters | 2 | Ranged | 60 / 20 | 3 | 15 | Skitterlings | 16 × 7 | 8 | 3.5 | 100 | 0.8 / 0.9 | 20 / 15 / 2 | 5 | 45 | 22, 3, 3.0 s, 35% |
@@ -275,7 +275,7 @@ Few, costly crystal soldiers who blink across the map and bend light through eac
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Tuner | 1 | Worker | 60 / 0 | 1 | 14 | Spire | 1 × 30 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 10 / 2 | 0 | 30 | |
-| Shardlings | 1 | Light | 110 / 0 | 3 | 20 | Forge of Facets | 12 × 9 | 6 | 3.25 | 80 | 0.7 / 0.9 | 35 / 35 / 4 | 30 | 55 | |
+| Shardlings | 1 | Light | 110 / 0 | 3 | 20 | Forge of Facets | 14 × 12 | 6 | 3.25 | 80 | 0.55 / 0.9 | 40 / 40 / 4 | 30 | 60 | |
 | Prism Lancers | 1 | Ranged | 140 / 0 | 4 | 24 | Forge of Facets | 10 × 8 | 5 | 3.0 | 70 | 0.9 / 1.0 | 15 / 25 / 2 | 0 | 55 | 26, 6, 4.5 s, 45% |
 | Harmonic Walkers | 2 | Heavy | 170 / 50 | 5 | 32 | Forge of Facets | 6 × 32 | 3 | 2.75 | 50 | 1.6 / 1.8 | 40 / 50 / 7 | 20 | 70 | |
 | Glass Striders (new) | 2 | Cavalry | 175 / 45 | 5 | 32 | Forge of Facets | 6 × 26 | 3 | 7.0 | 150 | 1.4 / 2.0 | 45 / 30 / 6 | 70 | 60 | |
@@ -354,7 +354,7 @@ Merchant-necromancers: cheap undead that never break, beside living specialists 
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Ledger Clerk | 1 | Worker | 50 / 0 | 1 | 12 | Counting House | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 25 | |
 | Caravan | 1 | Support | 75 / 0 | 2 | 20 | Counting House | 1 × 220 | 1 | 2.25 | 45 | 2.5 / 3.5 | 0 / 10 / 1 | 0 | 30 | |
-| Bone Pikes | 1 | Spear | 90 / 0 | 3 | 18 | Ossuary | 20 × 8 | 10 | 2.5 | 45 | 0.55 / 0.9 | 25 / 50 / 3 | 10 | — | |
+| Bone Pikes | 1 | Spear | 90 / 0 | 3 | 18 | Ossuary | 19 × 7 | 10 | 2.75 | 45 | 0.7 / 0.9 | 25 / 55 / 3 | 10 | — | |
 | Crossbow Auditors | 1 | Ranged | 140 / 0 | 4 | 24 | Guildhall | 12 × 9 | 6 | 3.0 | 70 | 0.8 / 1.0 | 20 / 25 / 2 | 0 | 55 | 26, 7, 6.0 s, 40% |
 | Gravewardens (new) | 2 | Heavy | 170 / 40 | 5 | 30 | Ossuary | 12 × 18 | 6 | 2.5 | 55 | 0.9 / 1.0 | 45 / 50 / 6 | 15 | — | |
 | Debt Collectors | 2 | Cavalry | 190 / 50 | 5 | 34 | Guildhall | 6 × 34 | 3 | 6.0 | 120 | 1.5 / 2.1 | 45 / 40 / 7 | 70 | 65 | |
@@ -451,10 +451,10 @@ A few figures to sanity-check the first pass (front rank fighting a defence-40 e
 
 | Unit | Total HP | Melee damage a second | Grub-equivalent cost* | HP per 100 Grub |
 |---|---|---|---|---|
-| Yari Ashigaru | 240 | 9.6 | 120 | 200 |
-| Skitterlings | 144 | 6.0 | 100 | 144 |
-| Shardlings | 108 | 10.8 | 110 | 98 |
-| Bone Pikes | 160 | 10.5 | 90 | 178 |
+| Yari Ashigaru | 224 | 9.6 | 120 | 187 |
+| Skitterlings | 192 | 14.4 | 100 | 192 |
+| Shardlings | 168 | 12.0 | 110 | 153 |
+| Bone Pikes | 133 | 10.5 | 90 | 148 |
 | Katana Samurai | 224 | 26.0 | 240 | 93 |
 | Chitin Guard | 192 | 9.6 | 130 | 148 |
 | Gravewardens | 216 | 19.8 | 250 | 86 |
@@ -466,10 +466,32 @@ A few figures to sanity-check the first pass (front rank fighting a defence-40 e
 
 What these show, and what playtesting should watch:
 
-- Tier-1 lines trade efficiency for numbers: the Yari and Bone Pikes are the cheapest hit points in the game; the Shardlings hit hardest for their cost but break fast. The Choir's high cost per hit point is deliberate (few, precious units) and leans on Refraction and Phase Shift to pay off.
+- Tier-1 regiments trade efficiency for numbers: they are the cheapest hit points in the game. The Skitterlings are a big, fast swarm that hits hard on the charge but has little defence; the Shardlings are few and tough; the Bone Pikes have the fewest hit points but the best defence and never break. The Choir's high cost per hit point is deliberate (few, precious units) and leans on Refraction and Phase Shift to pay off.
 - Elites hit much harder per regiment (Katana Samurai deal almost three times what a Yari line does) at about the same damage per Grub. You pay for concentrated punch and steadier morale, not for efficiency.
 - A monster holds its own against about two tier-1 regiments at once (the Oni-Bound against two Yari lines is close to even, before Terror). Focused ranged fire and heroes are the intended answer.
 - Every number here is a starting point for the M3 and M5 balance passes, not a final value.
+
+### Field Battle balance
+
+A Field Battle army is ten regiments from the faction's roster (see [06 · Game modes](06-game-modes.md)), so today the five live regiments are balanced per regiment, not per Grub; costs were left alone for the M3 pass. With the first-pass stats the Ember Clans won every matchup against the Brood and the Choir, so the October 2026 pass changed:
+
+| Unit | Before | After |
+|---|---|---|
+| Yari Ashigaru | 24 × 10 HP | 28 × 8 HP (less total HP) |
+| Skitterlings | 24 × 6, 6 files, 40 / 20 / 2, Mor 45 | 32 × 6, 8 files, 50 / 25 / 3, Mor 57 (a bigger, harder-hitting swarm) |
+| Shardlings | 12 × 9, spacing 0.7, 35 / 35 / 4, Mor 55 | 14 × 12, spacing 0.55, 40 / 40 / 4, Mor 60 (tougher; the tighter block takes more arrows) |
+| Bone Pikes | 20 × 8, speed 2.5, spacing 0.55, Def 50 | 19 × 7, speed 2.75, spacing 0.7, Def 55 (fewer hit points, harder to hit, looser block, a little quicker) |
+| Yumi Ashigaru | unchanged | |
+
+Two Veteran AIs, one per faction, on the generated map with the terrain rules (high ground and fords, [05 · Combat](05-combat.md)), 192 battles a pair (seeds 2001 to 2192, ends swapped every battle); the first faction's wins:
+
+| | Brood | Choir | Carrion Concord |
+|---|---|---|---|
+| **Ember Clans** | 50% | 47% | 61% |
+| **Brood** | | 45% | 53% |
+| **Choir** | | | 53% |
+
+Seeds 1 to 96 gave every pair between 48% and 57% except the Brood against the Choir (36%). Once the terrain rules arrived the Concord fell behind the Clans (66%), so the Bone Pikes got a little faster (2.6 to 2.75). One Yumi fewer evens the Clans and the Concord further, but then a Veteran in the Clans mirror on one test seed beats the army in front of it and never marches on the survivors who rallied and scattered (an AI gap, not balance), so the Yumi stay at 16. Results move in big steps: one Bone Pike more or less per regiment swings Concord matchups by 20 to 30 points, because it changes which AI expects to win and so which side attacks. Re-run the table after any change to these stats or to combat: `AI_BATTLES=192 AI_FROM=2001 cargo test -p gc_game --release faction_table -- --ignored --nocapture` (`AI_PAIR=Brood` or `AI_PAIR=Brood,Choir` narrows it).
 
 ---
 
