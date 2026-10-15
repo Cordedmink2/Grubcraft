@@ -21,11 +21,13 @@ pub mod nav;
 mod regiments;
 pub mod scenario;
 pub mod stances;
+pub mod terrain;
 
 pub use hash::StateHasher;
 pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
+pub use terrain::{Ground, Terrain};
 
 use combat::Combat;
 use formation::MAX_MODELS;
@@ -157,6 +159,9 @@ pub struct MatchSetup<'a> {
     /// Each party's team (see [`Stances`]): allies share a number. Empty
     /// means every party fights every other.
     pub teams: &'a [u8],
+    /// The map's heights and water line, for the terrain rules (see
+    /// [`terrain`]). [`Ground::FLAT`] means flat, dry ground.
+    pub ground: Ground<'a>,
 }
 
 /// A player's order. The only way anything outside the sim changes the sim.
@@ -217,6 +222,7 @@ pub struct World {
     map_tiles: u32,
     nav: Nav,
     stances: Stances,
+    terrain: Terrain,
     pub regiments: Regiments,
 }
 
@@ -235,6 +241,7 @@ impl World {
                 setup.capacities.regiments as usize,
             ),
             stances: Stances::from_teams(setup.teams),
+            terrain: Terrain::new(&setup.ground, setup.map_tiles),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
@@ -263,14 +270,26 @@ impl World {
                 stats.commands_rejected += 1;
             }
         }
-        self.combat
-            .before_move(&mut self.regiments, &self.units, &self.stances);
+        self.combat.before_move(
+            &mut self.regiments,
+            &self.units,
+            &self.stances,
+            &self.terrain,
+        );
         self.nav.plan(&mut self.regiments);
-        self.regiments.step_movement(&mut self.nav);
+        self.combat.mark_holders(&self.regiments);
+        self.regiments.step_movement(
+            &mut self.nav,
+            &self.terrain,
+            &self.combat,
+            &self.units,
+            &self.stances,
+        );
         self.combat.after_move(
             &mut self.regiments,
             &self.units,
             &self.stances,
+            &self.terrain,
             self.tick,
             &mut self.combat_rng,
         );
@@ -351,6 +370,11 @@ impl World {
     /// Whether `a`'s regiments fight `b`'s (see [`Stances::hostile`]).
     pub fn hostile(&self, a: PlayerId, b: PlayerId) -> bool {
         self.stances.hostile(a, b)
+    }
+
+    /// The ground's heights and water, and what they do in a fight.
+    pub fn terrain(&self) -> &Terrain {
+        &self.terrain
     }
 
     /// The walkable ground and the route searches in progress.

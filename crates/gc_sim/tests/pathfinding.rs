@@ -32,6 +32,7 @@ fn world_on(tiles: u32, nav: &[u8], units: &[UnitStats]) -> World {
         map_tiles: tiles,
         nav,
         teams: &[],
+        ground: gc_sim::Ground::FLAT,
     })
 }
 

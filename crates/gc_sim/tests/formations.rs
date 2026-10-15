@@ -20,6 +20,7 @@ fn one_regiment() -> (World, RegimentHandle) {
         map_tiles: 256,
         nav: &[],
         teams: &[],
+        ground: gc_sim::Ground::FLAT,
     });
     w.tick(&[PlayerCommand {
         player: 0,

@@ -113,6 +113,7 @@ fn new_world(seed: u64, regiments: u32, nav: &[u8]) -> World {
             map_tiles: MAP_TILES,
             nav,
             teams: &[],
+            ground: gc_sim::Ground::FLAT,
         })
     })
 }

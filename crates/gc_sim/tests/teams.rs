@@ -22,6 +22,7 @@ fn world(units: &[UnitStats], teams: &[u8]) -> World {
         map_tiles: 256,
         nav: &[],
         teams,
+        ground: gc_sim::Ground::FLAT,
     })
 }
 

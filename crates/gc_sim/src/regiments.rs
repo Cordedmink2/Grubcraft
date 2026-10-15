@@ -3,10 +3,12 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
+use crate::combat::{Combat, PATIENCE};
 use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
 use crate::nav::Nav;
-use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
+use crate::terrain::Terrain;
+use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
 
 /// Generational handle to a regiment. Stale handles (to a slot that has since
 /// been freed and reused) are detected and rejected.
@@ -35,6 +37,16 @@ const TURN_BEFORE_MARCH: i32 = 0x2000;
 /// a shuffle: the block turns toward its final facing and steps there at half
 /// pace instead of wheeling round to face the way it walks.
 const SHUFFLE_DISTANCE: Fx = Fx::from_int(4);
+
+/// With nothing blocked within this many tiles there is always room to
+/// pass beside a friend, so the queuing check is skipped.
+const OPEN_GROUND: i32 = 10;
+
+/// Ticks between looks at whether the way ahead has cleared, while queuing.
+const RECHECK: u16 = 4;
+/// The most ticks a regiment marches without looking for friends in its
+/// way (see `clear`).
+const CLEAR_TICKS: u8 = 8;
 
 /// Structure-of-arrays pool of regiments with a fixed capacity.
 ///
@@ -86,6 +98,12 @@ pub struct Regiments {
     pub(crate) rout_clock: Vec<u16>,
     /// Tick the regiment last broke and ran, plus one (0: never).
     pub(crate) last_rout: Vec<u32>,
+    /// Ticks spent waiting behind a friendly block in its way (see
+    /// [`crate::combat::Combat::friend_in_the_way`]); 0 while marching freely.
+    pub(crate) held: Vec<u16>,
+    /// Ticks it can march before looking for friends in its way again:
+    /// none holding their ground were near enough to reach sooner.
+    pub(crate) clear: Vec<u8>,
     /// Free slot indices, popped from the back. Initialised so slot 0 is used first.
     pub(crate) free: Vec<u32>,
 }
@@ -120,6 +138,8 @@ impl Regiments {
             shock: vec![0; n],
             rout_clock: vec![0; n],
             last_rout: vec![0; n],
+            held: vec![0; n],
+            clear: vec![0; n],
             free: (0..capacity).rev().collect(),
         }
     }
@@ -175,6 +195,8 @@ impl Regiments {
         self.shock[i] = 0;
         self.rout_clock[i] = 0;
         self.last_rout[i] = 0;
+        self.held[i] = 0;
+        self.clear[i] = 0;
         Some(RegimentHandle {
             index,
             generation: self.generation[i],
@@ -245,6 +267,8 @@ impl Regiments {
         self.target[i] = Some(order.target);
         self.target_facing[i] = order.facing;
         self.attack_target[i] = None;
+        self.held[i] = 0;
+        self.clear[i] = 0;
         if order.files != 0 {
             self.files[i] = order.files.clamp(1, self.models[i].max(1));
         }
@@ -268,6 +292,8 @@ impl Regiments {
         }
         self.attack_target[i] = Some(target);
         self.target_facing[i] = None;
+        self.held[i] = 0;
+        self.clear[i] = 0;
         self.pace[i] = self.speed[i];
         true
     }
@@ -321,10 +347,21 @@ impl Regiments {
             .map(|i| self.view(i))
     }
 
-    pub(crate) fn step_movement(&mut self, nav: &mut Nav) {
+    pub(crate) fn step_movement(
+        &mut self,
+        nav: &mut Nav,
+        terrain: &Terrain,
+        combat: &Combat,
+        units: &[UnitStats],
+        stances: &Stances,
+    ) {
         for i in 0..self.alive.len() {
             if !self.alive[i] {
                 continue;
+            }
+            if self.target[i].is_none() {
+                self.held[i] = 0;
+                self.clear[i] = 0;
             }
             let turn = self.turn[i];
             if self.engaged[i].is_some() {
@@ -357,21 +394,56 @@ impl Regiments {
                     }
                     pace
                 };
-                if dist <= step {
+                let step = terrain.wading(step, self.position[i]);
+                let here = self.position[i];
+                let arriving = dist <= step;
+                let dir = if dist.raw() > 0 {
+                    FxVec2::new(delta.x / dist, delta.y / dist)
+                } else {
+                    FxVec2::ZERO
+                };
+                let next = if arriving { point } else { here + dir * step };
+                // A friendly block holding its ground in the way, where the
+                // ground leaves no room beside it (a ford, a pass): wait
+                // behind it. In the open, blocks still pass through.
+                // A regiment already waiting looks again only every few
+                // ticks.
+                if (1..PATIENCE).contains(&self.held[i]) && !self.held[i].is_multiple_of(RECHECK) {
+                    self.held[i] += 1;
+                    continue;
+                }
+                if self.clear[i] > 0 {
+                    self.clear[i] -= 1;
+                } else if !nav.open_around(here, OPEN_GROUND) {
+                    match combat.friend_in_the_way(self, units, stances, i, next) {
+                        Ok(j) if !combat.room_beside(self, units, nav, i, j, dir) => {
+                            self.held[i] = self.held[i].saturating_add(1);
+                            continue;
+                        }
+                        Ok(_) => {}
+                        Err(gap) => {
+                            let ticks = gap.raw() / step.raw().max(1);
+                            self.clear[i] = ticks.clamp(0, CLEAR_TICKS as i32) as u8;
+                        }
+                    }
+                }
+                // Marching freely again. Once its patience ran out it stays
+                // out until this order is done, so it can finish slipping
+                // past whoever was in the way.
+                if self.held[i] < PATIENCE {
+                    self.held[i] = 0;
+                }
+                if arriving {
                     self.position[i] = point;
                     if last {
                         self.target[i] = None;
                     } else {
                         nav.reached(i);
                     }
+                } else if nav.blocks(here, next) {
+                    nav.lost(i);
                 } else {
-                    let dir = FxVec2::new(delta.x / dist, delta.y / dist);
-                    let next = self.position[i] + dir * step;
-                    if nav.blocks(self.position[i], next) {
-                        nav.lost(i);
-                    } else {
-                        self.position[i] = next;
-                    }
+                    self.position[i] = next;
                 }
             } else if let Some(want) = self.target_facing[i] {
                 self.facing[i] = self.facing[i].turn_toward(want, turn);
@@ -415,6 +487,12 @@ impl Regiments {
             h.u8(self.shock[i]);
             h.u16(self.rout_clock[i]);
             h.u32(self.last_rout[i]);
+            // Only while waiting, so worlds where nobody ever queues hash
+            // as they did before queuing existed.
+            if self.held[i] != 0 || self.clear[i] != 0 {
+                h.u16(self.held[i]);
+                h.u8(self.clear[i]);
+            }
             match self.target[i] {
                 Some(t) => {
                     h.u8(1);

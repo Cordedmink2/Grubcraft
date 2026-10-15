@@ -324,6 +324,7 @@ mod tests {
             .collect();
         let heightmap = Heightmap::generate(seed, MAP);
         let nav = heightmap.nav_costs();
+        let (heights, water_level) = heightmap.sim_ground();
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
         let mut world = World::new(&MatchSetup {
             seed,
@@ -332,6 +333,10 @@ mod tests {
             map_tiles: MAP,
             nav: &nav,
             teams: &teams,
+            ground: gc_sim::Ground {
+                heights: &heights,
+                water_level,
+            },
         });
         let mut minds = Minds::new(heightmap.ai_terrain(&nav));
         let mut out = Vec::new();

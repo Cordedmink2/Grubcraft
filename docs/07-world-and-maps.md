@@ -94,4 +94,4 @@ Besides the militia hamlets hire out, a few **mercenary companies** roam each ma
 
 Launch maps treat water as terrain: shallow fords are walkable and slow, deep water is impassable except to air. Naval play (ships, coastal raids, sea seeps) comes with the naval expansion. The map format reserves a water-depth layer from day one so old maps upgrade cleanly.
 
-**Built so far (M1 step 6):** the placeholder map's walkable ground comes from its heights: ground rising more than 1.2 tiles per tile and water deeper than 0.35 tiles are blocked; slopes over half that and shallow fords are walkable but routes avoid them (they don't slow the march yet).
+**Built so far (M1 step 6):** the placeholder map's walkable ground comes from its heights: ground rising more than 1.2 tiles per tile and water deeper than 0.35 tiles are blocked; slopes over half that and shallow fords are walkable but routes avoid them. Since the terrain rules landed, fords also slow the march to 60% and leave waders open to heavier blows, and high ground hits harder (see [05 · Combat](05-combat.md#terrain)); steep slopes don't slow anyone yet.

@@ -21,7 +21,9 @@ use core::cell::Cell;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
 use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_REAR, WAVERING_DAMAGE_PERCENT};
+use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments, hash_handle};
+use crate::terrain::Terrain;
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
 
 /// Ticks between a regiment's melee blows.
@@ -37,6 +39,17 @@ pub const MAX_VOLLEYS: usize = 2048;
 /// Ground covered per soldier in a "normal" block (0.8 × 0.8 tiles); denser
 /// blocks take more arrow hits, looser ones fewer.
 const REFERENCE_AREA_PER_SOLDIER: i64 = (Fx::ONE.raw() as i64 * 64) / 100;
+
+/// A marching regiment stops short of a friendly block it would overlap by
+/// more than this, in tiles (see [`Combat::friend_in_the_way`]).
+const CROWDING: Fx = Fx::from_ratio(1, 4);
+/// It waits this long behind a friend that is only standing or waiting,
+/// then walks through, so no order is stuck for good. Friends locked in
+/// melee are never walked through.
+pub const PATIENCE: u16 = 3 * TICKS_PER_SECOND as u16;
+/// How far past touching distance the crowd check looks, so a regiment
+/// with no friend that near can march a few ticks without looking again.
+const LOOK_AHEAD: Fx = Fx::from_int(2);
 
 /// Spatial hash cell edge, in tiles, and bucket count (a power of two).
 const CELL_TILES: i32 = 16;
@@ -80,6 +93,11 @@ struct Block {
 
 impl Block {
     fn of(regs: &Regiments, units: &[UnitStats], i: usize) -> Block {
+        Block::at(regs, units, i, regs.position[i])
+    }
+
+    /// Regiment `i`'s block if its centre were at `centre`.
+    fn at(regs: &Regiments, units: &[UnitStats], i: usize, centre: FxVec2) -> Block {
         let stats = &units[regs.unit[i] as usize];
         let (w, d) = formation::block_size(
             regs.files[i],
@@ -89,7 +107,7 @@ impl Block {
         );
         let forward = regs.facing[i].to_vec();
         Block {
-            centre: regs.position[i],
+            centre,
             forward,
             right: FxVec2::new(-forward.y, forward.x),
             half_width: Fx::from_raw(w.raw() / 2),
@@ -115,6 +133,19 @@ impl Block {
             .all(|&axis| {
                 d.dot(axis).abs() <= self.extent_along(axis) + other.extent_along(axis) + gap
             })
+    }
+
+    /// How deep the two blocks overlap: the least they would have to move
+    /// apart along any of their edges' directions to stop overlapping
+    /// (zero when apart).
+    fn overlap(&self, other: &Block) -> Fx {
+        let d = other.centre - self.centre;
+        [self.forward, self.right, other.forward, other.right]
+            .iter()
+            .map(|&axis| self.extent_along(axis) + other.extent_along(axis) - d.dot(axis).abs())
+            .min()
+            .unwrap_or(Fx::ZERO)
+            .max(Fx::ZERO)
     }
 
     /// The side of this block that faces `point`.
@@ -149,6 +180,14 @@ pub struct Combat {
     /// Every live regiment's footprint at the start of this tick.
     blocks: Vec<Block>,
     radius: Vec<Fx>,
+    /// The biggest of `radius` this tick.
+    max_radius: Fx,
+    /// Per grid bucket and owner slot (as `head`): whether a regiment that
+    /// may hold its ground this tick (fighting, standing or queuing) is
+    /// listed there, so marching regiments far from any skip the search
+    /// for friends in their way. `big_holder`: one too big for the grid is.
+    holder: Vec<bool>,
+    big_holder: bool,
     /// Marks for visiting each regiment once per search (see `each_near`).
     seen: Vec<Cell<u32>>,
     search: Cell<u32>,
@@ -219,6 +258,9 @@ impl Combat {
                 regiment_capacity
             ],
             radius: vec![Fx::ZERO; regiment_capacity],
+            max_radius: Fx::ZERO,
+            holder: vec![false; BUCKETS * OWNER_SLOTS],
+            big_holder: false,
             seen: vec![Cell::new(0); regiment_capacity],
             search: Cell::new(0),
             volleys: Volleys {
@@ -272,12 +314,14 @@ impl Combat {
         self.head.fill(EMPTY);
         self.entries = 0;
         self.big.clear();
+        self.max_radius = Fx::ZERO;
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 continue;
             }
             self.blocks[i] = Block::of(regs, units, i);
             self.radius[i] = self.blocks[i].radius();
+            self.max_radius = self.max_radius.max(self.radius[i]);
             let (x0, y0, x1, y1) = Self::cells(regs.position[i], self.radius[i] + REACH);
             if ((x1 - x0 + 1) * (y1 - y0 + 1)) as usize > MAX_CELLS_PER_REGIMENT {
                 self.big.push(i as u32);
@@ -383,12 +427,159 @@ impl Combat {
         }
     }
 
+    /// Note which grid cells hold regiments that may hold their ground this
+    /// tick (see `holder`). Called after [`Combat::before_move`], before
+    /// anyone moves.
+    pub(crate) fn mark_holders(&mut self, regs: &Regiments) {
+        self.holder.fill(false);
+        self.big_holder = false;
+        for i in 0..regs.alive.len() {
+            if !regs.alive[i]
+                || regs.morale_state[i].broken()
+                || !(regs.engaged[i].is_some()
+                    || regs.held[i] > 0
+                    || (regs.target[i].is_none() && regs.attack_target[i].is_none()))
+            {
+                continue;
+            }
+            let (x0, y0, x1, y1) = Self::cells(regs.position[i], self.radius[i]);
+            if ((x1 - x0 + 1) * (y1 - y0 + 1)) as usize > MAX_CELLS_PER_REGIMENT {
+                self.big_holder = true;
+                continue;
+            }
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    self.holder[Self::bucket_of(x, y) * OWNER_SLOTS
+                        + regs.owner[i] as usize % OWNER_SLOTS] = true;
+                }
+            }
+        }
+    }
+
+    /// Whether any regiment noted by [`Combat::mark_holders`] in the owner
+    /// slots `slots` may be within `range` of `p`.
+    fn holder_near(&self, p: FxVec2, range: Fx, slots: u32) -> bool {
+        if self.big_holder {
+            return true;
+        }
+        let (x0, y0, x1, y1) = Self::cells(p, range);
+        (y0..=y1).any(|y| {
+            (x0..=x1).any(|x| {
+                let b = Self::bucket_of(x, y) * OWNER_SLOTS;
+                (0..OWNER_SLOTS).any(|s| slots & (1 << s) != 0 && self.holder[b + s])
+            })
+        })
+    }
+
+    /// The friendly regiment regiment `i` would push into by moving its
+    /// centre to `next`, if any: one whose block it would then overlap by
+    /// more than [`CROWDING`], and by no less than it does now (moving out
+    /// of an overlap is always allowed). Only friends
+    /// holding their ground count: those fighting, waiting in a queue
+    /// themselves, or standing still (the last two only for
+    /// [`PATIENCE`]). Friends on the march pass through each other, and
+    /// routers neither wait nor are waited for.
+    pub(crate) fn friend_in_the_way(
+        &self,
+        regs: &Regiments,
+        units: &[UnitStats],
+        stances: &Stances,
+        i: usize,
+        next: FxVec2,
+    ) -> Result<usize, Fx> {
+        if regs.morale_state[i].broken() {
+            return Err(Fx::ZERO);
+        }
+        let patient = regs.held[i] < PATIENCE;
+        let me = Block::at(regs, units, i, next);
+        let now = Block::of(regs, units, i);
+        let placement = Placement {
+            alive: &regs.alive,
+            owner: &regs.owner,
+            position: &regs.position,
+            stances,
+        };
+        let reach = me.radius();
+        let range = reach + self.max_radius + LOOK_AHEAD;
+        if !self.holder_near(
+            next,
+            range,
+            stances.friend_slots(regs.owner[i], OWNER_SLOTS),
+        ) {
+            return Err(LOOK_AHEAD);
+        }
+        let mut found: Option<usize> = None;
+        let mut gap = LOOK_AHEAD;
+        self.each_near(
+            &placement,
+            next,
+            range,
+            Whose::Friends(regs.owner[i]),
+            |j| {
+                if j == i || found.is_some_and(|f| f < j) || regs.morale_state[j].broken() {
+                    return;
+                }
+                let holding = regs.engaged[j].is_some()
+                    || (patient
+                        && ((1..PATIENCE).contains(&regs.held[j])
+                            || (regs.target[j].is_none() && regs.attack_target[j].is_none())));
+                if !holding {
+                    return;
+                }
+                // Cheap circle test before the rectangles (radii from the
+                // start of the tick, with a tile of slack).
+                let touch = reach + self.radius[j] + Fx::ONE;
+                let r = (touch + LOOK_AHEAD).raw() as u64;
+                let d = (regs.position[j] - next).length_sq_raw();
+                if d > r * r {
+                    return;
+                }
+                let r = touch.raw() as u64;
+                if d > r * r {
+                    gap = gap.min((regs.position[j] - next).length() - touch);
+                    return;
+                }
+                gap = Fx::ZERO;
+                let them = Block::of(regs, units, j);
+                let after = me.overlap(&them);
+                if after > CROWDING && after >= now.overlap(&them) {
+                    found = Some(j);
+                }
+            },
+        );
+        found.ok_or(gap)
+    }
+
+    /// Whether regiment `i`, marching along `dir`, could stand beside
+    /// friend `j` instead of behind it: the ground is walkable all the way
+    /// from where `i` stands to a place level with `j`, on one side or the
+    /// other, clear of it.
+    pub(crate) fn room_beside(
+        &self,
+        regs: &Regiments,
+        units: &[UnitStats],
+        nav: &Nav,
+        i: usize,
+        j: usize,
+        dir: FxVec2,
+    ) -> bool {
+        let right = FxVec2::new(-dir.y, dir.x);
+        let me = Block::of(regs, units, i);
+        let them = Block::of(regs, units, j);
+        let apart = me.extent_along(right) + them.extent_along(right);
+        let here = regs.position[i];
+        [apart, -apart]
+            .iter()
+            .any(|&d| nav.clear_line(here, them.centre + right * d))
+    }
+
     /// Contacts, charges and chasing, before anyone moves this tick.
     pub(crate) fn before_move(
         &mut self,
         regs: &mut Regiments,
         units: &[UnitStats],
         stances: &Stances,
+        terrain: &Terrain,
     ) {
         self.build_grid(regs, units);
         for i in 0..regs.alive.len() {
@@ -436,9 +627,11 @@ impl Combat {
             });
             if let Some((_, j)) = best {
                 if !was_engaged {
-                    // Hitting home at speed is a charge. A fight ends any march.
+                    // Hitting home at speed is a charge, but nobody charges
+                    // out of a river. A fight ends any march.
                     let charging = regs.target[i].is_some()
-                        && regs.pace[i].raw() * 4 >= regs.speed[i].raw() * 3;
+                        && regs.pace[i].raw() * 4 >= regs.speed[i].raw() * 3
+                        && !terrain.wet(regs.position[i]);
                     if charging {
                         regs.charge[i] = CHARGE_TICKS;
                     }
@@ -460,7 +653,11 @@ impl Combat {
                 regs.attack_target[i] = None;
                 continue;
             };
-            let range = units[regs.unit[i] as usize].range;
+            let range = terrain.range(
+                units[regs.unit[i] as usize].range,
+                regs.position[i],
+                regs.position[j],
+            );
             let to = regs.position[j] - regs.position[i];
             if range.raw() > 0 && to.length() <= range {
                 regs.target[i] = None;
@@ -478,6 +675,7 @@ impl Combat {
         regs: &mut Regiments,
         units: &[UnitStats],
         stances: &Stances,
+        terrain: &Terrain,
         tick: u32,
         rng: &mut Pcg32,
     ) {
@@ -510,6 +708,7 @@ impl Combat {
             let charge =
                 100 + attacker.charge_bonus as u64 * regs.charge[i] as u64 / CHARGE_TICKS as u64;
             let heart = heart_percent(regs.morale_state[i]);
+            let ground = terrain.melee_percent(regs.position[i], regs.position[j]);
             let expected = fighters
                 * hit
                 * attacker.melee_damage as u64
@@ -517,7 +716,9 @@ impl Combat {
                 * charge
                 * heart
                 * 256
-                / (100 * 100 * 100 * 100);
+                / (100 * 100 * 100 * 100)
+                * ground
+                / 100;
             deal(regs, units, j, expected, side, rng);
         }
 
@@ -535,7 +736,7 @@ impl Combat {
             {
                 continue;
             }
-            let Some(j) = self.pick_target(regs, stances, i, stats.range) else {
+            let Some(j) = self.pick_target(regs, stances, terrain, i, stats.range) else {
                 continue;
             };
             let to = regs.position[j] - regs.position[i];
@@ -612,23 +813,30 @@ impl Combat {
         &self,
         regs: &Regiments,
         stances: &Stances,
+        terrain: &Terrain,
         i: usize,
         range: Fx,
     ) -> Option<usize> {
         let me = regs.position[i];
         if let Some(j) = regs.attack_target[i].and_then(|t| regs.resolve(t))
-            && (regs.position[j] - me).length() <= range
+            && (regs.position[j] - me).length() <= terrain.range(range, me, regs.position[j])
         {
             return Some(j);
         }
         let mut best: Option<(u64, usize)> = None;
-        let range_sq = (range.raw() as i64 * range.raw() as i64) as u64;
-        self.near_enemies(me, range, regs.owner[i], |j| {
+        // Look as far as high ground could carry, then check each.
+        let reach = if terrain.is_flat() {
+            range
+        } else {
+            Terrain::range_from_high_ground(range)
+        };
+        self.near_enemies(me, reach, regs.owner[i], |j| {
             if !regs.alive[j] || !stances.hostile(regs.owner[i], regs.owner[j]) {
                 return;
             }
             let d = (regs.position[j] - me).length_sq_raw();
-            if d <= range_sq && best.is_none_or(|(bd, bj)| (d, j) < (bd, bj)) {
+            let r = terrain.range(range, me, regs.position[j]).raw() as i64;
+            if d <= (r * r) as u64 && best.is_none_or(|(bd, bj)| (d, j) < (bd, bj)) {
                 best = Some((d, j));
             }
         });

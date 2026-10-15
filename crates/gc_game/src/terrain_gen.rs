@@ -152,6 +152,31 @@ impl Heightmap {
         cells
     }
 
+    /// The heights the simulation's terrain rules use (see
+    /// [`gc_sim::terrain`]): one per tile, the sample at the tile's centre,
+    /// in [`gc_sim::terrain::HEIGHT_UNITS`] per tile, and the water line in
+    /// the same units. The same tile-centre heights the minds read
+    /// ([`Heightmap::ai_terrain`]), so both agree on what is high and wet.
+    pub fn sim_ground(&self) -> (Vec<u16>, u16) {
+        let tiles = (self.size - 1) / self.samples_per_tile;
+        let half = self.samples_per_tile / 2;
+        let per_tile = gc_sim::terrain::HEIGHT_UNITS as f32;
+        // Stored samples to sim units: an integer rule, so every machine
+        // agrees given the same samples.
+        let scale = (self.max_height * per_tile) as u64;
+        let mut heights = Vec::with_capacity((tiles * tiles) as usize);
+        for y in 0..tiles {
+            for x in 0..tiles {
+                let s = (y * self.samples_per_tile + half) * self.size
+                    + x * self.samples_per_tile
+                    + half;
+                let h = self.heights[s as usize] as u64 * scale / u16::MAX as u64;
+                heights.push(h as u16);
+            }
+        }
+        (heights, (self.water_level * per_tile) as u16)
+    }
+
     /// The ground as the computer players read it: the walkable-ground
     /// grid plus each tile's height and where the water is, so they can
     /// pick a line beside a cliff, on a rise or behind a river.
@@ -226,6 +251,19 @@ mod tests {
         let a = hm.height_at(16.0, 16.0);
         let b = hm.height_at(18.0, 17.0);
         assert!((a - b).abs() < 0.05, "{a} vs {b}");
+    }
+
+    #[test]
+    fn sim_ground_matches_the_heights_the_minds_read() {
+        let hm = Heightmap::generate(1, 64);
+        let (heights, water) = hm.sim_ground();
+        assert_eq!(heights.len(), 64 * 64);
+        assert_eq!(water, (hm.water_level * 256.0) as u16);
+        for (x, y) in [(3, 5), (16, 16), (40, 22), (63, 63)] {
+            let want = hm.height_at(x as f32 + 0.5, y as f32 + 0.5) * 256.0;
+            let got = heights[y * 64 + x] as f32;
+            assert!((got - want).abs() <= 1.0, "tile {x},{y}: {got} vs {want}");
+        }
     }
 
     #[test]

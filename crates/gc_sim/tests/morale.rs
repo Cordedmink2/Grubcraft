@@ -20,6 +20,7 @@ fn world_with(units: &[UnitStats]) -> World {
         map_tiles: 256,
         nav: &[],
         teams: &[],
+        ground: gc_sim::Ground::FLAT,
     })
 }
 

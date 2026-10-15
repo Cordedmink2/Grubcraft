@@ -620,6 +620,22 @@ impl Nav {
         self.grid.as_ref().is_none_or(|g| g.open_cell(g.cell_at(p)))
     }
 
+    /// Whether a regiment at `p` has open ground all round for at least
+    /// `tiles` (always true with no map): nothing blocked that near.
+    pub fn open_around(&self, p: FxVec2, tiles: i32) -> bool {
+        self.grid
+            .as_ref()
+            .is_none_or(|g| g.clear[g.cell_at(p) as usize] as i32 >= tiles * CELLS_PER_TILE)
+    }
+
+    /// Whether a regiment's centre could walk the straight line from `from`
+    /// to `to` (always true with no map).
+    pub fn clear_line(&self, from: FxVec2, to: FxVec2) -> bool {
+        self.grid
+            .as_ref()
+            .is_none_or(|g| g.line_open(g.cell_at(from), g.cell_at(to), &mut 0))
+    }
+
     /// Portal nodes in the graph (for the dev overlay and tests).
     pub fn portal_count(&self) -> usize {
         self.grid.as_ref().map_or(0, |g| g.node_cell.len())

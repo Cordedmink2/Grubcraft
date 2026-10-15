@@ -38,6 +38,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Field Battle mode: army builder with points, deployment phase, victory conditions, 2 battle maps.
 - Teams: teammates are allied, through one hostility test that reads a stance table filled from the lobby ([18 · AI](18-ai.md#engine-hooks), hook 1). *Built with AI-1 step 1: lobby teams reach the sim and teammates don't fight.*
 - AI track: the battle AI (phases AI-1 and AI-2), so any Field Battle or sandbox slot can be an AI opponent or ally.
+- Terrain rules for battle maps: high ground and fords ([05 · Combat](05-combat.md#terrain)). *Built (2026-10-13): fighting downhill and shooting from high ground, slow wading, no charging out of a river, extra blows on waders. Friendly regiments queue in fords and passes instead of stacking (built the same day).*
 - Desync detection with report files; cross-platform determinism CI on golden replays.
 - Replays (record and play back).
 - Soldier fighting, stage 1: duel pairs and living formations (acceleration, settle, idle sway), see [09](09-art-and-audio.md#animation). *Built.*
