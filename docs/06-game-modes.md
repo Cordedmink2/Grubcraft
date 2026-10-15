@@ -1,6 +1,6 @@
 # 06 · Game Modes
 
-Two modes at launch. Both run on the **same simulation, unit data and controls**, so everything built for one improves the other.
+Two modes at launch, and a third, the **Campaign**, planned to follow. All of them run on the **same simulation, unit data and controls**, so everything built for one improves the others.
 
 | | **Conquest** (primary) | **Field Battle** (secondary) |
 |---|---|---|
@@ -60,6 +60,10 @@ The Total War experience in a 10-minute bite: two or more armies, one battlefiel
 
 ### Restage this battle (the bridge between modes)
 After a Conquest match, the post-game screen lists its biggest battles (by models killed). Pick one and the exact armies that fought it, with their veterancy and heroes, are staged on a Field Battle map generated from the same patch of terrain. Rematch the fight that decided the game. Because both modes share one simulation and replays record everything, this is cheap to build: it is a snapshot of regiments at the moment the battle began, loaded into a battle map.
+
+## Campaign (planned)
+
+A world map of the whole Reach, played over several game nights by 1 to 4 players (and AI players). Each season everyone plans at once: march your hosts, send your Pathfinder into the fog, raise regiments, deal with the peoples you meet. When hostile armies meet, the battle is fought as a Field Battle with the armies exactly as they are, on a map made from that region, or handed to the battle AI on both sides, which plays it out in the real simulation in seconds. One relations ledger runs the whole campaign, so the Reach remembers what you did on the first night. Full design in [19 · Campaign and Exploration](19-campaign.md); it is built as its own track starting after M4.
 
 ## Practice and learning
 

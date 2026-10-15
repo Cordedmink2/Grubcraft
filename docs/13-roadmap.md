@@ -68,6 +68,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Remaining launch maps (Hollow Lung, Marrowfen), map validator.
 - Post-game screen with graphs and "Restage this battle".
 - AI track: the relations ledger (stance, liking, trust, memories) that hamlet reputation runs on; mercenary companies; the parley panel (AI-4).
+- Campaign track: exploring inside a match, with frontier sites and first contact (C-0 in [19](19-campaign.md#build-plan)).
 - **Exit:** a newcomer can learn and win a game after the tutorial; first full balance pass.
 
 ### M5 · Choir and Concord
@@ -101,12 +102,28 @@ AI players were planned for after 1.0; on 2026-10-12 Mario asked for an intellig
 | AI-5 · Choir and Concord AI | Their economy modules and doctrines | M5 |
 | AI-6 · Exploration and diplomacy | Factions met while exploring; diplomacy between players as an option | After 1.0 |
 
+## The campaign track
+
+On 2026-10-15 the Campaign was designed as a third mode ([19 · Campaign and Exploration](19-campaign.md)): a world map of the Reach played over several game nights, where you explore, meet friendly, neutral and mercenary peoples, and fight the battles that matter as Field Battles. Like the AI track it lives in its own crate (`gc_campaign`) and AI module, so a parallel thread can build it.
+
+| Phase | What | With |
+|---|---|---|
+| C-0 · Exploring inside a match | Frontier sites, first sight and first contact on Conquest maps | M4 |
+| C-1 · Campaign core | World map, seasons, hosts, exploring, Grubfolk and companies, battles fought or handed to the generals, saves; Clans and Brood | Starts once M4 lands, alongside M5 |
+| C-2 · Peoples and diplomacy | Minor factions with minds (AI-6), diplomacy between players, alliances, guest commanders, the Chronicle | M7 |
+| C-3 · The full campaign | All four factions, Fellowship mode, stronghold battles, Iron campaign | M7 |
+
+### M7 · Across the Reach (first milestone after 1.0)
+*Goal: the full campaign.*
+- C-2 and C-3 above, on top of the C-1 core built alongside M5.
+- **Exit:** four friends finish a Long campaign over several game nights with no desync, and want to start another.
+
 ## After 1.0 (unordered)
 
 | Feature | Notes |
 |---|---|
 | Naval expansion | Water maps, ships, coastal raids; the map format already reserves a depth layer |
-| Exploration and diplomacy | Factions met while exploring, with their own minds and memories; diplomacy between players as a lobby option (AI-6 in [18 · AI](18-ai.md#build-plan)) |
+| Exploration and diplomacy | Now part of the campaign (M7 above): factions met while exploring, with their own minds and memories, and diplomacy between players (AI-6 in [18 · AI](18-ai.md#build-plan), C-2 in [19](19-campaign.md#build-plan)). Diplomacy between players in Conquest matches stays a later lobby option |
 | Host migration | Every client already has full state |
 | Internet join codes | UDP hole punching via a tiny rendezvous service |
 | Map editor for players | The internal edit mode, exposed |

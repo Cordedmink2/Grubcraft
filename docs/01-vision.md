@@ -37,7 +37,7 @@ The iPad-game test: someone who has played a few games should be doing something
 - Defaults are smart: new workers go to work, regiments hold formation, ranged units skirmish by themselves.
 
 ### 4. A living, edible world
-The map is not a static board. Grub seeps run dry and fall to "dregs", the Titan's corpse shudders and splits open new seeps mid-match, neutral hamlets will trade with you or remember that you burned them, and corpses on the battlefield are a resource for two factions. The world pushes players into each other.
+The map is not a static board. Grub seeps run dry and fall to "dregs", the Titan's corpse shudders and splits open new seeps mid-match, neutral hamlets will trade with you or remember that you burned them, mercenaries serve whoever pays, and corpses on the battlefield are a resource for two factions. The world pushes players into each other, and there is always something out in the fog worth finding ([19 · Campaign and Exploration](19-campaign.md)).
 
 ### 5. Lightweight, without looking cheap
 The engine is built from scratch to be lean at every layer: a full 4-player, 60-minute match with thousands of soldiers on screen within a **4 GB memory budget**, 60 fps on a base MacBook Air, and replay files measured in kilobytes. See [12 · Performance](12-performance.md). The art direction (stylized, low-poly, painted lighting) is chosen so that lean and beautiful are the same decision, not a trade-off.
@@ -60,7 +60,7 @@ Mario and friends: 2 to 4 players on the same Wi-Fi network (with internet play 
 
 ## What we are deliberately *not* doing
 
-- **No campaign map / turn-based layer.** The Total War inspiration is the battlefield, not the strategic map.
+- **No empire management.** A light campaign map is planned ([19 · Campaign and Exploration](19-campaign.md)), so that you can explore the Reach and meet its peoples over several game nights, but it stays a reason for battles, not a second game: no tax sliders, building chains, agents or family trees. (This replaced "no campaign map" on 2026-10-15, after Mario asked for exploration and encounters to be central.)
 - **No Warhammer-level complexity.** No ammunition counters, no fatigue meters beyond a short post-charge "winded", no lord skill trees with 40 nodes, no per-unit equipment.
 - **No dedicated servers, accounts, matchmaking or anti-cheat.** You play with friends; the host's machine runs the lobby.
 - **No naval combat in the first release.** Water is terrain at first; naval gameplay is a planned expansion ([13 · Roadmap](13-roadmap.md)).

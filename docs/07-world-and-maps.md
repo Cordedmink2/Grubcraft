@@ -14,6 +14,7 @@ Every Conquest map is built from the same parts, so players learn to read any ne
 | **Shrines** | Capturable; give vision and a small aura (Clans earn Honor from them) |
 | **The Titan's Heart** | Centre objective for the Heart victory and Heartbeat events |
 | **Bloodseep sites** | Pre-placed hidden locations where Tremors can open new seeps |
+| **Frontier sites** | 4 to 8 slots hidden in the fog (ruins, lost caravans, relic barrows and more), filled from the match seed; they reward whoever scouts them first ([19](19-campaign.md#part-1--exploring-inside-a-match)) |
 | **Terrain lanes** | Ridges (ribs), forests, fords, roads, bogs that shape where armies meet |
 
 ### Map sizes
@@ -82,13 +83,17 @@ Creep behaviour is a handful of simulation rules, not an AI: a camp wakes when a
 
 Besides the militia hamlets hire out, a few **mercenary companies** roam each map: a Grubfolk free company, a band of Titan-spawn tamers, a crew of disgraced ronin. Each has a captain, a personality, a small roster and a price. They camp at a hamlet or wander between them; you meet them, see their price and their opinion of you, and hire them for a fee plus upkeep. They fight for you while paid, may sell out to a higher bidder if their honour is low, and tell other companies who pays and who cheats. Their minds and contracts are described in [18 · AI](18-ai.md#deals-and-contracts).
 
+## Frontier sites (planned, M4)
+
+Places hidden in the fog that only reward whoever goes looking: a ruined waystation's cache, a lost caravan to rescue or rob, a hermit who sells the next Tremor's location, a Titan scar that reveals the land around it, a company camp, a relic barrow. The map marks slots; the match seed picks what appears in each, so a map the group knows still surprises. The first sighting of a site, hamlet or company is a ledger event (*first contact*). Full list and rules in [19 · Campaign and Exploration](19-campaign.md#frontier-sites).
+
 ## Map format and tooling
 
-- Maps are data, not code: a heightmap, a tile-type layer, an object list (seeps, veins, hamlets, creeps, Shrines, start positions, Bloodseep sites) and a small script block for map-specific events.
+- Maps are data, not code: a heightmap, a tile-type layer, an object list (seeps, veins, hamlets, creeps, Shrines, start positions, Bloodseep sites, frontier site slots) and a small script block for map-specific events.
 - Stored as a compact binary in the asset pack (a Warfield map is under 2 MB on disk; see [10 · Architecture](10-architecture.md#maps)).
 - Built in an **internal map editor** that is just the game running in an edit mode (same renderer, extra tools), so there is no separate editor engine to maintain. Exposed to players later.
 - **Map validator** (headless tool): checks start fairness (equal path lengths to resources and the Heart), unreachable areas, hamlet counts, and runs a few bot-free scripted economy simulations to compare income curves per start.
-- **Seeded generator (stretch):** procedural 2- and 4-player maps from a seed, guaranteed fair by the validator. Good for variety among a small friend group who will learn fixed maps quickly.
+- **Seeded generator (stretch):** procedural 2- and 4-player maps from a seed, guaranteed fair by the validator. Good for variety among a small friend group who will learn fixed maps quickly. The campaign needs a smaller version early: a battle map generated from a campaign region's ground, route and feature ([19](19-campaign.md#battles-on-the-campaign)).
 
 ## Water (later)
 

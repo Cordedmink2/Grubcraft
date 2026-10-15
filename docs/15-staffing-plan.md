@@ -127,7 +127,7 @@ A and B both touch `gc_sim`, so they split by module and B starts once A's inter
 
 | Thread | Lead | Workstreams |
 |---|---|---|
-| **A · World systems** | Opus | Grubfolk hamlets (market, mercenaries, rumours, raiding, reputation), creep camps and items, Shrines, Titan Events (Tremors and Bloodseeps, Marrow Bloom, Heartbeat), "Restage this battle" (snapshot and re-seed) |
+| **A · World systems** | Opus | Grubfolk hamlets (market, mercenaries, rumours, raiding, reputation), creep camps and items, Shrines, Titan Events (Tremors and Bloodseeps, Marrow Bloom, Heartbeat), "Restage this battle" (snapshot and re-seed), frontier sites and first contact (C-0 in [19](19-campaign.md#build-plan)); Sonnet writes the site content |
 | **B · Learnability** | Sonnet | Tutorial "First Harvest", Clans and Brood primers, contextual hints, codex. Opus reviews any tutorial scripting hook added to the sim; Haiku drafts codex entries from the design docs |
 | **C · Audio** | Sonnet | `gc_audio`: unit voices, faction themes, battle ambience (the mixer, first sound set and adaptive music were built early, as a separate Sonnet thread). Haiku sources and licence-checks royalty-free audio |
 | **D · Maps and post-game** | Sonnet | Hollow Lung and Marrowfen, map validator improvements, post-game screen with graphs |
@@ -144,6 +144,7 @@ A and B both touch `gc_sim`, so they split by module and B starts once A's inter
 | **C · Primers and presentation** | Sonnet | Primers for both factions, faction UI, effects. Starts once A and B have playable units |
 | **Balance across all pairings** | Opus | Haiku batch-sims every pairing; Opus proposes changes against the "no faction above 60%" exit |
 | **D · Choir and Concord AI** | Opus | Their economy modules and doctrines in `gc_ai` (AI-5); starts once A and B have playable units. Haiku `arena-runner` checks each holds 40 to 60% |
+| **E · Campaign core** | Opus, high effort | C-1 in [19](19-campaign.md#build-plan): `gc_campaign`, the world map, seasons, hosts, exploring, battles fought or handed to the generals, saves, the campaign mind in `gc_ai::campaign`. Sonnet builds the campaign screen; Haiku enters encounter cards as data. Lives in its own crate, so it doesn't collide with A and B |
 
 A and B both live in `gc_sim` but in separate faction modules; shared hooks they both need are added first, in one small Opus PR, before the two threads start.
 
@@ -163,7 +164,7 @@ A and B both live in `gc_sim` but in separate faction modules; shared hooks they
 
 | Feature | Lead | Notes |
 |---|---|---|
-| Exploration and diplomacy (AI-6) | Opus, max effort for diplomacy logic | Factions met while exploring are mostly content (rosters, personalities, homes) that Sonnet can add once the minds exist; Haiku runs the arena |
+| M7 · Across the Reach: campaign peoples, diplomacy and the full campaign (C-2, C-3, AI-6) | Opus, max effort for diplomacy logic | Factions met while exploring are mostly content (rosters, personalities, homes, encounter cards) that Sonnet can add once the minds exist; Sonnet builds the Chronicle and guest-commander screens; Haiku runs the arena and plays scripted test campaigns |
 | Host migration | Opus | Protocol work |
 | Internet join codes (hole punching, rendezvous service) | Sonnet | Opus security review of the rendezvous protocol |
 | Player map editor | Sonnet | Exposes the internal edit mode |

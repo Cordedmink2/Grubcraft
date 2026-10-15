@@ -22,6 +22,7 @@ Read in order the first time; afterwards each document stands alone.
 | 16 | [Art Sourcing](16-art-sourcing.md) | Vetted free (CC0) models, textures and sounds for the Ember Clans and the Brood, with licences and gaps |
 | 17 | [Unit Rosters](17-unit-rosters.md) | Every unit, summon and hero for all four factions: stats, costs, abilities, counters, and the data schema they need |
 | 18 | [AI](18-ai.md) | Computer opponents and allies, battle tactics, difficulty and personalities; the relations system (stance, liking, trust, memories) and the minds of hamlets, mercenaries and factions met while exploring |
+| 19 | [Campaign and Exploration](19-campaign.md) | Exploring inside a match (frontier sites, first contact), and the Campaign: a world map of the Reach played over several game nights, with seasons, hosts, the peoples you meet, relations over time, and battles fought or handed to the generals |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |

@@ -31,9 +31,24 @@ From the [AI design](18-ai.md). Work proceeds on these recommendations unless Ma
 | 16 | **Diplomacy between players** (ceasefires, alliances, tribute in free-for-all) | Later, as a lobby option, off by default | It changes how free-for-all plays; the relations system supports it whenever it's wanted |
 | 17 | **Exploration content**: factions met while exploring (friendly, neutral, hostile) with their own minds | After 1.0, on the same relations system; sooner if Mario wants exploration to lead | The design keeps the door open; what those peoples are like is a creative call |
 
+## Campaign and exploration (proposed 2026-10-15)
+
+From the [campaign design](19-campaign.md). Mario asked for it on 2026-10-15; work proceeds on these recommendations unless he says otherwise.
+
+| # | Decision | Recommendation | Why it matters |
+|---|---|---|---|
+| 18 | **A campaign map**, which the vision had ruled out | Yes, as a third mode kept light: a world map that gives battles a reason and the peoples of the Reach somewhere to live; no empire management. The vision's non-goal now reads "no empire management" | Exploring and meeting people become central, as Mario asked |
+| 19 | **How campaign turns work** | Simultaneous seasons: everyone plans at once (90 s, ends early when all are Ready), then every move plays out together | Nobody waits for three friends' turns |
+| 20 | **How campaign battles are fought** | Fight it as a Field Battle, or let the generals fight it: the battle AI plays every side in the real simulation, in seconds, with a replay | Every battle can be played, none has to be, and quick results are still real battles |
+| 21 | **When the campaign is built** | Exploring inside a match with M4 (C-0); the campaign core from after M4, alongside M5 (C-1); peoples, diplomacy and all four factions as M7, after 1.0 | Exploration arrives early without delaying 1.0; moving C-2 and C-3 before 1.0 would push 1.0 back about one milestone |
+| 22 | **Diplomacy between players in the campaign** | On by default (ceasefires, alliances, tribute, and the reputation cost of breaking them); fixed teams as an option | Promises kept and broken over weeks are what a campaign adds |
+| 23 | **Who lives in the Reach** | Start from the first drafts: Grubfolk, the Bazaar, three mercenary companies, the Heartbound (Titan cult), the Saltwander Caravan (nomad traders), the Discordant (Choir splinter), Titan-spawn lairs | A creative call; the systems work with any cast |
+
+Decision 17 (exploration content after 1.0) is refined by 21: factions met while exploring arrive with the campaign's C-2 phase.
+
 ## Smaller questions for later
 - Should allied players share supply or resources by default in team games?
-- Should Field Battle have a campaign-lite "ladder" among friends (persistent army veterancy across battles)?
+- Should Field Battle have a campaign-lite "ladder" among friends (persistent army veterancy across battles)? *Recommended: fold it into the campaign; a Short campaign with only Field Battles covers it ([19](19-campaign.md#open-questions)).*
 - Is there appetite for a fifth faction before naval play, or naval first?
 - Friendly-fire for all ranged units in Field Battle (more Shogun, less forgiving)?
 - Should an AI remember a human's habits across matches (a small local profile per player name)? See [18 · AI](18-ai.md#open-questions) for this and two other AI questions.

@@ -74,8 +74,23 @@ The consolidated, testable list of what Grubcraft must do. Each requirement has 
 | AI-8 | Mercenary companies: hire, serve, desert, word of mouth; parley panel with previewable answers | S | M4 |
 | AI-9 | Conquest AI for Choir and Carrion Concord | S | M5 |
 | AI-10 | AI takes over a disconnected player (lobby option) | C | M6 |
-| AI-11 | Factions met while exploring; diplomacy between players as a lobby option | C | — |
+| AI-11 | Factions met while exploring; diplomacy between players as a lobby option | C | M7 |
 | AI-12 | Headless AI arena: each difficulty beats the one below at least 70% of the time | S | M3 |
+
+## Exploration and campaign (see [19 · Campaign and Exploration](19-campaign.md))
+
+| ID | Requirement | Pri | Milestone |
+|---|---|---|---|
+| EXP-1 | Conquest maps have 4 to 8 frontier site slots, filled from the match seed, that reward whoever scouts them first | S | M4 |
+| EXP-2 | First sight of a site, hamlet or company is a ledger event (first contact) | S | M4 |
+| CMP-1 | Campaign mode: a world map of the Reach from a body template and a seed, played over several sessions by 1 to 4 players and AI players, saved after every season on every player's machine | C | C-1 / M7 |
+| CMP-2 | Simultaneous seasons: everyone plans at once with an optional timer, then every party's moves resolve together | C | C-1 |
+| CMP-3 | Campaign battles are Field Battles with the hosts' exact regiments on a map generated from the region; or the battle AI fights every side in the real simulation at full speed, leaving a replay | C | C-1 |
+| CMP-4 | One relations ledger for the whole campaign, memories fading by season; battles start from it and hand their memories back | C | C-1 |
+| CMP-5 | Friendly, neutral, mercenary and hostile peoples on the campaign map, with minds where they make choices | C | C-1 / M7 |
+| CMP-6 | Diplomacy between players in the campaign (ceasefire, alliance, tribute, call to arms), on by default | C | M7 |
+| CMP-7 | Guest commanders: players not in a battle can command its other sides | C | M7 |
+| CMP-8 | Campaign state under 1 MB; deterministic and hashed every season on all platforms | C | C-1 |
 
 ## Factions, units and combat (see [03 · Factions](03-factions.md), [05 · Combat](05-combat.md))
 
