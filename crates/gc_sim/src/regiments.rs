@@ -8,7 +8,7 @@ use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
 use crate::nav::Nav;
 use crate::terrain::Terrain;
-use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
+use crate::{Formation, PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
 
 /// Generational handle to a regiment. Stale handles (to a slot that has since
 /// been freed and reused) are detected and rejected.
@@ -28,6 +28,19 @@ pub struct Order {
     pub files: u16,
     /// Tiles per second; zero or negative means the regiment's own speed.
     pub pace: Fx,
+}
+
+/// Where a regiment is in its rhythm of melee blows (see `Combat`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Strike {
+    /// Strikes on its turn, once a second.
+    #[default]
+    Turn,
+    /// Spears or pikes that have just met their foe: strike this tick.
+    Early,
+    /// Struck early, so it sits out its next turn: long weapons strike
+    /// sooner, never more often.
+    Rest,
 }
 
 /// When the travel direction is further than this from the facing, the
@@ -62,6 +75,8 @@ pub struct Regiments {
     pub(crate) facing: Vec<Angle>,
     /// Soldiers per rank.
     pub(crate) files: Vec<u16>,
+    /// How closely the soldiers stand.
+    pub(crate) formation: Vec<Formation>,
     /// Soldiers still standing.
     pub(crate) models: Vec<u16>,
     /// Hit points per soldier, `MAX_MODELS` per regiment, by formation slot
@@ -81,6 +96,7 @@ pub struct Regiments {
     pub(crate) engaged: Vec<Option<RegimentHandle>>,
     /// Ticks of charge bonus left.
     pub(crate) charge: Vec<u16>,
+    pub(crate) strike: Vec<Strike>,
     /// Ticks until a ranged regiment can loose its next volley.
     pub(crate) reload: Vec<u16>,
     /// Damage taken but not yet a whole hit point, in 1/256ths.
@@ -119,6 +135,7 @@ impl Regiments {
             position: vec![FxVec2::ZERO; n],
             facing: vec![Angle::ZERO; n],
             files: vec![0; n],
+            formation: vec![Formation::Line; n],
             models: vec![0; n],
             hp: vec![0; n * MAX_MODELS as usize],
             speed: vec![Fx::ZERO; n],
@@ -129,6 +146,7 @@ impl Regiments {
             attack_target: vec![None; n],
             engaged: vec![None; n],
             charge: vec![0; n],
+            strike: vec![Strike::Turn; n],
             reload: vec![0; n],
             damage_carry: vec![0; n],
             full_models: vec![0; n],
@@ -174,6 +192,7 @@ impl Regiments {
         self.position[i] = position;
         self.facing[i] = facing;
         self.files[i] = stats.files;
+        self.formation[i] = Formation::Line;
         self.models[i] = stats.models;
         let hp = &mut self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize];
         hp.fill(0);
@@ -186,6 +205,7 @@ impl Regiments {
         self.attack_target[i] = None;
         self.engaged[i] = None;
         self.charge[i] = 0;
+        self.strike[i] = Strike::Turn;
         self.reload[i] = 0;
         self.damage_carry[i] = 0;
         self.full_models[i] = stats.models;
@@ -220,7 +240,34 @@ impl Regiments {
             } else {
                 self.pace[i].min(self.speed[i])
             };
+            // Shields taken away: the wall comes apart.
+            if !stats.can_form(self.formation[i]) {
+                self.formation[i] = Formation::Line;
+            }
         }
+    }
+
+    /// Change regiment `i`'s formation. Routing regiments don't listen, and
+    /// only shielded ones can form a shield wall.
+    pub(crate) fn set_formation(
+        &mut self,
+        h: RegimentHandle,
+        formation: Formation,
+        units: &[UnitStats],
+    ) -> bool {
+        let Some(i) = self.resolve(h) else {
+            return false;
+        };
+        // Ranks re-form out of the fight: locked in melee, or running, a
+        // regiment can't change them.
+        if self.morale_state[i].broken()
+            || self.engaged[i].is_some()
+            || !units[self.unit[i] as usize].can_form(formation)
+        {
+            return false;
+        }
+        self.formation[i] = formation;
+        true
     }
 
     pub fn despawn(&mut self, h: RegimentHandle) -> bool {
@@ -332,6 +379,7 @@ impl Regiments {
             position: self.position[i],
             facing: self.facing[i],
             files: self.files[i],
+            formation: self.formation[i],
             models: self.models[i],
             moving: self.target[i].is_some() || self.target_facing[i].is_some(),
             engaged: self.engaged[i].is_some(),
@@ -379,7 +427,11 @@ impl Regiments {
                 };
                 let delta = point - self.position[i];
                 let dist = delta.length();
-                let pace = self.pace[i];
+                // A shield wall shuffles along at half its speed.
+                let pace = match self.formation[i].pace_percent() {
+                    100 => self.pace[i],
+                    p => self.pace[i].min(Fx::from_raw((self.speed[i].raw() * p / 100).max(1))),
+                };
                 let shuffle = last && dist <= SHUFFLE_DISTANCE && self.target_facing[i].is_some();
                 let step = if shuffle {
                     self.facing[i] =
@@ -468,6 +520,11 @@ impl Regiments {
             h.i32(self.position[i].y.raw());
             h.u16(self.facing[i].0);
             h.u16(self.files[i]);
+            // Only when not the plain line, so worlds where nobody changes
+            // formation hash as they did before formations existed.
+            if self.formation[i] != Formation::Line {
+                h.u8(self.formation[i] as u8);
+            }
             h.u16(self.models[i]);
             for &hp in &self.hp[i * MAX_MODELS as usize..][..self.models[i] as usize] {
                 h.u16(hp);
@@ -478,6 +535,10 @@ impl Regiments {
             hash_handle(h, self.attack_target[i]);
             hash_handle(h, self.engaged[i]);
             h.u16(self.charge[i]);
+            // Only when set, as for the formation above.
+            if self.strike[i] == Strike::Rest {
+                h.u8(1);
+            }
             h.u16(self.reload[i]);
             h.u16(self.damage_carry[i]);
             h.u16(self.full_models[i]);
@@ -534,6 +595,8 @@ pub struct RegimentView {
     pub facing: Angle,
     /// Soldiers per rank.
     pub files: u16,
+    /// How closely the soldiers stand.
+    pub formation: Formation,
     /// Soldiers still standing.
     pub models: u16,
     /// Walking or turning to an ordered facing.

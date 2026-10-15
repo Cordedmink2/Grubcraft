@@ -7,7 +7,7 @@
 //! fails to decode is dropped.
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::{Command, PlayerCommand, RegimentHandle, UnitStats};
+use gc_sim::{Command, Formation, Mass, PlayerCommand, RegimentHandle, UnitStats};
 
 #[derive(Default)]
 pub struct Writer {
@@ -179,10 +179,12 @@ fn write_stats(w: &mut Writer, s: &UnitStats) {
     w.var(s.reload_ticks as u64);
     w.u8(s.accuracy);
     w.u8(s.morale);
+    w.u8(s.mass as u8);
+    w.u8(s.weapons());
 }
 
 fn read_stats(r: &mut Reader) -> Option<UnitStats> {
-    Some(UnitStats {
+    UnitStats {
         speed: r.fx()?,
         turn_rate: r.var_as()?,
         models: r.var_as()?,
@@ -199,7 +201,12 @@ fn read_stats(r: &mut Reader) -> Option<UnitStats> {
         reload_ticks: r.var_as()?,
         accuracy: r.u8()?,
         morale: r.u8()?,
-    })
+        mass: Mass::from_u8(r.u8()?)?,
+        reach: false,
+        swing_room: false,
+        shield: false,
+    }
+    .with_weapons(r.u8()?)
 }
 
 pub fn write_command(w: &mut Writer, c: &Command) {
@@ -245,6 +252,14 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.var(unit as u64);
             write_stats(w, &stats);
         }
+        Command::SetFormation {
+            regiment,
+            formation,
+        } => {
+            w.u8(5);
+            w.handle(regiment);
+            w.u8(formation as u8);
+        }
     }
 }
 
@@ -275,6 +290,10 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         4 => Command::TuneUnit {
             unit: r.var_as()?,
             stats: read_stats(r)?,
+        },
+        5 => Command::SetFormation {
+            regiment: r.handle()?,
+            formation: Formation::from_u8(r.u8()?)?,
         },
         _ => return None,
     })
@@ -374,6 +393,19 @@ mod tests {
             },
             Command::RemoveRegiment { regiment: h(2, 2) },
             Command::TuneUnit { unit: 1, stats },
+            Command::TuneUnit {
+                unit: 2,
+                stats: UnitStats {
+                    mass: Mass::Heavy,
+                    reach: true,
+                    shield: true,
+                    ..stats
+                },
+            },
+            Command::SetFormation {
+                regiment: h(7, 3),
+                formation: Formation::ShieldWall,
+            },
         ];
         let pcs: Vec<PlayerCommand> = cmds
             .iter()

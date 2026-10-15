@@ -21,7 +21,9 @@
 use gc_ai::army::{self, Placement};
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
 use gc_replay::Recorder;
-use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, PlayerId, UnitStats, World};
+use gc_sim::{
+    Capacities, Command, Formation, MatchSetup, PlayerCommand, PlayerId, UnitStats, World,
+};
 use glam::Vec2;
 
 use crate::battle::{HOLD_TICKS, battle_starts, holding_the_field};
@@ -97,10 +99,25 @@ fn charge(world: &World, out: &mut Vec<PlayerCommand>) {
     }
 }
 
-/// A minute in, someone in the sandbox makes Ember spearmen hit harder; at
-/// a minute and a half, they take the first regiment off the field.
+/// Half a minute in, each side changes one regiment's formation (Ember to
+/// Tight, Concord to Loose); a minute in, someone in the sandbox makes
+/// Ember spearmen hit harder; at a minute and a half, they take the first
+/// regiment off the field.
 fn tuning(world: &World, out: &mut Vec<PlayerCommand>) {
     match world.tick_count() {
+        600 => {
+            for (player, formation) in [(0, Formation::Tight), (1, Formation::Loose)] {
+                if let Some(r) = world.regiments.iter().find(|r| r.owner == player) {
+                    out.push(PlayerCommand {
+                        player,
+                        command: Command::SetFormation {
+                            regiment: r.handle,
+                            formation,
+                        },
+                    });
+                }
+            }
+        }
         1200 => {
             let mut stats = world.units()[0];
             stats.melee_attack += 15;

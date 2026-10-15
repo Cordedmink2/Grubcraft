@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
 use crate::formation::{self, GroupMember, GroupOrder};
-use crate::{Command, PlayerCommand, PlayerId, RegimentHandle, UnitId, UnitStats, World};
+use crate::{Command, Mass, PlayerCommand, PlayerId, RegimentHandle, UnitId, UnitStats, World};
 
 /// Turn rate of `deg` degrees per second, in angle steps per second.
 const fn degrees_per_second(deg: u32) -> u32 {
@@ -35,6 +35,10 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         reload_ticks: 0,
         accuracy: 0,
         morale: 60,
+        mass: Mass::Medium,
+        reach: false,
+        swing_room: false,
+        shield: false,
     },
     UnitStats {
         speed: Fx::from_int(4),
@@ -53,6 +57,10 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         reload_ticks: 0,
         accuracy: 0,
         morale: 45,
+        mass: Mass::Medium,
+        reach: false,
+        swing_room: false,
+        shield: false,
     },
     UnitStats {
         speed: Fx::from_ratio(13, 4),
@@ -71,6 +79,10 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         reload_ticks: 80,
         accuracy: 30,
         morale: 50,
+        mass: Mass::Medium,
+        reach: false,
+        swing_room: false,
+        shield: false,
     },
     UnitStats {
         speed: Fx::from_ratio(5, 2),
@@ -89,6 +101,10 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         reload_ticks: 0,
         accuracy: 0,
         morale: 70,
+        mass: Mass::Medium,
+        reach: false,
+        swing_room: false,
+        shield: false,
     },
 ];
 
@@ -232,17 +248,7 @@ impl Drill {
                     continue;
                 }
                 let r = world.regiments.get(handle).unwrap();
-                let stats = &world.units()[r.unit as usize];
-                members[count] = GroupMember {
-                    handle,
-                    position: r.position,
-                    facing: r.facing,
-                    files: r.files,
-                    models: r.models,
-                    file_spacing: stats.file_spacing,
-                    rank_spacing: stats.rank_spacing,
-                    speed: stats.speed,
-                };
+                members[count] = GroupMember::of(&r, &world.units()[r.unit as usize]);
                 count += 1;
             }
             let target = self.random_point();

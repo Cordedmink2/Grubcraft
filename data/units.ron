@@ -17,6 +17,14 @@
 // (it wavers below 25 and routs at 0; see docs/05-combat.md). Units that
 // fight to the last say never_routs: true instead.
 //
+// Weapon room (docs/05-combat.md): mass is Light (swarms), Medium (the
+// default) or Heavy (cavalry, monsters); it decides who gives ground when
+// lines crush together. reach: true for spears and pikes (the second rank
+// fights too, at half weight, and they strike at once when lines meet).
+// swing_room: true for big swinging weapons (cramped in Tight order, no
+// defence lost in Loose). shield: true lets a regiment form a shield wall.
+// All of them are off unless written.
+//
 // Numbers are first-pass, tuned so the factions' Field Battle armies are
 // close to even (docs/17-unit-rosters.md, "Field Battle balance").
 [
@@ -30,11 +38,12 @@
         turn_rate: 60.0,
         file_spacing: 0.75,
         rank_spacing: 0.85,
-        melee_attack: 30,
+        melee_attack: 27,
         melee_defence: 45,
-        melee_damage: 3,
+        melee_damage: 2,
         charge_bonus: 20,
         morale: 60,
+        reach: true,
     ),
     (
         name: "Skitterlings",
@@ -51,6 +60,7 @@
         melee_damage: 3,
         charge_bonus: 40,
         morale: 57,
+        mass: Light,
     ),
     (
         name: "Shardlings",
@@ -67,6 +77,7 @@
         melee_damage: 4,
         charge_bonus: 30,
         morale: 60,
+        swing_room: true,
     ),
     (
         name: "Bone Pikes",
@@ -78,11 +89,12 @@
         turn_rate: 45.0,
         file_spacing: 0.7,
         rank_spacing: 0.9,
-        melee_attack: 25,
-        melee_defence: 55,
-        melee_damage: 3,
+        melee_attack: 28,
+        melee_defence: 54,
+        melee_damage: 2,
         charge_bonus: 10,
         never_routs: true,
+        reach: true,
     ),
     (
         name: "Yumi Ashigaru",

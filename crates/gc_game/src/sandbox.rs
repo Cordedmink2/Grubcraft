@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use gc_assets::Pack;
 use gc_data::{GameData, UnitRecord};
 use gc_fixed::Fx;
-use gc_sim::UnitStats;
+use gc_sim::{Mass, UnitStats};
 
 /// The simulation's stats for a unit type from the game data.
 pub fn stats_of(u: &UnitRecord) -> UnitStats {
@@ -27,6 +27,10 @@ pub fn stats_of(u: &UnitRecord) -> UnitStats {
         reload_ticks: u.reload_ticks,
         accuracy: u.accuracy,
         morale: u.morale,
+        mass: Mass::from_u8(u.mass).unwrap_or_default(),
+        reach: u.reach(),
+        swing_room: u.swing_room(),
+        shield: u.shield(),
     }
 }
 
@@ -107,6 +111,29 @@ pub const TUNABLES: &[Tunable] = &[
         nudge: |s, d| s.morale = percent(s.morale, d * 5),
     },
     Tunable {
+        label: "mass",
+        show: |s| s.mass.name().to_string(),
+        nudge: |s, d| {
+            let m = (s.mass as i32 + d).clamp(0, Mass::Heavy as i32);
+            s.mass = Mass::from_u8(m as u8).unwrap_or_default();
+        },
+    },
+    Tunable {
+        label: "spears (reach)",
+        show: |s| yes_no(s.reach),
+        nudge: |s, d| s.reach = d > 0,
+    },
+    Tunable {
+        label: "swinging blades",
+        show: |s| yes_no(s.swing_room),
+        nudge: |s, d| s.swing_room = d > 0,
+    },
+    Tunable {
+        label: "shields",
+        show: |s| yes_no(s.shield),
+        nudge: |s, d| s.shield = d > 0,
+    },
+    Tunable {
         label: "hit points",
         show: |s| format!("{} (new regiments)", s.hp_per_model),
         nudge: |s, d| s.hp_per_model = count(s.hp_per_model, d).max(1),
@@ -121,6 +148,10 @@ pub const TUNABLES: &[Tunable] = &[
         },
     },
 ];
+
+fn yes_no(v: bool) -> String {
+    if v { "yes" } else { "no" }.to_string()
+}
 
 fn fx(v: Fx) -> f32 {
     v.raw() as f32 / 65536.0

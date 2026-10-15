@@ -119,6 +119,7 @@
                 melee_damage: 4,
                 charge_bonus: 30,
                 morale: 60,
+                swing_room: true,
             ),
         ),
         (
@@ -188,6 +189,7 @@
                 melee_damage: 7,
                 charge_bonus: 20,
                 morale: 70,
+                mass: Heavy,
             ),
         ),
         (
@@ -223,6 +225,7 @@
                 melee_damage: 6,
                 charge_bonus: 70,
                 morale: 60,
+                mass: Heavy,
             ),
         ),
         (
@@ -257,6 +260,7 @@
                 charge_bonus: 0,
                 morale: 50,
                 ranged: Some((range: 14.0, damage: 5, reload: 2.5, accuracy: 50)),
+                mass: Light,
             ),
         ),
         (
@@ -338,6 +342,7 @@
                 charge_bonus: 0,
                 morale: 100,
                 ranged: Some((range: 32.0, damage: 40, reload: 8.0, accuracy: 70)),
+                mass: Heavy,
             ),
         ),
     ],

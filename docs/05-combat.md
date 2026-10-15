@@ -32,7 +32,7 @@ Kept deliberately small. Every order is on the same hotkey for every regiment.
 | Hold | `E` | Hold position and facing, only fight what reaches you |
 | Charge | `X` | Cavalry and shock units charge for bonus damage and morale shock |
 | Skirmish / Brace | `Z` (toggle) | Ranged units keep distance from approaching melee; spears brace against charges |
-| Formation | `R` (cycle) | Line / Column / Loose (vs artillery) / Wedge (cavalry) |
+| Formation | `R` (cycle) | Line / Tight / Loose / Shield wall (shields only); Column and Wedge (cavalry) later. See [Weapons and formations](#weapons-and-formations) |
 | Run | double right-click / `C` | Faster move, then **Winded** for 10 s |
 | Retreat | `V` | Disengage toward the nearest friendly structure, ignoring attacks |
 
@@ -51,6 +51,23 @@ Keys follow the fixed 4 × 3 command grid; abilities take the middle row (see [0
 - Regiments take time to turn. Big blocks turn slowly; cavalry and swarms turn fast.
 - **Charges** add a bonus proportional to speed at impact, then fade over a few seconds. Charging braced spears into the front is suicide; charging archers in the rear wins battles.
 - A regiment engaged in melee is **locked**. It can only disengage with Retreat (taking free hits) or by routing.
+
+## Weapons and formations
+
+A regiment's weapons decide which formation suits it, so the Formation order is a real choice per unit type (adapted from Mount & Blade, [research note MB-3](14-decisions-needed.md#battle-feel-from-mount--blade-decided-2026-10-15)). Three flags on each unit carry it: **reach** (spears and pikes), **swing room** (big swinging blades: two-handed swords, axes, mandibles) and **shield**.
+
+| Formation | Spacing | Melee defence | Weapons | Arrows |
+|---|---|---|---|---|
+| **Line** (default) | as the unit's stats | +0 | full | as usual |
+| **Tight** | 80% | +10 | swinging blades deal 80% | denser block, takes more |
+| **Loose** | 150% | −10 (swinging blades +0) | spears and shields deal 85% | sparser block, takes fewer |
+| **Shield wall** (shields only) | 70% | +10 from the front only | swinging blades deal 80% | 30% from the front |
+
+- **Reach:** spears and pikes fight from their first two ranks when the foe is in front (the second rank at half strength), and when a foe comes at their points they strike the moment lines meet instead of waiting for their next blow (then skip that blow, so they strike sooner, not more often). Their support needs a close line, so Loose order costs them.
+- **Swing room:** big swings need space. Cramped in Tight order or a shield wall they lose a fifth of their damage; in Loose order they keep their defence, because the gaps are what they fight in.
+- **Shield wall:** the strongest answer to archers (arrows from the front do 30% damage, and the front holds better in melee), but the regiment marches at half pace, can't charge, and is no better than a Line when hit in the flank or rear. Only regiments with shields can form one.
+- Ranks re-form only out of the fight: a regiment locked in melee keeps its formation, and a routing one drops back to Line and takes no formation orders until it rallies. A group order with a shield wall in it marches at the wall's pace.
+- Each unit also has a **mass** (light, medium or heavy: swarms and flyers light, cavalry and monsters heavy), which decides how hard it shoves in a locked melee once lines that push arrive.
 
 ## Morale
 
@@ -100,7 +117,7 @@ Routing regiments are slower than their pursuers, so a rout is a real loss, but 
 
 ## Ranged combat
 
-- Ranged regiments fire **volleys**. Each volley rolls hits against the target area, so firing into a tight block hits more than firing at skirmishers in loose formation.
+- Ranged regiments fire **volleys**. Each volley rolls hits against the target area, so firing into a tight block hits more than firing at skirmishers in loose formation. A shield wall takes only 30% from volleys that land on its front.
 - Arcing fire (bows, acid, rockets) can shoot over friendly lines but is less accurate at long range. Direct fire (crossbows, beams) needs line of sight.
 - **No ammunition counter.** Ranged units have unlimited ammo; instead they are slow to reposition and terrible in melee.
 - Friendly fire is on for artillery only, so placing rocket carts and Broodmothers is a skill.
@@ -150,8 +167,9 @@ Regiments gain experience from kills. Three ranks, shown as chevrons on the regi
 The simulation models each regiment as a formation (position, facing, width, depth) with per-model hit points and a mask of which slots are alive. Melee is resolved along the contact frontage, file by file; ranged fire is resolved per volley against the target's formation footprint. Individual soldiers on screen are a **presentation layer** that animates those results: they step into gaps, swing, fall, and flee. Soldiers are planned to fight in visible one-on-one pairs, with matched kills for heroes and charges later ([09 · Art and Audio](09-art-and-audio.md#animation)); this is presentation only, so it never changes who wins. This keeps the deterministic simulation tiny (hundreds of regiments, not thousands of soldiers) while the screen shows thousands of soldiers. See [10 · Architecture](10-architecture.md#the-two-tier-simulation).
 
 **Built so far (M1 step 5):**
-- **Fighting:** melee with flank, rear and charge multipliers, locked melee, casualties from the back, and arrow volleys that hit dense blocks harder. The orders are move, move-and-face (right-drag) and attack.
+- **Fighting:** melee with flank, rear and charge multipliers, locked melee, casualties from the back, and arrow volleys that hit dense blocks harder. The orders are move, move-and-face (right-drag), attack and formation.
+- **Weapons and formations (2026-10-15):** reach, swing room, shields and mass work as in [Weapons and formations](#weapons-and-formations). The formation key is `F` for now, because `R` reloads the unit data in the sandbox. Of today's five Field Battle regiments the Yari Ashigaru and Bone Pikes have reach, the Shardlings have swing room and the Skitterlings are light; none carries shields yet, so the Shield wall needs a roster unit with shields (Chitin Guard, Shellbacks, Gravewardens) or the sandbox's stats panel. Computer players don't change formation yet.
 - **Morale:** Steady, Wavering, Routing and Shattered work as described above, driven by casualties, flank and rear hits, being outnumbered nearby, and nearby routs. Winning a fight lifts morale. Routers are slower than their pursuers and rally after 10 s with no enemy within 20 tiles. A second rout within 2 minutes shatters a regiment; with no structures yet, a shattered regiment runs, then stands for good. Concord undead (the Bone Pikes) never rout. A battered regiment never recovers its full morale.
-- **Not yet:** heroes, terror and veterancy as morale sources, the other faction exceptions, and Conquest's gentler rules. The Hold, Charge, Skirmish/Brace, Formation, Run and Retreat orders, terrain beyond high ground and fords (see [Terrain](#terrain)), air, heroes, counters and veterancy also come later.
+- **Not yet:** heroes, terror and veterancy as morale sources, the other faction exceptions, and Conquest's gentler rules. The Hold, Charge, Skirmish/Brace, Run and Retreat orders, the Column and Wedge formations, terrain beyond high ground and fords (see [Terrain](#terrain)), air, heroes, counters and veterancy also come later.
 
 The exact formulas are in [10 · Architecture](10-architecture.md#formations-and-combat).

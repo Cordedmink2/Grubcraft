@@ -56,6 +56,138 @@ impl Default for Capacities {
 /// Index of a regiment type in the match's unit table.
 pub type UnitId = u16;
 
+/// How heavy a regiment's soldiers are when two lines crush together
+/// (docs/05-combat.md): swarms are light, cavalry and monsters heavy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Mass {
+    Light = 0,
+    #[default]
+    Medium = 1,
+    Heavy = 2,
+}
+
+impl Mass {
+    pub const ALL: [Mass; 3] = [Mass::Light, Mass::Medium, Mass::Heavy];
+
+    pub fn from_u8(v: u8) -> Option<Mass> {
+        Mass::ALL.get(v as usize).copied()
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Mass::Light => "light",
+            Mass::Medium => "medium",
+            Mass::Heavy => "heavy",
+        }
+    }
+}
+
+/// How closely a regiment's soldiers stand (docs/05-combat.md, "Weapon
+/// room"). The order changes the block's size, and with it how many arrows
+/// find a mark, and how well each kind of weapon fights.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Formation {
+    /// The unit's own spacing. Nothing changes.
+    #[default]
+    Line = 0,
+    /// Closer ranks: +[`TIGHT_DEFENCE`] melee defence, but a denser target
+    /// for arrows, and swinging weapons are cramped.
+    Tight = 1,
+    /// Spread out: fewer arrows hit, but gaps cost [`LOOSE_DEFENCE`] melee
+    /// defence (not for swinging weapons, which want the room), and spears
+    /// and shields lose their mutual support.
+    Loose = 2,
+    /// Shields locked (shielded regiments only): as Tight from the front,
+    /// where arrows mostly glance off too, but no help on the flanks; it
+    /// marches at half pace and can't charge.
+    ShieldWall = 3,
+}
+
+/// Melee defence a regiment gains in Tight order or a shield wall.
+pub const TIGHT_DEFENCE: i32 = 10;
+/// Melee defence a regiment loses in Loose order (unless its weapons
+/// need room to swing).
+pub const LOOSE_DEFENCE: i32 = 10;
+/// Damage, percent, swinging weapons deal from Tight order or a shield wall.
+pub const CRAMPED_SWING_PERCENT: u64 = 80;
+/// Damage, percent, spears and shields deal in Loose order.
+pub const LOOSE_SUPPORT_PERCENT: u64 = 85;
+/// Damage, percent, arrows do to a shield wall from the front.
+pub const SHIELD_WALL_ARROW_PERCENT: u64 = 30;
+/// Marching pace of a shield wall, percent of the regiment's speed.
+pub const SHIELD_WALL_PACE_PERCENT: i32 = 50;
+/// How much the second rank of a spear or pike regiment adds, percent of
+/// a front-rank soldier's blow.
+pub const SECOND_RANK_PERCENT: u64 = 50;
+
+impl Formation {
+    pub const ALL: [Formation; 4] = [
+        Formation::Line,
+        Formation::Tight,
+        Formation::Loose,
+        Formation::ShieldWall,
+    ];
+
+    pub fn from_u8(v: u8) -> Option<Formation> {
+        Formation::ALL.get(v as usize).copied()
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Formation::Line => "Line",
+            Formation::Tight => "Tight",
+            Formation::Loose => "Loose",
+            Formation::ShieldWall => "Shield wall",
+        }
+    }
+
+    /// `spacing` (a unit's file or rank spacing) in this formation.
+    pub fn space(self, spacing: Fx) -> Fx {
+        let percent = match self {
+            Formation::Line => 100,
+            Formation::Tight => 80,
+            Formation::Loose => 150,
+            Formation::ShieldWall => 70,
+        };
+        Fx::from_raw((spacing.raw() as i64 * percent / 100).max(1) as i32)
+    }
+
+    /// Whether the soldiers stand closer than usual.
+    pub fn close(self) -> bool {
+        matches!(self, Formation::Tight | Formation::ShieldWall)
+    }
+
+    /// Marching pace, percent of the regiment's speed.
+    pub fn pace_percent(self) -> i32 {
+        match self {
+            Formation::ShieldWall => SHIELD_WALL_PACE_PERCENT,
+            _ => 100,
+        }
+    }
+
+    /// Whether a regiment in this formation can charge.
+    pub fn can_charge(self) -> bool {
+        self != Formation::ShieldWall
+    }
+
+    /// Damage, percent, a volley does to a regiment in this formation,
+    /// landing on its `front` or not.
+    pub fn arrow_percent(self, front: bool) -> u64 {
+        match self {
+            Formation::ShieldWall if front => SHIELD_WALL_ARROW_PERCENT,
+            _ => 100,
+        }
+    }
+}
+
+/// Weapon flags as bits ([`UnitStats::weapons`]), as the data, the network
+/// and replays carry them.
+pub const WEAPON_REACH: u8 = 1;
+pub const WEAPON_SWING_ROOM: u8 = 2;
+pub const WEAPON_SHIELD: u8 = 4;
+
 /// What the simulation needs from a regiment type's definition. The game
 /// builds these from the baked data tables (`gc_data`); tests build them by
 /// hand so golden hashes don't move when balance numbers are tuned.
@@ -93,6 +225,15 @@ pub struct UnitStats {
     /// Morale when fresh, 1 to 100 (see [`morale`]). Zero means the regiment
     /// never routs (the Concord's undead).
     pub morale: u8,
+    /// How heavy its soldiers are, for lines that push.
+    pub mass: Mass,
+    /// Spears and pikes: the second rank fights too, at
+    /// [`SECOND_RANK_PERCENT`], and they strike at once when lines meet.
+    pub reach: bool,
+    /// Big swinging weapons: cramped in Tight order, at home in Loose.
+    pub swing_room: bool,
+    /// Shields: may form a shield wall.
+    pub shield: bool,
 }
 
 impl UnitStats {
@@ -135,11 +276,86 @@ impl UnitStats {
         h.u16(self.reload_ticks);
         h.u8(self.accuracy);
         h.u8(self.morale);
+        // Only when set, so unit tables from before weapon room hash as
+        // they did.
+        if self.mass != Mass::Medium || self.weapons() != 0 {
+            h.u8(self.mass as u8);
+            h.u8(self.weapons());
+        }
     }
 
-    /// Size of a block of `models` soldiers in `files` files: (width, depth).
-    pub fn block_size(&self, files: u16, models: u16) -> (Fx, Fx) {
-        formation::block_size(files, models, self.file_spacing, self.rank_spacing)
+    /// The weapon flags as `WEAPON_*` bits.
+    pub fn weapons(&self) -> u8 {
+        let bit = |on: bool, b: u8| if on { b } else { 0 };
+        bit(self.reach, WEAPON_REACH)
+            | bit(self.swing_room, WEAPON_SWING_ROOM)
+            | bit(self.shield, WEAPON_SHIELD)
+    }
+
+    /// The same stats with the weapon flags `bits` (as [`Self::weapons`]
+    /// gives them); `None` if a bit is unknown.
+    pub fn with_weapons(self, bits: u8) -> Option<UnitStats> {
+        (bits & !(WEAPON_REACH | WEAPON_SWING_ROOM | WEAPON_SHIELD) == 0).then_some(UnitStats {
+            reach: bits & WEAPON_REACH != 0,
+            swing_room: bits & WEAPON_SWING_ROOM != 0,
+            shield: bits & WEAPON_SHIELD != 0,
+            ..self
+        })
+    }
+
+    /// File and rank spacing in `formation`.
+    pub fn spacing(&self, formation: Formation) -> (Fx, Fx) {
+        (
+            formation.space(self.file_spacing),
+            formation.space(self.rank_spacing),
+        )
+    }
+
+    /// Size of a block of `models` soldiers in `files` files, standing in
+    /// `formation`: (width, depth).
+    pub fn block_size_in(&self, formation: Formation, files: u16, models: u16) -> (Fx, Fx) {
+        let (fs, rs) = self.spacing(formation);
+        formation::block_size(files, models, fs, rs)
+    }
+
+    /// Whether this regiment may stand in `formation`.
+    pub fn can_form(&self, formation: Formation) -> bool {
+        formation != Formation::ShieldWall || self.shield
+    }
+
+    /// Soldiers who strike at a foe ahead, in percent of a soldier: the
+    /// front rank, and for spears and pikes the second rank at
+    /// [`SECOND_RANK_PERCENT`].
+    pub fn front_fighters_percent(&self, files: u16, models: u16) -> u64 {
+        let front = files.min(models) as u64;
+        let second = if self.reach {
+            front.min(models as u64 - front)
+        } else {
+            0
+        };
+        front * 100 + second * SECOND_RANK_PERCENT
+    }
+
+    /// Percent of its usual melee damage it deals in `formation`.
+    pub fn weapon_room_percent(&self, formation: Formation) -> u64 {
+        if self.swing_room && formation.close() {
+            CRAMPED_SWING_PERCENT
+        } else if (self.reach || self.shield) && formation == Formation::Loose {
+            LOOSE_SUPPORT_PERCENT
+        } else {
+            100
+        }
+    }
+
+    /// Melee defence it gains (or, negative, loses) in `formation` against
+    /// a blow on its `front` or not. A shield wall guards its front only.
+    pub fn formation_defence(&self, formation: Formation, front: bool) -> i32 {
+        match formation {
+            Formation::ShieldWall if !front => 0,
+            f if f.close() => TIGHT_DEFENCE,
+            Formation::Loose if !self.swing_room => -LOOSE_DEFENCE,
+            _ => 0,
+        }
     }
 }
 
@@ -197,6 +413,13 @@ pub enum Command {
     /// on the field take the new speed, turn rate and fighting stats at once;
     /// their soldiers keep the hit points they have.
     TuneUnit { unit: UnitId, stats: UnitStats },
+    /// Change how closely a regiment's soldiers stand (see [`Formation`]).
+    /// Only shielded regiments can form a shield wall; regiments locked in
+    /// melee or running can't re-form.
+    SetFormation {
+        regiment: RegimentHandle,
+        formation: Formation,
+    },
 }
 
 /// A command tagged with who issued it. Turn bundles carry these.
@@ -359,6 +582,16 @@ impl World {
                 self.regiments.retune(unit, slot);
                 true
             }
+            Command::SetFormation {
+                regiment,
+                formation,
+            } => match self.regiments.owner(regiment) {
+                Some(owner) if owner == pc.player => {
+                    self.regiments
+                        .set_formation(regiment, formation, &self.units)
+                }
+                _ => false,
+            },
         }
     }
 

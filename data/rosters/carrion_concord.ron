@@ -138,6 +138,7 @@
                 melee_damage: 1,
                 charge_bonus: 0,
                 morale: 30,
+                mass: Heavy,
             ),
         ),
         (
@@ -172,11 +173,12 @@
                 turn_rate: 45.0,
                 file_spacing: 0.7,
                 rank_spacing: 0.9,
-                melee_attack: 25,
-                melee_defence: 55,
-                melee_damage: 3,
+                melee_attack: 28,
+                melee_defence: 54,
+                melee_damage: 2,
                 charge_bonus: 10,
                 never_routs: true,
+                reach: true,
             ),
         ),
         (
@@ -250,6 +252,7 @@
                 melee_damage: 6,
                 charge_bonus: 15,
                 never_routs: true,
+                shield: true,
             ),
         ),
         (
@@ -282,6 +285,7 @@
                 melee_damage: 7,
                 charge_bonus: 70,
                 morale: 65,
+                mass: Heavy,
             ),
         ),
         (
@@ -323,6 +327,7 @@
                 charge_bonus: 0,
                 never_routs: true,
                 ranged: Some((range: 8.0, damage: 3, reload: 3.0, accuracy: 40)),
+                mass: Light,
             ),
         ),
         (
@@ -365,6 +370,7 @@
                 charge_bonus: 0,
                 never_routs: true,
                 ranged: Some((range: 40.0, damage: 14, reload: 9.0, accuracy: 30)),
+                mass: Heavy,
             ),
         ),
         (
@@ -405,6 +411,8 @@
                 melee_damage: 30,
                 charge_bonus: 40,
                 never_routs: true,
+                mass: Heavy,
+                swing_room: true,
             ),
         ),
         (
@@ -438,6 +446,7 @@
                 melee_damage: 2,
                 charge_bonus: 5,
                 never_routs: true,
+                mass: Light,
             ),
         ),
         (
@@ -470,6 +479,7 @@
                 melee_damage: 3,
                 charge_bonus: 10,
                 morale: 45,
+                reach: true,
             ),
         ),
     ],

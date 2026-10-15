@@ -6,11 +6,14 @@
 //! how many hit points a second it deals in melee and with arrows. The model
 //! then steps the fight forward half a second at a time, the way the sim's
 //! rules play out on average:
-//! - **Melee:** every front-rank soldier strikes once a second and lands with
-//!   chance 50 + attack - defence percent (10 to 90); regiments beyond the
-//!   enemy's frontage hit flanks for 40% more.
+//! - **Melee:** every front-rank soldier strikes once a second (spears and
+//!   pikes add half their second rank; formations cramp or free weapons and
+//!   change defence) and lands with chance 50 + attack - defence percent
+//!   (10 to 90); regiments beyond the enemy's frontage hit flanks for 40%
+//!   more.
 //! - **Arrows:** soldiers x accuracy x damage per volley, from as soon as the
-//!   enemy is in range, and on through the melee.
+//!   enemy is in range, and on through the melee; shield walls turn most of
+//!   them.
 //! - **Breaking:** losses cost 0.9 morale per 1% of strength, plus the
 //!   drains for being outnumbered two or three to one, for being below half
 //!   strength, and for being flanked. A side whose morale is spent breaks;
@@ -70,6 +73,9 @@ pub struct Force {
     pub defence: f32,
     /// Slowest marching speed, tiles per second.
     pub speed: f32,
+    /// Share of the arrows coming at its front that do no harm (shield
+    /// walls), weighted by soldiers.
+    pub arrows_turned: f32,
 }
 
 impl Force {
@@ -98,9 +104,12 @@ impl Force {
                 f.morale += r.morale_points as f32 * n;
                 morale_soldiers += n;
             }
-            f.defence += s.melee_defence as f32 * n;
+            // Taking the enemy head on.
+            f.defence +=
+                (s.melee_defence as i32 + s.formation_defence(r.formation, true)) as f32 * n;
+            f.arrows_turned += (100 - r.formation.arrow_percent(true)) as f32 / 100.0 * n;
             defence_soldiers += n;
-            f.speed = f.speed.min(u.speed);
+            f.speed = f.speed.min(view.pace(r));
             if u.class == Class::Ranged {
                 // Archers fight in melee too, badly, if caught; the model
                 // keeps them shooting from behind the line.
@@ -108,12 +117,18 @@ impl Force {
                     n * s.accuracy as f32 / 100.0 * s.missile_damage as f32 / u.reload_seconds();
                 f.range = f.range.max(u.range);
             } else {
-                let front = r.files.min(r.models) as f32;
+                // The front rank (and a spear block's second); the formation
+                // can cramp the weapons.
+                let front = (s.front_fighters_percent(r.files, r.models)
+                    * s.weapon_room_percent(r.formation)) as f32
+                    / 10_000.0;
                 f.melee_regiments += 1.0;
                 f.front_damage += front * s.melee_damage as f32;
                 f.front_damage_attack += front * s.melee_damage as f32 * s.melee_attack as f32;
-                f.charge +=
-                    front * s.melee_damage as f32 * s.charge_bonus as f32 / 100.0 * CHARGE_SECONDS;
+                if r.formation.can_charge() {
+                    f.charge += front * s.melee_damage as f32 * s.charge_bonus as f32 / 100.0
+                        * CHARGE_SECONDS;
+                }
             }
         }
         if morale_soldiers > 0.0 {
@@ -121,6 +136,7 @@ impl Force {
         }
         if defence_soldiers > 0.0 {
             f.defence /= defence_soldiers;
+            f.arrows_turned /= defence_soldiers;
         }
         if f.speed == f32::MAX {
             f.speed = 0.0;
@@ -261,10 +277,10 @@ pub fn estimate(ours: &Force, theirs: &Force, approach: Approach) -> Estimate {
         let mut to_b = 0.0;
         let mut to_a = 0.0;
         if gap_now <= ours.range {
-            to_b += ours.ranged * va * STEP;
+            to_b += ours.ranged * va * STEP * (1.0 - theirs.arrows_turned);
         }
         if gap_now <= theirs.range {
-            to_a += theirs.ranged * vb * STEP;
+            to_a += theirs.ranged * vb * STEP * (1.0 - ours.arrows_turned);
         }
         if contact {
             to_b += melee_a * va * STEP;

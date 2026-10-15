@@ -12,7 +12,7 @@ The numbers live as data in `data/rosters/*.ron`, one file per faction, and the 
 - **From**: where it is trained, what it evolves from (Brood), or what summons it.
 - **Models × HP**: soldiers at full strength and hit points each. **Files**: soldiers per rank when raised.
 - **Speed**: tiles per second. **Turn**: degrees per second. **Spacing**: tiles between soldiers across / front to back (for one-model units, its footprint).
-- **Atk / Def / Dmg**: melee attack, melee defence, damage per landed blow. A blow lands with chance 50 + attack − defence percent (10 to 90). Each front-rank soldier strikes once a second.
+- **Atk / Def / Dmg**: melee attack, melee defence, damage per landed blow. A blow lands with chance 50 + attack − defence percent (10 to 90). Each front-rank soldier strikes once a second (spears and pikes add half their second rank; see [Weapon flags and mass](#weapon-flags-and-mass)).
 - **Chg**: extra melee damage, percent, when a charge hits home (fades over 3 s).
 - **Mor**: morale when fresh, 1 to 100. "—" means it never routs.
 - **Ranged**: range in tiles, damage per hit, seconds between volleys, percent of shots that hit a block of normal density.
@@ -74,7 +74,7 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Hands | 1 | Worker | 50 / 0 | 1 | 12 | Clan Hall | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 20 | |
-| Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 28 × 8 | 8 | 3.0 | 60 | 0.75 / 0.85 | 30 / 45 / 3 | 20 | 60 | |
+| Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 28 × 8 | 8 | 3.0 | 60 | 0.75 / 0.85 | 27 / 45 / 2 | 20 | 60 | |
 | Yumi Ashigaru | 1 | Ranged | 130 / 0 | 3 | 22 | Dojo | 16 × 8 | 8 | 3.0 | 70 | 0.8 / 1.0 | 15 / 20 / 2 | 5 | 50 | 30, 4, 4.0 s, 30% |
 | Battering Ram | 1 | Siege | 100 / 0 | 4 | 25 | Ember Workshop | 1 × 300 | 1 | 2.0 | 45 | 1.5 / 3.0 | 20 / 10 / 40 | 0 | 50 | |
 | Katana Samurai | 2 | Heavy | 160 / 40 | 5 | 30 | Dojo | 16 × 14 | 8 | 3.0 | 75 | 0.8 / 0.9 | 55 / 45 / 5 | 30 | 80 | |
@@ -354,7 +354,7 @@ Merchant-necromancers: cheap undead that never break, beside living specialists 
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Ledger Clerk | 1 | Worker | 50 / 0 | 1 | 12 | Counting House | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 25 | |
 | Caravan | 1 | Support | 75 / 0 | 2 | 20 | Counting House | 1 × 220 | 1 | 2.25 | 45 | 2.5 / 3.5 | 0 / 10 / 1 | 0 | 30 | |
-| Bone Pikes | 1 | Spear | 90 / 0 | 3 | 18 | Ossuary | 19 × 7 | 10 | 2.75 | 45 | 0.7 / 0.9 | 25 / 55 / 3 | 10 | — | |
+| Bone Pikes | 1 | Spear | 90 / 0 | 3 | 18 | Ossuary | 19 × 7 | 10 | 2.75 | 45 | 0.7 / 0.9 | 28 / 54 / 2 | 10 | — | |
 | Crossbow Auditors | 1 | Ranged | 140 / 0 | 4 | 24 | Guildhall | 12 × 9 | 6 | 3.0 | 70 | 0.8 / 1.0 | 20 / 25 / 2 | 0 | 55 | 26, 7, 6.0 s, 40% |
 | Gravewardens (new) | 2 | Heavy | 170 / 40 | 5 | 30 | Ossuary | 12 × 18 | 6 | 2.5 | 55 | 0.9 / 1.0 | 45 / 50 / 6 | 15 | — | |
 | Debt Collectors | 2 | Cavalry | 190 / 50 | 5 | 34 | Guildhall | 6 × 34 | 3 | 6.0 | 120 | 1.5 / 2.1 | 45 / 40 / 7 | 70 | 65 | |
@@ -447,14 +447,14 @@ Grubfolk Militia are neutral hirelings; until the data has a neutral faction the
 
 ## Balance notes
 
-A few figures to sanity-check the first pass (front rank fighting a defence-40 enemy head on, no charge, steady morale):
+A few figures to sanity-check the first pass (front rank fighting a defence-40 enemy head on, in Line, no charge, steady morale; spears and pikes count half their second rank):
 
 | Unit | Total HP | Melee damage a second | Grub-equivalent cost* | HP per 100 Grub |
 |---|---|---|---|---|
-| Yari Ashigaru | 224 | 9.6 | 120 | 187 |
+| Yari Ashigaru | 224 | 8.9 | 120 | 187 |
 | Skitterlings | 192 | 14.4 | 100 | 192 |
 | Shardlings | 168 | 12.0 | 110 | 153 |
-| Bone Pikes | 133 | 10.5 | 90 | 148 |
+| Bone Pikes | 133 | 11.0 | 90 | 148 |
 | Katana Samurai | 224 | 26.0 | 240 | 93 |
 | Chitin Guard | 192 | 9.6 | 130 | 148 |
 | Gravewardens | 216 | 19.8 | 250 | 86 |
@@ -483,15 +483,31 @@ A Field Battle army is ten regiments from the faction's roster (see [06 · Game 
 | Bone Pikes | 20 × 8, speed 2.5, spacing 0.55, Def 50 | 19 × 7, speed 2.75, spacing 0.7, Def 55 (fewer hit points, harder to hit, looser block, a little quicker) |
 | Yumi Ashigaru | unchanged | |
 
-Two Veteran AIs, one per faction, on the generated map with the terrain rules (high ground and fords, [05 · Combat](05-combat.md)), 192 battles a pair (seeds 2001 to 2192, ends swapped every battle); the first faction's wins:
+Two Veteran AIs, one per faction, on the generated map with the terrain rules (high ground and fords, [05 · Combat](05-combat.md)), 192 battles a pair (seeds 2001 to 2192, ends swapped every battle); the first faction's wins, after the weapon room retune below:
 
 | | Brood | Choir | Carrion Concord |
 |---|---|---|---|
-| **Ember Clans** | 50% | 47% | 61% |
-| **Brood** | | 45% | 53% |
-| **Choir** | | | 53% |
+| **Ember Clans** | 59% | 42% | 53% |
+| **Brood** | | 45% | 54% |
+| **Choir** | | | 56% |
+
+**Weapon room retune (2026-10-15).** Reach gave the spear regiments half their second rank as extra blows, so the Yari Ashigaru went from 30 / 45 / 3 to 27 / 45 / 2 and the Bone Pikes from 25 / 55 / 3 to 28 / 54 / 2. Before the retune the table read 50%, 47%, 61% / 45%, 53% / 53%. On seeds 1 to 96 it now reads 60%, 51%, 52% / 36%, 52% / 54% (the Brood against the Choir was 36% there before the retune too). These knobs are steep too: a Bone Pikes defence of 53 or 55 instead of 54 moved the Concord's matchups by 10 to 20 points.
 
 Seeds 1 to 96 gave every pair between 48% and 57% except the Brood against the Choir (36%). Once the terrain rules arrived the Concord fell behind the Clans (66%), so the Bone Pikes got a little faster (2.6 to 2.75). One Yumi fewer evens the Clans and the Concord further, but then a Veteran in the Clans mirror on one test seed beats the army in front of it and never marches on the survivors who rallied and scattered (an AI gap, not balance), so the Yumi stay at 16. Results move in big steps: one Bone Pike more or less per regiment swings Concord matchups by 20 to 30 points, because it changes which AI expects to win and so which side attacks. Re-run the table after any change to these stats or to combat: `AI_BATTLES=192 AI_FROM=2001 cargo test -p gc_game --release faction_table -- --ignored --nocapture` (`AI_PAIR=Brood` or `AI_PAIR=Brood,Choir` narrows it).
+
+### Weapon flags and mass
+
+Since unit schema 5 (October 2026) each stats block can carry the [weapons and formations](05-combat.md#weapons-and-formations) flags: `reach: true` (spears and pikes: the second rank fights at half strength, and they strike as lines meet), `swing_room: true` (big swinging weapons: cramped in Tight order and a shield wall, no defence lost in Loose), `shield: true` (can form a shield wall), and `mass: Light` or `mass: Heavy` (Medium when left out; light and heavy decide who gives ground when lines push, once that arrives). Anything not written is off.
+
+| Flag | Regiments |
+|---|---|
+| Reach | Yari Ashigaru, Bone Pikes, Grubfolk Militia |
+| Swing room | Katana Samurai, Oni-Bound, Spectral Samurai, Mantid Reapers, Colossus Maw, Shardlings, The Insolvent |
+| Shield | Chitin Guard, Shellbacks, Gravewardens |
+| Heavy | Battering Ram, Mounted Samurai, Yabusame Riders, Ember Rocket Cart, Oni-Bound, Broodmother Bulk, Colossus Maw, Harmonic Walkers, Glass Striders, Monolith, Caravan, Debt Collectors, Mausoleum Engine, The Insolvent |
+| Light | War Kite, Fire Spirit, Gnawer, Skitterlings, Spitters, Burrowers, Drone-Moths, Spawnlings, Skyglass, Lantern Wraiths, Bound Dead |
+
+Spears pay for their second rank: the Yari Ashigaru and Bone Pikes deal 2 damage a blow instead of 3, with attack tuned so the Field Battle armies stay close to even (below). A spear block's punch now depends on its depth: it fades as the second rank thins, and a spear block hit in the flank fights with its plain front.
 
 ---
 
@@ -500,7 +516,7 @@ Seeds 1 to 96 gave every pair between 48% and 57% except the Brood against the C
 What the engine thread would need to add for these rosters to work in the game. Proposals only; `data/units.ron` and the engine crates are unchanged by this work.
 
 1. **Move units into roster files.** Have `gc_bake` read `data/rosters/*.ron` and bake each entry's `stats` block into the unit table (the stats blocks already use exactly the `units.ron` fields), then retire `units.ron`. The roster test already proves every stats block bakes.
-2. **Unit record additions** (a new `UNIT_SCHEMA`): `class` (u8, the classes above), `tier` (u8), `flags` (u16 bitset: flying, anti-air, crystal, undead, burrows, siege-only, friendly fire, direct fire, detector, terror), `supply` (u8), `cost_grub` and `cost_marrow` (u16), `train_ticks` (u16), `vision` (tiles, Fx), and `abilities` (a range into an ability table).
+2. **Unit record additions** (a new `UNIT_SCHEMA`; schema 5 already added `mass` and the `reach`, `swing_room` and `shield` weapon flags): `class` (u8, the classes above), `tier` (u8), `flags` (u16 bitset: flying, anti-air, crystal, undead, burrows, siege-only, friendly fire, direct fire, detector, terror), `supply` (u8), `cost_grub` and `cost_marrow` (u16), `train_ticks` (u16), `vision` (tiles, Fx), and `abilities` (a range into an ability table).
 3. **Counter table**: a 12 × 12 table of percent multipliers keyed by class, baked from data, applied to melee and missile damage beside the facing multiplier.
 4. **Ranged additions**: `min_range` (artillery), `splash_radius` (rockets, sacs), `direct_fire` (line of sight), and a structure-damage multiplier.
 5. **Heroes**: a hero table (base stats as a unit record, per-level hp and damage growth, four ability ids, ultimate flag) and the leadership rule above.

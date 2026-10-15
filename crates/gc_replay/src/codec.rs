@@ -7,7 +7,7 @@
 //! bumping [`crate::FORMAT`].
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::{Command, PlayerCommand, RegimentHandle, UnitStats};
+use gc_sim::{Command, Formation, Mass, PlayerCommand, RegimentHandle, UnitStats};
 
 #[derive(Default)]
 pub struct Writer {
@@ -73,6 +73,8 @@ impl Writer {
         self.var(s.reload_ticks as u64);
         self.u8(s.accuracy);
         self.u8(s.morale);
+        self.u8(s.mass as u8);
+        self.u8(s.weapons());
     }
 
     pub fn command(&mut self, pc: &PlayerCommand) {
@@ -115,6 +117,14 @@ impl Writer {
                 self.u8(4);
                 self.var(unit as u64);
                 self.stats(&stats);
+            }
+            Command::SetFormation {
+                regiment,
+                formation,
+            } => {
+                self.u8(5);
+                self.handle(regiment);
+                self.u8(formation as u8);
             }
         }
     }
@@ -195,7 +205,7 @@ impl<'a> Reader<'a> {
     }
 
     pub fn stats(&mut self) -> Option<UnitStats> {
-        Some(UnitStats {
+        UnitStats {
             speed: self.fx()?,
             turn_rate: self.var_as()?,
             models: self.var_as()?,
@@ -212,7 +222,12 @@ impl<'a> Reader<'a> {
             reload_ticks: self.var_as()?,
             accuracy: self.u8()?,
             morale: self.u8()?,
-        })
+            mass: Mass::from_u8(self.u8()?)?,
+            reach: false,
+            swing_room: false,
+            shield: false,
+        }
+        .with_weapons(self.u8()?)
     }
 
     pub fn command(&mut self) -> Option<PlayerCommand> {
@@ -243,6 +258,10 @@ impl<'a> Reader<'a> {
             4 => Command::TuneUnit {
                 unit: self.var_as()?,
                 stats: self.stats()?,
+            },
+            5 => Command::SetFormation {
+                regiment: self.handle()?,
+                formation: Formation::from_u8(self.u8()?)?,
             },
             _ => return None,
         };

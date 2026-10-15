@@ -6,7 +6,7 @@
 //! troops on the wings. The same code raises the AI's army and the player's,
 //! so neither side starts better placed.
 
-use gc_sim::{Command, PlayerCommand, PlayerId, UnitId, UnitStats};
+use gc_sim::{Command, Formation, PlayerCommand, PlayerId, UnitId, UnitStats};
 use glam::Vec2;
 use serde::Deserialize;
 
@@ -126,7 +126,7 @@ pub fn deploy(
     let right = right_of(forward);
     let size = |u: UnitId| {
         let s = &units[u as usize];
-        let (w, d) = s.block_size(s.files, s.models);
+        let (w, d) = s.block_size_in(Formation::Line, s.files, s.models);
         (fx(w), fx(d))
     };
     let class = |u: UnitId| Class::of(&units[u as usize]);

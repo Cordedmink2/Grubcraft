@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::{Command, RegimentHandle};
+use crate::{Command, RegimentHandle, RegimentView, UnitStats};
 
 /// Most soldiers a regiment can have. The largest regiments in the design are
 /// 24; this leaves room without making per-soldier storage large.
@@ -79,6 +79,24 @@ pub struct GroupMember {
 }
 
 impl GroupMember {
+    /// A regiment as a group order sees it: its block in its formation,
+    /// and the pace that formation allows.
+    pub fn of(r: &RegimentView, stats: &UnitStats) -> GroupMember {
+        let (file_spacing, rank_spacing) = stats.spacing(r.formation);
+        GroupMember {
+            handle: r.handle,
+            position: r.position,
+            facing: r.facing,
+            files: r.files,
+            models: r.models,
+            file_spacing,
+            rank_spacing,
+            speed: Fx::from_raw(
+                (stats.speed.raw() as i64 * r.formation.pace_percent() as i64 / 100) as i32,
+            ),
+        }
+    }
+
     fn width(&self, files: u16) -> Fx {
         block_size(files, self.models, self.file_spacing, Fx::ONE).0
     }

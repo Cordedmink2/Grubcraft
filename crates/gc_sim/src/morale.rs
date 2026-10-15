@@ -24,7 +24,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 
 use crate::combat::{Combat, Placement, Whose};
 use crate::regiments::Regiments;
-use crate::{RegimentHandle, Stances, TICKS_PER_SECOND, UnitStats};
+use crate::{Formation, RegimentHandle, Stances, TICKS_PER_SECOND, UnitStats};
 
 /// Morale is kept in tenths of a point.
 pub const SCALE: i16 = 10;
@@ -225,6 +225,8 @@ fn rout(
     regs.attack_target[i] = None;
     regs.target_facing[i] = None;
     regs.charge[i] = 0;
+    // Running men keep no ranks.
+    regs.formation[i] = Formation::Line;
     regs.pace[i] = Fx::from_raw(regs.speed[i].raw() * ROUT_PACE_PERCENT / 100);
 
     // Friends nearby are shaken; the enemies who broke them take heart. The

@@ -9,7 +9,8 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::{
-    MoraleState, PlayerId, RegimentHandle, Stances, TICKS_PER_SECOND, UnitId, UnitStats, World,
+    Formation, MoraleState, PlayerId, RegimentHandle, Stances, TICKS_PER_SECOND, UnitId, UnitStats,
+    World,
 };
 use glam::Vec2;
 
@@ -98,6 +99,7 @@ pub struct Seen {
     pub width: f32,
     pub depth: f32,
     pub files: u16,
+    pub formation: Formation,
     /// Soldiers standing, and at full strength.
     pub models: u16,
     pub full: u16,
@@ -196,7 +198,7 @@ impl Perception {
         self.by_index.resize(world.regiments.capacity(), NONE);
         for r in world.regiments.iter() {
             let stats = &self.units[r.unit as usize].stats;
-            let (w, d) = stats.block_size(r.files, r.models);
+            let (w, d) = stats.block_size_in(r.formation, r.files, r.models);
             self.by_index[r.handle.index as usize] = self.regiments.len() as u32;
             self.regiments.push(Seen {
                 handle: r.handle,
@@ -207,6 +209,7 @@ impl Perception {
                 width: fx(w),
                 depth: fx(d),
                 files: r.files,
+                formation: r.formation,
                 models: r.models,
                 full: stats.models,
                 moving: r.moving,
@@ -226,6 +229,11 @@ impl Perception {
 
     pub fn unit(&self, r: &Seen) -> &UnitInfo {
         &self.units[r.unit as usize]
+    }
+
+    /// How fast `r` marches in its formation, tiles per second.
+    pub fn pace(&self, r: &Seen) -> f32 {
+        self.unit(r).speed * r.formation.pace_percent() as f32 / 100.0
     }
 
     pub fn hostile(&self, a: PlayerId, b: PlayerId) -> bool {

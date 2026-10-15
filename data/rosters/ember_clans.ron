@@ -134,11 +134,12 @@
                 turn_rate: 60.0,
                 file_spacing: 0.75,
                 rank_spacing: 0.85,
-                melee_attack: 30,
+                melee_attack: 27,
                 melee_defence: 45,
-                melee_damage: 3,
+                melee_damage: 2,
                 charge_bonus: 20,
                 morale: 60,
+                reach: true,
             ),
         ),
         (
@@ -219,6 +220,7 @@
                 melee_damage: 40,
                 charge_bonus: 0,
                 morale: 50,
+                mass: Heavy,
             ),
         ),
         (
@@ -259,6 +261,7 @@
                 melee_damage: 5,
                 charge_bonus: 30,
                 morale: 80,
+                swing_room: true,
             ),
         ),
         (
@@ -297,6 +300,7 @@
                 melee_damage: 6,
                 charge_bonus: 80,
                 morale: 70,
+                mass: Heavy,
             ),
         ),
         (
@@ -330,6 +334,7 @@
                 charge_bonus: 20,
                 morale: 60,
                 ranged: Some((range: 24.0, damage: 4, reload: 3.5, accuracy: 30)),
+                mass: Heavy,
             ),
         ),
         (
@@ -371,6 +376,7 @@
                 charge_bonus: 0,
                 morale: 45,
                 ranged: Some((range: 60.0, damage: 12, reload: 10.0, accuracy: 20)),
+                mass: Heavy,
             ),
         ),
         (
@@ -413,6 +419,7 @@
                 charge_bonus: 0,
                 morale: 50,
                 ranged: Some((range: 6.0, damage: 5, reload: 6.0, accuracy: 50)),
+                mass: Light,
             ),
         ),
         (
@@ -453,6 +460,8 @@
                 melee_damage: 32,
                 charge_bonus: 40,
                 morale: 90,
+                mass: Heavy,
+                swing_room: true,
             ),
         ),
         (
@@ -486,6 +495,7 @@
                 melee_damage: 5,
                 charge_bonus: 30,
                 never_routs: true,
+                swing_room: true,
             ),
         ),
         (
@@ -519,6 +529,7 @@
                 charge_bonus: 0,
                 never_routs: true,
                 ranged: Some((range: 18.0, damage: 10, reload: 2.5, accuracy: 60)),
+                mass: Light,
             ),
         ),
     ],

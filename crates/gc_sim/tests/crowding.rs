@@ -83,7 +83,7 @@ fn overlap(w: &World, a: RegimentHandle, b: RegimentHandle) -> Fx {
     let stats = &w.units()[SPEARS as usize];
     let block = |h: RegimentHandle| {
         let r = w.regiments.get(h).unwrap();
-        let (width, depth) = stats.block_size(r.files, r.models);
+        let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
         let forward = r.facing.to_vec();
         let right = FxVec2::new(-forward.y, forward.x);
         (r.position, forward, right, width / 2, depth / 2)

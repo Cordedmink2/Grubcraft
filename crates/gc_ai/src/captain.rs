@@ -956,7 +956,7 @@ impl Captain {
             .chain(&ranged)
             .chain(reserve.iter())
             .filter_map(|&k| view.get(self.members[k].handle))
-            .map(|r| view.unit(r).speed)
+            .map(|r| view.pace(r))
             .fold(f32::MAX, f32::min);
         self.pace = if slowest == f32::MAX { 0.0 } else { slowest };
     }
@@ -1767,7 +1767,7 @@ impl Captain {
             let theirs = Force::of(view, [threat]);
             let duel = estimator::estimate(&mine, &theirs, Approach::CONTACT);
             // Running from something as fast only gets it charged in the back.
-            let outruns = view.unit(r).speed > view.unit(threat).speed * 1.1;
+            let outruns = view.pace(r) > view.pace(threat) * 1.1;
             if duel.margin > 0.2 || !outruns || ctx.slip() {
                 m.target = Some(threat.handle);
                 wants.push(attack(m.handle, threat.handle, 4));

@@ -60,7 +60,10 @@ fn units() -> Vec<UnitStats> {
 
 fn width(unit: UnitId) -> f32 {
     let s = &units()[unit as usize];
-    s.block_size(s.files, s.models).0.raw() as f32 / 65536.0
+    s.block_size_in(gc_sim::Formation::Line, s.files, s.models)
+        .0
+        .raw() as f32
+        / 65536.0
 }
 
 /// One regiment at (`x`, `y`) facing `facing`.

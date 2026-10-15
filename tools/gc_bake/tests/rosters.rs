@@ -194,6 +194,32 @@ struct Stats {
     never_routs: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ranged: Option<Ranged>,
+    #[serde(default, skip_serializing_if = "Mass::is_medium")]
+    mass: Mass,
+    #[serde(default, skip_serializing_if = "is_false")]
+    reach: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    swing_room: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    shield: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
+}
+
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum Mass {
+    Light,
+    #[default]
+    Medium,
+    Heavy,
+}
+
+impl Mass {
+    fn is_medium(&self) -> bool {
+        *self == Mass::Medium
+    }
 }
 
 #[derive(Deserialize, Serialize)]

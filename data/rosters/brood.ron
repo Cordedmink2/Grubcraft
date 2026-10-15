@@ -60,6 +60,7 @@
                 melee_damage: 2,
                 charge_bonus: 0,
                 morale: 15,
+                mass: Light,
             ),
         ),
         (
@@ -98,6 +99,7 @@
                 melee_damage: 3,
                 charge_bonus: 40,
                 morale: 57,
+                mass: Light,
             ),
         ),
         (
@@ -136,6 +138,7 @@
                 melee_damage: 4,
                 charge_bonus: 15,
                 morale: 60,
+                shield: true,
             ),
         ),
         (
@@ -209,6 +212,7 @@
                 charge_bonus: 5,
                 morale: 45,
                 ranged: Some((range: 22.0, damage: 3, reload: 3.0, accuracy: 35)),
+                mass: Light,
             ),
         ),
         (
@@ -248,6 +252,7 @@
                 melee_damage: 3,
                 charge_bonus: 50,
                 morale: 50,
+                mass: Light,
             ),
         ),
         (
@@ -280,6 +285,7 @@
                 melee_damage: 6,
                 charge_bonus: 25,
                 morale: 65,
+                swing_room: true,
             ),
         ),
         (
@@ -320,6 +326,7 @@
                 charge_bonus: 0,
                 morale: 75,
                 ranged: Some((range: 18.0, damage: 3, reload: 3.0, accuracy: 40)),
+                shield: true,
             ),
         ),
         (
@@ -361,6 +368,7 @@
                 charge_bonus: 0,
                 morale: 40,
                 ranged: Some((range: 5.0, damage: 4, reload: 8.0, accuracy: 50)),
+                mass: Light,
             ),
         ),
         (
@@ -395,6 +403,7 @@
                 charge_bonus: 0,
                 morale: 55,
                 ranged: Some((range: 45.0, damage: 10, reload: 12.0, accuracy: 30)),
+                mass: Heavy,
             ),
         ),
         (
@@ -436,6 +445,8 @@
                 melee_damage: 28,
                 charge_bonus: 50,
                 morale: 95,
+                mass: Heavy,
+                swing_room: true,
             ),
         ),
         (
@@ -468,6 +479,7 @@
                 melee_damage: 2,
                 charge_bonus: 30,
                 never_routs: true,
+                mass: Light,
             ),
         ),
     ],

@@ -58,7 +58,10 @@ fn row(army: &[UnitId], centre: Vec2, forward: Vec2) -> Vec<Placement> {
     let right = Vec2::new(-forward.y, forward.x);
     let width = |u: UnitId| {
         let s = &DRILL_UNITS[u as usize];
-        s.block_size(s.files, s.models).0.raw() as f32 / 65536.0
+        s.block_size_in(gc_sim::Formation::Line, s.files, s.models)
+            .0
+            .raw() as f32
+            / 65536.0
     };
     let total: f32 = army.iter().map(|&u| width(u) + 2.0).sum::<f32>() - 2.0;
     let mut x = -total * 0.5;

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use gc_assets::{Kind, PackWriter, table_bytes};
 use gc_data::{
     ANGLE_STEPS_PER_TURN, Faction, MANIFEST_PATH, NAME_BYTES, UNIT_SCHEMA, UNITS_PATH, UnitRecord,
+    WEAPON_REACH, WEAPON_SHIELD, WEAPON_SWING_ROOM,
 };
 use gc_fixed::Fx;
 use serde::Deserialize;
@@ -72,6 +73,26 @@ struct UnitDef {
     /// percent of arrows that hit. Leave out for regiments that don't shoot.
     #[serde(default)]
     ranged: Option<RangedDef>,
+    /// Light (swarms), Medium (the default) or Heavy (cavalry, monsters).
+    #[serde(default)]
+    mass: MassDef,
+    /// Spears and pikes: fight from two ranks, strike first when lines meet.
+    #[serde(default)]
+    reach: bool,
+    /// Big swinging weapons: cramped in Tight order.
+    #[serde(default)]
+    swing_room: bool,
+    /// Shields: may form a shield wall.
+    #[serde(default)]
+    shield: bool,
+}
+
+#[derive(Deserialize, Clone, Copy, Default)]
+enum MassDef {
+    Light,
+    #[default]
+    Medium,
+    Heavy,
 }
 
 #[derive(Deserialize)]
@@ -179,7 +200,7 @@ fn bake_units(file: &Path) -> Result<Vec<UnitRecord>, BakeError> {
             hp_per_model: def.hp_per_model,
             files: def.files,
             faction: Faction::from(def.faction) as u8,
-            _pad: 0,
+            mass: def.mass as u8,
             range: match &def.ranged {
                 Some(r) => {
                     to_fx(r.range).map_err(|why| invalid(&def.name, format!("range {why}")))?
@@ -208,7 +229,9 @@ fn bake_units(file: &Path) -> Result<Vec<UnitRecord>, BakeError> {
                     ));
                 }
             },
-            _pad2: 0,
+            weapons: (def.reach as u8 * WEAPON_REACH)
+                | (def.swing_room as u8 * WEAPON_SWING_ROOM)
+                | (def.shield as u8 * WEAPON_SHIELD),
         };
         gc_data::validate_unit(&record).map_err(|why| invalid(&def.name, why.into()))?;
         records.push(record);
@@ -324,7 +347,7 @@ mod tests {
         let hex: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,
-            "5afa499c0c6ccf31a6c711b53f899aaeb37435791961225d9c34941405d3ec4a"
+            "34c1b78e7173f5d5ad4db46c93a613b84f34e7ce25033abbb987714edc691d54"
         );
     }
 
@@ -355,6 +378,32 @@ mod tests {
         let u = GameData::from_pack(&pack).unwrap().units[0];
         assert_eq!(u.range(), Fx::from_int(30));
         assert_eq!((u.missile_damage, u.reload_ticks, u.accuracy), (4, 80, 30));
+    }
+
+    #[test]
+    fn bakes_mass_and_weapons() {
+        let units = r#"[
+            (name: "Pikes", faction: EmberClans, models: 4, hp_per_model: 1, files: 4, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 70, reach: true),
+            (name: "Wall", faction: Brood, models: 4, hp_per_model: 1, files: 4, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 70, mass: Heavy, swing_room: true, shield: true),
+            (name: "Swarm", faction: Brood, models: 4, hp_per_model: 1, files: 4, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 70, mass: Light),
+        ]"#;
+        let baked = bake(&temp_data(units)).unwrap();
+        let store = aligned(&baked.pack);
+        let bytes = &bytemuck::cast_slice::<u128, u8>(&store)[..baked.pack.len()];
+        let pack = Pack::parse(bytes).unwrap();
+        let u = GameData::from_pack(&pack).unwrap().units;
+        assert_eq!(
+            (u[0].mass, u[0].reach(), u[0].swing_room(), u[0].shield()),
+            (1, true, false, false)
+        );
+        assert_eq!(
+            (u[1].mass, u[1].reach(), u[1].swing_room(), u[1].shield()),
+            (2, false, true, true)
+        );
+        assert_eq!((u[2].mass, u[2].weapons), (0, 0));
+
+        let bad = r#"[(name: "X", faction: Brood, models: 4, hp_per_model: 1, files: 4, speed: 1.0, turn_rate: 90.0, file_spacing: 1.0, rank_spacing: 1.0, melee_attack: 1, melee_defence: 1, melee_damage: 1, charge_bonus: 0, morale: 70, mass: Huge)]"#;
+        assert!(matches!(bake(&temp_data(bad)), Err(BakeError::Parse(..))));
     }
 
     #[test]

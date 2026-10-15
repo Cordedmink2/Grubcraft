@@ -18,7 +18,7 @@ pub const UNITS_PATH: &str = "data/units";
 /// Pack path of the data manifest (the data hash).
 pub const MANIFEST_PATH: &str = "data/manifest";
 /// Bump whenever [`UnitRecord`]'s layout or meaning changes.
-pub const UNIT_SCHEMA: u32 = 4;
+pub const UNIT_SCHEMA: u32 = 5;
 /// Longest unit name, in UTF-8 bytes.
 pub const NAME_BYTES: usize = 32;
 /// Most soldiers in one regiment. Must equal `gc_sim::formation::MAX_MODELS`
@@ -26,6 +26,13 @@ pub const NAME_BYTES: usize = 32;
 pub const MAX_MODELS: u16 = 32;
 /// Angle steps in a full turn (`gc_fixed::Angle`).
 pub const ANGLE_STEPS_PER_TURN: u32 = 65_536;
+/// Bits of [`UnitRecord::weapons`]: spears and pikes that fight from two
+/// ranks, big swinging weapons that need room, and shields.
+pub const WEAPON_REACH: u8 = 1;
+pub const WEAPON_SWING_ROOM: u8 = 2;
+pub const WEAPON_SHIELD: u8 = 4;
+/// Heaviest [`UnitRecord::mass`]: 0 light, 1 medium, 2 heavy.
+pub const MAX_MASS: u8 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -81,7 +88,9 @@ pub struct UnitRecord {
     pub files: u16,
     /// A [`Faction`] as `u8`.
     pub faction: u8,
-    pub _pad: u8,
+    /// How heavy the soldiers are: 0 light (swarms), 1 medium, 2 heavy
+    /// (cavalry, monsters).
+    pub mass: u8,
     /// Shooting range in tiles (`Fx` raw); zero for regiments that don't shoot.
     pub range: i32,
     /// Hit points a landed melee blow takes.
@@ -99,7 +108,8 @@ pub struct UnitRecord {
     pub accuracy: u8,
     /// Morale when fresh, 1 to 100; 0 means the regiment never routs.
     pub morale: u8,
-    pub _pad2: u8,
+    /// [`WEAPON_REACH`], [`WEAPON_SWING_ROOM`] and [`WEAPON_SHIELD`] bits.
+    pub weapons: u8,
 }
 
 impl UnitRecord {
@@ -127,6 +137,18 @@ impl UnitRecord {
     pub fn faction(&self) -> Faction {
         // Validated when the table is loaded.
         Faction::from_u8(self.faction).unwrap_or(Faction::EmberClans)
+    }
+
+    pub fn reach(&self) -> bool {
+        self.weapons & WEAPON_REACH != 0
+    }
+
+    pub fn swing_room(&self) -> bool {
+        self.weapons & WEAPON_SWING_ROOM != 0
+    }
+
+    pub fn shield(&self) -> bool {
+        self.weapons & WEAPON_SHIELD != 0
     }
 }
 
@@ -258,11 +280,11 @@ pub fn validate_unit(u: &UnitRecord) -> Result<(), &'static str> {
     if u.morale > 100 {
         return Err("morale is 0 (never routs) to 100");
     }
-    if u._pad2 != 0 {
-        return Err("padding must be zero");
+    if u.mass > MAX_MASS {
+        return Err("mass is light, medium or heavy");
     }
-    if u._pad != 0 {
-        return Err("padding must be zero");
+    if u.weapons & !(WEAPON_REACH | WEAPON_SWING_ROOM | WEAPON_SHIELD) != 0 {
+        return Err("unknown weapon flags");
     }
     Ok(())
 }
