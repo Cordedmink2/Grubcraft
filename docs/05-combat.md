@@ -160,9 +160,9 @@ Counters are multipliers between 0.7× and 1.5×, never hard immunities, so a we
 
 ## Structures in combat
 
-- Structures have armour types: **Fortified** (main buildings, towers, walls), **Structure** (production) and **Living** (Brood). Siege units deal bonus damage to Fortified.
+- Structures have armour types: **Fortified** (main buildings, towers, walls), **Structure** (production) and **Living** (Brood). Blows against structures always land. Regiments deal half damage to Fortified, and siege units deal ×3.0 to it (×2.0 to the others). The full table and every building's hit points are in [21 · Buildings](21-buildings.md#damage-against-buildings).
 - Infantry can damage structures, slowly. Clan archers with Fire Arrows deal burning damage; Concord Debt Collectors steal Grub on hit.
-- Walls and gates (Clans and Concord) create chokepoints; the Brood spreads veins instead; the Choir relies on teleporting armies to defend.
+- Walls and gates (Clans) create chokepoints; the Concord holds roads with Tollgates; the Brood spreads veins instead; the Choir relies on teleporting armies to defend.
 
 ## Veterancy
 

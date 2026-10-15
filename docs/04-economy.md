@@ -24,7 +24,7 @@ That is the entire economic HUD. Everything else is visible in the world (seep p
 
 ### Supply
 - Cap of **150**, raised by housing (Farmstead +10, Pustule +8, Resonator +4, Tenement +10; each main building tier +10).
-- Supply costs are listed in [03 · Factions](03-factions.md#faction-design-rules).
+- Supply costs are listed in [03 · Factions](03-factions.md#faction-design-rules). Each building's supply, with its cost, build time and hit points, is in [21 · Buildings](21-buildings.md).
 
 ### Faction meter
 One per faction (Honor, Larvae, Resonance, Tithe). See each faction.

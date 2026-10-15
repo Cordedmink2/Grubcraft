@@ -54,7 +54,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Workers, Grub seeps and Marrow veins, structures and construction, production queues, supply and upkeep, tech tiers.
 - Soldier fighting with the chosen faction art kits: shield-raise, parry and stagger clips made for the new models (stage 2's rules are built in M2, see above).
 - Ember Clans economy and Honor; Brood veins, larvae, metamorphosis, Reclaimers.
-- Unit, hero and ability data for all four factions is already drafted in `data/rosters/` ([17 · Unit Rosters](17-unit-rosters.md)); M3 bakes it into the game.
+- Unit, hero, ability and building data for all four factions is already drafted in `data/rosters/` ([17 · Unit Rosters](17-unit-rosters.md), [21 · Buildings](21-buildings.md)); M3 bakes it into the game.
 - Heroes: levelling, abilities from the effect-primitive system, items, altar revive.
 - Fog of war (built on the ambush vision rules, [20](20-ambushes.md#from-hidden-regiments-to-fog-of-war)), minimap, army tray, command grid, edge notifications. *Built early (2026-10-15, Conquest UI thread): the minimap and army tray, on today's battles; the rest follows.*
 - Annihilation and Titan's Heart victories.

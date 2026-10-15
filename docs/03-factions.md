@@ -86,6 +86,8 @@ Clan regiments get +15% defence while in a tight formation and not moving, and t
 | Forge | Weapon and armour upgrades |
 | Watchtower, Palisade, Gate | Defence |
 
+Cost, hit points, build time and size for each: [21 · Buildings](21-buildings.md#ember-clans).
+
 ### Regiments
 | Unit | Tier | Models | Cost (Grub/Marrow) | Role and signature |
 |---|---|---|---|---|
@@ -150,6 +152,8 @@ Chitin Guard ─┬─▶ Mantid Reapers (anti-cavalry, high damage)
 | Spine Mound | Defensive tower |
 | Queen's Chamber | Heroes |
 
+Cost, hit points, build time and size for each: [21 · Buildings](21-buildings.md#brood).
+
 ### Regiments
 | Unit | Tier | Models | Cost (Grub/Marrow) | Role and signature |
 |---|---|---|---|---|
@@ -210,6 +214,8 @@ Choir beam weapons pass *through* allied crystal units and split. A Prism Lancer
 | Skyglass Loom | Air |
 | Bell Tower | Defence, pulse that silences abilities |
 | Sanctum of Echoes | Heroes |
+
+Cost, hit points, build time and size for each: [21 · Buildings](21-buildings.md#choir).
 
 ### Regiments
 | Unit | Tier | Models | Cost (Grub/Marrow) | Role and signature |
@@ -272,6 +278,8 @@ Concord undead regiments ignore morale entirely. Instead they **crumble**: they 
 | Lantern Spire | Air |
 | Tollgate | Defensive tower; damage it deals earns Grub |
 | Vault of Names | Heroes |
+
+Cost, hit points, build time and size for each: [21 · Buildings](21-buildings.md#carrion-concord).
 
 ### Regiments
 | Unit | Tier | Models | Cost (Grub/Marrow) | Role and signature |

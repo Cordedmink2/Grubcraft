@@ -25,7 +25,7 @@ Every Conquest map is built from the same parts, so players learn to read any ne
 | Skirmish | 192 × 192 | 2 to 3 | 30 to 45 min |
 | Warfield | 256 × 256 | 4 | 40 to 60 min |
 
-One tile is about the width of a two-storey building (structures occupy 2×2 to 5×5 tiles; an infantry regiment in line is about 6 tiles wide).
+One tile is about the width of a two-storey building (structures occupy 2×2 to 5×5 tiles and walls are one tile thick, see [21 · Buildings](21-buildings.md); an infantry regiment in line is about 6 tiles wide).
 
 ### Design rules for maps
 - **Symmetry or fairness by construction.** 2-player maps are rotationally symmetric; 4-player maps are 4-way symmetric or validated by the map tool (equal travel times from each start to resources and to the Heart).
