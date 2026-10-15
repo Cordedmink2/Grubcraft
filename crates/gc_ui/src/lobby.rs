@@ -1,8 +1,8 @@
 //! The lobby model and the [`Network`] trait the screens talk to.
 //!
-//! This is the contract between the menus and the netcode. `gc_net` (M2)
-//! implements [`Network`] over UDP; until then [`LocalNetwork`] hosts a
-//! practice lobby on this machine so the screens are real and testable.
+//! This is the contract between the menus and the netcode. `gc_net::Lan`
+//! implements [`Network`] over UDP; [`LocalNetwork`] hosts a practice lobby
+//! on this machine, which keeps the screens testable without a network.
 //! Nothing here is hashed or sent by the simulation: it is setup data only.
 
 use std::fmt;
@@ -186,6 +186,26 @@ impl LobbyState {
             .collect()
     }
 
+    /// The setup a match started from this lobby runs with.
+    pub fn match_start(&self, seed: Option<u64>) -> MatchStart {
+        let mut players = Vec::new();
+        let mut local_player = 0;
+        for (i, s) in self.slots.iter().enumerate() {
+            if s.occupied() {
+                if i == self.local_slot {
+                    local_player = players.len();
+                }
+                players.push(s.clone());
+            }
+        }
+        MatchStart {
+            settings: self.settings.clone(),
+            players,
+            local_player,
+            seed,
+        }
+    }
+
     /// Why the match can't start yet, or `None` if it can.
     pub fn start_blocker(&self) -> Option<String> {
         if !self.settings.mode.playable() {
@@ -204,7 +224,8 @@ impl LobbyState {
             .slots
             .iter()
             .enumerate()
-            .filter(|(i, s)| s.kind == SlotKind::Human && *i != self.local_slot && !s.ready)
+            // The host (slot 0) is ready by pressing Start.
+            .filter(|(i, s)| s.kind == SlotKind::Human && *i != 0 && !s.ready)
             .count();
         (waiting > 0).then(|| format!("Waiting for {waiting} player(s) to get ready"))
     }
@@ -231,7 +252,7 @@ pub struct DiscoveredGame {
     pub address: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SlotEdit {
     Faction(Faction),
     Color(u8),
@@ -251,6 +272,10 @@ pub struct MatchStart {
     pub players: Vec<Slot>,
     /// Position of this machine's player in `players`.
     pub local_player: usize,
+    /// Set when the match is played over the network: the host's seed,
+    /// which every machine must use. `None` for a match on this machine
+    /// alone (a practice lobby, or one where every other player is an AI).
+    pub seed: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -304,6 +329,67 @@ pub trait Network {
     fn leave(&mut self);
     /// Events since the last call.
     fn poll(&mut self) -> Vec<NetEvent>;
+}
+
+/// Change `slot` on behalf of the player in slot `editor` (`host` if that
+/// is the host), as [`Network::edit_slot`] allows: your own slot, or as the
+/// host any AI slot and which slots are open or AI. Edits not allowed are
+/// ignored. The netcode runs clients' edits through this on the host.
+pub fn apply_edit(lobby: &mut LobbyState, editor: usize, host: bool, slot: usize, edit: SlotEdit) {
+    if slot >= MAX_PLAYERS {
+        return;
+    }
+    let local = slot == editor;
+    let is_ai = lobby.slots[slot].kind == SlotKind::Ai;
+    let allowed = match &edit {
+        SlotEdit::Kind(_) => host && !local,
+        SlotEdit::AiLevel(_) => host && is_ai,
+        _ => local || (host && is_ai),
+    };
+    if !allowed {
+        return;
+    }
+    match edit {
+        SlotEdit::Faction(f) => lobby.slots[slot].faction = f,
+        SlotEdit::Color(c) => {
+            let c = c % 4;
+            // Colours are unique: swapping with whoever has it.
+            if let Some(other) = (0..MAX_PLAYERS)
+                .find(|&i| i != slot && lobby.slots[i].occupied() && lobby.slots[i].color == c)
+            {
+                lobby.slots[other].color = lobby.slots[slot].color;
+            }
+            lobby.slots[slot].color = c;
+        }
+        SlotEdit::Team(t) => lobby.slots[slot].team = t % MAX_PLAYERS as u8,
+        SlotEdit::Ready(r) => lobby.slots[slot].ready = r,
+        SlotEdit::AiLevel(level) => {
+            lobby.slots[slot].ai_level = level % AI_LEVELS.len() as u8;
+        }
+        SlotEdit::Kind(kind) => match kind {
+            SlotKind::Ai => {
+                let version = lobby.host_version.clone();
+                let s = &mut lobby.slots[slot];
+                s.kind = SlotKind::Ai;
+                s.name = format!("AI {}", slot + 1);
+                s.ready = true;
+                s.version = version;
+            }
+            SlotKind::Open => lobby.slots[slot] = Slot::open(slot),
+            SlotKind::Human => {}
+        },
+    }
+    // An AI joining must not share a colour with someone already there.
+    let taken: Vec<u8> = (0..MAX_PLAYERS)
+        .filter(|&i| i != slot && lobby.slots[i].occupied())
+        .map(|i| lobby.slots[i].color)
+        .collect();
+    if lobby.slots[slot].occupied()
+        && taken.contains(&lobby.slots[slot].color)
+        && let Some(free) = (0..4u8).find(|c| !taken.contains(c))
+    {
+        lobby.slots[slot].color = free;
+    }
 }
 
 /// A practice lobby on this machine: hosting works, AI players fill slots,
@@ -360,62 +446,9 @@ impl Network for LocalNetwork {
     }
 
     fn edit_slot(&mut self, slot: usize, edit: SlotEdit) {
-        let Some(lobby) = self.lobby.as_mut() else {
-            return;
-        };
-        if slot >= MAX_PLAYERS {
-            return;
-        }
-        let local = slot == lobby.local_slot;
-        let is_ai = lobby.slots[slot].kind == SlotKind::Ai;
-        let allowed = match &edit {
-            SlotEdit::Kind(_) => lobby.is_host && !local,
-            SlotEdit::AiLevel(_) => lobby.is_host && is_ai,
-            _ => local || (lobby.is_host && is_ai),
-        };
-        if !allowed {
-            return;
-        }
-        match edit {
-            SlotEdit::Faction(f) => lobby.slots[slot].faction = f,
-            SlotEdit::Color(c) => {
-                let c = c % 4;
-                // Colours are unique: swapping with whoever has it.
-                if let Some(other) = (0..MAX_PLAYERS)
-                    .find(|&i| i != slot && lobby.slots[i].occupied() && lobby.slots[i].color == c)
-                {
-                    lobby.slots[other].color = lobby.slots[slot].color;
-                }
-                lobby.slots[slot].color = c;
-            }
-            SlotEdit::Team(t) => lobby.slots[slot].team = t % MAX_PLAYERS as u8,
-            SlotEdit::Ready(r) => lobby.slots[slot].ready = r,
-            SlotEdit::AiLevel(level) => {
-                lobby.slots[slot].ai_level = level % AI_LEVELS.len() as u8;
-            }
-            SlotEdit::Kind(kind) => match kind {
-                SlotKind::Ai => {
-                    let version = lobby.host_version.clone();
-                    let s = &mut lobby.slots[slot];
-                    s.kind = SlotKind::Ai;
-                    s.name = format!("AI {}", slot + 1);
-                    s.ready = true;
-                    s.version = version;
-                }
-                SlotKind::Open => lobby.slots[slot] = Slot::open(slot),
-                SlotKind::Human => {}
-            },
-        }
-        // An AI joining must not share a colour with someone already there.
-        let taken: Vec<u8> = (0..MAX_PLAYERS)
-            .filter(|&i| i != slot && lobby.slots[i].occupied())
-            .map(|i| lobby.slots[i].color)
-            .collect();
-        if lobby.slots[slot].occupied()
-            && taken.contains(&lobby.slots[slot].color)
-            && let Some(free) = (0..4u8).find(|c| !taken.contains(c))
-        {
-            lobby.slots[slot].color = free;
+        if let Some(lobby) = self.lobby.as_mut() {
+            let (me, host) = (lobby.local_slot, lobby.is_host);
+            apply_edit(lobby, me, host, slot, edit);
         }
     }
 
@@ -433,21 +466,7 @@ impl Network for LocalNetwork {
         if let Some(why) = lobby.start_blocker() {
             return Err(NetError::Refused(why));
         }
-        let mut players = Vec::new();
-        let mut local_player = 0;
-        for (i, s) in lobby.slots.iter().enumerate() {
-            if s.occupied() {
-                if i == lobby.local_slot {
-                    local_player = players.len();
-                }
-                players.push(s.clone());
-            }
-        }
-        Ok(MatchStart {
-            settings: lobby.settings.clone(),
-            players,
-            local_player,
-        })
+        Ok(lobby.match_start(None))
     }
 
     fn leave(&mut self) {
@@ -609,6 +628,22 @@ mod tests {
         );
         n.lobby.as_mut().unwrap().slots[1].ready = true;
         assert!(n.start_match().is_ok());
+    }
+
+    #[test]
+    fn a_joiner_who_is_not_ready_holds_up_the_start_on_their_screen_too() {
+        let mut n = hosted();
+        let l = n.lobby.as_mut().unwrap();
+        l.slots[1] = Slot {
+            kind: SlotKind::Human,
+            name: "Alex".into(),
+            version: "0.1.0".into(),
+            ..Slot::open(1)
+        };
+        // Alex's own view of the same lobby.
+        l.local_slot = 1;
+        l.is_host = false;
+        assert!(l.start_blocker().unwrap().contains("Waiting for 1"));
     }
 
     #[test]

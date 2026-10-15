@@ -1,0 +1,16 @@
+[package]
+name = "gc_net"
+description = "Grubcraft LAN play: UDP transport, lobby protocol, discovery and host-sequenced lockstep turns"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gc_fixed.workspace = true
+gc_sim.workspace = true
+gc_ui.workspace = true
+
+[lints]
+workspace = true

@@ -61,7 +61,7 @@ grubcraft/
 │  ├─ gc_sim/        deterministic simulation (no_std + alloc, no floats)
 │  ├─ gc_ai/         AI players and world-party minds; reads sim views, sends commands
 │  ├─ gc_data/       unit/faction/ability definitions, compiled tables
-│  ├─ gc_net/        transport, lockstep turns, lobby protocol, discovery   (M2)
+│  ├─ gc_net/        transport, lockstep turns, lobby protocol, discovery
 │  ├─ gc_present/    interpolation, soldier puppets, effects triggers       (later)
 │  ├─ gc_render/     wgpu renderer: terrain, instancing, VAT, fog, UI batch
 │  ├─ gc_ui/         game UI (immediate mode; menus, lobby, settings built)
@@ -83,7 +83,7 @@ grubcraft/
 └─ docs/
 ```
 
-Crates marked *(later)* or *(M2)* don't exist yet. Until `gc_present` is needed, interpolation and the soldier puppets live in `gc_game` (`src/puppets.rs`).
+Crates marked *(later)* don't exist yet. Until `gc_present` is needed, interpolation and the soldier puppets live in `gc_game` (`src/puppets.rs`).
 
 `gc_sim` depends on nothing platform-related. It cannot read the clock, open files, spawn threads or use floating point. This boundary is what makes lockstep, replays, rejoin, "Restage this battle" and AI players possible (they read the sim's public views and send commands; see [18 · AI](18-ai.md)).
 
@@ -283,7 +283,7 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 ## UI framework
 - Our own **immediate-mode UI** in `gc_ui`: layout in Rust code, rendered as one batched draw, with an MSDF font atlas baked offline (crisp at any UI scale from one small atlas).
 
-**Built so far (menus and lobby):** `gc_ui` has no GPU code: each frame `gc_game` feeds it the mouse and keys (`UiInput`), a `Menu` lays out and draws its current screen into a list of `Quad`s (a rectangle or a glyph, in UI pixels), and `gc_render` draws them in one instanced call (`Renderer::set_ui`, the same pipeline as the dev overlay, drawn under it). Text uses the dev overlay's 8 × 16 bitmap font at whole-number sizes; the MSDF font comes later. Screens: main menu, Play (host card and join card), lobby, settings; all are unit tested by clicking through them headlessly. The lobby model (`Slot`, `LobbySettings`, `MatchStart`) and the `Network` trait in `gc_ui::lobby` are the contract with the netcode: `gc_net` (M2) implements `Network`, and until then `LocalNetwork` hosts a practice lobby with AI players and answers a join with "networking arrives in milestone 2". Starting a lobby match builds a Field Battle from `MatchStart` (`gc_game/src/battle.rs`): each slot becomes a party with its team in the stance table, its colour and an army from its faction, and each AI slot gets a mind at its level. Settings are RON in the user config folder (`~/Library/Application Support/Grubcraft/` on a Mac, `%APPDATA%\Grubcraft\` on Windows), overridable with `GRUBCRAFT_SETTINGS`.
+**Built so far (menus and lobby):** `gc_ui` has no GPU code: each frame `gc_game` feeds it the mouse and keys (`UiInput`), a `Menu` lays out and draws its current screen into a list of `Quad`s (a rectangle or a glyph, in UI pixels), and `gc_render` draws them in one instanced call (`Renderer::set_ui`, the same pipeline as the dev overlay, drawn under it). Text uses the dev overlay's 8 × 16 bitmap font at whole-number sizes; the MSDF font comes later. Screens: main menu, Play (host card and join card), lobby, settings; all are unit tested by clicking through them headlessly. The lobby model (`Slot`, `LobbySettings`, `MatchStart`) and the `Network` trait in `gc_ui::lobby` are the contract with the netcode: `Menu<N: Network>` is generic over it, the game runs it on `gc_net::Lan` (LAN hosting and joining, see [11 · Networking](11-networking.md#transport)), and the tests run it on `LocalNetwork`, a practice lobby on one machine. A `MatchStart` with a `seed` is a network match. Starting a lobby match builds a Field Battle from `MatchStart` (`gc_game/src/battle.rs`): each slot becomes a party with its team in the stance table, its colour and an army from its faction, and each AI slot gets a mind at its level. Settings are RON in the user config folder (`~/Library/Application Support/Grubcraft/` on a Mac, `%APPDATA%\Grubcraft\` on Windows), overridable with `GRUBCRAFT_SETTINGS`.
 - Immediate mode suits a UI that is mostly views over game state; no retained widget tree to keep in sync.
 - Localisation-ready from day one (strings by key, UTF-8, font fallback), English only at launch.
 

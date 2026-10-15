@@ -6,10 +6,9 @@
 //! draws those. Everything here runs headless, so the screens are unit
 //! tested by clicking through them.
 //!
-//! The network is behind the [`lobby::Network`] trait. Until `gc_net` lands
-//! (M2) the game plugs in [`lobby::LocalNetwork`], which lets you host a
-//! practice lobby with AI players and says plainly that joining friends is
-//! not built yet.
+//! The network is behind the [`lobby::Network`] trait. The game plugs in
+//! `gc_net::Lan` (LAN play); [`lobby::LocalNetwork`] is a practice lobby on
+//! one machine that the menu tests run on.
 
 pub mod draw;
 pub mod lobby;

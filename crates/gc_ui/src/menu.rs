@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::draw::{Rect, fit};
 use crate::lobby::{
-    AI_LEVELS, Faction, GameMode, LobbySettings, MAPS, MatchStart, NetEvent, Network,
+    AI_LEVELS, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MatchStart, NetEvent, Network,
     PLAYER_COLORS, Profile, SlotEdit, SlotKind, Tempo,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
@@ -34,9 +34,11 @@ pub enum MenuAction {
     Quit,
 }
 
-pub struct Menu {
+/// The menus, talking to the network through `N` ([`LocalNetwork`] for a
+/// practice lobby on one machine, `gc_net::Lan` for real LAN play).
+pub struct Menu<N: Network = LocalNetwork> {
     screen: Screen,
-    net: Box<dyn Network>,
+    net: N,
     settings: Settings,
     settings_path: Option<PathBuf>,
     version: String,
@@ -73,13 +75,13 @@ fn centered(screen: (i32, i32), w: i32, h: i32) -> Rect {
     Rect::new((screen.0 - w) / 2, (screen.1 - h) / 2, w, h)
 }
 
-impl Menu {
+impl<N: Network> Menu<N> {
     pub fn new(
-        net: Box<dyn Network>,
+        net: N,
         settings: Settings,
         settings_path: Option<PathBuf>,
         version: &str,
-    ) -> Menu {
+    ) -> Menu<N> {
         Menu {
             screen: Screen::Main,
             net,
@@ -92,6 +94,16 @@ impl Menu {
             message: None,
             in_match: false,
         }
+    }
+
+    /// The network the menus talk to.
+    pub fn net(&mut self) -> &mut N {
+        &mut self.net
+    }
+
+    /// The network, to look at.
+    pub fn network(&self) -> &N {
+        &self.net
     }
 
     pub fn settings(&self) -> &Settings {
@@ -113,7 +125,8 @@ impl Menu {
         self.in_match = in_match;
     }
 
-    fn profile(&self) -> Profile {
+    /// Who this player is, from the settings.
+    pub fn profile(&self) -> Profile {
         Profile {
             name: self.settings.player_name.clone(),
             color: self.settings.player_color,
@@ -777,7 +790,6 @@ impl Menu {
 mod tests {
     use super::*;
     use crate::draw::{DrawList, SOLID};
-    use crate::lobby::LocalNetwork;
     use crate::ui::UiInput;
 
     struct Harness {
@@ -828,12 +840,7 @@ mod tests {
     impl Harness {
         fn new() -> Harness {
             let mut h = Harness {
-                menu: Menu::new(
-                    Box::new(LocalNetwork::new()),
-                    Settings::default(),
-                    None,
-                    "0.1.0",
-                ),
+                menu: Menu::new(LocalNetwork::new(), Settings::default(), None, "0.1.0"),
                 ui: Ui::new(),
                 last: MenuAction::None,
             };

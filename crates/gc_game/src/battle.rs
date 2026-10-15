@@ -45,20 +45,31 @@ pub struct SetOut {
 /// is ten regiments in a preset mix from its faction's roster. `units` and
 /// `factions` describe the regiment types;
 /// `plateaus` are the map's start positions (see [`battle_starts`]);
-/// `roll` varies the AI personalities from match to match.
+/// `roll` varies the AI personalities from match to match. `deploy` is
+/// false on a joiner in a network match: the host raises every army and
+/// runs the computer players, and the deployment reaches each machine in
+/// the first turn, so this only works out who stands where.
+///
+/// Who starts where is worked out from this machine's point of view (it
+/// takes the south), except in a network match, where every machine must
+/// agree and the host's view is used: the host takes the south, and a
+/// joiner may find itself in the north.
+#[allow(clippy::too_many_arguments)]
 pub fn set_out(
     setup: &MatchStart,
     units: &[UnitStats],
     factions: &[Faction],
     plateaus: [Vec2; 4],
     roll: u64,
+    deploy: bool,
     minds: &mut Minds,
     out: &mut Vec<PlayerCommand>,
 ) -> SetOut {
     let players = &setup.players;
     let me = setup.local_player.min(players.len().saturating_sub(1));
     let teams: Vec<u8> = players.iter().map(|s| s.team).collect();
-    let starts = battle_starts(&teams, me, plateaus);
+    let perspective = if setup.seed.is_some() { 0 } else { me };
+    let starts = battle_starts(&teams, perspective, plateaus);
     let middle = plateaus.iter().copied().sum::<Vec2>() / 4.0;
     let mut set = SetOut {
         parties: Vec::with_capacity(players.len()),
@@ -75,7 +86,7 @@ pub fn set_out(
             color,
             faction: Some(faction),
         });
-        let mind = (slot.kind == SlotKind::Ai).then(|| {
+        let mind = (deploy && slot.kind == SlotKind::Ai).then(|| {
             let pick = gc_fixed::Pcg32::new(roll, i as u64).next_u32();
             Mind::new(MindConfig {
                 party,
@@ -98,8 +109,10 @@ pub fn set_out(
         if i == me {
             set.my_forward = forward;
         }
-        let placed = army::deploy(units, &raised, starts[i], forward, minds.terrain());
-        army::spawn_commands(party, &placed, out);
+        if deploy {
+            let placed = army::deploy(units, &raised, starts[i], forward, minds.terrain());
+            army::spawn_commands(party, &placed, out);
+        }
         if let Some(mind) = mind {
             minds.add(mind);
         }
@@ -224,6 +237,7 @@ pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
         settings: LobbySettings::default(),
         players: vec![me, ai],
         local_player: 0,
+        seed: None,
     }
 }
 
@@ -284,6 +298,7 @@ mod tests {
             settings: LobbySettings::default(),
             players,
             local_player: 0,
+            seed: None,
         }
     }
 
@@ -326,6 +341,7 @@ mod tests {
             &factions,
             start_positions(MAP),
             seed,
+            true,
             &mut minds,
             &mut out,
         );

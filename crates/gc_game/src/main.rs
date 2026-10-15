@@ -37,9 +37,9 @@
 //! the camera on it.
 //!
 //! The game opens on the main menu (Play, Sandbox, Settings); Esc brings it
-//! back during a match. Play hosts or joins a lobby (joining other machines
-//! arrives with the netcode in M2; today you can host a practice lobby with
-//! AI players at Recruit, Veteran or General). Starting it opens a Field
+//! back during a match. Play hosts or joins a lobby over the local network
+//! (`gc_net`, see `online.rs`), with AI players at Recruit, Veteran or
+//! General in any slot. Starting it opens a Field
 //! Battle (`battle.rs`): ten regiments a side on the start plateaus, the
 //! computer players commanding theirs, and VICTORY or DEFEAT once one side
 //! is left holding the field.
@@ -56,7 +56,8 @@
 //! the menu.
 //!
 //! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general`
-//! starts a Field Battle against one computer player of that level; `--no-menu` skips the main menu
+//! starts a Field Battle against one computer player of that level;
+//! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
 //! `--overlay` starts with the dev overlay shown; `--no-audio` never opens
@@ -71,6 +72,7 @@ mod credits;
 mod data;
 mod lens;
 mod models;
+mod online;
 mod profile;
 mod puppets;
 mod sandbox;
@@ -82,6 +84,7 @@ use std::time::{Duration, Instant};
 
 use battle::{Battle, Party, party_name};
 use gc_ai::{Difficulty, Mind, MindConfig, Minds};
+use gc_net::Lan;
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
 use gc_render::{
     BoxInstance, FrameParams, Renderer, RendererOptions, SoldierBatch, SoldierInstance, Terrain,
@@ -94,7 +97,7 @@ use gc_sim::{
     UnitStats, World,
 };
 use gc_ui::lobby::MatchStart;
-use gc_ui::{LocalNetwork, Menu, MenuAction, Screen, Settings, Ui, UiInput};
+use gc_ui::{Menu, MenuAction, Network, Screen, Settings, Ui, UiInput};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
@@ -198,6 +201,9 @@ struct Options {
     audio: bool,
     /// Start straight into a Field Battle against one AI of this level.
     battle: Option<u8>,
+    /// Open a LAN lobby at once (`--host`), or join one (`--join ADDRESS`).
+    host: bool,
+    join: Option<String>,
     render: RendererOptions,
 }
 
@@ -210,6 +216,8 @@ fn parse_args() -> Options {
         menu: None,
         audio: true,
         battle: None,
+        host: false,
+        join: None,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -226,6 +234,10 @@ fn parse_args() -> Options {
             opts.sandbox = true;
             continue;
         }
+        if flag == "--host" {
+            opts.host = true;
+            continue;
+        }
         if flag == "--no-audio" {
             opts.audio = false;
             continue;
@@ -233,6 +245,10 @@ fn parse_args() -> Options {
         let value = args.next().unwrap_or_default();
         let ok = match flag.as_str() {
             "--seed" => value.parse().map(|v| opts.seed = v).is_ok(),
+            "--join" => {
+                opts.join = Some(value);
+                true
+            }
             "--frames" => value.parse().map(|v| opts.frames = Some(v)).is_ok(),
             "--battle" => {
                 let level = gc_ui::lobby::AI_LEVELS
@@ -277,7 +293,7 @@ fn parse_args() -> Options {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general] [--seed N] [--frames N] [--overlay] [--no-audio] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
     );
     std::process::exit(2);
@@ -318,6 +334,8 @@ struct Running {
     shooting: Vec<bool>,
     /// The match's regiment types, as the simulation sees them, and their names.
     unit_stats: Vec<UnitStats>,
+    /// The regiment types as built, before any sandbox tuning.
+    data_stats: Vec<UnitStats>,
     unit_names: Vec<String>,
     /// Each regiment type's faction, as the AI names them.
     unit_factions: Vec<gc_ai::Faction>,
@@ -354,13 +372,15 @@ struct Running {
     capacities: Capacities,
     /// Menus: the screens, the immediate-mode UI they draw with, and the
     /// mouse and keys collected since the last frame.
-    menu: Menu,
+    menu: Menu<Lan>,
     ui: Ui,
     ui_input: UiInput,
     ui_quads: Vec<UiQuad>,
     menu_open: bool,
     /// Whether a match has started (the sim is frozen until then).
     match_started: bool,
+    /// A match over the network, whose turns come from the host.
+    online: Option<online::Online>,
     quit: bool,
     /// None with `--no-audio` or when there is no sound output.
     sounds: Option<sounds::Sounds>,
@@ -679,12 +699,13 @@ impl App {
         let settings = settings_path
             .as_deref()
             .map_or_else(Settings::default, Settings::load);
-        let menu = Menu::new(
-            Box::new(LocalNetwork::new()),
-            settings,
-            settings_path,
-            env!("CARGO_PKG_VERSION"),
-        );
+        let lan = Lan::new(gc_net::Identity {
+            version: online::version(),
+            data_hash: game_data.short_hash(),
+            seed: opts.seed,
+            map_hash: online::map_hash(&nav),
+        });
+        let menu = Menu::new(lan, settings, settings_path, &online::version());
         let show_menu = opts
             .menu
             .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
@@ -716,6 +737,7 @@ impl App {
             art,
             commander: false,
             shooting: vec![false; capacities.regiments as usize],
+            data_stats: unit_stats.clone(),
             unit_stats,
             unit_names,
             unit_factions,
@@ -764,11 +786,26 @@ impl App {
             ui_quads: Vec::with_capacity(512),
             menu_open: show_menu,
             match_started: !show_menu,
+            online: None,
             quit: false,
             sounds,
         });
         if let Some(r) = self.running.as_mut() {
             r.menu.set_in_match(r.match_started);
+            if opts.host || opts.join.is_some() {
+                let me = r.menu.profile();
+                let result = match &opts.join {
+                    Some(addr) => r.menu.net().join(&me, addr),
+                    None => r
+                        .menu
+                        .net()
+                        .host(&me, gc_ui::lobby::LobbySettings::default()),
+                };
+                match result {
+                    Ok(()) => r.menu.show(Screen::Lobby),
+                    Err(e) => eprintln!("grubcraft: {e}"),
+                }
+            }
             if let Some(level) = opts.battle {
                 let setup = battle::quick_battle(level, r.menu.settings());
                 r.start_match(MatchKind::Battle(setup));
@@ -860,6 +897,30 @@ impl ApplicationHandler for App {
                 let down = event.state == ElementState::Pressed;
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if r.sandbox.tuning && down && r.tune_key(code) {
+                        return;
+                    }
+                    // The sandbox tools would change this machine's game and
+                    // nobody else's.
+                    let sandbox_tool = matches!(
+                        code,
+                        KeyCode::KeyP
+                            | KeyCode::Pause
+                            | KeyCode::Minus
+                            | KeyCode::NumpadSubtract
+                            | KeyCode::Equal
+                            | KeyCode::NumpadAdd
+                            | KeyCode::Tab
+                            | KeyCode::KeyI
+                            | KeyCode::KeyB
+                            | KeyCode::Delete
+                            | KeyCode::Backspace
+                            | KeyCode::KeyT
+                            | KeyCode::KeyR
+                    );
+                    if r.online.is_some() && sandbox_tool {
+                        if down && !event.repeat {
+                            r.say("That sandbox tool is off in a network battle.".into());
+                        }
                         return;
                     }
                     match code {
@@ -1315,18 +1376,19 @@ impl Running {
         } else {
             dt.mul_f32(SPEEDS[self.speed])
         };
-        // The sim stands still behind the menu.
-        if !self.menu_open {
+        // The sim stands still behind the menu, except in a network match,
+        // which runs on the host's clock.
+        if !self.menu_open && self.online.is_none() {
             self.sim_clock += game_dt;
         }
-        let mut ticks_this_frame = 0;
+        let mut ticks_this_frame = if self.online.is_some() {
+            self.online_turns(now)
+        } else {
+            0
+        };
         while self.sim_clock >= TICK && ticks_this_frame < MAX_TICKS_PER_FRAME {
             self.sim_clock -= TICK;
             ticks_this_frame += 1;
-            for r in self.world.regiments.iter() {
-                self.prev_positions[r.handle.index as usize] =
-                    Some((r.handle, from_fx_vec(r.position), angle_vec(r.facing)));
-            }
             self.pending.clear();
             if let Some(drill) = &mut self.drill {
                 drill.commands_for(&self.world, &mut self.pending);
@@ -1341,23 +1403,19 @@ impl Running {
             tagged_alloc::scope(Tag::Ai, || self.minds.tick(&self.world, &mut self.pending));
             self.stats.ai_time += t_ai.elapsed();
             self.pending.append(&mut self.human_orders);
-            let t0 = Instant::now();
-            profile::zone!("sim tick");
-            tagged_alloc::scope(Tag::Sim, || self.world.tick(&self.pending));
-            if let Some(sounds) = &mut self.sounds {
-                tagged_alloc::scope(Tag::Audio, || sounds.observe(&self.world, &self.camera));
-            }
-            let took = t0.elapsed();
-            self.stats.tick_time += took;
-            self.stats.tick_max = self.stats.tick_max.max(took);
-            self.stats.ticks += 1;
+            self.step();
         }
         if ticks_this_frame > 0 {
             // Tuned stats take effect in the tick after they are sent.
             self.unit_stats.clone_from_slice(self.world.units());
             self.judge_battle();
         }
-        let alpha = self.sim_clock.as_secs_f32() / TICK.as_secs_f32();
+        let alpha = match &self.online {
+            // Turns arrive on the host's clock: move smoothly towards the
+            // latest one.
+            Some(o) => (o.last_turn.elapsed().as_secs_f32() / TICK.as_secs_f32()).min(1.0),
+            None => self.sim_clock.as_secs_f32() / TICK.as_secs_f32(),
+        };
 
         self.instances.clear();
         self.boxed.clear();
@@ -1617,6 +1675,90 @@ impl Running {
         }
     }
 
+    /// Remember where every regiment stands, then simulate one tick with
+    /// the commands in `pending`.
+    fn step(&mut self) {
+        for r in self.world.regiments.iter() {
+            self.prev_positions[r.handle.index as usize] =
+                Some((r.handle, from_fx_vec(r.position), angle_vec(r.facing)));
+        }
+        let t0 = Instant::now();
+        profile::zone!("sim tick");
+        tagged_alloc::scope(Tag::Sim, || self.world.tick(&self.pending));
+        if let Some(sounds) = &mut self.sounds {
+            tagged_alloc::scope(Tag::Audio, || sounds.observe(&self.world, &self.camera));
+        }
+        let took = t0.elapsed();
+        self.stats.tick_time += took;
+        self.stats.tick_max = self.stats.tick_max.max(took);
+        self.stats.ticks += 1;
+    }
+
+    /// A network match: send this machine's orders, then simulate every
+    /// turn the host has sent that is due. Returns the turns simulated.
+    fn online_turns(&mut self, now: Instant) -> u32 {
+        let lan = self.menu.net();
+        lan.pump(now);
+        let events = lan.match_events();
+        let in_match = lan.in_match();
+        let Some(o) = &mut self.online else {
+            return 0;
+        };
+        for e in events {
+            match e {
+                gc_net::MatchEvent::Notice(text) => o.note(text),
+                gc_net::MatchEvent::Desync { tick } => {
+                    o.desync.get_or_insert(tick);
+                }
+                gc_net::MatchEvent::Ended(why) => {
+                    eprintln!("grubcraft: {why}");
+                    o.ended = Some(why);
+                }
+            }
+            self.sandbox.dirty = true;
+        }
+        if o.ended.is_none() && !in_match {
+            o.ended = Some("you left it.".into());
+            self.sandbox.dirty = true;
+        }
+        if o.ended.is_some() {
+            self.human_orders.clear();
+            return 0;
+        }
+        let host = o.host;
+        let lan = self.menu.net();
+        lan.submit(self.human_orders.drain(..));
+        let mut turns = 0;
+        while turns < MAX_TICKS_PER_FRAME {
+            let Some(commands) = self.menu.net().next_turn(now) else {
+                break;
+            };
+            self.pending = commands;
+            self.step();
+            let tick = self.world.tick_count();
+            if tick.is_multiple_of(gc_net::HASH_EVERY) {
+                let hash = self.world.state_hash();
+                self.menu.net().record_hash(tick, hash);
+            }
+            // The computer players think on the host only; their orders
+            // reach everyone through the turns like a human's.
+            if host {
+                self.pending.clear();
+                let t_ai = Instant::now();
+                tagged_alloc::scope(Tag::Ai, || self.minds.tick(&self.world, &mut self.pending));
+                self.stats.ai_time += t_ai.elapsed();
+                self.menu.net().submit(self.pending.drain(..));
+            }
+            turns += 1;
+        }
+        if turns > 0
+            && let Some(o) = &mut self.online
+        {
+            o.last_turn = now;
+        }
+        turns
+    }
+
     /// Note which regiments loosed a volley lately, so their soldiers play
     /// the shooting animation.
     fn mark_shooting(&mut self) {
@@ -1738,7 +1880,7 @@ impl Running {
     /// Begin a match from a fresh world: the empty-field sandbox or a Field
     /// Battle from the lobby.
     fn start_match(&mut self, kind: MatchKind) {
-        self.camera.reset_rotation();
+        self.camera.face(Vec2::NEG_Y);
         self.restart_match(kind);
         self.match_started = true;
         self.menu.set_in_match(true);
@@ -1746,6 +1888,23 @@ impl Running {
     }
 
     fn restart_match(&mut self, kind: MatchKind) {
+        // A network match plays on the host's map, with the game data as
+        // built (whatever the sandbox tuned stays in the sandbox).
+        let net_seed = match &kind {
+            MatchKind::Battle(setup) => setup.seed,
+            _ => None,
+        };
+        if net_seed.is_none() && self.menu.net().in_match() {
+            // Starting something else leaves the network match.
+            self.menu.net().leave();
+        }
+        if let Some(seed) = net_seed {
+            if seed != self.seed {
+                self.use_map(seed);
+            }
+            self.unit_stats.clone_from(&self.data_stats);
+        }
+        self.online = net_seed.map(|_| online::Online::new(self.menu.net().is_host()));
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
         let teams: Vec<u8> = match &kind {
             MatchKind::Battle(setup) => setup.players.iter().map(|s| s.team).collect(),
@@ -1782,6 +1941,43 @@ impl Running {
         if let MatchKind::Battle(setup) = kind {
             self.set_out_battle(&setup);
         }
+        if self.online.is_some() {
+            // A joiner checks its map came out the same as the host's
+            // before saying it is ready.
+            let mine = online::map_hash(&nav);
+            let lan = self.menu.net();
+            let result = match lan.host_map() {
+                Some(host) if host.map_hash != mine => Err(format!(
+                    "the map came out differently on this machine (seed {}, map {:016x}, host's {:016x})",
+                    host.seed, mine, host.map_hash
+                )),
+                _ => Ok(()),
+            };
+            lan.loaded(result.clone());
+            if let (Err(why), Some(o)) = (result, &mut self.online) {
+                o.ended = Some(why);
+                self.menu.net().leave();
+            }
+        }
+    }
+
+    /// Generate the map for `seed` and put it on screen.
+    fn use_map(&mut self, seed: u64) {
+        eprintln!("grubcraft: switching to the host's map (seed {seed})");
+        self.seed = seed;
+        self.heightmap = tagged_alloc::scope(Tag::Map, || Heightmap::generate(seed, MAP_TILES));
+        let hm = &self.heightmap;
+        tagged_alloc::scope(Tag::Render, || {
+            self.renderer.set_terrain(&Terrain {
+                size: hm.size,
+                samples_per_tile: hm.samples_per_tile,
+                max_height: hm.max_height,
+                water_level: hm.water_level,
+                heights: &hm.heights,
+            })
+        });
+        let nav = self.heightmap.nav_costs();
+        self.blocked_marks = blocked_marks(&nav, MAP_TILES);
     }
 
     /// Raise and deploy every side's army for a lobby Field Battle, and put
@@ -1795,6 +1991,7 @@ impl Running {
                 &self.unit_factions,
                 terrain_gen::start_positions(MAP_TILES),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,
                 &mut self.human_orders,
             )
@@ -1814,6 +2011,10 @@ impl Running {
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
         self.camera.distance = 120.0;
+        // A joiner who starts in the north looks south, towards the enemy.
+        if self.online.is_some() && set.my_forward.y > 0.0 {
+            self.camera.face(Vec2::Y);
+        }
     }
 
     /// How the battle ended, once it has.
@@ -2349,9 +2550,40 @@ impl Running {
             format!("{}x speed", SPEEDS[self.speed])
         };
         let mut lines = Vec::new();
+        if let Some(o) = &self.online {
+            let lan = self.menu.network();
+            lines.extend(o.lines(lan.status(), lan.waiting()));
+            lines.push(String::new());
+        }
         if let Some(outcome) = self.battle_outcome() {
             lines.push(outcome.to_string());
             lines.push(String::new());
+        }
+        if self.online.is_some() {
+            lines.push(format!(
+                "FIELD BATTLE over the network   commanding {} (player {})   H: hide",
+                party_name(&self.parties, sb.side),
+                sb.side + 1
+            ));
+            for m in self.minds.iter() {
+                lines.push(format!(
+                    "  {}: {}",
+                    party_name(&self.parties, m.party()),
+                    m.summary()
+                ));
+            }
+            lines.push(if self.commander {
+                "view     Commander View   L: AI lens   C: credits   Esc: menu (the battle goes on)"
+                    .to_string()
+            } else {
+                "view     soldiers   L: AI lens   C: credits   Esc: menu (the battle goes on)"
+                    .to_string()
+            });
+            if let Some((message, _)) = &sb.message {
+                lines.push(String::new());
+                lines.push(message.clone());
+            }
+            return lines.join("\n");
         }
         let mode = if self.battle.is_some() {
             "FIELD BATTLE"

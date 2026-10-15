@@ -19,6 +19,28 @@ fn main() {
             std::process::exit(1);
         }
     };
+    // The build's commit, so players can tell builds apart in the lobby
+    // (the version gate compares it).
+    let commit = std::process::Command::new("git")
+        .args(["rev-parse", "--short=7", "HEAD"])
+        .current_dir(&manifest_dir)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "local".into());
+    println!("cargo:rustc-env=GRUBCRAFT_COMMIT={commit}");
+    let git_head = manifest_dir.join("../../.git/HEAD");
+    if git_head.exists() {
+        println!("cargo:rerun-if-changed={}", git_head.display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            manifest_dir.join("../../.git/refs/heads").display()
+        );
+    }
+
     let out = Path::new(&std::env::var("OUT_DIR").unwrap()).join("grubcraft.pak");
     std::fs::write(&out, &baked.pack).expect("write baked pack");
 }

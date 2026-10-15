@@ -705,6 +705,7 @@ dependencies = [
  "gc_bake",
  "gc_data",
  "gc_fixed",
+ "gc_net",
  "gc_platform",
  "gc_render",
  "gc_sim",
@@ -713,6 +714,15 @@ dependencies = [
  "pollster",
  "tracy-client",
  "winit",
+]
+
+[[package]]
+name = "gc_net"
+version = "0.1.0"
+dependencies = [
+ "gc_fixed",
+ "gc_sim",
+ "gc_ui",
 ]
 
 [[package]]

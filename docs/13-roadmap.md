@@ -43,6 +43,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Soldier fighting, stage 1: duel pairs and living formations (acceleration, settle, idle sway), see [09](09-art-and-audio.md#animation). *Built.*
 - Packaging: Mac `.app` (ad-hoc signed), Windows `.exe`, one zip each.
 - **Exit:** a 2v2 Field Battle across two Macs and two Windows PCs on home Wi-Fi with zero desyncs.
+- **Progress (2026-10-13):** the netcode is built in steps. Step 1 is built: `gc_net` hosts and joins lobbies over UDP, finds games on the network, checks builds, data and maps match, and plays Field Battles in host-sequenced lockstep with desync detection and disconnect notices ([11 · Networking](11-networking.md#transport) has the detail and the next steps: adaptive input delay and desync reports, encryption and join codes, baked maps, army builder, replays, packaging).
 
 ### M3 · First Harvest (Conquest playable)
 *Goal: the primary mode, with two factions.*

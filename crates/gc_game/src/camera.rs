@@ -18,6 +18,9 @@ pub struct RtsCamera {
     pub distance: f32,
     /// Rotation away from the default north-facing view, in radians.
     pub yaw: f32,
+    /// The view Home returns to, and the middle of the turning range: north
+    /// (zero), or towards the enemy for a player who starts in the north.
+    pub home_yaw: f32,
     pub map_size: f32,
     pub aspect: f32,
 }
@@ -29,6 +32,7 @@ impl RtsCamera {
             focus_height: 0.0,
             distance: 110.0,
             yaw: 0.0,
+            home_yaw: 0.0,
             map_size,
             aspect: 16.0 / 9.0,
         }
@@ -72,12 +76,23 @@ impl RtsCamera {
 
     pub fn rotate(&mut self, radians: f32) {
         if radians.is_finite() {
-            self.yaw = (self.yaw + radians).clamp(-MAX_YAW, MAX_YAW);
+            self.yaw = (self.yaw + radians).clamp(self.home_yaw - MAX_YAW, self.home_yaw + MAX_YAW);
         }
     }
 
     pub fn reset_rotation(&mut self) {
-        self.yaw = 0.0;
+        self.yaw = self.home_yaw;
+    }
+
+    /// Make "forward" on screen point along `forward` on the ground, and
+    /// turn there.
+    pub fn face(&mut self, forward: Vec2) {
+        self.home_yaw = if forward.length_squared() > 0.0 {
+            (-forward.x).atan2(-forward.y)
+        } else {
+            0.0
+        };
+        self.yaw = self.home_yaw;
     }
 
     /// World-space ray through a point given in normalised device coordinates.
@@ -116,5 +131,22 @@ mod tests {
         assert_eq!(cam.yaw, MAX_YAW);
         cam.zoom(f32::NAN);
         assert_eq!(cam.distance, MAX_DISTANCE);
+    }
+
+    #[test]
+    fn facing_south_turns_the_view_round() {
+        let mut cam = RtsCamera::new(256.0, Vec2::new(128.0, 128.0));
+        cam.face(Vec2::Y);
+        // The eye sits north of the focus, looking south.
+        assert!(cam.eye().z < 128.0);
+        // Panning "up" the screen moves the view south.
+        cam.pan(0.0, 0.1);
+        assert!(cam.focus.y > 128.0);
+        cam.rotate(10.0);
+        assert!((cam.yaw - cam.home_yaw - MAX_YAW).abs() < 1e-5);
+        cam.reset_rotation();
+        assert_eq!(cam.yaw, cam.home_yaw);
+        cam.face(Vec2::NEG_Y);
+        assert_eq!(cam.yaw, 0.0);
     }
 }
