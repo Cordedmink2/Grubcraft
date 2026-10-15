@@ -97,7 +97,7 @@ Collected here so they're easy to find; detailed in [10 · Architecture](10-arch
 4. **Bone animation textures with four-bone skinning.** Kilobytes per unit type instead of megabytes.
 5. **One instanced draw call per unit type**, 16 bytes per soldier.
 6. **Commander View.** Zooming out makes rendering *cheaper*.
-7. **Baked terrain lighting** for the fixed per-map sun; only dynamic objects cast real-time shadows.
+7. **Baked terrain lighting** for the fixed per-map sun; only dynamic objects cast real-time shadows. (Until a profile says otherwise the terrain also casts into the shadow map in real time.)
 8. **Memory-mapped, zero-copy, GPU-ready asset pack.** Upload and forget; nothing parsed.
 9. **Fixed pools, zero allocations per tick**, verified by test.
 10. **Incremental fog of war** with reference-counted vision stamps.

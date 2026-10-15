@@ -31,7 +31,7 @@ cargo run --release -p gc_game --features profile   # build with Tracy profiling
 
 **Computer players:** **I** hands the side you command to the computer (press again to step it up from Recruit to Veteran to General, and once more to take the side back). The panel shows each computer player's personality, level, battle plan and what it expects ("Hold the line, advancing, expects a close fight"), and the latest thing it decided for the side you command. With Tab and I you can set two computer players against each other and watch.
 
-To measure memory on your machine: `cargo run --release -p gc_game -- --frames 600` runs for 600 frames and prints the numbers. Measurement flags: `--latency 1|2|3` (frames in flight), `--render-scale 0.25..1` (render fewer pixels than the window has) and `--draw all|terrain|blocks|none` (turn parts of the frame off).
+To measure memory on your machine: `cargo run --release -p gc_game -- --frames 600` runs for 600 frames and prints the numbers. Measurement flags: `--latency 1|2|3` (frames in flight), `--render-scale 0.25..1` (render fewer pixels than the window has), `--draw all|terrain|blocks|none` (turn parts of the frame off), and `--no-shadows` and `--no-glow` (turn off the sun's shadows and the glow around bright light).
 
 ## Layout
 

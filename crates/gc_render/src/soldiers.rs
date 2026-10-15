@@ -56,6 +56,8 @@ pub(crate) struct SoldiersGpu {
     /// For models painted in vertex colours.
     pub pipeline: wgpu::RenderPipeline,
     pub textured_pipeline: wgpu::RenderPipeline,
+    /// Depth only, for the sun's shadow map; any model.
+    pub shadow_pipeline: wgpu::RenderPipeline,
     pub bones_layout: wgpu::BindGroupLayout,
     pub instances: wgpu::Buffer,
     pub models: Option<ModelGpu>,
@@ -66,7 +68,6 @@ pub(crate) fn make(
     world_layout: &wgpu::BindGroupLayout,
     shader: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
-    depth: wgpu::TextureFormat,
 ) -> SoldiersGpu {
     let materials = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -108,7 +109,8 @@ pub(crate) fn make(
         bind_group_layouts: &[Some(world_layout), Some(&bones_layout)],
         immediate_size: 0,
     });
-    let pipeline = |label, vs, fs, cull_mode| {
+    let pipeline = |label, vs, target: crate::Target<'_>, cull_mode| {
+        let (targets, fs) = target.color();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&layout),
@@ -142,23 +144,13 @@ pub(crate) fn make(
                 cull_mode,
                 ..Default::default()
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
+            depth_stencil: Some(target.depth_state()),
             multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
+            fragment: fs.map(|fs| wgpu::FragmentState {
                 module: shader,
                 entry_point: Some(fs),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+                targets: &targets,
             }),
             multiview_mask: None,
             cache: None,
@@ -169,10 +161,21 @@ pub(crate) fn make(
     let textured_pipeline = pipeline(
         "textured soldiers",
         "vs_soldier_textured",
-        "fs_soldier_textured",
+        crate::Target::Color(format, "fs_soldier_textured"),
         Some(wgpu::Face::Back),
     );
-    let pipeline = pipeline("soldiers", "vs_soldier", "fs_soldier", None);
+    let shadow_pipeline = pipeline(
+        "soldier shadows",
+        "vs_soldier_depth",
+        crate::Target::Shadow,
+        None,
+    );
+    let pipeline = pipeline(
+        "soldiers",
+        "vs_soldier",
+        crate::Target::Color(format, "fs_soldier"),
+        None,
+    );
     let instances = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("soldier instances"),
         size: (MAX_SOLDIER_INSTANCES * size_of::<SoldierInstance>()) as u64,
@@ -182,9 +185,65 @@ pub(crate) fn make(
     SoldiersGpu {
         pipeline,
         textured_pipeline,
+        shadow_pipeline,
         bones_layout,
         instances,
         models: None,
+    }
+}
+
+impl SoldiersGpu {
+    /// Draw the first `count` uploaded instances by `batches`, each at its
+    /// level of detail, into the frame or (with `shadow`) the shadow map.
+    /// Returns draw calls, soldiers and triangles drawn.
+    pub fn draw(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        count: usize,
+        batches: &[SoldierBatch],
+        shadow: bool,
+    ) -> (u32, u32, u64) {
+        let (mut calls, mut drawn, mut tris) = (0, 0, 0);
+        let Some(models) = self.models.as_ref().filter(|_| count > 0) else {
+            return (calls, drawn, tris);
+        };
+        pass.set_bind_group(1, &models.bind_group, &[]);
+        pass.set_vertex_buffer(0, models.vertices.slice(..));
+        pass.set_vertex_buffer(1, self.instances.slice(..));
+        pass.set_index_buffer(models.indices.slice(..), wgpu::IndexFormat::Uint16);
+        if shadow {
+            pass.set_pipeline(&self.shadow_pipeline);
+        }
+        let mut textured_now = None;
+        for b in batches {
+            let Some(&(base, lods, textured)) = models.ranges.get(b.model as usize) else {
+                continue;
+            };
+            if !shadow && textured_now != Some(textured) {
+                pass.set_pipeline(if textured {
+                    &self.textured_pipeline
+                } else {
+                    &self.pipeline
+                });
+                textured_now = Some(textured);
+            }
+            // A model without the reduced mesh draws its full one.
+            let lod = (b.lod as usize).min(1);
+            let [first, len] = if lods[lod][1] == 0 {
+                lods[0]
+            } else {
+                lods[lod]
+            };
+            let end = (b.first + b.count).min(count as u32);
+            if b.first >= end || len == 0 {
+                continue;
+            }
+            pass.draw_indexed(first..first + len, base, b.first..end);
+            calls += 1;
+            drawn += end - b.first;
+            tris += u64::from(len / 3) * u64::from(end - b.first);
+        }
+        (calls, drawn, tris)
     }
 }
 

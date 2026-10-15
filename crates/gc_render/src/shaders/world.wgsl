@@ -1,4 +1,6 @@
-// Terrain and regiment-block shaders for M0.
+// World shaders: terrain, regiment boxes and soldiers, lit by the sun (with
+// its shadow map) and the sky, in linear HDR. post.wgsl adds the glow and
+// tone-maps the result for the screen.
 //
 // Neither pipeline uses a vertex buffer for geometry: terrain vertices are
 // generated from the vertex index over a shared chunk grid, and heights come
@@ -17,10 +19,22 @@ struct Globals {
     fog: vec4<f32>,
     // x: water level in tiles, y: time in seconds
     misc: vec4<f32>,
+    // World to the sun's shadow map (x, y in [-1, 1], z the depth).
+    sun_view_proj: mat4x4<f32>,
+    // x: how far to push the lookup out along the surface normal (tiles),
+    // y: 1 with shadows on, z: where shadows start fading toward the map's
+    // edge (`SHADOW_FADE` in shadows.rs)
+    shadow: vec4<f32>,
 };
+
+// The selection highlight's strength. It is added before tone mapping,
+// which flattens it, so it is twice what it was when added after.
+const HIGHLIGHT: f32 = 1.6;
 
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(0) @binding(1) var heightmap: texture_2d<u32>;
+@group(0) @binding(2) var shadow_map: texture_depth_2d;
+@group(0) @binding(3) var shadow_sampler: sampler_comparison;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -71,11 +85,6 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return pow(c, vec3<f32>(2.2));
 }
 
-// Soft filmic curve so bright sunlit slopes don't clip to white.
-fn tonemap(c: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(1.0) - exp(-c * 1.25);
-}
-
 const SUN_COLOR = vec3<f32>(1.0, 0.9, 0.74) * 1.9;
 
 fn ambient_light(n: vec3<f32>) -> vec3<f32> {
@@ -84,15 +93,47 @@ fn ambient_light(n: vec3<f32>) -> vec3<f32> {
     return mix(ground, sky, n.y * 0.5 + 0.5) * 0.45;
 }
 
-// Tone-map lit colour and fade it into the fog with distance.
+// Fade lit colour into the fog with distance. `fog.rgb` is already in the
+// HDR scale (the colour that tone-maps to the sky).
 fn finish(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
     let dist = distance(world, g.camera_pos.xyz);
     let fog = 1.0 - exp(-dist * g.fog.a);
-    return mix(tonemap(c), srgb_to_linear(g.fog.rgb), clamp(fog, 0.0, 1.0));
+    return mix(c, g.fog.rgb, clamp(fog, 0.0, 1.0));
+}
+
+// How much sunlight reaches a surface: 0 in shadow, 1 in full sun. Four
+// filtered taps soften the edge over about three shadow texels, and the
+// shadow fades out at the edge of the area the map covers.
+fn sunlight(world: vec3<f32>, n: vec3<f32>) -> f32 {
+    if g.shadow.y < 0.5 {
+        return 1.0;
+    }
+    let c = g.sun_view_proj * vec4<f32>(world + n * g.shadow.x, 1.0);
+    let edge = max(abs(c.x), abs(c.y));
+    if edge >= 1.0 || c.z >= 1.0 {
+        return 1.0;
+    }
+    let uv = c.xy * vec2<f32>(0.5, -0.5) + 0.5;
+    let t = 0.5 / f32(textureDimensions(shadow_map).x);
+    var lit = 0.0;
+    for (var i = 0u; i < 4u; i++) {
+        let o = vec2<f32>(select(-t, t, (i & 1u) == 1u), select(-t, t, i >= 2u));
+        lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + o, c.z);
+    }
+    return mix(lit * 0.25, 1.0, smoothstep(g.shadow.z, 1.0, edge));
+}
+
+// Direct sunlight on a surface facing `n`: the cosine term, shadowed.
+fn sun_ndl(n: vec3<f32>, world: vec3<f32>) -> f32 {
+    let ndl = max(dot(n, g.sun_dir.xyz), 0.0);
+    if ndl > 0.0 {
+        return ndl * sunlight(world, n);
+    }
+    return 0.0;
 }
 
 fn shade(albedo: vec3<f32>, n: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
-    let ndl = max(dot(n, g.sun_dir.xyz), 0.0);
+    let ndl = sun_ndl(n, world);
     return finish(albedo * (SUN_COLOR * ndl + ambient_light(n)), world);
 }
 
@@ -109,7 +150,7 @@ fn shade_material(
     emit: vec3<f32>,
 ) -> vec3<f32> {
     let sun = g.sun_dir.xyz;
-    let ndl = max(dot(n, sun), 0.0);
+    let ndl = sun_ndl(n, world);
     let v = normalize(g.camera_pos.xyz - world);
     let h = normalize(sun + v);
     let power = exp2(11.0 * (1.0 - rough) + 1.0);
@@ -379,13 +420,19 @@ fn vs_soldier(v: SoldierIn) -> SoldierOut {
     return out;
 }
 
+// Position only, for the shadow map.
+@vertex
+fn vs_soldier_depth(v: SoldierIn) -> @builtin(position) vec4<f32> {
+    return pose(v).clip;
+}
+
 @fragment
 fn fs_soldier(in: SoldierOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let albedo = srgb_to_linear(in.color);
     // Thin double-sided parts (cloaks, blades) light from whichever side shows.
     let n = select(-in.normal, in.normal, front);
     let c = shade(albedo, n, in.world);
-    return vec4<f32>(c + albedo * in.highlight * 0.8, 1.0);
+    return vec4<f32>(c + albedo * in.highlight * HIGHLIGHT, 1.0);
 }
 
 @vertex
@@ -419,5 +466,5 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     let nt = vec3<f32>(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
     let n = normalize(t * nt.x + bt * nt.y + n0 * nt.z);
     let c = shade_material(albedo, n, in.world, b.w, e.a, b.z, e.rgb);
-    return vec4<f32>(c + albedo * in.highlight * 0.8, 1.0);
+    return vec4<f32>(c + albedo * in.highlight * HIGHLIGHT, 1.0);
 }
