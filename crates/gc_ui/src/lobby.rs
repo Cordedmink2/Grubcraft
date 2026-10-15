@@ -107,6 +107,60 @@ pub const DEFAULT_AI_LEVEL: u8 = 1;
 /// Maps the lobby offers. Only the placeholder map exists so far.
 pub const MAPS: [&str; 1] = ["Proving Ground"];
 
+/// How many points each side has to raise its army in a Field Battle
+/// (docs/06-game-modes.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Budget {
+    Skirmish,
+    Battle,
+    GrandBattle,
+}
+
+impl Budget {
+    pub const ALL: [Budget; 3] = [Budget::Skirmish, Budget::Battle, Budget::GrandBattle];
+
+    pub fn points(self) -> u32 {
+        match self {
+            Budget::Skirmish => 2_000,
+            Budget::Battle => 4_000,
+            Budget::GrandBattle => 8_000,
+        }
+    }
+}
+
+/// Most regiments one army can hold, whatever the budget.
+pub const MAX_ARMY: usize = 40;
+
+/// A regiment type the army builder offers, from the game's unit table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RosterUnit {
+    pub name: String,
+    pub faction: Faction,
+    pub points: u32,
+}
+
+/// What `army` (unit types, indexes into `roster`) costs. Unknown types
+/// count nothing.
+pub fn army_points(roster: &[RosterUnit], army: &[u16]) -> u32 {
+    army.iter()
+        .filter_map(|&u| roster.get(u as usize))
+        .map(|r| r.points)
+        .sum()
+}
+
+/// 4000 as "4,000".
+pub fn thousands(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// What a network match does when a player loses the connection
 /// (docs/11-networking.md, "Disconnects and rejoining").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +189,8 @@ pub struct LobbySettings {
     pub tempo: Tempo,
     /// If a player drops out of a network match.
     pub on_drop: OnDrop,
+    /// Field Battle: points each side raises its army with.
+    pub budget: Budget,
     /// Whether champions may duel between the lines before a battle with a
     /// computer player (a chance, not every time).
     pub champions: bool,
@@ -147,6 +203,7 @@ impl Default for LobbySettings {
             mode: GameMode::FieldBattle,
             tempo: Tempo::Normal,
             on_drop: OnDrop::Wait,
+            budget: Budget::Battle,
             champions: true,
         }
     }
@@ -173,6 +230,10 @@ pub struct Slot {
     pub version: String,
     /// For an AI player: its difficulty, an index into [`AI_LEVELS`].
     pub ai_level: u8,
+    /// The regiments this player built for a Field Battle, as unit types
+    /// in the game's unit table; empty to have one picked for them (the
+    /// "Balanced" mix, or an AI's own).
+    pub army: Vec<u16>,
 }
 
 impl Slot {
@@ -186,6 +247,7 @@ impl Slot {
             ready: false,
             version: String::new(),
             ai_level: DEFAULT_AI_LEVEL,
+            army: Vec::new(),
         }
     }
 
@@ -292,6 +354,8 @@ pub enum SlotEdit {
     Kind(SlotKind),
     /// Host only: an AI player's difficulty (index into [`AI_LEVELS`]).
     AiLevel(u8),
+    /// The regiments of your Field Battle army (see [`Slot::army`]).
+    Army(Vec<u16>),
 }
 
 /// The setup a started match runs with.
@@ -391,7 +455,17 @@ pub fn apply_edit(lobby: &mut LobbyState, editor: usize, host: bool, slot: usize
         return;
     }
     match edit {
-        SlotEdit::Faction(f) => lobby.slots[slot].faction = f,
+        SlotEdit::Faction(f) => {
+            // Another faction's regiments aren't yours to field.
+            if lobby.slots[slot].faction != f {
+                lobby.slots[slot].army.clear();
+            }
+            lobby.slots[slot].faction = f;
+        }
+        SlotEdit::Army(mut army) => {
+            army.truncate(MAX_ARMY);
+            lobby.slots[slot].army = army;
+        }
         SlotEdit::Color(c) => {
             let c = c % 4;
             // Colours are unique: swapping with whoever has it.
@@ -415,6 +489,8 @@ pub fn apply_edit(lobby: &mut LobbyState, editor: usize, host: bool, slot: usize
                 s.name = format!("AI {}", slot + 1);
                 s.ready = true;
                 s.version = version;
+                // An AI picks its own army.
+                s.army.clear();
             }
             SlotKind::Open => lobby.slots[slot] = Slot::open(slot),
             SlotKind::Human => {}
@@ -465,6 +541,7 @@ impl Network for LocalNetwork {
             ready: true,
             version: me.version.clone(),
             ai_level: DEFAULT_AI_LEVEL,
+            army: Vec::new(),
         };
         self.lobby = Some(LobbyState {
             slots,
@@ -584,6 +661,31 @@ mod tests {
         assert_eq!(n.lobby().unwrap().slots[0].ai_level, DEFAULT_AI_LEVEL);
         let start = n.start_match().unwrap();
         assert_eq!(AI_LEVELS[start.players[1].ai_level as usize], "General");
+    }
+
+    #[test]
+    fn your_army_goes_with_your_faction() {
+        let mut n = hosted();
+        n.edit_slot(0, SlotEdit::Faction(Faction::Brood));
+        n.edit_slot(0, SlotEdit::Army(vec![1, 1, 1]));
+        assert_eq!(n.lobby().unwrap().slots[0].army, vec![1, 1, 1]);
+        // Choosing the same faction keeps it; another clears it.
+        n.edit_slot(0, SlotEdit::Faction(Faction::Brood));
+        assert_eq!(n.lobby().unwrap().slots[0].army.len(), 3);
+        n.edit_slot(0, SlotEdit::Faction(Faction::Choir));
+        assert!(n.lobby().unwrap().slots[0].army.is_empty());
+        // No army is longer than MAX_ARMY.
+        n.edit_slot(0, SlotEdit::Army(vec![2; MAX_ARMY + 5]));
+        assert_eq!(n.lobby().unwrap().slots[0].army.len(), MAX_ARMY);
+        // Nobody edits a human's army but them.
+        n.edit_slot(1, SlotEdit::Kind(SlotKind::Ai));
+        let mut lobby = n.lobby().unwrap().clone();
+        apply_edit(&mut lobby, 1, false, 0, SlotEdit::Army(vec![]));
+        assert_eq!(lobby.slots[0].army.len(), MAX_ARMY);
+        // A slot handed to an AI starts with no army: it picks its own.
+        n.edit_slot(1, SlotEdit::Army(vec![1]));
+        n.edit_slot(1, SlotEdit::Kind(SlotKind::Ai));
+        assert!(n.lobby().unwrap().slots[1].army.is_empty());
     }
 
     #[test]

@@ -18,7 +18,7 @@ pub const UNITS_PATH: &str = "data/units";
 /// Pack path of the data manifest (the data hash).
 pub const MANIFEST_PATH: &str = "data/manifest";
 /// Bump whenever [`UnitRecord`]'s layout or meaning changes.
-pub const UNIT_SCHEMA: u32 = 5;
+pub const UNIT_SCHEMA: u32 = 6;
 /// Longest unit name, in UTF-8 bytes.
 pub const NAME_BYTES: usize = 32;
 /// Most soldiers in one regiment. Must equal `gc_sim::formation::MAX_MODELS`
@@ -110,6 +110,10 @@ pub struct UnitRecord {
     pub morale: u8,
     /// [`WEAPON_REACH`], [`WEAPON_SWING_ROOM`] and [`WEAPON_SHIELD`] bits.
     pub weapons: u8,
+    /// What the regiment costs from a Field Battle army's points budget.
+    pub points: u16,
+    /// Zero; keeps the record free of padding.
+    pub reserved: u16,
 }
 
 impl UnitRecord {
@@ -286,6 +290,12 @@ pub fn validate_unit(u: &UnitRecord) -> Result<(), &'static str> {
     if u.weapons & !(WEAPON_REACH | WEAPON_SWING_ROOM | WEAPON_SHIELD) != 0 {
         return Err("unknown weapon flags");
     }
+    if u.points == 0 {
+        return Err("points must be above 0");
+    }
+    if u.reserved != 0 {
+        return Err("reserved bytes must be zero");
+    }
     Ok(())
 }
 
@@ -296,7 +306,7 @@ mod tests {
     #[test]
     fn record_layout_is_stable() {
         // Changing this means bumping UNIT_SCHEMA.
-        assert_eq!(size_of::<UnitRecord>(), 72);
+        assert_eq!(size_of::<UnitRecord>(), 76);
         assert_eq!(align_of::<UnitRecord>(), 4);
     }
 }

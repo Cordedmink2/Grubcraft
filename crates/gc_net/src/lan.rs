@@ -857,6 +857,7 @@ impl Lan {
                             ready: false,
                             version: short_name(&theirs),
                             ai_level: DEFAULT_AI_LEVEL,
+                            army: Vec::new(),
                         };
                         peer.link.send(&Msg::Welcome { slot: slot as u8 });
                     }
@@ -1529,6 +1530,7 @@ impl Network for Lan {
             ready: true,
             version: self.id.version.clone(),
             ai_level: DEFAULT_AI_LEVEL,
+            army: Vec::new(),
         };
         self.socket = Some(socket);
         self.role = Role::Host(Box::new(Host {

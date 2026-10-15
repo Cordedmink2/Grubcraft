@@ -499,7 +499,7 @@ Seeds 1 to 96 gave every pair between 48% and 57% except the Brood against the C
 
 ### Weapon flags and mass
 
-Since unit schema 5 (October 2026) each stats block can carry the [weapons and formations](05-combat.md#weapons-and-formations) flags: `reach: true` (spears and pikes: the second rank fights at half strength, and they strike as lines meet), `swing_room: true` (big swinging weapons: cramped in Tight order and a shield wall, no defence lost in Loose), `shield: true` (can form a shield wall), and `mass: Light` or `mass: Heavy` (Medium when left out; light and heavy decide who gives ground when lines push, once that arrives). Anything not written is off.
+Since unit schema 6 (2026-10-15) every stats block in `data/units.ron` needs `points`, what the regiment costs from a Field Battle army's budget (400 for all five today; roster entries without it are read as 400). Since unit schema 5 (October 2026) each stats block can carry the [weapons and formations](05-combat.md#weapons-and-formations) flags: `reach: true` (spears and pikes: the second rank fights at half strength, and they strike as lines meet), `swing_room: true` (big swinging weapons: cramped in Tight order and a shield wall, no defence lost in Loose), `shield: true` (can form a shield wall), and `mass: Light` or `mass: Heavy` (Medium when left out; light and heavy decide who gives ground when lines push, once that arrives). Anything not written is off.
 
 | Flag | Regiments |
 |---|---|

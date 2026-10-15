@@ -270,6 +270,14 @@ struct Stats {
     swing_room: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     shield: bool,
+    /// Field Battle points live in `data/units.ron`, not the rosters; any
+    /// value bakes.
+    #[serde(default = "some_points")]
+    points: u16,
+}
+
+fn some_points() -> u16 {
+    400
 }
 
 fn is_false(v: &bool) -> bool {

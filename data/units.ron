@@ -25,6 +25,11 @@
 // defence lost in Loose). shield: true lets a regiment form a shield wall.
 // All of them are off unless written.
 //
+// points: what the regiment costs from a Field Battle army's points budget
+// (Skirmish 2,000, Battle 4,000, Grand Battle 8,000; docs/06-game-modes.md).
+// Every regiment costs 400 for now, so a Battle army is ten regiments, the
+// size the balance pass below was tuned at.
+//
 // Numbers are first-pass, tuned so the factions' Field Battle armies are
 // close to even (docs/17-unit-rosters.md, "Field Battle balance").
 [
@@ -44,6 +49,7 @@
         charge_bonus: 20,
         morale: 60,
         reach: true,
+        points: 400,
     ),
     (
         name: "Skitterlings",
@@ -61,6 +67,7 @@
         charge_bonus: 40,
         morale: 57,
         mass: Light,
+        points: 400,
     ),
     (
         name: "Shardlings",
@@ -78,6 +85,7 @@
         charge_bonus: 30,
         morale: 60,
         swing_room: true,
+        points: 400,
     ),
     (
         name: "Bone Pikes",
@@ -95,6 +103,7 @@
         charge_bonus: 10,
         never_routs: true,
         reach: true,
+        points: 400,
     ),
     (
         name: "Yumi Ashigaru",
@@ -112,5 +121,6 @@
         charge_bonus: 5,
         morale: 50,
         ranged: Some((range: 30.0, damage: 4, reload: 4.0, accuracy: 30)),
+        points: 400,
     ),
 ]

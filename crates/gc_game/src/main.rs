@@ -388,6 +388,8 @@ struct Running {
     unit_names: Vec<String>,
     /// Each regiment type's faction, as the AI names them.
     unit_factions: Vec<gc_ai::Faction>,
+    /// Each regiment type's cost in a Field Battle army.
+    unit_points: Vec<u32>,
     sandbox: Sandbox,
     selected: Vec<RegimentHandle>,
     /// The formation F last ordered, for which selection and on which tick:
@@ -735,6 +737,22 @@ impl App {
             .iter()
             .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
             .collect();
+        let unit_points: Vec<u32> = game_data
+            .units
+            .iter()
+            .map(|u| u32::from(u.points))
+            .collect();
+        // gc_data and the lobby list the factions in the same order.
+        let roster: Vec<gc_ui::lobby::RosterUnit> = game_data
+            .units
+            .iter()
+            .zip(&unit_names)
+            .map(|(u, name)| gc_ui::lobby::RosterUnit {
+                name: name.clone(),
+                faction: gc_ui::lobby::Faction::ALL[u.faction() as usize],
+                points: u32::from(u.points),
+            })
+            .collect();
         let capacities = Capacities::default();
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
         let blocked_marks = blocked_marks(&nav, MAP_TILES);
@@ -806,7 +824,8 @@ impl App {
             seed: opts.seed,
             map_hash: online::map_hash(&nav, &heightmap.ground()),
         });
-        let menu = Menu::new(lan, settings, settings_path, &online::version());
+        let mut menu = Menu::new(lan, settings, settings_path, &online::version());
+        menu.set_roster(roster);
         let show_menu = opts
             .menu
             .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
@@ -842,6 +861,7 @@ impl App {
             unit_stats,
             unit_names,
             unit_factions,
+            unit_points,
             sandbox: Sandbox::new(opts.sandbox),
             selected: Vec::with_capacity(64),
             formation_pick: None,
@@ -2325,6 +2345,7 @@ impl Running {
                 setup,
                 &self.unit_stats,
                 &self.unit_factions,
+                &self.unit_points,
                 terrain_gen::start_positions(MAP_TILES),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),

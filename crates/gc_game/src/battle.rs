@@ -7,7 +7,7 @@ use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
 use gc_sim::champions::{HEART, Outcome};
 use gc_sim::{Challenge, PlayerCommand, PlayerId, UnitStats, World};
 use gc_ui::Settings;
-use gc_ui::lobby::{LobbySettings, MatchStart, PLAYER_COLORS, Slot, SlotKind};
+use gc_ui::lobby::{LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind};
 use glam::Vec2;
 
 /// Whether champions may duel before this battle: the lobby allows it and
@@ -52,9 +52,10 @@ pub struct SetOut {
 
 /// Raise and deploy every side's army for `setup`, appending the commands
 /// that put them on the field to `out`, and add a mind for each AI slot to
-/// `minds`. Until the army builder and its points budget arrive, every army
-/// is ten regiments in a preset mix from its faction's roster. `units` and
-/// `factions` describe the regiment types;
+/// `minds`. Each army is what its player built in the army builder, held to
+/// the lobby's points budget, or if they built none (and for every AI) the
+/// largest army in a preset mix from the faction's roster that the budget
+/// buys. `units`, `factions` and `points` describe the regiment types;
 /// `plateaus` are the map's start positions (see [`battle_starts`]);
 /// `roll` varies the AI personalities from match to match. `deploy` is
 /// false on a joiner in a network match: the host raises every army and
@@ -70,6 +71,7 @@ pub fn set_out(
     setup: &MatchStart,
     units: &[UnitStats],
     factions: &[Faction],
+    points: &[u32],
     plateaus: [Vec2; 4],
     roll: u64,
     deploy: bool,
@@ -109,7 +111,12 @@ pub fn set_out(
         let preset = mind
             .as_ref()
             .map_or(Preset::Balanced, |m| m.personality().army);
-        let raised = army::pick_army(units, factions, faction, preset, army::ARMY_REGIMENTS);
+        let budget = setup.settings.budget.points();
+        let raised = if slot.army.is_empty() {
+            army::pick_army_within(units, points, factions, faction, preset, budget, MAX_ARMY)
+        } else {
+            army::within_budget(&slot.army, points, factions, faction, budget, MAX_ARMY)
+        };
         // Face the nearest enemy start (the middle of the map if none).
         let foe = (0..players.len())
             .filter(|&j| teams[j] != teams[i])
@@ -392,6 +399,68 @@ mod tests {
         ai_worst: std::time::Duration,
     }
 
+    /// Who fields what: a built army as built (held to the budget), and
+    /// the budget's worth of the preset mix for an AI or a player who built
+    /// nothing.
+    #[test]
+    fn armies_are_what_was_built_within_the_budget() {
+        let data = crate::data::load();
+        let units: Vec<UnitStats> = data.units.iter().map(crate::sandbox::stats_of).collect();
+        let factions: Vec<Faction> = data
+            .units
+            .iter()
+            .map(|u| Faction::from_index(u.faction() as u8))
+            .collect();
+        let points: Vec<u32> = data.units.iter().map(|u| u32::from(u.points)).collect();
+        let (yari, _) = data.unit_by_name("Yari Ashigaru").unwrap();
+        let (yumi, _) = data.unit_by_name("Yumi Ashigaru").unwrap();
+        let (pikes, _) = data.unit_by_name("Bone Pikes").unwrap();
+        let heightmap = Heightmap::generate(1, MAP);
+        let nav = heightmap.nav_costs();
+        let fielded = |setup: &MatchStart| {
+            let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+            let mut out = Vec::new();
+            set_out(
+                setup,
+                &units,
+                &factions,
+                &points,
+                start_positions(MAP),
+                1,
+                true,
+                &mut minds,
+                &mut out,
+            );
+            let mut per = vec![Vec::new(); setup.players.len()];
+            for c in &out {
+                if let gc_sim::Command::SpawnRegiment { unit, .. } = c.command {
+                    per[c.player as usize].push(unit);
+                }
+            }
+            per
+        };
+        let mut setup = lobby(&[None, Some(Difficulty::Veteran)], &[0, 1]);
+        let spent = |army: &[u16]| army.iter().map(|&u| points[u as usize]).sum::<u32>();
+        // Nothing built: both sides get the Battle budget's worth.
+        for army in fielded(&setup) {
+            assert!(
+                spent(&army) <= 4_000 && spent(&army) > 4_000 - 600,
+                "{army:?}"
+            );
+        }
+        // A built army, with another faction's regiment slipped in, and a
+        // Skirmish budget it overspends.
+        setup.players[0].army = vec![yari, yari, pikes, yumi, yumi, yari, yari, yari, yari];
+        setup.settings.budget = gc_ui::lobby::Budget::Skirmish;
+        let armies = fielded(&setup);
+        let mut mine = armies[0].clone();
+        mine.sort_unstable();
+        let mut want = vec![yari, yari, yumi, yumi, yari];
+        want.sort_unstable();
+        assert_eq!(mine, want, "five fit in 2,000");
+        assert!(spent(&armies[1]) <= 2_000);
+    }
+
     /// Play `setup` on the generated map with the real game data, the human
     /// side standing still, for at most `minutes`.
     fn play(setup: &MatchStart, seed: u64, minutes: u32) -> Played {
@@ -402,6 +471,7 @@ mod tests {
             .iter()
             .map(|u| Faction::from_index(u.faction() as u8))
             .collect();
+        let points: Vec<u32> = data.units.iter().map(|u| u32::from(u.points)).collect();
         let heightmap = Heightmap::generate(seed, MAP);
         let nav = heightmap.nav_costs();
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
@@ -421,6 +491,7 @@ mod tests {
             setup,
             &units,
             &factions,
+            &points,
             start_positions(MAP),
             seed,
             true,

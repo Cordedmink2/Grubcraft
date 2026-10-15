@@ -100,6 +100,57 @@ pub fn pick_army(
     army
 }
 
+/// The largest army in `preset`'s mix (see [`pick_army`]) whose regiments
+/// cost at most `budget` points, `points[u]` being unit `u`'s cost, and no
+/// more than `most` regiments.
+pub fn pick_army_within(
+    units: &[UnitStats],
+    points: &[u32],
+    factions: &[Faction],
+    faction: Faction,
+    preset: Preset,
+    budget: u32,
+    most: usize,
+) -> Vec<UnitId> {
+    let cost = |army: &[UnitId]| -> u32 {
+        army.iter()
+            .map(|&u| points.get(u as usize).copied().unwrap_or(u32::MAX))
+            .fold(0, u32::saturating_add)
+    };
+    (1..=most)
+        .map(|n| pick_army(units, factions, faction, preset, n))
+        .take_while(|army| cost(army) <= budget)
+        .last()
+        .unwrap_or_default()
+}
+
+/// The part of a player's own `army` that can take the field: their
+/// faction's regiments, in list order, up to `budget`
+/// points and `most` regiments. Anything else is left at home, so a
+/// changed budget or a tampered list can't field more than it should.
+pub fn within_budget(
+    army: &[UnitId],
+    points: &[u32],
+    factions: &[Faction],
+    faction: Faction,
+    budget: u32,
+    most: usize,
+) -> Vec<UnitId> {
+    let mut spent = 0u32;
+    let mut out = Vec::new();
+    for &u in army {
+        let (Some(&p), Some(&f)) = (points.get(u as usize), factions.get(u as usize)) else {
+            continue;
+        };
+        if f != faction || out.len() == most || spent + p > budget {
+            continue;
+        }
+        spent += p;
+        out.push(u);
+    }
+    out
+}
+
 /// Where one regiment of an army starts.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {
@@ -249,6 +300,69 @@ mod tests {
             ARMY_REGIMENTS,
         );
         assert_eq!(army, vec![3; ARMY_REGIMENTS]);
+    }
+
+    #[test]
+    fn armies_are_raised_to_the_budget() {
+        let f = factions();
+        let points = [400, 600, 300, 400];
+        let cost = |a: &[UnitId]| a.iter().map(|&u| points[u as usize]).sum::<u32>();
+        for budget in [2_000, 4_000, 8_000] {
+            let army = pick_army_within(
+                &DRILL_UNITS,
+                &points,
+                &f,
+                Faction::EmberClans,
+                Preset::Balanced,
+                budget,
+                40,
+            );
+            assert!(cost(&army) <= budget, "{budget}: {}", cost(&army));
+            // One more regiment of the mix would not have fitted.
+            let next = pick_army(
+                &DRILL_UNITS,
+                &f,
+                Faction::EmberClans,
+                Preset::Balanced,
+                army.len() + 1,
+            );
+            assert!(cost(&next) > budget, "{budget}: room left");
+        }
+        let pikes = pick_army_within(
+            &DRILL_UNITS,
+            &points,
+            &f,
+            Faction::CarrionConcord,
+            Preset::Balanced,
+            4_000,
+            40,
+        );
+        assert_eq!(pikes, vec![3; 10]);
+        let capped = pick_army_within(
+            &DRILL_UNITS,
+            &points,
+            &f,
+            Faction::CarrionConcord,
+            Preset::Balanced,
+            4_000,
+            6,
+        );
+        assert_eq!(capped.len(), 6);
+    }
+
+    #[test]
+    fn a_players_army_is_held_to_the_budget_and_their_faction() {
+        let f = factions();
+        let points = [400, 600, 300, 400];
+        // A Concord regiment and an unknown type are dropped, then the
+        // budget runs out at the second 600.
+        let built = [0, 3, 1, 99, 2, 1, 0];
+        let fielded = within_budget(&built, &points, &f, Faction::EmberClans, 1_800, 40);
+        assert_eq!(fielded, vec![0, 1, 2, 0]);
+        assert_eq!(
+            within_budget(&built, &points, &f, Faction::EmberClans, 8_000, 2),
+            vec![0, 1]
+        );
     }
 
     #[test]
