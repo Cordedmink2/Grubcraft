@@ -340,6 +340,9 @@ pub struct DiscoveredGame {
     pub version: String,
     /// Joining needs a password.
     pub locked: bool,
+    /// The match has started: only a player who was in it can join, to
+    /// take their place again.
+    pub playing: bool,
     /// What to hand to [`Network::join`].
     pub address: String,
 }

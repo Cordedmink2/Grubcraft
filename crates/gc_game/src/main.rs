@@ -219,6 +219,9 @@ const DEPLOY_REPLAY_SPEED: u32 = 8;
 /// Most ticks run in one frame, so a slow frame can't snowball (4x speed at
 /// 30 fps needs about 3).
 const MAX_TICKS_PER_FRAME: u32 = 8;
+/// How long a frame may spend simulating when an online match is catching
+/// up after a rejoin.
+const CATCH_UP_BUDGET: Duration = Duration::from_millis(25);
 
 const _: () = assert!(gc_data::MAX_MODELS == gc_sim::formation::MAX_MODELS);
 // The baked weapon bits and masses mean the same to the simulation.
@@ -2193,7 +2196,12 @@ impl Running {
         let lan = self.menu.net();
         lan.submit(self.human_orders.drain(..));
         let mut turns = 0;
-        while turns < MAX_TICKS_PER_FRAME {
+        // A player who rejoined replays the match so far as fast as a
+        // frame's budget allows.
+        let started = Instant::now();
+        while turns < MAX_TICKS_PER_FRAME
+            || (self.menu.net().catching_up() && started.elapsed() < CATCH_UP_BUDGET)
+        {
             let Some(commands) = self.menu.net().next_turn(now) else {
                 break;
             };
@@ -2365,7 +2373,6 @@ impl Running {
         // The last battle's recording is done.
         self.save_recording();
         self.recording = None;
-        // A replay played with its own unit table.
         // A replay played with its own unit table; what was tuned before
         // comes back.
         if let Some(w) = self.watching.take() {

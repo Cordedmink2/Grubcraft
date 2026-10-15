@@ -407,11 +407,12 @@ impl<N: Network> Menu<N> {
                 self.selected_game = Some(i);
             }
             let text = format!(
-                "{}  {}  {}/{}{}",
+                "{}  {}  {}/{}{}{}",
                 g.host,
                 g.map,
                 g.players,
                 g.max_players,
+                if g.playing { "  (in progress)" } else { "" },
                 if g.locked { "  (password)" } else { "" }
             );
             let ty = row.y + (row.h - 16) / 2;

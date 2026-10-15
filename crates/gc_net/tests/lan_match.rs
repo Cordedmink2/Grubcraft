@@ -486,6 +486,60 @@ fn a_desync_is_found_and_reported_everywhere() {
 }
 
 #[test]
+fn a_player_whose_game_restarts_rejoins_and_catches_up() {
+    let _turn = ports();
+    let mut m = Match::start(&["Alex", "Sam"], &[], OnDrop::Wait, 5);
+    m.run(&[], 300, Duration::from_secs(20));
+
+    // Alex's game closes without a goodbye: the host pauses for them.
+    m.run(
+        &[1],
+        u32::MAX,
+        gc_net_player_timeout() + Duration::from_millis(500),
+    );
+    assert!(m.lans[0].paused_for_player());
+
+    // A stranger still can't join the match.
+    let err = join(&mut lan(), "Kim", &mut m.lans[0]).unwrap_err();
+    assert_eq!(
+        err,
+        NetError::Refused("That game has already started.".into())
+    );
+
+    // Alex starts the game again and joins: they get the match's start and
+    // every turn so far, and the match carries on.
+    let mut again = lan();
+    join(&mut again, "Alex", &mut m.lans[0]).unwrap();
+    match again.poll().as_slice() {
+        [NetEvent::Started(s)] => assert_eq!(s.local_player, 1),
+        other => panic!("{other:?}"),
+    }
+    again.loaded(Ok(()));
+    std::mem::forget(std::mem::replace(&mut m.lans[1], again));
+    let (mut worlds, mut recorders) = machines(1);
+    m.worlds[1] = worlds.pop().unwrap();
+    m.recorders[1] = recorders.pop().unwrap();
+    m.drills[1] = Drill::new(SEED);
+    m.drills[1].regiments_per_player = 20;
+    assert!(!m.lans[0].paused_for_player());
+
+    let target = m.ticks()[0] + 200;
+    m.run(&[], target, Duration::from_secs(30));
+    assert_eq!(m.ticks(), [target; 3]);
+    m.settle();
+    let hash = m.worlds[0].state_hash();
+    assert!(m.worlds.iter().all(|w| w.state_hash() == hash));
+    let events = m.lans[2].match_events();
+    assert!(
+        events.iter().any(
+            |e| matches!(e, MatchEvent::Notice(t) if t == "Alex rejoined and is catching up.")
+        ),
+        "{events:?}"
+    );
+    assert_eq!(m.desyncs(), []);
+}
+
+#[test]
 fn joiners_are_refused_when_full_or_on_different_data() {
     let _turn = ports();
     let mut host = lan();
