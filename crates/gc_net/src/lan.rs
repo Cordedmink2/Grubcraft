@@ -18,7 +18,6 @@ use crate::link::Link;
 use crate::proto::{
     Beacon, Kind, LobbyWire, MAX_PACKET, Msg, PROTOCOL, header, read_header, short_name,
 };
-use crate::report::Report;
 use crate::wire::{Reader, Writer, command_size};
 
 /// The port a host listens on. A second game hosted on the same machine
@@ -99,8 +98,8 @@ pub struct Identity {
 pub enum MatchEvent {
     /// A line to show the players ("Alex lost connection").
     Notice(String),
-    /// A player's world no longer matches the host's; time to save a
-    /// desync report ([`Lan::desync_report`]).
+    /// A player's world no longer matches the host's from `tick`; time to
+    /// save a desync report (the game saves its recording of the match).
     Desync { tick: u32 },
     /// The match is over for this machine (host gone, kicked).
     Ended(String),
@@ -224,9 +223,6 @@ pub struct Lan {
     match_events: Vec<MatchEvent>,
     /// Length of a turn: [`TURN`], shorter in tests.
     turn: Duration,
-    /// What this machine has played of the current (or last) match, for a
-    /// desync report.
-    log: Option<Report>,
     /// Test hook: drop this percentage of outgoing packets.
     loss: u32,
     loss_rng: u32,
@@ -244,7 +240,6 @@ impl Lan {
             games: Vec::new(),
             events: Vec::new(),
             match_events: Vec::new(),
-            log: None,
             turn: TURN,
             loss: 0,
             loss_rng: 0x9e37_79b9,
@@ -441,10 +436,7 @@ impl Lan {
             }
             Role::Idle => None,
         };
-        if let Some(t) = &turn {
-            if let Some(log) = &mut self.log {
-                log.turns.push(t.clone());
-            }
+        if turn.is_some() {
             self.flush(now, false);
         }
         turn
@@ -484,20 +476,11 @@ impl Lan {
         self.flush(now, false);
     }
 
-    /// Everything this machine played of the current or last match, with
-    /// its state hashes, to save when worlds disagree.
-    pub fn desync_report(&self) -> Option<&Report> {
-        self.log.as_ref()
-    }
-
     /// This machine's state hash after `tick` ticks. Call after every tick;
     /// only every [`HASH_EVERY`]th is used.
     pub fn record_hash(&mut self, tick: u32, hash: u64) {
         if !tick.is_multiple_of(HASH_EVERY) {
             return;
-        }
-        if let Some(log) = &mut self.log {
-            log.hashes.push((tick, hash));
         }
         match &mut self.role {
             Role::Host(h) => {
@@ -936,18 +919,6 @@ impl Lan {
                 if c.game.is_some() {
                     return;
                 }
-                self.log = Some(Report {
-                    version: self.id.version.clone(),
-                    data_hash: self.id.data_hash,
-                    seed,
-                    map_hash,
-                    settings: settings.clone(),
-                    players: players.clone(),
-                    me: you,
-                    desync_tick: 0,
-                    turns: Vec::new(),
-                    hashes: Vec::new(),
-                });
                 c.game = Some(ClientGame {
                     map: HostMap { seed, map_hash },
                     me: you,
@@ -997,9 +968,6 @@ impl Lan {
                 }
             }
             Msg::Desync { tick } if c.game.is_some() => {
-                if let Some(log) = &mut self.log {
-                    log.desync_tick = tick;
-                }
                 self.match_events.push(MatchEvent::Desync { tick });
             }
             _ => {}
@@ -1240,11 +1208,6 @@ impl Lan {
             for p in h.peers.iter_mut().filter(|p| !p.gone) {
                 p.link.send(&Msg::Notice { text: text.clone() });
                 p.link.send(&Msg::Desync { tick });
-            }
-            if let Some(log) = &mut self.log
-                && log.desync_tick == 0
-            {
-                log.desync_tick = tick;
             }
             self.match_events.push(MatchEvent::Notice(text));
             self.match_events.push(MatchEvent::Desync { tick });
@@ -1691,18 +1654,6 @@ impl Network for Lan {
                 input_delay: INPUT_DELAY as u8,
             });
         }
-        self.log = Some(Report {
-            version: self.id.version.clone(),
-            data_hash: self.id.data_hash,
-            seed,
-            map_hash,
-            settings: start.settings.clone(),
-            players: start.players.clone(),
-            me: 0,
-            desync_tick: 0,
-            turns: Vec::new(),
-            hashes: Vec::new(),
-        });
         h.game = Some(HostGame {
             go_at: None,
             started_at: Instant::now(),

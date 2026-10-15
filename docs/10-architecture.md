@@ -328,7 +328,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 ## Tooling
 | Tool | Purpose |
 |---|---|
-| `gc_replay` | Run a replay headless at maximum speed and verify its state hashes: `cargo run --release -p gc_replay -- verify` (all of `replays/`), `bless FILE` (store the hashes the sim produces now), `info FILE`. Dumping state at a tick is still to come |
+| `gc_replay` | Run a replay headless at maximum speed and verify its state hashes: `cargo run --release -p gc_replay -- verify` (all of `replays/`), `bless FILE` (store the hashes the sim produces now), `info FILE` (with who played and which build recorded it), `compare A B` (where two machines' recordings of one match, such as desync reports, first disagree). Dumping state at a tick is still to come |
 | `gc_bench` | Fixed benchmark scenarios; reports tick time, frame time, memory by tag; enforces budgets |
 | `gc_mapcheck` *(later)* | Map fairness and validity checks |
 | `gc_bake` | Data baker |

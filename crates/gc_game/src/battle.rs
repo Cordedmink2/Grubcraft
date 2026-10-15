@@ -266,7 +266,8 @@ pub fn holding_the_field(world: &World) -> Option<PlayerId> {
 /// A lobby Field Battle under way: whose side this machine plays, and how
 /// it ended.
 pub struct Battle {
-    pub me: PlayerId,
+    /// None while watching a replay: nobody here won or lost.
+    pub me: Option<PlayerId>,
     /// The side holding the field and the tick it took it, while one does.
     held: Option<(PlayerId, u32)>,
     /// "VICTORY" or "DEFEAT" and what happened, once it is over.
@@ -280,7 +281,7 @@ pub struct Battle {
 }
 
 impl Battle {
-    pub fn new(me: PlayerId) -> Battle {
+    pub fn new(me: Option<PlayerId>) -> Battle {
         Battle {
             me,
             held: None,
@@ -332,9 +333,15 @@ impl Battle {
         if now - since < HOLD_TICKS {
             return false;
         }
-        let secs = world.battle_ticks() / gc_sim::TICKS_PER_SECOND;
-        let time = format!("{}:{:02}", secs / 60, secs % 60);
-        let won = !world.hostile(self.me, p);
+        let time = gc_ai::lens::clock(world.battle_ticks());
+        let Some(me) = self.me else {
+            self.outcome = Some(format!(
+                "OVER  {} holds the field after {time}. Esc: menu",
+                party_name(parties, p)
+            ));
+            return true;
+        };
+        let won = !world.hostile(me, p);
         self.won = Some(won);
         self.outcome = Some(if won {
             format!("VICTORY  the field is yours after {time}. Esc: menu")
@@ -692,7 +699,7 @@ mod tests {
                     .count()
             })
             .collect();
-        let mut battle = Battle::new(set.me);
+        let mut battle = Battle::new(Some(set.me));
         let limit = minutes * 60 * gc_sim::TICKS_PER_SECOND;
         let (mut ai_time, mut ai_worst) = Default::default();
         while world.tick_count() < limit && battle.outcome.is_none() {

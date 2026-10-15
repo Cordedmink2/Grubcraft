@@ -168,7 +168,7 @@ pub enum Msg {
     Desync { tick: u32 },
 }
 
-pub(crate) fn write_slot(w: &mut Writer, s: &Slot) {
+fn write_slot(w: &mut Writer, s: &Slot) {
     w.u8(match s.kind {
         SlotKind::Open => 0,
         SlotKind::Human => 1,
@@ -203,7 +203,7 @@ fn read_faction(r: &mut Reader) -> Option<Faction> {
     Faction::ALL.get(r.u8()? as usize).copied()
 }
 
-pub(crate) fn read_slot(r: &mut Reader) -> Option<Slot> {
+fn read_slot(r: &mut Reader) -> Option<Slot> {
     Some(Slot {
         kind: match r.u8()? {
             0 => SlotKind::Open,
@@ -222,7 +222,7 @@ pub(crate) fn read_slot(r: &mut Reader) -> Option<Slot> {
     })
 }
 
-pub(crate) fn write_settings(w: &mut Writer, s: &LobbySettings) {
+fn write_settings(w: &mut Writer, s: &LobbySettings) {
     w.var(s.map as u64);
     w.u8(GameMode::ALL.iter().position(|&m| m == s.mode).unwrap_or(0) as u8);
     w.u8(Tempo::ALL.iter().position(|&t| t == s.tempo).unwrap_or(0) as u8);
@@ -234,7 +234,7 @@ pub(crate) fn write_settings(w: &mut Writer, s: &LobbySettings) {
     w.bool(s.champions);
 }
 
-pub(crate) fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
+fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
     Some(LobbySettings {
         map: r.var_as()?,
         mode: *GameMode::ALL.get(r.u8()? as usize)?,

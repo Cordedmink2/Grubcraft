@@ -35,11 +35,12 @@ use codec::{Reader, Writer};
 
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older replays are refused
-/// with [`Error::Format`], except format 4, which is format 5 without the
-/// deployment commands, format 3, which is format 4 without the champions
+/// with [`Error::Format`], except format 5, which is format 6 without the
+/// [`Header`] (read as an empty one), format 4, which is format 5 without
+/// the deployment commands, format 3, which is format 4 without the champions
 /// flag (read as no champions), and format 2, which is format 3 without
 /// the cover layer (read as a map with no woods or grass).
-pub const FORMAT: u16 = 5;
+pub const FORMAT: u16 = 6;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -49,11 +50,41 @@ pub const CHECKPOINT_EVERY: u32 = TICKS_PER_SECOND;
 /// A replay body larger than this is refused rather than allocated.
 const MAX_BODY: usize = 256 << 20;
 
+/// One side of a recorded match, as the game showed it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Player {
+    /// "Red (Mario)".
+    pub name: String,
+    pub color: [u8; 3],
+    /// The faction's index in the lobby's list, when it had one.
+    pub faction: Option<u8>,
+}
+
+/// Who recorded a match and on what, for the game's replay list. The
+/// simulation doesn't need any of it to play the match back.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Header {
+    /// The build that recorded it (version and commit; empty if unknown).
+    pub build: String,
+    /// The game data's short hash (`gc_data::GameData::short_hash`; 0 if
+    /// unknown). Unit names and models are looked up in the game's own
+    /// data, so they only match the recording when this does.
+    pub data_hash: u64,
+    /// The players, in player order.
+    pub players: Vec<Player>,
+    /// The player whose machine recorded it, if a player's did.
+    pub recorded_by: Option<u8>,
+    /// Where the recording machine's world first disagreed with the
+    /// host's, for a desync report.
+    pub desync_tick: Option<u32>,
+}
+
 /// A recorded match.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Replay {
     /// What was recorded and how, for people (`gc_replay info`).
     pub note: String,
+    pub header: Header,
     pub seed: u64,
     /// Regiment capacity the world was created with.
     pub regiments: u32,
@@ -76,6 +107,16 @@ pub struct Replay {
     /// `(tick, state hash)` at tick 0 and every [`CHECKPOINT_EVERY`]
     /// ticks after.
     pub checkpoints: Vec<(u32, u64)>,
+}
+
+/// The replay files in `dir`, sorted by name.
+pub fn files_in(dir: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut found: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|f| f.extension().is_some_and(|x| x == EXTENSION))
+        .collect();
+    found.sort();
+    Ok(found)
 }
 
 /// Where a replay stopped matching its recorded hashes.
@@ -174,6 +215,20 @@ impl Replay {
         self.turns.iter().map(|(_, c)| c.len()).sum()
     }
 
+    /// The first checkpoint tick both recordings have where their state
+    /// hashes differ: where two machines' worlds of one match parted.
+    pub fn first_difference(&self, other: &Replay) -> Option<u32> {
+        self.checkpoints
+            .iter()
+            .find(|&&(tick, hash)| {
+                other
+                    .checkpoints
+                    .binary_search_by_key(&tick, |&(t, _)| t)
+                    .is_ok_and(|i| other.checkpoints[i].1 != hash)
+            })
+            .map(|&(tick, _)| tick)
+    }
+
     /// Play the whole replay and compare every checkpoint. Returns the
     /// final world when all of them match.
     pub fn verify(&self) -> Result<World, Divergence> {
@@ -231,6 +286,17 @@ impl Replay {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
         w.bytes(self.note.as_bytes());
+        let h = &self.header;
+        w.bytes(h.build.as_bytes());
+        w.u64(h.data_hash);
+        w.var(h.players.len() as u64);
+        for p in &h.players {
+            w.bytes(p.name.as_bytes());
+            w.bytes(&p.color);
+            w.var(p.faction.map_or(0, |f| u64::from(f) + 1));
+        }
+        w.var(h.recorded_by.map_or(0, |p| u64::from(p) + 1));
+        w.var(h.desync_tick.map_or(0, |t| u64::from(t) + 1));
         w.u64(self.seed);
         w.var(u64::from(self.regiments));
         w.var(u64::from(self.map_tiles));
@@ -300,6 +366,11 @@ impl Replay {
     fn read_body(r: &mut Reader, format: u16) -> Option<Replay> {
         // Counts are checked against the bytes left before allocating.
         let note = String::from_utf8(r.bytes()?.to_vec()).ok()?;
+        let header = if format >= 6 {
+            read_header(r)?
+        } else {
+            Header::default()
+        };
         let seed = r.u64()?;
         let regiments = r.var_as()?;
         let map_tiles: u32 = r.var_as()?;
@@ -363,6 +434,7 @@ impl Replay {
         }
         Some(Replay {
             note,
+            header,
             seed,
             regiments,
             units,
@@ -388,10 +460,44 @@ impl Replay {
     }
 }
 
+fn read_header(r: &mut Reader) -> Option<Header> {
+    let text = |r: &mut Reader| String::from_utf8(r.bytes()?.to_vec()).ok();
+    // 0 for none, else the value plus one.
+    let maybe = |r: &mut Reader| -> Option<Option<u32>> {
+        let v: u32 = r.var_as()?;
+        Some(v.checked_sub(1))
+    };
+    let build = text(r)?;
+    let data_hash = r.u64()?;
+    let n: usize = r.var_as()?;
+    let mut players = Vec::with_capacity(n.min(r.remaining()));
+    for _ in 0..n {
+        let name = text(r)?;
+        let color = r.bytes()?.try_into().ok()?;
+        let faction = maybe(r)?.map(u8::try_from).transpose().ok()?;
+        players.push(Player {
+            name,
+            color,
+            faction,
+        });
+    }
+    let recorded_by = maybe(r)?.map(u8::try_from).transpose().ok()?;
+    let desync_tick = maybe(r)?;
+    Some(Header {
+        build,
+        data_hash,
+        players,
+        recorded_by,
+        desync_tick,
+    })
+}
+
 /// Records a match as it is played: create the world from the same setup,
 /// then run every tick through [`Recorder::tick`].
 pub struct Recorder {
     replay: Replay,
+    /// Ticks between state hashes ([`CHECKPOINT_EVERY`] unless set).
+    every: u32,
 }
 
 impl Recorder {
@@ -402,6 +508,7 @@ impl Recorder {
         Recorder {
             replay: Replay {
                 note: note.into(),
+                header: Header::default(),
                 seed: setup.seed,
                 regiments: setup.capacities.regiments,
                 units: setup.units.to_vec(),
@@ -421,7 +528,25 @@ impl Recorder {
                 turns: Vec::new(),
                 checkpoints: vec![(0, world.state_hash())],
             },
+            every: CHECKPOINT_EVERY,
         }
+    }
+
+    /// Keep a state hash every `ticks` ticks instead, such as as often as a
+    /// network match compares them, so a desync report pins the tick.
+    #[must_use]
+    pub fn checkpoint_every(mut self, ticks: u32) -> Recorder {
+        self.every = ticks.max(1);
+        self
+    }
+
+    /// The state hash taken after the last tick, if one was.
+    pub fn hash_now(&self) -> Option<u64> {
+        self.replay
+            .checkpoints
+            .last()
+            .filter(|&&(t, _)| t == self.replay.ticks)
+            .map(|&(_, h)| h)
     }
 
     /// Advance `world` one tick with `commands`, recording them.
@@ -434,12 +559,17 @@ impl Recorder {
         }
         let stats = world.tick(commands);
         self.replay.ticks += 1;
-        if self.replay.ticks.is_multiple_of(CHECKPOINT_EVERY) {
+        if self.replay.ticks.is_multiple_of(self.every) {
             self.replay
                 .checkpoints
                 .push((self.replay.ticks, world.state_hash()));
         }
         stats
+    }
+
+    /// Who is recording and on what (see [`Header`]).
+    pub fn header_mut(&mut self) -> &mut Header {
+        &mut self.replay.header
     }
 
     /// The recording so far.
@@ -484,6 +614,20 @@ mod tests {
         };
         let mut world = World::new(&setup);
         let mut rec = Recorder::new(&setup, &world, "test drill");
+        *rec.header_mut() = Header {
+            build: "0.1.0 abc1234".into(),
+            data_hash: 42,
+            players: vec![
+                Player {
+                    name: "Red (Mario)".into(),
+                    color: [200, 40, 40],
+                    faction: Some(2),
+                },
+                Player::default(),
+            ],
+            recorded_by: Some(0),
+            desync_tick: None,
+        };
         let mut drill = Drill::new(7);
         drill.regiments_per_player = 6;
         drill.map_tiles = 64;
@@ -537,6 +681,38 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, replay);
         back.verify().expect("the replay plays back identically");
+    }
+
+    #[test]
+    fn two_machines_recordings_show_where_they_parted() {
+        let a = record();
+        let mut b = a.clone();
+        assert_eq!(a.first_difference(&b), None);
+        b.checkpoints[7].1 ^= 1;
+        assert_eq!(a.first_difference(&b), Some(7 * CHECKPOINT_EVERY));
+        // A shorter recording is compared as far as it goes.
+        b.checkpoints.truncate(5);
+        assert_eq!(a.first_difference(&b), None);
+    }
+
+    #[test]
+    fn a_format_5_replay_has_an_empty_header() {
+        let mut replay = record();
+        // Format 5 is format 6 without the header.
+        let mut w = Writer::default();
+        w.bytes(replay.note.as_bytes());
+        let mut body = w.buf;
+        let full = lz4_flex::decompress_size_prepended(&replay.encode()[6..]).unwrap();
+        replay.header = Header::default();
+        let empty = lz4_flex::decompress_size_prepended(&replay.encode()[6..]).unwrap();
+        // The empty header: no build, data hash 0, no players, nobody, no desync.
+        let header_len = 1 + 8 + 1 + 1 + 1;
+        body.extend_from_slice(&empty[body.len() + header_len..]);
+        assert!(full.len() > empty.len());
+        let mut old = MAGIC.to_vec();
+        old.extend_from_slice(&5u16.to_le_bytes());
+        old.extend_from_slice(&lz4_flex::compress_prepend_size(&body));
+        assert_eq!(Replay::decode(&old).unwrap(), replay);
     }
 
     #[test]

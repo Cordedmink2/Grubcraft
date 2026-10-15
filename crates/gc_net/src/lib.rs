@@ -13,8 +13,6 @@
 //! - [`link`]: reliable, ordered messages over UDP by redundancy.
 //! - [`Lan`]: the lobby (it implements the menus' `Network`), discovery on
 //!   the local network, and the turns of a match.
-//!
-//! - [`report`]: desync reports, a replay of what one machine played.
 //! - [`crypt`]: the key exchange and encryption that secure every link.
 //! - [`joincode`]: a host's address as a short code to type.
 //!
@@ -26,11 +24,9 @@ pub mod joincode;
 mod lan;
 pub mod link;
 pub mod proto;
-pub mod report;
 pub mod wire;
 
 pub use lan::{
     DEFAULT_PORT, HASH_EVERY, HostMap, INPUT_DELAY, Identity, Lan, MAX_DELAY, MIN_DELAY,
     MatchEvent, PLAYER_TIMEOUT, PORTS, RECONNECT_WAIT, TURN,
 };
-pub use report::Report;

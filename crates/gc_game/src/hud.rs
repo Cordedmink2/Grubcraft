@@ -242,13 +242,18 @@ impl Running {
             },
             cards: &hud.cards,
             tray_title: &title,
-            deployment: self.world.deploy_zone(side).map(|_| DeployStatus {
-                seconds_left: self
-                    .world
-                    .deploy_ticks_left()
-                    .div_ceil(gc_sim::TICKS_PER_SECOND),
-                ready: self.world.deploy_ready(side),
-            }),
+            // Nobody deploys in a replay.
+            deployment: self
+                .world
+                .deploy_zone(side)
+                .filter(|_| self.watching.is_none())
+                .map(|_| DeployStatus {
+                    seconds_left: self
+                        .world
+                        .deploy_ticks_left()
+                        .div_ceil(gc_sim::TICKS_PER_SECOND),
+                    ready: self.world.deploy_ready(side),
+                }),
         };
         hud.hud
             .frame(&mut hud.draw, screen, input, &data, &mut hud.events);
