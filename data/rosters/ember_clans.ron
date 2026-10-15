@@ -8,14 +8,15 @@
 //
 // Building fields (docs/21-buildings.md): name, role (Main, Outpost, Housing,
 // Economy, Production, Tech, Heroes, Defence, Wall), tier (the main-building
-// tier needed to build it), upgrades_from (main-building tiers 2 and 3: the
-// building it upgrades, with the upgrade's cost and time), cost, build_time
-// (seconds at Standard tempo), hp, armour (Fortified, Structure, Living),
-// footprint (tiles across and deep), supply (cap it adds), flags (DropOffGrub,
-// DropOffMarrow, ConsumesBuilder, NeedsPower, PowersField, AntiAir), attack
-// (towers: range in tiles, damage per shot, seconds between shots, shots per
-// volley) and effect (plain words). A unit's `from: Building("...")` names
-// one of these buildings.
+// tier needed to build it), upgrades_from (main-building tiers 2 and 3:
+// Some(the building it upgrades), with the upgrade's cost and time), cost,
+// build_time (seconds at Standard tempo), hp, armour (Fortified, Structure,
+// Living), footprint (tiles across and deep), supply (cap it adds), flags
+// (DropOffGrub, DropOffMarrow, PowersField, AntiAir), attack (towers: range in
+// tiles, damage per shot, seconds between shots, shots per volley) and effect
+// (plain words). starting_buildings are what a player starts Conquest with
+// (docs/04-economy.md). A unit's `from: Building("...")` names one of these
+// buildings.
 //
 // Unit fields: tier (1 to 3; 0 for summoned units), class, cost (Grub and
 // Marrow), supply, train_time (seconds; for Brood evolutions the cocoon
@@ -75,6 +76,7 @@
             ),
         ],
     ),
+    starting_buildings: ["Clan Hall"],
     buildings: [
         (
             name: "Clan Hall",
@@ -93,7 +95,7 @@
             name: "Castle Keep",
             role: Main,
             tier: 2,
-            upgrades_from: "Clan Hall",
+            upgrades_from: Some("Clan Hall"),
             cost: (grub: 300, marrow: 100),
             build_time: 60.0,
             hp: 3800,
@@ -107,7 +109,7 @@
             name: "Daimyo's Citadel",
             role: Main,
             tier: 3,
-            upgrades_from: "Castle Keep",
+            upgrades_from: Some("Castle Keep"),
             cost: (grub: 600, marrow: 250),
             build_time: 90.0,
             hp: 4600,
@@ -140,7 +142,7 @@
             armour: Structure,
             footprint: (3, 3),
             supply: 10,
-            effect: "+10 supply.",
+            effect: "Housing.",
         ),
         (
             name: "Granary",

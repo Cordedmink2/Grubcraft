@@ -8,14 +8,15 @@
 //
 // Building fields (docs/21-buildings.md): name, role (Main, Outpost, Housing,
 // Economy, Production, Tech, Heroes, Defence, Wall), tier (the main-building
-// tier needed to build it), upgrades_from (main-building tiers 2 and 3: the
-// building it upgrades, with the upgrade's cost and time), cost, build_time
-// (seconds at Standard tempo), hp, armour (Fortified, Structure, Living),
-// footprint (tiles across and deep), supply (cap it adds), flags (DropOffGrub,
-// DropOffMarrow, ConsumesBuilder, NeedsPower, PowersField, AntiAir), attack
-// (towers: range in tiles, damage per shot, seconds between shots, shots per
-// volley) and effect (plain words). A unit's `from: Building("...")` names
-// one of these buildings.
+// tier needed to build it), upgrades_from (main-building tiers 2 and 3:
+// Some(the building it upgrades), with the upgrade's cost and time), cost,
+// build_time (seconds at Standard tempo), hp, armour (Fortified, Structure,
+// Living), footprint (tiles across and deep), supply (cap it adds), flags
+// (DropOffGrub, DropOffMarrow, PowersField, AntiAir), attack (towers: range in
+// tiles, damage per shot, seconds between shots, shots per volley) and effect
+// (plain words). starting_buildings are what a player starts Conquest with
+// (docs/04-economy.md). A unit's `from: Building("...")` names one of these
+// buildings.
 //
 // Unit fields: tier (1 to 3; 0 for summoned units), class, cost (Grub and
 // Marrow), supply, train_time (seconds; for Brood evolutions the cocoon
@@ -34,6 +35,7 @@
         max: 15,
         abilities: [],
     ),
+    starting_buildings: ["Hive"],
     buildings: [
         (
             name: "Hive",
@@ -45,14 +47,13 @@
             armour: Living,
             footprint: (5, 5),
             supply: 12,
-            flags: [ConsumesBuilder],
             effect: "Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 10 tiles around it.",
         ),
         (
             name: "Great Hive",
             role: Main,
             tier: 2,
-            upgrades_from: "Hive",
+            upgrades_from: Some("Hive"),
             cost: (grub: 300, marrow: 100),
             build_time: 60.0,
             hp: 3400,
@@ -65,7 +66,7 @@
             name: "Throne Hive",
             role: Main,
             tier: 3,
-            upgrades_from: "Great Hive",
+            upgrades_from: Some("Great Hive"),
             cost: (grub: 600, marrow: 250),
             build_time: 90.0,
             hp: 4200,
@@ -84,8 +85,7 @@
             armour: Living,
             footprint: (2, 2),
             supply: 8,
-            flags: [ConsumesBuilder],
-            effect: "+8 supply. Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering.",
+            effect: "Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering.",
         ),
         (
             name: "Hatchery Pit",
@@ -96,7 +96,6 @@
             hp: 900,
             armour: Living,
             footprint: (3, 3),
-            flags: [ConsumesBuilder],
             effect: "Holds 3 more larvae and spawns its own every 12 s.",
         ),
         (
@@ -108,7 +107,6 @@
             hp: 1100,
             armour: Living,
             footprint: (3, 3),
-            flags: [ConsumesBuilder],
             effect: "Unlocks evolutions: tier-1 regiments can cocoon into their tier-2 forms anywhere on the field.",
         ),
         (
@@ -120,7 +118,6 @@
             hp: 1000,
             armour: Living,
             footprint: (3, 3),
-            flags: [ConsumesBuilder],
             effect: "Lets larvae hatch into Drone-Moths.",
         ),
         (
@@ -132,7 +129,6 @@
             hp: 1300,
             armour: Living,
             footprint: (4, 4),
-            flags: [ConsumesBuilder],
             effect: "Lets larvae hatch into Broodmother Bulks and, at tier 3, the Colossus Maw.",
         ),
         (
@@ -144,7 +140,7 @@
             hp: 900,
             armour: Living,
             footprint: (2, 2),
-            flags: [ConsumesBuilder, AntiAir],
+            flags: [AntiAir],
             attack: Some((range: 14.0, damage: 10, reload: 2.0, shots: 1)),
             effect: "Flings spines at ground and air.",
         ),
@@ -157,7 +153,6 @@
             hp: 1100,
             armour: Living,
             footprint: (3, 3),
-            flags: [ConsumesBuilder],
             effect: "Hatches and revives heroes.",
         ),
     ],

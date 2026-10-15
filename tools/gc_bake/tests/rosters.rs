@@ -20,6 +20,8 @@ const ROSTERS: &[(&str, FactionDef)] = &[
 struct Roster {
     faction: FactionDef,
     meter: Meter,
+    /// What a player starts Conquest with (docs/04-economy.md).
+    starting_buildings: Vec<String>,
     buildings: Vec<Building>,
     units: Vec<Unit>,
     heroes: Vec<Hero>,
@@ -42,7 +44,7 @@ struct Building {
     tier: u8,
     /// Main-building tiers 2 and 3: the building this one upgrades.
     #[serde(default)]
-    upgrades_from: String,
+    upgrades_from: Option<String>,
     cost: Cost,
     /// Seconds at Standard tempo.
     build_time: f64,
@@ -83,10 +85,8 @@ enum Armour {
 enum BuildingFlag {
     DropOffGrub,
     DropOffMarrow,
-    /// Brood: the Gnawer that grows it is used up.
-    ConsumesBuilder,
-    /// Choir: shuts down outside a powered field.
-    NeedsPower,
+    /// Choir: powers buildings around it. Every other Choir building needs
+    /// power to work.
     PowersField,
     AntiAir,
 }
@@ -507,24 +507,24 @@ const HOUSING: [(&str, u8); 4] = [
 /// Grub, Marrow, seconds.
 const TIER_UPGRADES: [(u16, u16, f64); 2] = [(300, 100, 60.0), (600, 250, 90.0)];
 
+/// Every faction starts Conquest on this supply cap (docs/04-economy.md).
+const STARTING_SUPPLY: u8 = 12;
+
 #[test]
 fn buildings_follow_the_design_rules() {
-    let mut everywhere = BTreeSet::new();
+    let mut supply_of = BTreeMap::new();
     for &(file, faction) in ROSTERS {
         let r = load(file);
         let brood = faction == FactionDef::Brood;
-        let choir = faction == FactionDef::Choir;
         let by_name: BTreeMap<&str, &Building> =
             r.buildings.iter().map(|b| (b.name.as_str(), b)).collect();
-        assert_eq!(
-            by_name.len(),
-            r.buildings.len(),
-            "{file}: duplicate building"
-        );
 
         for b in &r.buildings {
             let at = format!("{file}: {}", b.name);
-            assert!(everywhere.insert(b.name.clone()), "{at}: name used twice");
+            assert!(
+                supply_of.insert(b.name.clone(), b.supply).is_none(),
+                "{at}: name used twice"
+            );
             assert!((1..=3).contains(&b.tier), "{at}: tier 1 to 3");
             assert!(
                 b.cost.grub > 0 && b.hp > 0,
@@ -567,32 +567,20 @@ fn buildings_follow_the_design_rules() {
                     "{at}: only halls, housing and Resonators add supply"
                 );
             }
-            let expected = if brood {
-                Armour::Living
-            } else if matches!(b.role, Role::Main | Role::Defence | Role::Wall)
-                || (b.role == Role::Outpost && faction == FactionDef::EmberClans)
-            {
-                Armour::Fortified
-            } else {
-                Armour::Structure
-            };
-            assert_eq!(b.armour, expected, "{at}: armour");
-            let upgrade = !b.upgrades_from.is_empty();
-            assert_eq!(
-                b.flags.contains(&BuildingFlag::ConsumesBuilder),
-                brood && !upgrade,
-                "{at}: only Brood buildings use up their builder (not upgrades)"
+            assert!(
+                b.upgrades_from.is_none() || b.role == Role::Main,
+                "{at}: only main buildings upgrade"
             );
-            let powers = b.flags.contains(&BuildingFlag::PowersField);
-            assert!(!powers || choir, "{at}: only the Choir powers fields");
-            assert_eq!(
-                b.flags.contains(&BuildingFlag::NeedsPower),
-                choir && !powers,
-                "{at}: every Choir building needs power except the ones that give it"
-            );
-            if let Some(&(_, supply)) = HOUSING.iter().find(|(n, _)| *n == b.name) {
-                assert_eq!(b.supply, supply, "{at}: supply differs from docs/04");
+            // Brood structures are all Living; nobody else's are. Elsewhere
+            // halls, towers and walls are Fortified.
+            assert_eq!(b.armour == Armour::Living, brood, "{at}: armour");
+            if !brood && matches!(b.role, Role::Main | Role::Defence | Role::Wall) {
+                assert_eq!(b.armour, Armour::Fortified, "{at}: armour");
             }
+            assert!(
+                !b.flags.contains(&BuildingFlag::PowersField) || faction == FactionDef::Choir,
+                "{at}: only the Choir powers fields"
+            );
         }
 
         // The main building: one at tier 1, upgraded twice.
@@ -608,14 +596,14 @@ fn buildings_follow_the_design_rules() {
         );
         let base = mains
             .iter()
-            .find(|b| b.upgrades_from.is_empty())
+            .find(|b| b.upgrades_from.is_none())
             .expect("tier-1 main building");
         assert_eq!(base.tier, 1, "{file}: the main building starts at tier 1");
         let mut prev = *base;
         for (tier, &(grub, marrow, time)) in (2..).zip(&TIER_UPGRADES) {
             let next = mains
                 .iter()
-                .find(|b| b.upgrades_from == prev.name)
+                .find(|b| b.upgrades_from.as_deref() == Some(prev.name.as_str()))
                 .unwrap_or_else(|| panic!("{file}: nothing upgrades {}", prev.name));
             let at = format!("{file}: {}", next.name);
             assert_eq!(next.tier, tier, "{at}: tier");
@@ -631,35 +619,36 @@ fn buildings_follow_the_design_rules() {
                 "{at}: each tier adds 10 supply"
             );
             assert!(next.hp > prev.hp, "{at}: upgrades add hit points");
-            // An upgrade is not grown from a Gnawer, so only that flag may differ.
-            let kept = |b: &Building| -> Vec<BuildingFlag> {
-                let not_builder = |f: &&BuildingFlag| **f != BuildingFlag::ConsumesBuilder;
-                b.flags.iter().filter(not_builder).copied().collect()
-            };
             assert_eq!(
-                kept(next),
-                kept(prev),
+                next.flags, prev.flags,
                 "{at}: keeps what the tier below does"
             );
             prev = next;
         }
-        for b in r.buildings.iter().filter(|b| !b.upgrades_from.is_empty()) {
+        // An expansion takes the same drop-offs as the main building.
+        for b in r.buildings.iter().filter(|b| b.role == Role::Outpost) {
             assert_eq!(
-                b.role,
-                Role::Main,
-                "{file}: {}: only main buildings upgrade",
+                b.flags, base.flags,
+                "{file}: {}: drop-offs differ from the main building",
                 b.name
             );
         }
 
-        // Every faction starts on 12 supply (docs/04, "Starting state"); the
-        // Choir starts with two Resonators beside its Spire.
-        let resonators = if choir {
-            2 * by_name["Resonator"].supply
-        } else {
-            0
-        };
-        assert_eq!(base.supply + resonators, 12, "{file}: starting supply");
+        let start: u8 = r
+            .starting_buildings
+            .iter()
+            .map(|n| {
+                by_name
+                    .get(n.as_str())
+                    .unwrap_or_else(|| panic!("{file}: no building {n}"))
+                    .supply
+            })
+            .sum();
+        assert_eq!(start, STARTING_SUPPLY, "{file}: starting supply");
+        assert!(
+            r.starting_buildings.contains(&base.name),
+            "{file}: a player starts with the main building"
+        );
 
         assert!(
             r.buildings
@@ -670,15 +659,12 @@ fn buildings_follow_the_design_rules() {
 
         // Units and heroes come from buildings that exist, no earlier than the
         // building can stand.
-        let heroes: Vec<&Building> = r
-            .buildings
-            .iter()
-            .filter(|b| b.role == Role::Heroes)
-            .collect();
-        assert_eq!(heroes.len(), 1, "{file}: one hero building");
+        let mut heroes = r.buildings.iter().filter(|b| b.role == Role::Heroes);
+        let hero_building = heroes.next().expect("a hero building");
+        assert!(heroes.next().is_none(), "{file}: one hero building");
         for h in &r.heroes {
             assert_eq!(
-                h.hired_at, heroes[0].name,
+                h.hired_at, hero_building.name,
                 "{file}: {} is hired elsewhere",
                 h.stats.name
             );
@@ -705,5 +691,12 @@ fn buildings_follow_the_design_rules() {
                 b.name
             );
         }
+    }
+    for (name, supply) in HOUSING {
+        assert_eq!(
+            supply_of.get(name),
+            Some(&supply),
+            "{name}: supply differs from docs/04"
+        );
     }
 }

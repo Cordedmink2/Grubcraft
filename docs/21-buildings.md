@@ -56,7 +56,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Castle Keep (upgrades Clan Hall) | 2 | 300 / 100 | 60 s | 3,800 | Fortified | 5×5 | +22 | Tier 2: elite infantry, cavalry, air, artillery and a second hero. |
 | Daimyo's Citadel (upgrades Castle Keep) | 3 | 600 / 250 | 90 s | 4,600 | Fortified | 5×5 | +32 | Tier 3: monsters, top upgrades and a third hero. |
 | Outpost Hall | 1 | 250 / 0 | 80 s | 2,000 | Fortified | 4×4 | +6 | A cheaper hall for expansions: takes Grub and Marrow and reinforces, but trains nothing and cannot be upgraded. |
-| Farmstead | 1 | 80 / 0 | 25 s | 600 | Structure | 3×3 | +10 | +10 supply. |
+| Farmstead | 1 | 80 / 0 | 25 s | 600 | Structure | 3×3 | +10 | Housing. |
 | Granary | 1 | 100 / 0 | 30 s | 800 | Structure | 3×3 |  | A Grub drop-off to build beside seeps, so Hands walk less. Researches the Clans' economy upgrades. |
 | Dojo | 1 | 150 / 0 | 50 s | 1,400 | Structure | 4×4 |  | Trains spearmen, archers and samurai. Reinforces regiments nearby. |
 | Stables | 2 | 180 / 40 | 60 s | 1,400 | Structure | 5×4 |  | Trains cavalry. Reinforces regiments nearby. |
@@ -75,7 +75,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Hive | 1 | 300 / 0 | 100 s | 2,600 | Living | 5×5 | +12 | Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 10 tiles around it. |
 | Great Hive (upgrades Hive) | 2 | 300 / 100 | 60 s | 3,400 | Living | 5×5 | +22 | Tier 2: elite infantry, cavalry, air, artillery and a second hero. |
 | Throne Hive (upgrades Great Hive) | 3 | 600 / 250 | 90 s | 4,200 | Living | 5×5 | +32 | Tier 3: monsters, top upgrades and a third hero. |
-| Pustule | 1 | 40 / 0 | 20 s | 400 | Living | 2×2 | +8 | +8 supply. Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering. |
+| Pustule | 1 | 40 / 0 | 20 s | 400 | Living | 2×2 | +8 | Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering. |
 | Hatchery Pit | 1 | 120 / 0 | 40 s | 900 | Living | 3×3 |  | Holds 3 more larvae and spawns its own every 12 s. |
 | Chrysalis Chamber | 2 | 150 / 50 | 50 s | 1,100 | Living | 3×3 |  | Unlocks evolutions: tier-1 regiments can cocoon into their tier-2 forms anywhere on the field. |
 | Moth Roost | 2 | 150 / 40 | 50 s | 1,000 | Living | 3×3 |  | Lets larvae hatch into Drone-Moths. |
@@ -90,8 +90,8 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Spire | 1 | 400 / 0 | 110 s | 2,800 | Fortified | 4×4 | +4 | Main building. Builds Tuners and Conductors and powers buildings within 8 tiles. |
 | Cathedral (upgrades Spire) | 2 | 300 / 100 | 60 s | 3,600 | Fortified | 4×4 | +14 | Tier 2: elite infantry, cavalry, air, artillery and a second hero. |
 | Grand Organ (upgrades Cathedral) | 3 | 600 / 250 | 90 s | 4,400 | Fortified | 4×4 | +24 | Tier 3: monsters, top upgrades and a third hero. |
-| Resonator | 1 | 150 / 0 | 25 s | 500 | Structure | 2×2 | +4 | +4 supply. Tunes a seep within 4 tiles to make Grub with no workers, links with Resonators within 14 tiles into chords, and powers buildings within 6 tiles. |
-| Siphon | 1 | 175 / 0 | 30 s | 500 | Structure | 2×2 | +4 | +4 supply. A Resonator built on a Marrow vein: about 50 Marrow a minute. Links chords and powers buildings like a Resonator. |
+| Resonator | 1 | 150 / 0 | 25 s | 500 | Structure | 2×2 | +4 | Tunes a seep within 4 tiles to make Grub with no workers, links with Resonators within 14 tiles into chords, and powers buildings within 6 tiles. |
+| Siphon | 1 | 175 / 0 | 30 s | 500 | Structure | 2×2 | +4 | A Resonator built on a Marrow vein: about 50 Marrow a minute. Links chords and powers buildings like a Resonator. |
 | Forge of Facets | 1 | 160 / 0 | 50 s | 1,300 | Structure | 4×4 |  | Builds every Choir regiment that walks. |
 | Harmonics Lab | 1 | 175 / 0 | 50 s | 1,100 | Structure | 3×3 |  | Researches upgrades. |
 | Skyglass Loom | 2 | 160 / 50 | 55 s | 1,100 | Structure | 3×3 |  | Builds Skyglass. |
@@ -106,7 +106,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Exchange (upgrades Counting House) | 2 | 300 / 100 | 60 s | 3,600 | Fortified | 5×5 | +22 | Tier 2: elite infantry, cavalry, air, artillery and a second hero. |
 | Grand Bourse (upgrades Exchange) | 3 | 600 / 250 | 90 s | 4,400 | Fortified | 5×5 | +32 | Tier 3: monsters, top upgrades and a third hero. |
 | Waystation | 1 | 200 / 0 | 60 s | 1,200 | Structure | 4×4 |  | Your own trade post for caravan routes (half rate), and a Marrow drop-off for expansions. |
-| Tenement | 1 | 80 / 0 | 25 s | 650 | Structure | 3×3 | +10 | +10 supply. |
+| Tenement | 1 | 80 / 0 | 25 s | 650 | Structure | 3×3 | +10 | Housing. |
 | Reliquary | 1 | 75 / 0 | 20 s | 400 | Structure | 2×2 |  | Every model that dies within 12 tiles, on any side, pays 1 Tithe. Can be built anywhere you have vision. |
 | Ossuary | 1 | 150 / 0 | 50 s | 1,400 | Structure | 4×4 |  | Raises the undead: Bone Pikes, Gravewardens, and at tier 3 the Mausoleum Engine and the Insolvent. |
 | Guildhall | 1 | 160 / 0 | 50 s | 1,400 | Structure | 4×4 |  | Trains living infantry and cavalry. Living regiments reinforce near it. |
