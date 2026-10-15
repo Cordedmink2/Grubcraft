@@ -70,6 +70,8 @@ mod battle;
 mod camera;
 mod credits;
 mod data;
+#[cfg(test)]
+mod goldens;
 mod lens;
 mod models;
 mod online;

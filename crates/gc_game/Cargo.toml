@@ -34,6 +34,9 @@ pollster.workspace = true
 winit.workspace = true
 tracy-client = { version = "0.18", optional = true }
 
+[dev-dependencies]
+gc_replay.workspace = true
+
 [build-dependencies]
 gc_bake.workspace = true
 

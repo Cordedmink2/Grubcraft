@@ -74,7 +74,7 @@ grubcraft/
 │  ├─ gc_bake/       data baker: data/*.ron → compiled tables
 │  ├─ gc_artbake/    model baker: glTF → meshes, LODs, bone animation textures
 │  ├─ gc_sfx/        generates the prototype sound set
-│  ├─ gc_replay/     headless replay runner, determinism checker            (later)
+│  ├─ gc_replay/     replay file, recorder, headless runner, golden checks
 │  ├─ gc_bench/      performance benchmarks with budget gates
 │  ├─ gc_arena/      headless AI-against-AI ladders and tactical drills      (later)
 │  └─ gc_mapcheck/   map validator                                          (later)
@@ -317,7 +317,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 ## Tooling
 | Tool | Purpose |
 |---|---|
-| `gc_replay` *(later)* | Run a replay headless at maximum speed; verify state hashes; dump state at a tick |
+| `gc_replay` | Run a replay headless at maximum speed and verify its state hashes: `cargo run --release -p gc_replay -- verify` (all of `replays/`), `bless FILE` (store the hashes the sim produces now), `info FILE`. Dumping state at a tick is still to come |
 | `gc_bench` | Fixed benchmark scenarios; reports tick time, frame time, memory by tag; enforces budgets |
 | `gc_mapcheck` *(later)* | Map fairness and validity checks |
 | `gc_bake` | Data baker |
@@ -336,7 +336,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 - **Performance gates** (see [12 · Performance](12-performance.md#hill-climbing-process)).
 - **AI drills and arena:** tactical puzzles with expected outcomes run as tests, and nightly AI-against-AI ladders in `gc_arena` that check each difficulty beats the one below ([18 · AI](18-ai.md#testing-tuning-and-explaining)).
 
-**Built so far:** unit tests per crate (fixed-point maths, formations, group orders, combat, morale, pathfinding, data baking, puppets); a golden determinism test that runs a scripted 4-player drill (moves, group moves and fights) for 2,400 ticks, on an open plane and again on a ridged test map where most orders need routes, and compares state hashes on macOS, Windows and Linux CI; the no-float and no-allocation tests (the latter on the ridged map); and the `gc_bench` drill and pathing-storm benchmarks. Recorded golden replays arrive with replay recording in M2.
+**Built so far:** unit tests per crate (fixed-point maths, formations, group orders, combat, morale, pathfinding, data baking, puppets); a golden determinism test that runs a scripted 4-player drill (moves, group moves and fights) for 2,400 ticks, on an open plane and again on a ridged test map where most orders need routes, and compares state hashes on macOS, Windows and Linux CI; the no-float and no-allocation tests (the latter on the ridged map); and the `gc_bench` drill, pathing-storm and grand-battle benchmarks. **Golden replays (2026-10-15):** four recorded battles in `replays/` (see `replays/README.md`): a 1v1 and a 2v2 Field Battle between computer players, a 1v1 with sandbox tuning and removal mid-fight (so every command kind is covered), and the 6,000-soldier `field-8000pt-2v2` brawl. Each stores its unit table and map, so retuning `data/units.ron` or the map generator never moves them; only simulation changes do. `cargo test` checks them (`gc_replay/tests/goldens.rs`) and CI plays them again in release mode on macOS, Windows and Linux. They were recorded headless by `gc_game`'s `goldens.rs` (an ignored test, run by hand); a PR that changes how battles play out re-blesses them with `gc_replay bless` in the same PR.
 
 ## Dependency policy
 - Every third-party crate is listed in `docs/dependencies.md` with its purpose and its cost (binary size, transitive dependencies).

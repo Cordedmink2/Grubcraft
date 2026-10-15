@@ -49,6 +49,8 @@ jobs:
       - run: cargo test --workspace
       - name: Determinism in release mode
         run: cargo test --release -p gc_sim --test determinism
+      - name: Golden replays in release mode
+        run: cargo run --release -p gc_replay -- verify replays
       - name: Simulation benchmark and budgets
         run: cargo run --release -p gc_bench
 

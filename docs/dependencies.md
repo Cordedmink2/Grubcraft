@@ -40,6 +40,7 @@ These run in `gc_bake` and in `gc_game`'s build script. `blake3` never reaches t
 | Crate | Used by | Why |
 |---|---|---|
 | `naga` 30 (`wgsl-in`) | `gc_render` tests | Validates shaders in CI, where there is no GPU |
+| `lz4_flex` 0.14 (`std`, `safe-encode`, `safe-decode`; no frame format) | `gc_replay` (the golden replays, `gc_bench`, `gc_game` tests) | Compresses replay files, as [11 · Networking](11-networking.md#save-load-and-replays) planned. Pure Rust, no `unsafe` with these features. Ships in the game once it records replays (M2) |
 
 ## Bundled assets
 

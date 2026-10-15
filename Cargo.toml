@@ -8,6 +8,7 @@ members = [
     "crates/gc_sim",
     "crates/gc_ai",
     "crates/gc_net",
+    "crates/gc_replay",
     "crates/gc_platform",
     "crates/gc_render",
     "crates/gc_ui",
@@ -33,6 +34,7 @@ gc_data = { path = "crates/gc_data" }
 gc_sim = { path = "crates/gc_sim" }
 gc_ai = { path = "crates/gc_ai" }
 gc_net = { path = "crates/gc_net" }
+gc_replay = { path = "crates/gc_replay" }
 gc_platform = { path = "crates/gc_platform" }
 gc_render = { path = "crates/gc_render" }
 gc_ui = { path = "crates/gc_ui" }
@@ -42,6 +44,7 @@ blake3 = { version = "1", default-features = false, features = ["pure"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 cpal = { version = "0.16", default-features = false }
 glam = "0.34"
+lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 pollster = "1.0"
 ron = "0.10"
 serde = { version = "1", features = ["derive"] }

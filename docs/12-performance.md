@@ -126,11 +126,13 @@ Scenarios replayed headless (sim) and rendered with a scripted camera (frame):
 | `zoom-sweep` | Camera from closest to Commander View: LOD transitions |
 | `cold-start` | Launch to menu, menu to match |
 
-**Built so far:** two scenarios, both on a 256-tile ridged test map (`gc_sim::scenario::ribs_map`; `--open` runs on an open plane instead), gating tick p99 (≤ 2 ms), sim heap (≤ 8 MB) and allocations per tick (0). CI runs both on every pull request.
+**Built so far:** three scenarios, gating tick p99 (≤ 2 ms), sim heap (≤ 8 MB) and allocations per tick (0). CI runs all three on every pull request. The first two run on a 256-tile ridged test map (`gc_sim::scenario::ribs_map`; `--open` runs them on an open plane instead).
 - `drill`: four scripted players with 300 regiments each, ordering moves and group moves and fighting, for 12,000 ticks. With pathfinding (M1 step 6) it measures about 0.75 to 0.9 ms p99 (0.5 ms on the open plane), 2.7 MB of sim heap (the nav grid and portal graph are most of it) and 0 allocations, in the cloud build container.
 - `pathing-storm`: 120 regiments ordered across the map in the same tick. It also gates how long the last one waits for its route (≤ 40 ticks, 2 s); today about 17 ticks, at about 0.45 ms p99.
 
-The other scenarios need features that don't exist yet (replays, rendering benchmarks).
+- `field-8000pt-2v2` (headless half): the recorded battle `replays/field-8000pt-2v2.gcr` played back. Four armies of about 1,500 soldiers (276 regiments, 6,052 soldiers; points arrive with the army builder, so "8,000 points" means 1,500 soldiers for now) on a generated 384-tile map with hills and rivers, every regiment ordered to attack the nearest enemy each second. Up to about 2,000 soldiers are in melee at once and half the field falls in the first minute. It measures about 0.05 ms p50, 0.3 ms p99 and 0.7 ms at worst a tick, 5.2 MB of sim heap and 0 allocations, in the cloud build container. The frame half (puppets and rendering of the same battle) needs in-game replay playback (M2 step 6) and a real GPU, so it is measured on Mario's machines.
+
+The other scenarios need features that don't exist yet (a recorded hour-long 4-player match, rendering benchmarks).
 
 ### Gates in CI
 - Every pull request runs the headless benchmarks on CI machines and compares against the stored baseline: **> 5% regression in any tracked metric fails**, unless the PR updates the baseline with a written reason. *(Not built yet: today CI checks the fixed budgets above, not a stored baseline. Due in M1, requirement PRF-7.)*

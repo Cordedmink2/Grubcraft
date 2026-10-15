@@ -9,16 +9,22 @@
 //!   moves and fighting, for ten minutes of game time.
 //! - `pathing-storm`: 120 regiments all ordered across the map in the same
 //!   tick; measures how long the last one waits for its route.
+//! - `field-8000pt-2v2`: the recorded grand battle in
+//!   `replays/field-8000pt-2v2.gcr`, played back: four armies of 1,500
+//!   soldiers on a generated 384-tile map, charging into one brawl.
 //!
-//! Usage: gc_bench [--scenario drill|pathing-storm] [--ticks N]
-//!                 [--regiments-per-player N] [--seed N] [--open]
-//! `--open` runs on an open plane with no obstacles (no route searches).
-//! With no `--scenario`, runs both.
+//! Usage: gc_bench [--scenario drill|pathing-storm|field-8000pt-2v2]
+//!                 [--ticks N] [--regiments-per-player N] [--seed N] [--open]
+//! `--open` runs the scripted scenarios on an open plane with no obstacles
+//! (no route searches); `--ticks` cuts the replay short. The grand battle
+//! takes its map, armies and seed from the replay. With no `--scenario`,
+//! runs all three.
 
 use std::time::Instant;
 
 use gc_fixed::{Fx, FxVec2};
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
+use gc_replay::Replay;
 use gc_sim::scenario::{DRILL_UNITS, Drill, NORTH, ribs_map};
 use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, World};
 
@@ -34,6 +40,10 @@ const P99_TICK_BUDGET_US: f64 = 2_000.0;
 /// ticks of the order (2 s).
 const STORM_WAIT_BUDGET: u32 = 40;
 const MAP_TILES: u32 = 256;
+/// The recorded grand battle, built into the benchmark so it runs from
+/// any folder.
+const GRAND_BATTLE: &[u8] = include_bytes!("../../../replays/field-8000pt-2v2.gcr");
+const SCENARIOS: [&str; 3] = ["drill", "pathing-storm", "field-8000pt-2v2"];
 
 struct Options {
     scenario: Option<String>,
@@ -85,7 +95,13 @@ fn main() {
         }
         failed |= pathing_storm(&opts, &nav);
     }
-    if !run_all && !matches!(opts.scenario.as_deref(), Some("drill" | "pathing-storm")) {
+    if run_all || opts.scenario.as_deref() == Some("field-8000pt-2v2") {
+        if run_all {
+            println!();
+        }
+        failed |= grand_battle(&opts);
+    }
+    if !run_all && !SCENARIOS.contains(&opts.scenario.as_deref().unwrap_or("")) {
         usage();
     }
     if failed {
@@ -95,8 +111,9 @@ fn main() {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: gc_bench [--scenario drill|pathing-storm] [--ticks N] \
-         [--regiments-per-player N] [--seed N] [--open]"
+        "usage: gc_bench [--scenario {}] [--ticks N] \
+         [--regiments-per-player N] [--seed N] [--open]",
+        SCENARIOS.join("|")
     );
     std::process::exit(2);
 }
@@ -274,6 +291,60 @@ fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
         failed = true;
     }
     failed
+}
+
+fn grand_battle(opts: &Options) -> bool {
+    let replay = Replay::decode(GRAND_BATTLE).expect("the grand battle replay is built in");
+    let ticks = opts.ticks.unwrap_or(replay.ticks).min(replay.ticks);
+    let mut world = tagged_alloc::scope(Tag::Sim, || replay.new_world());
+    let mut timings = Timings::new(ticks);
+    let mut most_in_melee = (0, 0);
+    let (mut regiments, mut soldiers) = (0, 0);
+    let last_check = replay
+        .checkpoints
+        .iter()
+        .rev()
+        .find(|&&(t, _)| t <= ticks)
+        .copied();
+    let mut golden = None;
+    for tick in 0..ticks {
+        timings.tick(&mut world, replay.commands_at(tick));
+        if tick == 0 {
+            regiments = world.regiments.len();
+            soldiers = world.regiments.iter().map(|r| r.models as u32).sum::<u32>();
+        }
+        let in_melee: u32 = world
+            .regiments
+            .iter()
+            .filter(|r| r.engaged)
+            .map(|r| r.models as u32)
+            .sum();
+        if in_melee > most_in_melee.0 {
+            most_in_melee = (in_melee, tick + 1);
+        }
+        if let Some((t, hash)) = last_check
+            && t == tick + 1
+        {
+            golden = Some(world.state_hash() == hash);
+        }
+    }
+    let at = most_in_melee.1 / gc_sim::TICKS_PER_SECOND;
+    println!(
+        "scenario     field-8000pt-2v2, replayed: {regiments} regiments, {soldiers} soldiers, \
+         {ticks} ticks, {}-tile map",
+        replay.map_tiles
+    );
+    println!(
+        "in melee     {:>9}      (most soldiers fighting at once, at {}:{:02})",
+        most_in_melee.0,
+        at / 60,
+        at % 60
+    );
+    if golden == Some(false) {
+        // Not a failure here: `gc_replay verify` is the determinism check.
+        println!("note         the simulation no longer plays this replay as recorded");
+    }
+    timings.report(&world)
 }
 
 fn mb(bytes: usize) -> f64 {
