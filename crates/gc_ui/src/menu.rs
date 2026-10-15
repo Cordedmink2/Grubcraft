@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::draw::{Rect, fit};
 use crate::lobby::{
     AI_LEVELS, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MatchStart, NetEvent, Network,
-    PLAYER_COLORS, Profile, SlotEdit, SlotKind, Tempo,
+    OnDrop, PLAYER_COLORS, Profile, SlotEdit, SlotKind, Tempo,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -425,7 +425,7 @@ impl<N: Network> Menu<N> {
 
         // Match settings: the host edits, everyone sees.
         let mut settings = lobby.settings.clone();
-        let col_w = (panel.w - 48 - 24) / 3;
+        let col_w = (panel.w - 48 - 36) / 4;
         let y = panel.y + sp(64);
         let slot_rect = |i: i32| Rect::new(panel.x + 24 + i * (col_w + 12), y, col_w, sp(36));
         let mut changed = false;
@@ -463,12 +463,22 @@ impl<N: Network> Menu<N> {
                 settings.tempo = Tempo::ALL[tempo];
                 changed = true;
             }
+            let drop_names: Vec<&str> = OnDrop::ALL.iter().map(|d| d.name()).collect();
+            let mut on_drop = OnDrop::ALL
+                .iter()
+                .position(|&d| d == settings.on_drop)
+                .unwrap_or(0);
+            if ui.stepper(slot_rect(3), "On drop", &mut on_drop, &drop_names) {
+                settings.on_drop = OnDrop::ALL[on_drop];
+                changed = true;
+            }
         } else {
             let map = MAPS.get(settings.map).copied().unwrap_or("?");
             for (i, text) in [
                 format!("Map: {map}"),
                 format!("Mode: {}", settings.mode.name()),
                 format!("Tempo: {}", settings.tempo.name()),
+                format!("On drop: {}", settings.on_drop.name()),
             ]
             .iter()
             .enumerate()

@@ -7,14 +7,14 @@
 
 use gc_sim::PlayerCommand;
 use gc_ui::lobby::{
-    Faction, GameMode, LobbySettings, MAX_PLAYERS, Slot, SlotEdit, SlotKind, Tempo,
+    Faction, GameMode, LobbySettings, MAX_PLAYERS, OnDrop, Slot, SlotEdit, SlotKind, Tempo,
 };
 
 use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 1;
+pub const PROTOCOL: u8 = 2;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -141,9 +141,18 @@ pub enum Msg {
     Notice { text: String },
     /// Either way: I'm leaving, and why.
     Bye { reason: String },
+    /// Host → everyone: orders now land this many turns after they reach
+    /// the host (it adapts to the slowest connection).
+    Delay { turns: u8 },
+    /// Host → everyone: the match is paused while `who` reconnects, for
+    /// at most `seconds` more. An empty `who` means it carries on.
+    Wait { who: String, seconds: u16 },
+    /// Host → everyone: a player's world stopped matching the host's at
+    /// `tick`; everyone saves a desync report.
+    Desync { tick: u32 },
 }
 
-fn write_slot(w: &mut Writer, s: &Slot) {
+pub(crate) fn write_slot(w: &mut Writer, s: &Slot) {
     w.u8(match s.kind {
         SlotKind::Open => 0,
         SlotKind::Human => 1,
@@ -162,7 +171,7 @@ fn read_faction(r: &mut Reader) -> Option<Faction> {
     Faction::ALL.get(r.u8()? as usize).copied()
 }
 
-fn read_slot(r: &mut Reader) -> Option<Slot> {
+pub(crate) fn read_slot(r: &mut Reader) -> Option<Slot> {
     Some(Slot {
         kind: match r.u8()? {
             0 => SlotKind::Open,
@@ -180,17 +189,22 @@ fn read_slot(r: &mut Reader) -> Option<Slot> {
     })
 }
 
-fn write_settings(w: &mut Writer, s: &LobbySettings) {
+pub(crate) fn write_settings(w: &mut Writer, s: &LobbySettings) {
     w.var(s.map as u64);
     w.u8(GameMode::ALL.iter().position(|&m| m == s.mode).unwrap_or(0) as u8);
     w.u8(Tempo::ALL.iter().position(|&t| t == s.tempo).unwrap_or(0) as u8);
+    w.u8(OnDrop::ALL
+        .iter()
+        .position(|&d| d == s.on_drop)
+        .unwrap_or(0) as u8);
 }
 
-fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
+pub(crate) fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
     Some(LobbySettings {
         map: r.var_as()?,
         mode: *GameMode::ALL.get(r.u8()? as usize)?,
         tempo: *Tempo::ALL.get(r.u8()? as usize)?,
+        on_drop: *OnDrop::ALL.get(r.u8()? as usize)?,
     })
 }
 
@@ -334,6 +348,19 @@ impl Msg {
                 w.u8(11);
                 w.str(reason);
             }
+            Msg::Delay { turns } => {
+                w.u8(12);
+                w.u8(*turns);
+            }
+            Msg::Wait { who, seconds } => {
+                w.u8(13);
+                w.str(who);
+                w.var(*seconds as u64);
+            }
+            Msg::Desync { tick } => {
+                w.u8(14);
+                w.var(*tick as u64);
+            }
         }
         w.buf
     }
@@ -401,6 +428,12 @@ impl Msg {
             },
             10 => Msg::Notice { text: r.str()? },
             11 => Msg::Bye { reason: r.str()? },
+            12 => Msg::Delay { turns: r.u8()? },
+            13 => Msg::Wait {
+                who: r.str()?,
+                seconds: r.var_as()?,
+            },
+            14 => Msg::Desync { tick: r.var_as()? },
             _ => return None,
         };
         r.is_empty().then_some(msg)
@@ -505,6 +538,12 @@ mod tests {
         round_trip(Msg::Orders { commands: vec![] });
         round_trip(Msg::Hash { tick: 10, hash: 99 });
         round_trip(Msg::Notice { text: "hi".into() });
+        round_trip(Msg::Delay { turns: 3 });
+        round_trip(Msg::Wait {
+            who: "Alex".into(),
+            seconds: 90,
+        });
+        round_trip(Msg::Desync { tick: 1230 });
         round_trip(Msg::Bye {
             reason: "bye".into(),
         });

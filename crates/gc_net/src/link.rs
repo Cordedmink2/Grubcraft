@@ -31,6 +31,8 @@ pub struct Link {
     echo: Option<(u32, Instant)>,
     /// Smoothed round trip, if measured.
     rtt: Option<Duration>,
+    /// Smoothed difference between round trips and the average.
+    jitter: Duration,
     pub last_heard: Instant,
     pub last_sent: Instant,
     /// Messages queued since the last packet went out.
@@ -46,6 +48,7 @@ impl Link {
             received: 0,
             echo: None,
             rtt: None,
+            jitter: Duration::ZERO,
             last_heard: now,
             last_sent: now,
             fresh: false,
@@ -68,6 +71,12 @@ impl Link {
     /// Round trip time, once measured.
     pub fn rtt(&self) -> Option<Duration> {
         self.rtt
+    }
+
+    /// How much round trips vary around [`Link::rtt`] (the smoothed mean
+    /// deviation, as TCP keeps it).
+    pub fn jitter(&self) -> Duration {
+        self.jitter
     }
 
     fn millis(&self, now: Instant) -> u32 {
@@ -138,8 +147,15 @@ impl Link {
             let elapsed = now.duration_since(self.epoch);
             if let Some(sample) = elapsed.checked_sub(sent + held) {
                 self.rtt = Some(match self.rtt {
-                    Some(old) => (old * 7 + sample) / 8,
-                    None => sample,
+                    Some(old) => {
+                        let off = sample.abs_diff(old);
+                        self.jitter = (self.jitter * 3 + off) / 4;
+                        (old * 7 + sample) / 8
+                    }
+                    None => {
+                        self.jitter = sample / 2;
+                        sample
+                    }
                 });
             }
         }
@@ -233,5 +249,29 @@ mod tests {
         deliver(&back, &mut a, t0 + Duration::from_millis(45));
         let rtt = a.rtt().unwrap().as_millis();
         assert!((39..=41).contains(&rtt), "{rtt}");
+    }
+
+    #[test]
+    fn jitter_grows_when_round_trips_vary() {
+        let t0 = Instant::now();
+        let mut a = Link::new(t0);
+        let mut b = Link::new(t0);
+        let mut now = t0;
+        let mut exchange = |a: &mut Link, b: &mut Link, trip: u64| {
+            let p = a.packet(now);
+            deliver(&p, b, now + Duration::from_millis(trip / 2));
+            let back = b.packet(now + Duration::from_millis(trip / 2));
+            deliver(&back, a, now + Duration::from_millis(trip));
+            now += Duration::from_millis(50);
+        };
+        for _ in 0..40 {
+            exchange(&mut a, &mut b, 20);
+        }
+        let steady = a.jitter();
+        assert!(steady < Duration::from_millis(2), "{steady:?}");
+        for i in 0..40 {
+            exchange(&mut a, &mut b, if i % 2 == 0 { 10 } else { 70 });
+        }
+        assert!(a.jitter() > Duration::from_millis(15), "{:?}", a.jitter());
     }
 }

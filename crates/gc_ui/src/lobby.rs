@@ -107,11 +107,34 @@ pub const DEFAULT_AI_LEVEL: u8 = 1;
 /// Maps the lobby offers. Only the placeholder map exists so far.
 pub const MAPS: [&str; 1] = ["Proving Ground"];
 
+/// What a network match does when a player loses the connection
+/// (docs/11-networking.md, "Disconnects and rejoining").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnDrop {
+    /// Pause everyone for up to 90 seconds while they come back.
+    Wait,
+    /// Play on at once; their regiments stand and defend.
+    CarryOn,
+}
+
+impl OnDrop {
+    pub const ALL: [OnDrop; 2] = [OnDrop::Wait, OnDrop::CarryOn];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            OnDrop::Wait => "Wait",
+            OnDrop::CarryOn => "Play on",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LobbySettings {
     pub map: usize,
     pub mode: GameMode,
     pub tempo: Tempo,
+    /// If a player drops out of a network match.
+    pub on_drop: OnDrop,
 }
 
 impl Default for LobbySettings {
@@ -120,6 +143,7 @@ impl Default for LobbySettings {
             map: 0,
             mode: GameMode::FieldBattle,
             tempo: Tempo::Normal,
+            on_drop: OnDrop::Wait,
         }
     }
 }

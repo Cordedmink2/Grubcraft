@@ -930,6 +930,16 @@ impl ApplicationHandler for App {
                             | KeyCode::KeyT
                             | KeyCode::KeyR
                     );
+                    // P carries on without a player the match is paused for.
+                    if code == KeyCode::KeyP
+                        && down
+                        && !event.repeat
+                        && r.online.is_some()
+                        && r.menu.network().paused_for_player()
+                    {
+                        r.menu.net().carry_on();
+                        return;
+                    }
                     if r.online.is_some() && sandbox_tool {
                         if down && !event.repeat {
                             r.say("That sandbox tool is off in a network battle.".into());
@@ -1721,7 +1731,10 @@ impl Running {
             match e {
                 gc_net::MatchEvent::Notice(text) => o.note(text),
                 gc_net::MatchEvent::Desync { tick } => {
-                    o.desync.get_or_insert(tick);
+                    if o.desync.is_none() {
+                        o.desync = Some(tick);
+                        o.report = lan.desync_report().map(online::save_report);
+                    }
                 }
                 gc_net::MatchEvent::Ended(why) => {
                     eprintln!("grubcraft: {why}");

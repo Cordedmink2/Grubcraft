@@ -7,6 +7,7 @@
 //! switching sides, placing, tuning) are off because they would change one
 //! machine's game and not the others'.
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// How long a notice ("Alex lost connection") stays on screen.
@@ -33,6 +34,31 @@ pub fn map_hash(nav: &[u8], ground: &gc_sim::Ground) -> u64 {
     h ^ nav.len() as u64
 }
 
+/// Save a desync report beside the settings file (or in the working
+/// folder), returning a line saying where.
+pub fn save_report(report: &gc_net::Report) -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let dir = gc_ui::settings::settings_path()
+        .and_then(|p| p.parent().map(|d| d.join("desync-reports")))
+        .unwrap_or_else(|| PathBuf::from("desync-reports"));
+    let path = dir.join(format!(
+        "desync-{stamp}-player{}.gcdesync",
+        report.me as u32 + 1
+    ));
+    let saved = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, report.encode()));
+    let line = match saved {
+        Ok(()) => format!(
+            "Saved a desync report for the developers: {}",
+            path.display()
+        ),
+        Err(e) => format!("Could not save the desync report ({e})"),
+    };
+    eprintln!("grubcraft: {line}");
+    line
+}
+
 /// A networked match under way.
 pub struct Online {
     /// This machine is the host (it runs the computer players).
@@ -41,6 +67,8 @@ pub struct Online {
     pub notice: Option<(String, Instant)>,
     /// Set once a state hash disagreed with the host's.
     pub desync: Option<u32>,
+    /// Where the desync report went (or why it couldn't be saved).
+    pub report: Option<String>,
     /// Set when the match is over for this machine, with why.
     pub ended: Option<String>,
     /// When the last turn was simulated, for smooth movement in between.
@@ -53,6 +81,7 @@ impl Online {
             host,
             notice: None,
             desync: None,
+            report: None,
             ended: None,
             last_turn: Instant::now(),
         }
@@ -77,12 +106,19 @@ impl Online {
             status.unwrap_or_else(|| "not connected".into())
         ));
         if let Some(w) = waiting {
-            lines.push(w);
+            lines.push(if self.host && w.starts_with("Paused") {
+                format!("{w}   P: carry on without them")
+            } else {
+                w
+            });
         }
         if let Some(tick) = self.desync {
             lines.push(format!(
                 "Out of sync with the host since turn {tick}: this battle may look different on each machine."
             ));
+            if let Some(r) = &self.report {
+                lines.push(r.clone());
+            }
         }
         if let Some((text, at)) = &self.notice
             && at.elapsed() < NOTICE_TIME

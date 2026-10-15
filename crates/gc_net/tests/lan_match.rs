@@ -5,11 +5,11 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use gc_net::{HASH_EVERY, Identity, Lan, MatchEvent};
+use gc_net::{HASH_EVERY, INPUT_DELAY, Identity, Lan, MIN_DELAY, MatchEvent, Report};
 use gc_sim::scenario::{DRILL_UNITS, Drill};
 use gc_sim::{Capacities, MatchSetup, PlayerCommand, World};
 use gc_ui::lobby::{
-    Faction, LobbySettings, NetError, NetEvent, Network, Profile, SlotEdit, SlotKind,
+    Faction, LobbySettings, NetError, NetEvent, Network, OnDrop, Profile, SlotEdit, SlotKind,
 };
 
 /// Hosts listen on a fixed few ports, so these tests take turns.
@@ -39,6 +39,10 @@ fn lan() -> Lan {
     let mut l = Lan::new(id("test"));
     l.set_turn_length(Duration::from_millis(5));
     l
+}
+
+fn gc_net_player_timeout() -> Duration {
+    gc_net::PLAYER_TIMEOUT
 }
 
 fn address(host: &Lan) -> String {
@@ -83,6 +87,139 @@ fn world() -> World {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
     })
+}
+
+/// A match under way between `lans`, each playing the drill for its own
+/// players (`mine[i]`) on its own copy of the world.
+struct Match {
+    lans: Vec<Lan>,
+    worlds: Vec<World>,
+    drills: Vec<Drill>,
+    mine: Vec<Vec<u8>>,
+    cmds: Vec<PlayerCommand>,
+}
+
+impl Match {
+    /// Host a lobby, let `names` join and get ready, fill `ai` slots with
+    /// computer players, and start, with turns `turn_ms` long.
+    fn start(names: &[&str], ai: &[usize], on_drop: OnDrop, turn_ms: u64) -> Match {
+        let lan = || {
+            let mut l = Lan::new(id("test"));
+            l.set_turn_length(Duration::from_millis(turn_ms));
+            l
+        };
+        let mut host = lan();
+        host.host(
+            &profile("Mario"),
+            LobbySettings {
+                on_drop,
+                ..LobbySettings::default()
+            },
+        )
+        .unwrap();
+        let mut lans = vec![host];
+        for name in names {
+            let mut l = lan();
+            join(&mut l, name, &mut lans[0]).unwrap();
+            lans.push(l);
+        }
+        for &slot in ai {
+            lans[0].edit_slot(slot, SlotEdit::Kind(SlotKind::Ai));
+        }
+        for l in &mut lans[1..] {
+            let me = l.lobby().unwrap().local_slot;
+            l.edit_slot(me, SlotEdit::Ready(true));
+        }
+        settle(&mut lans.iter_mut().collect::<Vec<_>>());
+        let start = lans[0].start_match().unwrap();
+        assert_eq!(start.seed, Some(SEED));
+        settle(&mut lans.iter_mut().collect::<Vec<_>>());
+        let mut mine = vec![vec![0u8]];
+        mine[0].extend((names.len() + 1..start.players.len()).map(|p| p as u8));
+        for l in &mut lans[1..] {
+            match l.poll().as_slice() {
+                [NetEvent::Started(s)] => mine.push(vec![s.local_player as u8]),
+                other => panic!("{other:?}"),
+            }
+            assert_eq!(l.host_map().unwrap().map_hash, 7);
+        }
+        for l in &mut lans {
+            l.loaded(Ok(()));
+        }
+        let n = lans.len();
+        let mut m = Match {
+            lans,
+            worlds: (0..n).map(|_| world()).collect(),
+            drills: (0..n)
+                .map(|_| {
+                    let mut d = Drill::new(SEED);
+                    d.regiments_per_player = 20;
+                    d
+                })
+                .collect(),
+            mine,
+            cmds: Vec::new(),
+        };
+        // The armies, ordered before the first turn.
+        for i in 0..n {
+            m.order(i);
+        }
+        m
+    }
+
+    fn order(&mut self, i: usize) {
+        self.drills[i].commands_for(&self.worlds[i], &mut self.cmds);
+        let mine = &self.mine[i];
+        self.lans[i].submit(self.cmds.drain(..).filter(|c| mine.contains(&c.player)));
+    }
+
+    /// Run every machine except `away` (cut off from the network) for a
+    /// while, or until every running world reaches `until` ticks.
+    fn run(&mut self, away: &[usize], until: u32, for_at_most: Duration) {
+        let deadline = Instant::now() + for_at_most;
+        let running: Vec<usize> = (0..self.lans.len()).filter(|i| !away.contains(i)).collect();
+        while Instant::now() < deadline
+            && running.iter().any(|&i| self.worlds[i].tick_count() < until)
+        {
+            for &i in &running {
+                let now = Instant::now();
+                self.lans[i].pump(now);
+                while self.worlds[i].tick_count() < until
+                    && let Some(turn) = self.lans[i].next_turn(now)
+                {
+                    self.worlds[i].tick(&turn);
+                    let tick = self.worlds[i].tick_count();
+                    let hash = self.worlds[i].state_hash();
+                    self.lans[i].record_hash(tick, hash);
+                    self.order(i);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn ticks(&self) -> Vec<u32> {
+        self.worlds.iter().map(|w| w.tick_count()).collect()
+    }
+
+    /// Let the last hashes reach the host.
+    fn settle(&mut self) {
+        for l in &mut self.lans {
+            l.simulate_loss(0);
+        }
+        settle(&mut self.lans.iter_mut().collect::<Vec<_>>());
+    }
+
+    fn desyncs(&mut self) -> Vec<u32> {
+        self.lans
+            .iter_mut()
+            .flat_map(|l| l.match_events())
+            .filter_map(|e| match e {
+                MatchEvent::Desync { tick } => Some(tick),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 #[test]
@@ -143,63 +280,183 @@ fn three_machines_play_in_lockstep_through_lost_packets() {
     }
 
     // Host plays players 0 and 3 (the AI), Alex 1 and Sam 2.
-    let mine: [&[u8]; 3] = [&[0, 3], &[1], &[2]];
-    let mut lans = [host, alex, sam];
-    let mut worlds = [world(), world(), world()];
-    let mut drills: Vec<Drill> = (0..3)
-        .map(|_| {
-            let mut d = Drill::new(SEED);
-            d.regiments_per_player = 20;
-            d
-        })
-        .collect();
-    let mut cmds: Vec<PlayerCommand> = Vec::new();
-    // The armies, ordered before the first turn.
+    let mut m = Match {
+        lans: vec![host, alex, sam],
+        worlds: vec![world(), world(), world()],
+        drills: (0..3)
+            .map(|_| {
+                let mut d = Drill::new(SEED);
+                d.regiments_per_player = 20;
+                d
+            })
+            .collect(),
+        mine: vec![vec![0, 3], vec![1], vec![2]],
+        cmds: Vec::new(),
+    };
     for i in 0..3 {
-        drills[i].commands_for(&worlds[i], &mut cmds);
-        lans[i].submit(cmds.drain(..).filter(|c| mine[i].contains(&c.player)));
+        m.order(i);
     }
     const TURNS: u32 = 300;
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while worlds.iter().any(|w| w.tick_count() < TURNS) {
-        assert!(Instant::now() < deadline, "match stalled");
-        for i in 0..3 {
-            let now = Instant::now();
-            lans[i].pump(now);
-            while worlds[i].tick_count() < TURNS
-                && let Some(turn) = lans[i].next_turn(now)
-            {
-                worlds[i].tick(&turn);
-                lans[i].record_hash(worlds[i].tick_count(), worlds[i].state_hash());
-                drills[i].commands_for(&worlds[i], &mut cmds);
-                lans[i].submit(cmds.drain(..).filter(|c| mine[i].contains(&c.player)));
-            }
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    // Let the last hashes reach the host.
-    for l in lans.iter_mut() {
-        l.simulate_loss(0);
-    }
-    settle(&mut lans.iter_mut().collect::<Vec<_>>());
-    let hashes: Vec<u64> = worlds.iter().map(|w| w.state_hash()).collect();
+    m.run(&[], TURNS, Duration::from_secs(60));
+    assert_eq!(m.ticks(), [TURNS; 3], "match stalled");
+    m.settle();
+    let hashes: Vec<u64> = m.worlds.iter().map(|w| w.state_hash()).collect();
     assert_eq!(hashes[0], hashes[1]);
     assert_eq!(hashes[0], hashes[2]);
     // Every player's regiments made it into the match.
     for p in 0..4u8 {
-        let n = worlds[0].regiments.iter().filter(|r| r.owner == p).count();
+        let n = m.worlds[0]
+            .regiments
+            .iter()
+            .filter(|r| r.owner == p)
+            .count();
         assert_eq!(n, 20, "player {p}");
     }
     assert!(TURNS.is_multiple_of(HASH_EVERY));
-    for l in lans.iter_mut() {
-        let events = l.match_events();
-        assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, MatchEvent::Desync { .. })),
-            "{events:?}"
-        );
+    assert_eq!(m.desyncs(), []);
+    // 5 ms turns are shorter than the 10 ms margin: the delay rose from
+    // where it started, and everyone heard.
+    let delay = m.lans[0].input_delay().unwrap();
+    assert!(delay > INPUT_DELAY, "{delay}");
+    for l in &m.lans {
+        assert_eq!(l.input_delay(), Some(delay));
     }
+
+    // Sam's desync report is a replay of the match: played back, it gives
+    // the same world.
+    let report = m.lans[2].desync_report().unwrap();
+    let report = Report::decode(&report.encode()).unwrap();
+    assert_eq!(report.me, 2);
+    assert_eq!(report.seed, SEED);
+    assert_eq!(report.players.len(), 4);
+    assert_eq!(report.turns.len(), TURNS as usize);
+    let mut replay = world();
+    for turn in &report.turns {
+        replay.tick(turn);
+        let tick = replay.tick_count();
+        if let Some(&(_, h)) = report.hashes.iter().find(|&&(t, _)| t == tick) {
+            assert_eq!(h, replay.state_hash(), "tick {tick}");
+        }
+    }
+    assert_eq!(replay.state_hash(), hashes[2]);
+    assert_eq!(report.hashes.len(), (TURNS / HASH_EVERY) as usize);
+}
+
+#[test]
+fn the_delay_drops_on_a_fast_network() {
+    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    // With 30 ms turns, a round trip on this machine plus the margin fits
+    // in one turn.
+    let mut m = Match::start(&["Alex"], &[], OnDrop::Wait, 30);
+    assert_eq!(m.lans[0].input_delay(), Some(INPUT_DELAY));
+    m.run(&[], 100, Duration::from_secs(20));
+    assert_eq!(m.ticks(), [100, 100]);
+    assert_eq!(m.lans[0].input_delay(), Some(MIN_DELAY));
+    m.settle();
+    assert_eq!(m.lans[1].input_delay(), Some(MIN_DELAY));
+    assert_eq!(m.worlds[0].state_hash(), m.worlds[1].state_hash());
+    assert_eq!(m.desyncs(), []);
+}
+
+#[test]
+fn the_match_waits_for_a_player_who_drops() {
+    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut m = Match::start(&["Alex", "Sam"], &[], OnDrop::Wait, 5);
+    m.run(&[], 100, Duration::from_secs(20));
+    assert_eq!(m.ticks(), [100; 3]);
+
+    // Alex's Wi-Fi goes: after a few quiet seconds the host pauses.
+    m.run(
+        &[1],
+        u32::MAX,
+        gc_net_player_timeout() + Duration::from_millis(500),
+    );
+    let paused_at = m.ticks();
+    assert!(m.lans[0].paused_for_player());
+    let waiting = m.lans[0].waiting().unwrap();
+    assert!(waiting.starts_with("Paused: waiting for Alex"), "{waiting}");
+    let sam_sees = m.lans[2].waiting().unwrap();
+    assert!(
+        sam_sees.starts_with("Paused: waiting for Alex"),
+        "{sam_sees}"
+    );
+    m.run(&[1], u32::MAX, Duration::from_millis(300));
+    assert_eq!(m.ticks()[0], paused_at[0], "the host played on");
+
+    // Alex comes back: everyone carries on, in step.
+    let target = paused_at[0] + 100;
+    m.run(&[], target, Duration::from_secs(20));
+    assert_eq!(m.ticks(), [target; 3]);
+    assert!(!m.lans[0].paused_for_player());
+    assert_eq!(m.lans[2].waiting(), None);
+
+    // Sam goes for good, and the host carries on without them.
+    m.run(
+        &[2],
+        u32::MAX,
+        gc_net_player_timeout() + Duration::from_millis(500),
+    );
+    assert!(m.lans[0].paused_for_player());
+    m.lans[0].carry_on();
+    let target = m.ticks()[0] + 50;
+    m.run(&[2], target, Duration::from_secs(20));
+    assert_eq!(&m.ticks()[..2], [target; 2]);
+    m.settle();
+    assert_eq!(m.worlds[0].state_hash(), m.worlds[1].state_hash());
+    let notices: Vec<MatchEvent> = m.lans[1].match_events();
+    assert!(
+        notices
+            .iter()
+            .any(|e| matches!(e, MatchEvent::Notice(t) if t == "Carrying on without Sam.")),
+        "{notices:?}"
+    );
+    assert!(
+        !notices
+            .iter()
+            .any(|e| matches!(e, MatchEvent::Desync { .. }))
+    );
+    assert_eq!(m.desyncs(), []);
+}
+
+#[test]
+fn carry_on_plays_through_a_drop() {
+    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut m = Match::start(&["Alex"], &[2], OnDrop::CarryOn, 5);
+    m.run(&[], 50, Duration::from_secs(20));
+    let before = m.ticks()[0];
+    m.run(
+        &[1],
+        u32::MAX,
+        gc_net_player_timeout() + Duration::from_millis(500),
+    );
+    assert!(!m.lans[0].paused_for_player());
+    assert!(m.ticks()[0] > before + 100, "{:?}", m.ticks());
+    let events = m.lans[0].match_events();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, MatchEvent::Notice(t) if t == "Alex lost connection.")),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_desync_is_found_and_reported_everywhere() {
+    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut m = Match::start(&["Alex"], &[], OnDrop::Wait, 5);
+    m.run(&[], 40, Duration::from_secs(20));
+    // Something only Alex's machine does: an extra tick of its own.
+    m.worlds[1].tick(&[]);
+    m.run(&[], 100, Duration::from_secs(20));
+    m.settle();
+    let found = m.desyncs();
+    // The host and Alex both hear, at the first hash after the split.
+    assert_eq!(found, [50, 50], "{found:?}");
+    let host = m.lans[0].desync_report().unwrap().clone();
+    let alex = m.lans[1].desync_report().unwrap().clone();
+    assert_eq!(host.desync_tick, 50);
+    assert_eq!(alex.desync_tick, 50);
+    assert_eq!(host.first_difference(&alex), Some(50));
 }
 
 #[test]
