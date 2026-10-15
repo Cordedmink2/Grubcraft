@@ -3,7 +3,7 @@
 //! and level of detail.
 
 use bytemuck::{Pod, Zeroable};
-use gc_assets::model::{BONE_TEXELS_PER_ROW, Models};
+use gc_assets::model::{BONE_TEXELS_PER_ROW, ModelVertex, Models};
 
 /// Fixed capacity of the soldier instance buffer; never reallocated.
 pub const MAX_SOLDIER_INSTANCES: usize = 65_536;
@@ -89,18 +89,21 @@ pub(crate) fn make(
             compilation_options: Default::default(),
             buffers: &[
                 Some(wgpu::VertexBufferLayout {
-                    array_stride: 16,
+                    array_stride: size_of::<ModelVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
+                    // Position and team weight, bones, weights, normal,
+                    // tangent, colour, texture coordinate.
                     attributes: &wgpu::vertex_attr_array![
-                        0 => Sint16x4, 1 => Snorm8x4, 2 => Unorm8x4
+                        0 => Sint16x4, 1 => Uint8x4, 2 => Unorm8x4, 3 => Snorm8x4,
+                        4 => Snorm8x4, 5 => Unorm8x4, 6 => Unorm16x2
                     ],
                 }),
                 Some(wgpu::VertexBufferLayout {
                     array_stride: size_of::<SoldierInstance>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &wgpu::vertex_attr_array![
-                        3 => Float32x2, 4 => Float32x2, 5 => Uint16x2, 6 => Unorm8x4,
-                        7 => Unorm8x4, 8 => Float32, 9 => Float32
+                        7 => Float32x2, 8 => Float32x2, 9 => Uint16x2, 10 => Unorm8x4,
+                        11 => Unorm8x4, 12 => Float32, 13 => Float32
                     ],
                 }),
             ],

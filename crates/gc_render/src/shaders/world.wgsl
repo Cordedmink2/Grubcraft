@@ -211,10 +211,11 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
 
 // ---------------------------------------------------------------- soldiers
 //
-// Real soldier models (M1 step 8): each vertex is rigidly bound to one bone,
-// and the bone texture holds, per animation frame, a 3 × 4 matrix per bone
-// that moves the rest pose into that frame's pose. Each instance names two
-// frame rows and how far to blend between them.
+// Real soldier models: each vertex follows up to four bones, and the bone
+// texture holds, per animation frame, a 3 × 4 matrix per bone that moves a
+// vertex from where it is stored into that frame's pose. Each instance names two frame rows and
+// how far to blend between them; the vertex blends its bones' matrices by
+// their weights (linear blend skinning).
 
 @group(1) @binding(0) var bones: texture_2d<f32>;
 
@@ -230,32 +231,48 @@ fn bone_texel(row: u32, bone: u32, r: u32) -> vec4<f32> {
     return textureLoad(bones, vec2<i32>(i32(bone * 3u + r), i32(row)), 0);
 }
 
+// One bone's matrix rows, blended between the instance's two frames.
+fn bone_rows(frames: vec2<u32>, bone: u32, t: f32) -> mat3x4<f32> {
+    return mat3x4<f32>(
+        mix(bone_texel(frames.x, bone, 0u), bone_texel(frames.y, bone, 0u), t),
+        mix(bone_texel(frames.x, bone, 1u), bone_texel(frames.y, bone, 1u), t),
+        mix(bone_texel(frames.x, bone, 2u), bone_texel(frames.y, bone, 2u), t),
+    );
+}
+
 @vertex
 fn vs_soldier(
-    // x, y, z in 1/4096 tiles; w packs the bone (low byte) and team weight.
+    // x, y, z in 1/4096 tiles; the low byte of w is the team weight.
     @location(0) vpos: vec4<i32>,
-    @location(1) vnormal: vec4<f32>,
-    @location(2) vcolor: vec4<f32>,
-    @location(3) pos: vec2<f32>,
-    @location(4) facing: vec2<f32>,
-    @location(5) frames: vec2<u32>,
+    // Heaviest first; weights sum to 1 and unused slots weigh 0.
+    @location(1) vbones: vec4<u32>,
+    @location(2) vweights: vec4<f32>,
+    @location(3) vnormal: vec4<f32>,
+    @location(5) vcolor: vec4<f32>,
+    @location(7) pos: vec2<f32>,
+    @location(8) facing: vec2<f32>,
+    @location(9) frames: vec2<u32>,
     // x: blend toward frames.y, y: selection highlight, z: lies fallen
-    @location(6) flags: vec4<f32>,
-    @location(7) team_color: vec4<f32>,
-    @location(8) lift: f32,
-    @location(9) scale: f32,
+    @location(10) flags: vec4<f32>,
+    @location(11) team_color: vec4<f32>,
+    @location(12) lift: f32,
+    @location(13) scale: f32,
 ) -> SoldierOut {
-    let packed = bitcast<u32>(vpos.w);
-    let bone = packed & 0xffu;
-    let team = f32((packed >> 8u) & 0xffu) / 255.0;
+    let team = f32(bitcast<u32>(vpos.w) & 0xffu) / 255.0;
     let p = vec4<f32>(vec3<f32>(vpos.xyz) / 4096.0, 1.0);
     let t = flags.x;
-    let r0 = mix(bone_texel(frames.x, bone, 0u), bone_texel(frames.y, bone, 0u), t);
-    let r1 = mix(bone_texel(frames.x, bone, 1u), bone_texel(frames.y, bone, 1u), t);
-    let r2 = mix(bone_texel(frames.x, bone, 2u), bone_texel(frames.y, bone, 2u), t);
-    var local = vec3<f32>(dot(r0, p), dot(r1, p), dot(r2, p)) * scale;
+    // Most vertices follow one or two bones; stop at the first empty slot.
+    var m = bone_rows(frames, vbones.x, t) * vweights.x;
+    for (var i = 1u; i < 4u; i++) {
+        let w = vweights[i];
+        if w <= 0.0 {
+            break;
+        }
+        m += bone_rows(frames, vbones[i], t) * w;
+    }
+    var local = vec3<f32>(dot(m[0], p), dot(m[1], p), dot(m[2], p)) * scale;
     let n = vnormal.xyz;
-    var nl = vec3<f32>(dot(r0.xyz, n), dot(r1.xyz, n), dot(r2.xyz, n));
+    var nl = vec3<f32>(dot(m[0].xyz, n), dot(m[1].xyz, n), dot(m[2].xyz, n));
     if flags.z > 0.5 {
         // No death clip: lay the soldier on his back.
         local = vec3<f32>(local.x, -local.z + 0.12 * scale, local.y);

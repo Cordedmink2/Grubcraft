@@ -94,7 +94,7 @@ Collected here so they're easy to find; detailed in [10 · Architecture](10-arch
 1. **Regiments in the sim, soldiers in presentation.** The deterministic state is hundreds of formations, not thousands of soldiers. Simulation memory and CPU scale with regiments.
 2. **Lockstep networking.** Bandwidth and replays scale with clicks, not units.
 3. **Palette-textured low-poly art.** Units and buildings need almost no texture memory.
-4. **Bone animation textures with rigid binding.** Kilobytes per unit type instead of megabytes.
+4. **Bone animation textures with four-bone skinning.** Kilobytes per unit type instead of megabytes.
 5. **One instanced draw call per unit type**, 16 bytes per soldier.
 6. **Commander View.** Zooming out makes rendering *cheaper*.
 7. **Baked terrain lighting** for the fixed per-map sun; only dynamic objects cast real-time shadows.
