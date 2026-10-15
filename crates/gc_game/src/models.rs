@@ -5,6 +5,8 @@
 use gc_assets::model::{ClipKind, ClipRecord, Models};
 use gc_assets::{Aligned, Pack};
 
+use crate::puppets::Move;
+
 static PACK: &Aligned<[u8]> = &Aligned(*include_bytes!("../../../assets/models.pak"));
 
 /// The embedded models. The pack is checked when the game starts; a failure
@@ -24,6 +26,10 @@ pub enum Action {
     Attack2,
     Shoot,
     Cheer,
+    /// Reeling from a blow.
+    Hit,
+    /// Guarding against a blow.
+    Block,
 }
 
 /// The two bone texture rows to blend between and how far, or `None` when
@@ -45,16 +51,28 @@ fn candidates(action: Action) -> &'static [ClipKind] {
         Action::Attack2 => &[Attack2, Attack, Idle],
         Action::Shoot => &[Shoot, Attack, Idle],
         Action::Cheer => &[Cheer, Idle],
+        Action::Hit => &[Hit, Idle],
+        Action::Block => &[Block, Idle],
     }
 }
 
-/// Per model, the clip for each action, looked up once.
+/// How far into the attack clip a parry raises the weapon to meet the blow,
+/// and into the block clip a soldier ducks behind his guard.
+const PARRY_DEPTH: f32 = 0.35;
+const BLOCK_DEPTH: f32 = 0.25;
+/// A knockdown spends this much of its time falling, and this much getting
+/// up; between the two he lies still.
+const DOWN_FALL: f32 = 0.25;
+const DOWN_RISE: f32 = 0.35;
+
+/// Per model, the clip for each action (in the order of `ACTIONS`, which is
+/// the enum's), looked up once.
 pub struct Clips {
-    by_model: Vec<[Option<ClipRecord>; 7]>,
+    by_model: Vec<[Option<ClipRecord>; ACTIONS.len()]>,
     die: Vec<Option<ClipRecord>>,
 }
 
-const ACTIONS: [Action; 7] = [
+const ACTIONS: [Action; 9] = [
     Action::Idle,
     Action::Walk,
     Action::Run,
@@ -62,6 +80,8 @@ const ACTIONS: [Action; 7] = [
     Action::Attack2,
     Action::Shoot,
     Action::Cheer,
+    Action::Hit,
+    Action::Block,
 ];
 
 impl Clips {
@@ -82,25 +102,83 @@ impl Clips {
         Clips { by_model, die }
     }
 
-    /// The pose for `action` `seconds` into a looping clip.
-    pub fn pose(&self, model: usize, action: Action, seconds: f32) -> Option<Pose> {
-        let slot = ACTIONS.iter().position(|&a| a == action)?;
-        let clip = self.by_model.get(model)?[slot]?;
-        Some(looping(&clip, seconds))
+    fn clip(&self, model: usize, action: Action) -> Option<ClipRecord> {
+        self.by_model.get(model)?[action as usize]
     }
 
-    /// The pose `seconds` after falling: the death clip, held on its last
-    /// frame. `None` when the model has no death clip (the renderer lays the
-    /// idle pose down instead).
-    pub fn death(&self, model: usize, seconds: f32) -> Option<Pose> {
-        let clip = (*self.die.get(model)?)?;
-        let f = (seconds.max(0.0) * clip.fps).min((clip.frames - 1) as f32);
-        let a = f.floor() as u32;
-        let b = (a + 1).min(clip.frames - 1);
-        Some(Pose {
-            rows: [(clip.first_row + a) as u16, (clip.first_row + b) as u16],
-            blend: f - a as f32,
-        })
+    /// The pose for `action` `seconds` into a looping clip.
+    pub fn pose(&self, model: usize, action: Action, seconds: f32) -> Option<Pose> {
+        Some(looping(&self.clip(model, action)?, seconds))
+    }
+
+    /// The pose `fraction` (0 to 1) of the way through the clip for
+    /// `action`, played once whatever its length.
+    pub fn at(&self, model: usize, action: Action, fraction: f32) -> Option<Pose> {
+        let clip = self.clip(model, action)?;
+        Some(once(&clip, fraction * (clip.frames - 1) as f32))
+    }
+
+    /// The pose `seconds` after falling dead (negative while he still
+    /// stands, waiting for the blow), and whether to lay the model flat: see
+    /// `fall`.
+    pub fn death(&self, model: usize, seconds: f32) -> Option<(Pose, bool)> {
+        self.fall(model, |die| seconds * die.fps, seconds >= 0.0)
+    }
+
+    /// The death clip at the frame `frame` picks, held on its first and last
+    /// frames, or for a model without one its idle pose, laid flat when
+    /// `down`.
+    fn fall(
+        &self,
+        model: usize,
+        frame: impl FnOnce(&ClipRecord) -> f32,
+        down: bool,
+    ) -> Option<(Pose, bool)> {
+        match (*self.die.get(model)?).as_ref() {
+            Some(die) => Some((once(die, frame(die)), false)),
+            None => Some((self.pose(model, Action::Idle, 0.0)?, down)),
+        }
+    }
+
+    /// The pose for a soldier's move in a duel, and whether to lay the model
+    /// flat (a knockdown on a model with no death clip). `seconds` keeps the
+    /// guard's idle loop going.
+    pub fn fight(&self, model: usize, fight: Move, seconds: f32) -> Option<(Pose, bool)> {
+        let standing = |pose: Option<Pose>| Some((pose?, false));
+        match fight {
+            Move::Guard => standing(self.pose(model, Action::Idle, seconds)),
+            Move::Swing { at, alt } => {
+                let attack = if alt { Action::Attack2 } else { Action::Attack };
+                standing(self.at(model, attack, at))
+            }
+            // Raise the weapon (or duck behind the shield) and recover.
+            Move::Parry(f) => standing(self.at(model, Action::Attack, PARRY_DEPTH * peak(f))),
+            Move::Block(f) => standing(self.at(model, Action::Block, BLOCK_DEPTH * peak(f))),
+            Move::Stagger(f) => standing(self.at(model, Action::Hit, f)),
+            // Fall, lie still a moment and get up: the death clip played
+            // forward, then back.
+            Move::Down(f) => {
+                let depth = (f / DOWN_FALL).min((1.0 - f) / DOWN_RISE).min(1.0);
+                self.fall(model, |die| depth * (die.frames - 1) as f32, depth > 0.5)
+            }
+        }
+    }
+}
+
+/// 0 at both ends of `f` (0 to 1), rising to 1 halfway.
+fn peak(f: f32) -> f32 {
+    1.0 - (2.0 * f - 1.0).abs()
+}
+
+/// The pose at `frame` of a clip played once: held on its first and last
+/// frames outside it.
+fn once(clip: &ClipRecord, frame: f32) -> Pose {
+    let f = frame.clamp(0.0, (clip.frames - 1) as f32);
+    let a = f.floor() as u32;
+    let b = (a + 1).min(clip.frames - 1);
+    Pose {
+        rows: [(clip.first_row + a) as u16, (clip.first_row + b) as u16],
+        blend: f - a as f32,
     }
 }
 
@@ -132,6 +210,13 @@ mod tests {
     }
 
     #[test]
+    fn actions_are_listed_in_order() {
+        for (k, a) in ACTIONS.into_iter().enumerate() {
+            assert_eq!(a as usize, k, "{a:?}");
+        }
+    }
+
+    #[test]
     fn every_model_can_stand_walk_and_fight() {
         let models = load().unwrap();
         let clips = Clips::new(&models);
@@ -140,6 +225,41 @@ mod tests {
                 assert!(clips.pose(m, a, 1.3).is_some(), "model {m} {a:?}");
             }
         }
+    }
+
+    #[test]
+    fn duel_moves_play_their_clips() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let m = models.by_name("Bone Pikes").unwrap();
+        let clip = |k| *models.clip(m, k).unwrap();
+        let (die, duck, hit) = (
+            clip(ClipKind::Die),
+            clip(ClipKind::Block),
+            clip(ClipKind::Hit),
+        );
+        let rows = |f: Move| clips.fight(m, f, 0.0).unwrap();
+        // A knockdown falls, lies on the death clip's last frame, and gets
+        // up again; it never lays the model flat when it has a death clip.
+        let (start, flat) = rows(Move::Down(0.0));
+        assert_eq!((start.rows[0], flat), (die.first_row as u16, false));
+        let lying = (die.first_row + die.frames - 1) as u16;
+        assert_eq!(rows(Move::Down(0.5)).0.rows, [lying; 2]);
+        assert_eq!(rows(Move::Down(1.0)).0.rows[0], die.first_row as u16);
+        // A block ducks and comes back up; a stagger plays the hit clip.
+        assert_eq!(rows(Move::Block(0.0)).0.rows[0], duck.first_row as u16);
+        let low = rows(Move::Block(0.5)).0.rows[0] as u32;
+        assert!(low > duck.first_row && low < duck.first_row + duck.frames / 2);
+        assert_eq!(
+            rows(Move::Stagger(1.0)).0.rows,
+            [(hit.first_row + hit.frames - 1) as u16; 2]
+        );
+
+        // A model without a death clip lies flat while knocked down.
+        let bug = models.by_name("Skitterlings").unwrap();
+        assert!(models.clip(bug, ClipKind::Die).is_none());
+        assert!(clips.fight(bug, Move::Down(0.5), 0.0).unwrap().1);
+        assert!(!clips.fight(bug, Move::Down(0.05), 0.0).unwrap().1);
     }
 
     #[test]
@@ -163,7 +283,8 @@ mod tests {
             .find(|&m| models.clip(m, ClipKind::Die).is_some())
             .unwrap();
         let die = models.clip(m, ClipKind::Die).unwrap();
-        let end = clips.death(m, 100.0).unwrap();
+        let (end, flat) = clips.death(m, 100.0).unwrap();
         assert_eq!(end.rows, [(die.first_row + die.frames - 1) as u16; 2]);
+        assert!(!flat);
     }
 }

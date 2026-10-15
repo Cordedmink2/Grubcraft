@@ -55,10 +55,12 @@ pub enum ClipKind {
     Die = 6,
     Cheer = 7,
     Shoot = 8,
+    /// Guarding against a blow (a shield raised, or a duck).
+    Block = 9,
 }
 
 impl ClipKind {
-    pub const ALL: [ClipKind; 9] = [
+    pub const ALL: [ClipKind; 10] = [
         ClipKind::Idle,
         ClipKind::Walk,
         ClipKind::Run,
@@ -68,6 +70,7 @@ impl ClipKind {
         ClipKind::Die,
         ClipKind::Cheer,
         ClipKind::Shoot,
+        ClipKind::Block,
     ];
 
     pub fn from_u8(v: u8) -> Option<ClipKind> {

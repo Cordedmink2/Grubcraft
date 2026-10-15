@@ -726,9 +726,8 @@ impl Combat {
                 Side::Rear => 100 * files.min(models).div_ceil(2) as u64,
             };
             let side = them.side_facing(me.centre);
-            let defence = defender.melee_defence as i32
-                + defender.formation_defence(regs.formation[j], side == Side::Front);
-            let hit = (50 + attacker.melee_attack as i32 - defence).clamp(10, 90) as u128;
+            let defence = defender.melee_defence_in(regs.formation[j], side == Side::Front);
+            let hit = hit_percent(attacker.melee_attack as i32, defence) as u128;
             let charge =
                 100 + attacker.charge_bonus as u128 * regs.charge[i] as u128 / CHARGE_TICKS as u128;
             let heart = heart_percent(regs.morale_state[i]) as u128;
@@ -897,8 +896,14 @@ impl Combat {
     }
 }
 
+/// Percent chance a melee blow with `attack` lands on a soldier with
+/// `defence` (docs/05-combat.md).
+pub fn hit_percent(attack: i32, defence: i32) -> i32 {
+    (50 + attack - defence).clamp(10, 90)
+}
+
 /// Percent of its usual damage a regiment deals in this state of mind.
-fn heart_percent(state: MoraleState) -> u64 {
+pub fn heart_percent(state: MoraleState) -> u64 {
     match state {
         MoraleState::Wavering => WAVERING_DAMAGE_PERCENT,
         _ => 100,

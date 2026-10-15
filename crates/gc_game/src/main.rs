@@ -115,7 +115,7 @@ use winit::window::{Window, WindowId};
 
 use camera::RtsCamera;
 use models::Action;
-use puppets::{Block, Puppets, Soldier};
+use puppets::{Block, Fighter, Puppets, Soldier};
 use terrain_gen::Heightmap;
 
 #[global_allocator]
@@ -483,11 +483,27 @@ fn formation_hint(f: Formation) -> String {
     }
 }
 
-/// What a soldier is doing, from his puppet and his regiment.
+/// How a regiment's soldiers fight, for choosing what their blows do on
+/// screen: the simulation's numbers for its unit and state.
+fn fighter_of(stats: &UnitStats, r: &gc_sim::RegimentView) -> Fighter {
+    Fighter {
+        attack: stats.melee_attack as i32,
+        defence: stats.melee_defence_in(r.formation, true),
+        flank_defence: stats.melee_defence_in(r.formation, false),
+        sharpness: (gc_sim::combat::heart_percent(r.morale)
+            * stats.weapon_room_percent(r.formation)
+            / 100) as u32,
+        shield: stats.shield,
+        mass: stats.mass,
+        heavy_blade: stats.swing_room,
+    }
+}
+
+/// What a soldier is doing out of a duel, from his puppet and his regiment.
 fn soldier_action(s: &Soldier, block: &Block, shooting: bool) -> Action {
     if block.routing {
         Action::Run
-    } else if s.striking && !s.dueling && s.phase > 0.6 {
+    } else if s.striking && s.phase > 0.6 {
         // Behind the fighting line, some wait their turn.
         Action::Idle
     } else if s.striking {
@@ -1601,6 +1617,8 @@ impl Running {
                 speed: fx_to_f32(stats.speed),
                 engaged: r.engaged,
                 routing: r.morale.broken(),
+                charge: r.charge,
+                fighter: fighter_of(stats, &r),
             };
             let blink = self.started.elapsed().as_millis() % 600 < 300;
             let banner = match r.morale {
@@ -1682,15 +1700,22 @@ impl Running {
                 let highlight = if selected { 70 } else { 0 };
                 self.puppets
                     .update(&block, r.owner, game_dt.as_secs_f32(), |s| {
-                        let action = soldier_action(&s, &block, shooting);
-                        let Some(pose) = clips.pose(model, action, time + s.phase * 4.0) else {
+                        let seconds = time + s.phase * 4.0;
+                        let pose = match s.fight {
+                            Some(fight) => clips.fight(model, fight, seconds),
+                            None => {
+                                let action = soldier_action(&s, &block, shooting);
+                                clips.pose(model, action, seconds).map(|p| (p, false))
+                            }
+                        };
+                        let Some((pose, flat)) = pose else {
                             return;
                         };
                         bucket.push(SoldierInstance {
                             pos: s.pos.to_array(),
                             facing: s.facing.to_array(),
                             frames: pose.rows,
-                            flags: [(pose.blend * 255.0) as u8, highlight, 0, 0],
+                            flags: [(pose.blend * 255.0) as u8, highlight, flat as u8 * 255, 0],
                             color: [cr, cg, cb, 255],
                             lift: 0.0,
                             scale: 1.0,
@@ -2230,12 +2255,8 @@ impl Running {
                 .and_then(|a| a.unit_model.get(c.unit as usize).copied().flatten());
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
                 // The death clip, held on its last frame; models without
-                // one lie down in their idle pose.
-                let (pose, fallen) = match art.clips.death(model, c.age) {
-                    Some(p) => (Some(p), 0),
-                    None => (art.clips.pose(model, Action::Idle, 0.0), 255),
-                };
-                if let Some(pose) = pose {
+                // one lie down in their idle pose once the blow lands.
+                if let Some((pose, flat)) = art.clips.death(model, c.age) {
                     let far = self.camera.eye().distance(glam::Vec3::new(
                         c.pos.x,
                         self.camera.focus_height,
@@ -2245,7 +2266,7 @@ impl Running {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),
                         frames: pose.rows,
-                        flags: [(pose.blend * 255.0) as u8, 0, fallen, 0],
+                        flags: [(pose.blend * 255.0) as u8, 0, flat as u8 * 255, 0],
                         color: [r, g, b, 255],
                         lift: -0.5 * c.sink,
                         scale: 1.0,

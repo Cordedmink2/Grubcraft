@@ -43,7 +43,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Pausing for a player who drops (up to 90 s, or play on). *Built in step 2.*
 - Replays (record and play back).
 - Soldier fighting, stage 1: duel pairs and living formations (acceleration, settle, idle sway), see [09](09-art-and-audio.md#animation). *Built.*
-- Battle feel from Mount & Blade ([14](14-decisions-needed.md#battle-feel-from-mount--blade-decided-2026-10-15), picked 2026-10-15): weapon room (spears from two ranks, swinging blades that need room, shields, and the Tight, Loose and Shield wall formations, [05](05-combat.md#weapons-and-formations)) *built 2026-10-15*; then duels that read the numbers (soldier fighting, stage 2), lines that push, and champions before battle in battles with computer players (a lobby option, on by default).
+- Battle feel from Mount & Blade ([14](14-decisions-needed.md#battle-feel-from-mount--blade-decided-2026-10-15), picked 2026-10-15): weapon room (spears from two ranks, swinging blades that need room, shields, and the Tight, Loose and Shield wall formations, [05](05-combat.md#weapons-and-formations)) *built 2026-10-15*; duels that read the numbers (soldier fighting, stage 2: parries, blocks, staggers, crush-through, charge knockdowns and partner kills from the real stats, [09](09-art-and-audio.md#animation)) *built 2026-10-15*; then lines that push, and champions before battle in battles with computer players (a lobby option, on by default).
 - Packaging: Mac `.app` (ad-hoc signed), Windows `.exe`, one zip each.
 - **Exit:** a 2v2 Field Battle across two Macs and two Windows PCs on home Wi-Fi with zero desyncs.
 - **Progress (2026-10-13):** the netcode is built in steps. Step 1 is built: `gc_net` hosts and joins lobbies over UDP, finds games on the network, checks builds, data and maps match, and plays Field Battles in host-sequenced lockstep with desync detection and disconnect notices Step 2 (2026-10-15): the input delay follows the slowest connection, every machine saves a desync report when worlds disagree, and the match pauses for a player who drops. Step 3 (2026-10-15): every link is encrypted, the host's lobby shows a join code, and a lobby can have a password. [11 · Networking](11-networking.md#transport) has the detail and the next steps: baked maps, army builder, replays with sim snapshots (and with them resync and rejoin), packaging.
@@ -51,7 +51,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 ### M3 · First Harvest (Conquest playable)
 *Goal: the primary mode, with two factions.*
 - Workers, Grub seeps and Marrow veins, structures and construction, production queues, supply and upkeep, tech tiers.
-- Soldier fighting, stage 2: block, stagger and hit-reaction clips and partner kills, with the chosen faction art kits.
+- Soldier fighting with the chosen faction art kits: shield-raise, parry and stagger clips made for the new models (stage 2's rules are built in M2, see above).
 - Ember Clans economy and Honor; Brood veins, larvae, metamorphosis, Reclaimers.
 - Unit, hero and ability data for all four factions is already drafted in `data/rosters/` ([17 · Unit Rosters](17-unit-rosters.md)); M3 bakes it into the game.
 - Heroes: levelling, abilities from the effect-primitive system, items, altar revive.

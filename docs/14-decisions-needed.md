@@ -53,7 +53,7 @@ From the Mount & Blade study (MB-1 to MB-11, in the project's research notes). M
 | # | Decision | What was decided | Where it lands |
 |---|---|---|---|
 | 24 | **Lines that push** (MB-1) | Yes: the side winning a locked melee drives the line back, weighted by mass (heavy shoves, light gives way); a regiment pushed into a friend, water or a cliff is disordered | Combat, [05](05-combat.md#facing-flanks-and-charges) and [10](10-architecture.md#formations-and-combat) |
-| 25 | **Duels that read the numbers** (MB-2) | Yes: soldier duels show blocks, parries, staggers, crush-throughs and knockdowns in proportions taken from the regiments' real stats; the kill comes from the partner | Presentation, [09](09-art-and-audio.md#animation) |
+| 25 | **Duels that read the numbers** (MB-2) | Yes: soldier duels show blocks, parries, staggers, crush-throughs and knockdowns in proportions taken from the regiments' real stats; the kill comes from the partner. **Built 2026-10-15** | Presentation, [09](09-art-and-audio.md#animation) |
 | 26 | **Weapon room** (MB-3) | Yes: reach, swing room and shields as unit flags, and Tight, Loose and Shield wall formations. **Built 2026-10-15** | [05 · Weapons and formations](05-combat.md#weapons-and-formations), [17](17-unit-rosters.md#weapon-flags-and-mass) |
 | 27 | **Champions before battle** (MB-4) | Yes, as a chance event in battles with computer players, switched on or off in the lobby (on by default): two champions duel between the lines, the result decided by their stats, and the winner's army gains morale while the loser's loses some. Regiment champions stand in until heroes reach the simulation (M3) | [05](05-combat.md), [06](06-game-modes.md) |
 

@@ -58,7 +58,7 @@ pub type UnitId = u16;
 
 /// How heavy a regiment's soldiers are when two lines crush together
 /// (docs/05-combat.md): swarms are light, cavalry and monsters heavy.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum Mass {
     Light = 0,
@@ -347,15 +347,17 @@ impl UnitStats {
         }
     }
 
-    /// Melee defence it gains (or, negative, loses) in `formation` against
-    /// a blow on its `front` or not. A shield wall guards its front only.
-    pub fn formation_defence(&self, formation: Formation, front: bool) -> i32 {
-        match formation {
-            Formation::ShieldWall if !front => 0,
-            f if f.close() => TIGHT_DEFENCE,
-            Formation::Loose if !self.swing_room => -LOOSE_DEFENCE,
-            _ => 0,
-        }
+    /// Melee defence in `formation` against a blow on its `front` or not:
+    /// its own, plus what close order gives or gaps cost. A shield wall
+    /// guards its front only.
+    pub fn melee_defence_in(&self, formation: Formation, front: bool) -> i32 {
+        self.melee_defence as i32
+            + match formation {
+                Formation::ShieldWall if !front => 0,
+                f if f.close() => TIGHT_DEFENCE,
+                Formation::Loose if !self.swing_room => -LOOSE_DEFENCE,
+                _ => 0,
+            }
     }
 }
 

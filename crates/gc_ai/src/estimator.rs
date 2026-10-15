@@ -105,8 +105,7 @@ impl Force {
                 morale_soldiers += n;
             }
             // Taking the enemy head on.
-            f.defence +=
-                (s.melee_defence as i32 + s.formation_defence(r.formation, true)) as f32 * n;
+            f.defence += s.melee_defence_in(r.formation, true) as f32 * n;
             f.arrows_turned += (100 - r.formation.arrow_percent(true)) as f32 / 100.0 * n;
             defence_soldiers += n;
             f.speed = f.speed.min(view.pace(r));
