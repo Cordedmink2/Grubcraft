@@ -59,7 +59,8 @@ MapDef(
         (kind: GrubSeep, at: (84, 32)),
         (kind: MarrowVein, at: (64, 40)),
         (kind: CreepCamp, at: (69, 44), label: "Gutworms guard the vein"),
-        (kind: CreepCamp, at: (84, 40), label: "Rib Harpies"),
+        // Beside the rib wall, not on top of it, so regiments can reach it.
+        (kind: CreepCamp, at: (82, 37), label: "Rib Harpies"),
         (kind: Shrine, at: (18, 66)),
         (kind: Bloodseep, at: (96, 44)),
         (kind: Bloodseep, at: (50, 66)),

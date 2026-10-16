@@ -12,7 +12,7 @@ use gc_ui::Settings;
 use gc_ui::lobby::{COLORS, LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind};
 use glam::Vec2;
 
-use crate::terrain_gen::START_PLATEAUS;
+use gc_map::START_PLATEAUS;
 
 // A start plateau for every lobby slot.
 const _: () = assert!(START_PLATEAUS == gc_ui::lobby::MAX_PLAYERS);
@@ -435,15 +435,15 @@ pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terrain_gen::Heightmap;
-    use crate::terrain_view::start_positions;
+    use crate::terrain_view::plateau_positions;
+    use gc_map::Map as Heightmap;
     use gc_sim::{Capacities, MatchSetup};
 
     const MAP: u32 = 256;
 
     #[test]
     fn you_and_your_allies_start_in_the_south_facing_the_rest() {
-        let p = start_positions(MAP);
+        let p = plateau_positions(MAP);
         let (nw, ne, sw, se, n, s) = (p[0], p[1], p[2], p[3], p[4], p[5]);
         // One against one.
         assert_eq!(battle_starts(&[0, 1], 0, p), vec![sw, nw]);
@@ -565,14 +565,14 @@ mod tests {
         let heightmap = Heightmap::generate(1, MAP);
         let nav = heightmap.nav_costs();
         let fielded = |setup: &MatchStart| {
-            let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+            let mut minds = Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav));
             let mut out = Vec::new();
             set_out(
                 setup,
                 &units,
                 &factions,
                 &points,
-                start_positions(MAP),
+                plateau_positions(MAP),
                 1,
                 true,
                 &mut minds,
@@ -629,14 +629,14 @@ mod tests {
                 ground: heightmap.ground(),
                 champions: false,
             });
-            let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+            let mut minds = Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav));
             let mut out = Vec::new();
             set_out(
                 setup,
                 &units,
                 &factions,
                 &points,
-                start_positions(MAP),
+                plateau_positions(MAP),
                 3,
                 true,
                 &mut minds,
@@ -723,14 +723,14 @@ mod tests {
                 ground: heightmap.ground(),
                 champions: false,
             });
-            let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+            let mut minds = Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav));
             let mut out = Vec::new();
             set_out(
                 &setup,
                 &units,
                 &factions,
                 &points,
-                start_positions(MAP),
+                plateau_positions(MAP),
                 3,
                 true,
                 &mut minds,
@@ -772,7 +772,7 @@ mod tests {
             ground: heightmap.ground(),
             champions: champions_allowed(setup),
         });
-        let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+        let mut minds = Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav));
         // As in a real game (for measuring what the minds cost the game's
         // thread): the battle may not play out the same way twice.
         if std::env::var_os("AI_LIVE").is_some() {
@@ -784,7 +784,7 @@ mod tests {
             &units,
             &factions,
             &points,
-            start_positions(MAP),
+            plateau_positions(MAP),
             seed,
             true,
             &mut minds,

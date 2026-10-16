@@ -23,7 +23,9 @@ The soldier and unit models baked into `assets/models.pak` (see `assets-src/mode
 | The Magnate, made for Grubcraft on the King (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | The Magnate |
 | The Undertaker, made for Grubcraft on the Suit (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | The Undertaker |
 | The Usurer, made for Grubcraft on the Adventurer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | The Usurer |
-| Ranger (LowPoly RPG Characters) | Quaternius | CC0 | Yumi Ashigaru |
+| Ember Clans models (Yumi Ashigaru, Katana Samurai, Hands, The Ronin, The Onmyoji), made for Grubcraft on the Farmer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | Those units |
+| Ranger's bow clips (LowPoly RPG Characters), on the Yumi Ashigaru | Quaternius | CC0 | Yumi Ashigaru |
+| Wizard's casting clips (LowPoly RPG Characters), on The Onmyoji | Quaternius | CC0 | The Onmyoji |
 | Alien (Ultimate Monsters) | Quaternius | CC0 | Shardlings (stand-in) |
 | Alien Bug | CDmir | CC0 | Skitterlings |
 

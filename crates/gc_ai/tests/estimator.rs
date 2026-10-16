@@ -171,8 +171,10 @@ fn score(seeds: std::ops::RangeInclusive<u64>, show_misses: bool) -> (u32, u32) 
 
 #[test]
 fn the_estimator_calls_eight_drill_battles_in_ten() {
-    let (decided, called) = score(1..=60, true);
-    assert!(decided >= 50, "only {decided} of 60 battles were decided");
+    // 240 drills (under a second): 60 left the bar a battle or two
+    // from chance either way.
+    let (decided, called) = score(1..=240, true);
+    assert!(decided >= 200, "only {decided} of 240 battles were decided");
     assert!(
         called * 10 >= decided * 8,
         "called {called} of {decided} decided battles"

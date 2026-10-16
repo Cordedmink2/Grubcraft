@@ -6,6 +6,7 @@ members = [
     "crates/gc_audio",
     "crates/gc_data",
     "crates/gc_sim",
+    "crates/gc_map",
     "crates/gc_ai",
     "crates/gc_net",
     "crates/gc_replay",
@@ -33,6 +34,7 @@ gc_assets = { path = "crates/gc_assets" }
 gc_audio = { path = "crates/gc_audio" }
 gc_data = { path = "crates/gc_data" }
 gc_sim = { path = "crates/gc_sim" }
+gc_map = { path = "crates/gc_map" }
 gc_ai = { path = "crates/gc_ai" }
 gc_net = { path = "crates/gc_net" }
 gc_replay = { path = "crates/gc_replay" }

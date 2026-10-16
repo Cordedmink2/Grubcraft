@@ -2,8 +2,8 @@
 //! the objects. Written as a plain PNG with no compression, so it needs no
 //! image library.
 
-use crate::def::Kind;
 use crate::map::{Ground, Map};
+use gc_map::Kind;
 use gc_sim::terrain::Cover;
 
 fn object_colour(k: Kind) -> [u8; 3] {
@@ -22,12 +22,12 @@ fn object_colour(k: Kind) -> [u8; 3] {
 
 /// RGB pixels, `scale` per tile, row by row.
 pub fn render(map: &Map, scale: i32) -> (u32, Vec<u8>) {
-    let side = (map.tiles * scale) as usize;
+    let side = (map.n * scale) as usize;
     let max = i32::from(*map.heights.iter().max().unwrap_or(&1)).max(1);
     let mut px = vec![0u8; side * side * 3];
     for y in 0..side {
         for x in 0..side {
-            let t = ((y as i32 / scale) * map.tiles + x as i32 / scale) as usize;
+            let t = ((y as i32 / scale) * map.n + x as i32 / scale) as usize;
             let h = i32::from(map.heights[t]) * 255 / max;
             let mut c = match map.ground[t] {
                 Ground::Blocked if map.heights[t] < map.water => [20, 40, 110],

@@ -30,8 +30,7 @@ use gc_sim::{
 use glam::Vec2;
 
 use crate::battle::{battle_starts, zone_order};
-use crate::terrain_gen::Heightmap;
-use crate::terrain_view::start_positions;
+use crate::terrain_view::plateau_positions;
 
 /// One side of a recorded battle: a computer player.
 struct Side {
@@ -393,7 +392,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         .iter()
         .map(|u| Faction::from_index(u.faction() as u8))
         .collect();
-    let heightmap = Heightmap::generate(golden.seed, golden.map_tiles);
+    let heightmap = gc_map::Map::generate(golden.seed, golden.map_tiles);
     let nav = heightmap.nav_costs();
     let teams: Vec<u8> = golden.sides.iter().map(|s| s.team).collect();
     let setup = MatchSetup {
@@ -407,10 +406,10 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         champions: golden.champions,
     };
     let mut world = World::new(&setup);
-    let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+    let mut minds = Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav));
     let mut out = Vec::new();
 
-    let starts = battle_starts(&teams, 0, start_positions(golden.map_tiles));
+    let starts = battle_starts(&teams, 0, plateau_positions(golden.map_tiles));
     let middle = Vec2::splat(golden.map_tiles as f32 * 0.5);
     let mut fielded = Vec::new();
     // As `battle::set_out` sends them: every zone, then the armies, then

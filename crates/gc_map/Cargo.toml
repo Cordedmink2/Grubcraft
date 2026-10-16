@@ -1,0 +1,18 @@
+[package]
+name = "gc_map"
+description = "Grubcraft maps: the seeded generator, the RON map loader and the one set of terrain rules both share"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gc_fixed.workspace = true
+gc_sim.workspace = true
+glam.workspace = true
+ron.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

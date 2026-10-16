@@ -33,16 +33,102 @@
             )),
         ),
         (
-            name: "Yumi Ashigaru",
-            source: "shared:quaternius/rpg-characters/glTF/Ranger.gltf",
-            height: 1.15,
-            team: [],
-            team_hue: Some((120.0, 210.0, 0.12)),
+            name: "Katana Samurai",
+            // Ember Clans roster art: made in Blender on the Farmer body and
+            // rig like the Yari Ashigaru; the katana rides the right wrist.
+            source: "shared:grubcraft/ember/katana-samurai/katana-samurai.glb",
+            height: 1.6,
             clips: {
-                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Punch",
-                "Shoot": "Bow_Shoot", "Hit": "RecieveHit", "Die": "Death", "Cheer": "PickUp",
+                "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash",
+                "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
             },
-            lod_triangles: (1400, 600, 250, 100),
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/katana-samurai/albedo.png",
+                team: Some("shared:grubcraft/ember/katana-samurai/team.png"),
+                normal: Some("shared:grubcraft/ember/katana-samurai/normal.png"),
+                orm: Some("shared:grubcraft/ember/katana-samurai/orm.png"),
+                emissive: Some("shared:grubcraft/ember/katana-samurai/emissive.png"),
+            )),
+        ),
+        (
+            name: "Hands",
+            // Ember Clans worker, on the Farmer body and rig: mallet in the
+            // right hand, a back basket of glowing Grub.
+            source: "shared:grubcraft/ember/hands/hands.glb",
+            height: 1.11,
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash",
+                "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
+            },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/hands/albedo.png",
+                team: Some("shared:grubcraft/ember/hands/team.png"),
+                normal: Some("shared:grubcraft/ember/hands/normal.png"),
+                orm: Some("shared:grubcraft/ember/hands/orm.png"),
+                emissive: Some("shared:grubcraft/ember/hands/emissive.png"),
+            )),
+        ),
+        (
+            name: "The Ronin",
+            // Ember Clans hero, on the Farmer body and rig: haori, hakama
+            // and a long katana with a glowing edge.
+            source: "shared:grubcraft/ember/ronin/ronin.glb",
+            height: 1.12,
+            clips: {
+                "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash",
+                "Attack2": "Kick_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
+            },
+            lod_triangles: (12000, 4000, 1400, 450),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/ronin/albedo.png",
+                team: Some("shared:grubcraft/ember/ronin/team.png"),
+                normal: Some("shared:grubcraft/ember/ronin/normal.png"),
+                orm: Some("shared:grubcraft/ember/ronin/orm.png"),
+                emissive: Some("shared:grubcraft/ember/ronin/emissive.png"),
+            )),
+        ),
+        (
+            name: "The Onmyoji",
+            // Ember Clans hero, on the Farmer body and rig: white kariginu,
+            // tall eboshi and a gohei wand. Casting clips come from
+            // Quaternius's Wizard; a 63rd bone turns the talisman wheel.
+            source: "shared:grubcraft/ember/onmyoji/onmyoji.glb",
+            height: 1.25,
+            clips: {
+                "Idle": "Idle_Staff", "Walk": "Walk_Staff", "Run": "Run_Staff", "Attack": "Staff_Strike",
+                "Attack2": "Spell_Call", "Shoot": "Spell_Bolt", "Hit": "Hit_Staff", "Die": "Death_Staff",
+                "Cheer": "Spell_Call",
+            },
+            lod_triangles: (12000, 4000, 1400, 450),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/onmyoji/albedo.png",
+                team: Some("shared:grubcraft/ember/onmyoji/team.png"),
+                normal: Some("shared:grubcraft/ember/onmyoji/normal.png"),
+                orm: Some("shared:grubcraft/ember/onmyoji/orm.png"),
+                emissive: Some("shared:grubcraft/ember/onmyoji/emissive.png"),
+            )),
+        ),
+        (
+            name: "Yumi Ashigaru",
+            // Ember Clans roster art on the Farmer body and rig. Its bow
+            // clips come from Quaternius's Ranger, mirrored onto this rig;
+            // a 63rd bone draws the string and shows the nocked arrow.
+            source: "shared:grubcraft/ember/yumi-ashigaru/yumi-ashigaru.glb",
+            height: 1.09,
+            clips: {
+                "Idle": "Idle_Bow", "Walk": "Walk_Bow", "Run": "Run_Bow", "Attack": "Bash",
+                "Shoot": "Bow_Shoot", "Hit": "Hit_Bow", "Die": "Death_Bow", "Cheer": "Wave",
+            },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/yumi-ashigaru/albedo.png",
+                team: Some("shared:grubcraft/ember/yumi-ashigaru/team.png"),
+                normal: Some("shared:grubcraft/ember/yumi-ashigaru/normal.png"),
+                orm: Some("shared:grubcraft/ember/yumi-ashigaru/orm.png"),
+                emissive: Some("shared:grubcraft/ember/yumi-ashigaru/emissive.png"),
+            )),
         ),
         (
             name: "Skitterlings",

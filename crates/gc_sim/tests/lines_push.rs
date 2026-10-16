@@ -311,10 +311,10 @@ fn a_regiment_with_its_back_already_over_the_edge_is_pinned_at_once() {
 
 #[test]
 fn a_regiment_holds_when_the_foe_beating_it_is_losing_its_own_fight() {
-    // A second strong block hits the strong one from behind: the strong
-    // block is losing overall, so it isn't pushing, and the weak one holds
-    // instead of backing out of the fight. (Later the strong block turns to
-    // face the one behind it, which has nothing to do with pushing.)
+    // A second strong block hits the strong one from behind: while the
+    // strong block is losing overall it isn't pushing, and the weak one
+    // holds instead of backing out of the fight. (Once the strong block
+    // holds its own again, it drives the weak one back as usual.)
     let mut w = world(Behind::Open);
     let (strong, weak) = face_off(&mut w, STRONG, WEAK);
     spawn(
@@ -325,14 +325,17 @@ fn a_regiment_holds_when_the_foe_beating_it_is_losing_its_own_fight() {
         Fx::from_ratio(1696, 100),
         SOUTH,
     );
-    let start = [(weak, at(&w, weak))];
-    let mut losing = false;
+    let mut losing_ticks = 0;
     for _ in 0..15 * 20 {
+        let before = [(weak, at(&w, weak))];
+        let losing = w.regiments.get(strong).unwrap().giving_ground;
         w.tick(&[]);
-        assert!(moved_south(&w, &start)[0] < 0.1);
-        losing |= w.regiments.get(strong).unwrap().giving_ground;
+        if losing {
+            losing_ticks += 1;
+            assert!(moved_south(&w, &before)[0] <= 0.0);
+        }
     }
-    assert!(losing);
+    assert!(losing_ticks > 5 * 20);
 }
 
 #[test]

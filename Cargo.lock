@@ -804,6 +804,7 @@ dependencies = [
  "gc_bake",
  "gc_data",
  "gc_fixed",
+ "gc_map",
  "gc_net",
  "gc_platform",
  "gc_render",
@@ -817,13 +818,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "gc_map"
+version = "0.1.0"
+dependencies = [
+ "gc_fixed",
+ "gc_sim",
+ "glam",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "gc_mapcheck"
 version = "0.1.0"
 dependencies = [
- "blake3",
+ "gc_map",
  "gc_sim",
- "ron",
- "serde",
 ]
 
 [[package]]
