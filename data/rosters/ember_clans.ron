@@ -328,7 +328,7 @@
                 turn_rate: 60.0,
                 file_spacing: 0.75,
                 rank_spacing: 0.85,
-                melee_attack: 27,
+                melee_attack: 26,
                 melee_defence: 45,
                 melee_damage: 2,
                 charge_bonus: 20,
@@ -362,7 +362,7 @@
             stats: (
                 name: "Yumi Ashigaru",
                 faction: EmberClans,
-                models: 16,
+                models: 17,
                 hp_per_model: 8,
                 files: 8,
                 speed: 3.0,
