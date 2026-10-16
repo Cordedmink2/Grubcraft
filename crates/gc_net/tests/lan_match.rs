@@ -606,13 +606,10 @@ fn six_machines_play_in_lockstep() {
     let joiners = ["Alex", "Sam", "Kai", "Jo", "Ren"];
     let mut m = Match::start(&joiners, &[], OnDrop::Wait, 10);
     assert_eq!(m.lans.len(), MAX_PLAYERS);
-    const TURNS: u32 = 200;
-    m.run(&[], TURNS, Duration::from_secs(60));
-    assert_eq!(m.ticks(), [TURNS; MAX_PLAYERS], "match stalled");
-    m.settle();
-    let hash = m.worlds[0].state_hash();
-    assert!(m.worlds.iter().all(|w| w.state_hash() == hash));
-    // Every player's regiments made it into the match.
+    // Every player's regiments made it into the match. Count them a few
+    // turns in, before the drill's fighting can kill any.
+    m.run(&[], 5, Duration::from_secs(30));
+    assert_eq!(m.ticks(), [5; MAX_PLAYERS], "match stalled");
     for p in 0..MAX_PLAYERS as u8 {
         let n = m.worlds[0]
             .regiments
@@ -621,6 +618,12 @@ fn six_machines_play_in_lockstep() {
             .count();
         assert_eq!(n, 20, "player {p}");
     }
+    const TURNS: u32 = 200;
+    m.run(&[], TURNS, Duration::from_secs(60));
+    assert_eq!(m.ticks(), [TURNS; MAX_PLAYERS], "match stalled");
+    m.settle();
+    let hash = m.worlds[0].state_hash();
+    assert!(m.worlds.iter().all(|w| w.state_hash() == hash));
     assert_eq!(m.desyncs(), []);
 }
 
