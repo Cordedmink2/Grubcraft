@@ -50,7 +50,7 @@ Keys follow the fixed 4 × 3 command grid; abilities take the middle row (see [0
 
 - Regiments take time to turn. Big blocks turn slowly; cavalry and swarms turn fast.
 - **Charges** add a bonus proportional to speed at impact, then fade over a few seconds. Charging braced spears into the front is suicide; charging archers in the rear wins battles. A charge needs a run-up: a regiment only charges after a second of marching without stopping or fighting (about 3 tiles for infantry), so blocks that brush apart and close again, a regiment turned or pushed out of reach that presses straight back in, or one that starts next to its foe, don't win a charge.
-- A regiment engaged in melee is **locked**. It can only disengage with Retreat (taking free hits) or by routing, though a stronger foe can drive it back ([Lines that push](#lines-that-push)).
+- A regiment engaged in melee is **locked**. It can only disengage with Retreat (taking free hits) or by routing, though a stronger foe can drive it back ([Lines that push](#lines-that-push)). Contact is sticky: two blocks meet when their edges come within half a tile, and a regiment keeps fighting the foe it is touching even when another enemy comes up nearer, so who is winning the fight isn't reset. Lines that drift apart (blocks shrinking as soldiers fall, or turning to face their foe) stay locked, with no other enemy in reach, until their edges are two tiles apart, and close up again at a tile a second; blows land only within the half tile. A foe that routs no longer holds a regiment. (Before this, nine in ten contacts brushed apart and re-formed within two seconds.)
 
 ## Weapons and formations
 
