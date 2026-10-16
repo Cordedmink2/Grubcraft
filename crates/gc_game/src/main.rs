@@ -102,7 +102,7 @@ mod scenery;
 mod sounds;
 mod terrain_gen;
 
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use battle::{Battle, Party, party_name};
@@ -493,6 +493,8 @@ struct Running {
     quit: bool,
     /// None with `--no-audio` or when there is no sound output.
     sounds: Option<sounds::Sounds>,
+    /// The replay list being read on another thread, until it arrives.
+    replay_list: Option<replays::Listing>,
 }
 
 /// Soldier models and the lists that draw them, rebuilt every frame.
@@ -1045,6 +1047,7 @@ impl App {
             data_hash: game_data.short_hash(),
             quit: false,
             sounds,
+            replay_list: None,
         });
         if let Some(r) = self.running.as_mut() {
             r.menu.set_in_match(r.match_started);
@@ -2469,6 +2472,18 @@ impl Running {
         let (screen, scale) = self.ui_screen();
         let mut input = std::mem::take(&mut self.ui_input);
         input.mouse = self.ui_cursor();
+        if let Some(listing) = &self.replay_list {
+            let arrived = match listing.try_recv() {
+                Ok(list) => Some(list),
+                // The thread never started or died: show an empty list.
+                Err(mpsc::TryRecvError::Disconnected) => Some(Vec::new()),
+                Err(mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(list) = arrived {
+                self.menu.set_replays(list);
+                self.replay_list = None;
+            }
+        }
         self.ui.begin_frame(input, screen);
         let action = self.menu.frame(&mut self.ui);
         self.ui.end_frame();
@@ -2487,13 +2502,13 @@ impl Running {
             MenuAction::ListReplays => {
                 // A replay being saved now belongs in the list.
                 self.save_recording();
-                let list = replays::list(
-                    &replays::folder(),
+                self.menu.replays_loading();
+                self.replay_list = Some(replays::list_in_background(
+                    replays::folder(),
                     self.data_stats.len(),
                     self.capacities,
                     self.data_hash,
-                );
-                self.menu.set_replays(list);
+                ));
             }
             MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
                 Ok(r) => match replays::unplayable(&r, self.data_stats.len(), self.capacities) {

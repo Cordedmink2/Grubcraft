@@ -78,6 +78,8 @@ pub struct Menu<N: Network = LocalNetwork> {
     /// The saved replays, newest first, and the page of them on screen.
     replays: Vec<ReplayEntry>,
     replay_page: usize,
+    /// The game is still reading the replay folder.
+    replays_loading: bool,
 }
 
 /// Vertical flow of equally wide rows.
@@ -130,6 +132,7 @@ impl<N: Network> Menu<N> {
             army_draft: None,
             replays: Vec::new(),
             replay_page: 0,
+            replays_loading: false,
         }
     }
 
@@ -143,6 +146,13 @@ impl<N: Network> Menu<N> {
     pub fn set_replays(&mut self, replays: Vec<ReplayEntry>) {
         self.replays = replays;
         self.replay_page = 0;
+        self.replays_loading = false;
+    }
+
+    /// The list is on its way: the Replays screen says so instead of
+    /// "No replays yet" until [`Menu::set_replays`].
+    pub fn replays_loading(&mut self) {
+        self.replays_loading = true;
     }
 
     /// Show a problem on the current screen (the Replays screen shows why
@@ -956,13 +966,12 @@ impl<N: Network> Menu<N> {
         self.replay_page = self.replay_page.min(pages - 1);
         let mut action = MenuAction::None;
         if self.replays.is_empty() {
-            ui.label(
-                panel.x + 24,
-                top,
-                1,
-                theme::MUTED,
-                "No replays yet. Play a battle and it will be here to watch.",
-            );
+            let text = if self.replays_loading {
+                "Looking for replays..."
+            } else {
+                "No replays yet. Play a battle and it will be here to watch."
+            };
+            ui.label(panel.x + 24, top, 1, theme::MUTED, text);
         }
         let first = self.replay_page * per_page;
         let mut y = top;
@@ -1324,6 +1333,10 @@ mod tests {
             ..Default::default()
         });
         assert!(matches!(h.last, MenuAction::ListReplays));
+        h.menu.replays_loading();
+        h.frame(UiInput::default());
+        assert!(h.has("Looking for replays") && !h.has("No replays yet"));
+        h.menu.set_replays(Vec::new());
         h.frame(UiInput::default());
         assert!(h.has("No replays yet"));
         let entry = |n: usize, unplayable: Option<&str>| ReplayEntry {
