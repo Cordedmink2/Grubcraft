@@ -1,6 +1,6 @@
 # Grubcraft
 
-A four-player LAN real-time strategy game where Warcraft III's base-building meets Shogun: Total War's regiment battles, fought over the corpse of a fallen god. Built on a lean custom engine for Mac and Windows, with a 4 GB memory budget for a full 4-player war.
+A four-player LAN real-time strategy game where Warcraft III's base-building meets Shogun: Total War's regiment battles, fought over the corpse of a fallen god. Built on a lean custom engine for Mac and Windows, with a 6 GB memory budget for a full 6-player war.
 
 - **Conquest** (main mode): gather Grub and Marrow, build a base, tech up, and command regiments with formations, flanks and morale. 2 to 4 players, 20 to 60 minutes.
 - **Field Battle**: pre-built armies, one battlefield, 5 to 20 minutes.
