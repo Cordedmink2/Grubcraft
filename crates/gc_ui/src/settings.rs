@@ -132,6 +132,11 @@ impl Settings {
     }
 }
 
+/// The folder holding settings, replays, logs and crash reports.
+pub fn app_dir() -> Option<PathBuf> {
+    settings_path().and_then(|p| p.parent().map(Path::to_path_buf))
+}
+
 /// Where settings live: `GRUBCRAFT_SETTINGS` if set, else the platform's
 /// per-user config folder.
 pub fn settings_path() -> Option<PathBuf> {

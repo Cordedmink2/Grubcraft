@@ -45,3 +45,11 @@ and signs in. The host shares their computer with the others from the
 Tailscale admin page (Share). Friends then type the lobby's Tailscale code
 (or the host's address starting with 100.) into Join. The game list only
 finds games on the same Wi-Fi.
+
+If the game crashes or won't start
+----------------------------------
+Grubcraft keeps a log and writes a crash report. Send the newest files
+from these folders to whoever gave you the game:
+  ~/Library/Application Support/Grubcraft
+    crashes   (one text file per crash)
+    logs      (grubcraft.log is the latest run)

@@ -20,7 +20,7 @@ Do this from the downloaded zip on a machine with no repo checkout. Not from `ta
 
 ### Windows
 
-- The zip holds a `Grubcraft` folder with `grubcraft.exe` and `Read me.txt`.
+- The zip holds a `Grubcraft` folder with `grubcraft.exe`, `grubcraft.pdb` and `Read me.txt`.
 - SmartScreen shows. More info, then Run anyway, starts the game.
 - The firewall question appears when hosting. Allow on Private networks.
 - The main menu, a battle with AI, and sound all work.
@@ -39,3 +39,7 @@ Do this from the downloaded zip on a machine with no repo checkout. Not from `ta
 - The lobby shows the same version on both. Start works.
 - A short battle ends with no desync message.
 - Quit one game mid-battle and start it again. It rejoins.
+
+### Crash reports
+
+- Start the game from a terminal as `grubcraft --crash-test` (on a Mac: `Grubcraft.app/Contents/MacOS/grubcraft --crash-test`). It panics on purpose. The game folder (`%APPDATA%\Grubcraft` on Windows, `~/Library/Application Support/Grubcraft` on a Mac) now holds a `crashes/crash-….txt` naming the build, the GPU and a backtrace with function names, and `logs/grubcraft.log` ends with a `PANIC` line.

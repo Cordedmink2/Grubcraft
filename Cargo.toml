@@ -83,7 +83,11 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 panic = "abort"
-strip = "symbols"
+# Keep the symbol table (function names, about 4 MB more than stripped) so the
+# backtrace in a crash report names the functions. Line numbers would need
+# debug info, which makes the binary 49 MB instead of 19. On Windows the names come from
+# the .pdb, which the bundle script ships beside the exe.
+strip = "none"
 
 # Fast dev builds of our code, optimised dependencies (wgpu is slow unoptimised).
 [profile.dev.package."*"]

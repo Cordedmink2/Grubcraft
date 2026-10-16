@@ -881,6 +881,7 @@ dependencies = [
 name = "gc_ui"
 version = "0.1.0"
 dependencies = [
+ "gc_platform",
  "ron",
  "serde",
 ]

@@ -201,7 +201,7 @@ impl<N: Network> Menu<N> {
         if let Some(path) = &self.settings_path
             && let Err(e) = self.settings.save(path)
         {
-            eprintln!(
+            gc_platform::logln!(
                 "grubcraft: could not save settings to {}: {e}",
                 path.display()
             );

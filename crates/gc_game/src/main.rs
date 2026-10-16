@@ -107,6 +107,7 @@ use std::time::{Duration, Instant};
 use battle::{Battle, Party, party_name};
 use gc_ai::{Difficulty, Mind, MindConfig, Minds};
 use gc_net::Lan;
+use gc_platform::logln;
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
 use gc_render::{
     BoxInstance, FrameParams, Renderer, RendererOptions, SoldierBatch, SoldierInstance, Terrain,
@@ -253,6 +254,9 @@ struct Options {
     host: bool,
     join: Option<String>,
     password: String,
+    /// Panic once the game has started, to check that a crash report is
+    /// written (`--crash-test`).
+    crash_test: bool,
     render: RendererOptions,
 }
 
@@ -268,6 +272,7 @@ fn parse_args() -> Options {
         host: false,
         join: None,
         password: String::new(),
+        crash_test: false,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -286,6 +291,10 @@ fn parse_args() -> Options {
         }
         if flag == "--host" {
             opts.host = true;
+            continue;
+        }
+        if flag == "--crash-test" {
+            opts.crash_test = true;
             continue;
         }
         if flag == "--no-audio" {
@@ -752,12 +761,12 @@ impl App {
                     batches: Vec::with_capacity(models.models.len() * 2),
                 }),
                 Err(e) => {
-                    eprintln!("grubcraft: soldier models off: {e}");
+                    logln!("grubcraft: soldier models off: {e}");
                     None
                 }
             },
             Err(e) => {
-                eprintln!("grubcraft: soldier models off: {e}");
+                logln!("grubcraft: soldier models off: {e}");
                 None
             }
         };
@@ -821,7 +830,12 @@ impl App {
 
         self.memory_timeline.mark("simulation world");
         let info = renderer.adapter_info();
-        eprintln!(
+        gc_platform::diag::set_context(
+            "gpu",
+            format!("{} ({:?}, {:?})", info.name, info.backend, info.driver),
+        );
+        gc_platform::diag::set_context("data hash", format!("{:016x}", game_data.short_hash()));
+        logln!(
             "grubcraft: {} via {:?}, {}x{} pixels, frame latency {}, render scale {}, draw {}",
             info.name,
             info.backend,
@@ -836,7 +850,7 @@ impl App {
                 (false, false) => "none",
             }
         );
-        eprintln!(
+        logln!(
             "grubcraft: game data {:016x}, {} unit types ({})",
             game_data.short_hash(),
             game_data.units.len(),
@@ -847,6 +861,8 @@ impl App {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+
+        assert!(!opts.crash_test, "--crash-test: a deliberate panic");
 
         let mut hud_state = hud::HudState::default();
         hud_state.set_terrain(&heightmap, MAP_TILES);
@@ -969,7 +985,7 @@ impl App {
                 };
                 match result {
                     Ok(()) => r.menu.show(Screen::Lobby),
-                    Err(e) => eprintln!("grubcraft: {e}"),
+                    Err(e) => logln!("grubcraft: {e}"),
                 }
             }
             if let Some(level) = opts.battle {
@@ -994,7 +1010,7 @@ impl ApplicationHandler for App {
             return;
         }
         if let Err(e) = self.start(event_loop) {
-            eprintln!("grubcraft: failed to start: {e}");
+            logln!("grubcraft: failed to start: {e}");
             event_loop.exit();
         }
     }
@@ -2110,6 +2126,7 @@ impl Running {
     /// Remember where every regiment stands, then simulate one tick with
     /// the commands in `pending`.
     fn step(&mut self) {
+        gc_platform::diag::set_tick(u64::from(self.world.tick_count()));
         for r in self.world.regiments.iter() {
             self.prev_positions[r.handle.index as usize] =
                 Some((r.handle, from_fx_vec(r.position), angle_vec(r.facing)));
@@ -2227,7 +2244,7 @@ impl Running {
                     }
                 }
                 gc_net::MatchEvent::Ended(why) => {
-                    eprintln!("grubcraft: {why}");
+                    logln!("grubcraft: {why}");
                     o.ended = Some(why);
                 }
             }
@@ -2390,7 +2407,7 @@ impl Running {
             MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
                 Ok(r) => match replays::unplayable(&r, self.data_stats.len(), self.capacities) {
                     None => {
-                        eprintln!("grubcraft: watching {}", path.display());
+                        logln!("grubcraft: watching {}", path.display());
                         self.start_match(MatchKind::Replay(Box::new(r)));
                     }
                     Some(why) => self.menu.tell(why),
@@ -2398,7 +2415,7 @@ impl Running {
                 Err(e) => self.menu.tell(format!("Can't open that replay: {e}")),
             },
             MenuAction::StartMatch(setup) => {
-                eprintln!(
+                logln!(
                     "grubcraft: starting {} on {} with {} players",
                     setup.settings.mode.name(),
                     gc_ui::lobby::MAPS[setup.settings.map],
@@ -2576,7 +2593,7 @@ impl Running {
 
     /// Generate the map for `seed` and put it on screen.
     fn use_map(&mut self, seed: u64) {
-        eprintln!("grubcraft: switching to the host's map (seed {seed})");
+        logln!("grubcraft: switching to the host's map (seed {seed})");
         self.seed = seed;
         self.heightmap = tagged_alloc::scope(Tag::Map, || Heightmap::generate(seed, MAP_TILES));
         let hm = &self.heightmap;
@@ -2615,7 +2632,7 @@ impl Running {
             )
         });
         for m in self.minds.iter() {
-            eprintln!(
+            logln!(
                 "grubcraft: {} plays {}",
                 m.summary(),
                 party_name(&set.parties, m.party())
@@ -2689,7 +2706,7 @@ impl Running {
         };
         rec.saved_at = Some(tick);
         if let Err(e) = replays::save(rec.recorder.replay(), &rec.path) {
-            eprintln!(
+            logln!(
                 "grubcraft: could not save the replay {}: {e}",
                 rec.path.display()
             );
@@ -2720,7 +2737,7 @@ impl Running {
             ),
             Err(e) => format!("Could not save the desync report ({e})"),
         };
-        eprintln!("grubcraft: {line}");
+        logln!("grubcraft: {line}");
         line
     }
 
@@ -2741,13 +2758,13 @@ impl Running {
         let decided = battle.judge(&self.world, &self.parties);
         if decided {
             if let Some(outcome) = &battle.outcome {
-                eprintln!("grubcraft: {outcome}");
+                logln!("grubcraft: {outcome}");
             }
             self.sandbox.dirty = true;
         }
         if battle.herald(&self.world, &self.parties, &self.unit_names) {
             if let Some(news) = &battle.champions {
-                eprintln!("grubcraft: {news}");
+                logln!("grubcraft: {news}");
             }
             self.sandbox.dirty = true;
         }
@@ -3285,7 +3302,7 @@ impl Running {
         let (names, stats) = match sandbox::reload(&dir) {
             Ok(fresh) => fresh,
             Err(e) => {
-                eprintln!("grubcraft: reloading data: {e}");
+                logln!("grubcraft: reloading data: {e}");
                 self.say(format!("data/units.ron has a problem: {e}"));
                 return;
             }
@@ -3313,7 +3330,7 @@ impl Running {
 
     /// Show a line in the sandbox panel for a few seconds.
     fn say(&mut self, message: String) {
-        eprintln!("grubcraft: {message}");
+        logln!("grubcraft: {message}");
         self.sandbox.message = Some((message, Instant::now()));
         self.sandbox.dirty = true;
     }
@@ -3645,11 +3662,15 @@ fn angle_vec(a: gc_fixed::Angle) -> Vec2 {
 
 fn main() {
     let opts = parse_args();
+    if let Some(dir) = gc_ui::settings::app_dir() {
+        gc_platform::diag::init(&dir);
+    }
+    gc_platform::diag::set_context("build", online::version());
     profile::start();
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
         Err(e) => {
-            eprintln!("grubcraft: cannot open a window: {e}");
+            logln!("grubcraft: cannot open a window: {e}");
             std::process::exit(1);
         }
     };
@@ -3660,7 +3681,7 @@ fn main() {
     };
     app.memory_timeline.mark("process start");
     if let Err(e) = event_loop.run_app(&mut app) {
-        eprintln!("grubcraft: {e}");
+        logln!("grubcraft: {e}");
         std::process::exit(1);
     }
 }

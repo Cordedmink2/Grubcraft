@@ -9,6 +9,8 @@
 
 use std::time::{Duration, Instant};
 
+use gc_platform::logln;
+
 /// How long a notice ("Alex lost connection") stays on screen.
 const NOTICE_TIME: Duration = Duration::from_secs(8);
 
@@ -64,7 +66,7 @@ impl Online {
     }
 
     pub fn note(&mut self, text: String) {
-        eprintln!("grubcraft: {text}");
+        logln!("grubcraft: {text}");
         self.notice = Some((text, Instant::now()));
     }
 

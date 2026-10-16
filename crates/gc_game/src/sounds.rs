@@ -11,6 +11,7 @@
 use crate::camera::RtsCamera;
 use crate::from_fx_vec;
 use gc_audio::{Audio, Bank, SoundId};
+use gc_platform::logln;
 use gc_sim::{MoraleState, RegimentHandle, World};
 use glam::Vec2;
 
@@ -85,7 +86,7 @@ impl Sounds {
             .and_then(Audio::start);
         match started {
             Ok(audio) => {
-                eprintln!(
+                logln!(
                     "audio: {} at {} Hz",
                     audio.device_name(),
                     audio.sample_rate()
@@ -104,7 +105,7 @@ impl Sounds {
                 })
             }
             Err(e) => {
-                eprintln!("audio off: {e}");
+                logln!("audio off: {e}");
                 None
             }
         }
