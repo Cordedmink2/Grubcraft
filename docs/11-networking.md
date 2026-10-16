@@ -73,7 +73,7 @@ Tests: three `Lan`s in one process play 300 turns over real UDP on this machine,
 
 **Built in step 7 (2026-10-15):** packaging, with no protocol change. One zip per platform, each with a read-me that explains the firewall (Windows) and local network (Mac) prompts LAN play depends on. See [release checklist](release-checklist.md).
 
-**Next steps for M2:** (6c) sim snapshots, and with them resyncing a diverged player and a faster rejoin.
+**Parked, build only if needed (2026-10-16):** (6c) sim snapshots, and with them resyncing a diverged player and a faster rejoin. Desyncs are detected and reported but not repaired. Build this if out-of-sync notices or desync reports show up in real games. Tracked in [issue #59](https://github.com/mariothapliyal/Grubcraft/issues/59). M2's netcode is otherwise complete, and plays over the internet with Tailscale (see [Playing beyond one Wi-Fi network](#playing-beyond-one-wi-fi-network)).
 
 ## Session flow
 
