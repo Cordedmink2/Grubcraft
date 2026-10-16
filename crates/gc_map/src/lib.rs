@@ -31,6 +31,7 @@
 // modules and the drawing views may use floats.
 #![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
+pub mod conquest;
 pub mod def;
 mod generate;
 mod map;

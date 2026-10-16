@@ -6,9 +6,11 @@
 //! whether it is valid and fair.
 
 pub mod check;
+pub mod generate;
 pub mod map;
 pub mod preview;
 
 pub use check::{Report, check};
 pub use gc_map::MapDef;
+pub use generate::generate;
 pub use map::Map;

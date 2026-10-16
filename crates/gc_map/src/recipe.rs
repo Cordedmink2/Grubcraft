@@ -43,28 +43,22 @@ impl Recipe {
     }
 }
 
-/// Ground level before the stamps, and the water line (sixteenths of a tile).
+/// Ground level before the stamps, and the water line (sixteenths of a
+/// tile); the Conquest recipes share the water.
 const BASE: i32 = 48;
-const WATER: i32 = 24;
+pub(crate) const WATER: i32 = 24;
 /// Water this far under the line is a ford (shallower than the 0.35 tiles
 /// the walking rules allow), and this far is too deep to wade.
-const FORD: i32 = WATER - 3;
-const DEEP: i32 = WATER - 14;
+pub(crate) const FORD: i32 = WATER - 3;
+pub(crate) const DEEP: i32 = WATER - 14;
 /// How far a rise's slope reaches from its centre, in tiles: the widest
 /// top plus the widest edge (see [`Writer::rise`]).
-const RISE_REACH: i32 = 5 + 14;
+pub(crate) const RISE_REACH: i32 = 5 + 14;
 
 /// The description a recipe makes from a seed, `tiles` on a side.
 pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
     let mut rng = Pcg32::new(seed, 0x006d_6170);
-    let mut w = Writer {
-        rng: &mut rng,
-        tiles,
-        mid: tiles / 2,
-        terrain: Vec::new(),
-        cover: Vec::new(),
-        set_pieces: Vec::new(),
-    };
+    let mut w = Writer::new(&mut rng, tiles, BASE);
     // Rolling ground first, then the start plateaus, then the recipe's
     // shape, then cover.
     let noise = Noise {
@@ -121,24 +115,39 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
     }
 }
 
-/// Writes the north half of a map.
-struct Writer<'a> {
-    rng: &'a mut Pcg32,
+/// Writes the first player's share of a map: the north half of a Field
+/// Battle map (the Conquest recipes use it too).
+pub(crate) struct Writer<'a> {
+    pub(crate) rng: &'a mut Pcg32,
     tiles: i32,
     /// The middle line, where the halves meet.
     mid: i32,
-    terrain: Vec<TerrainOp>,
-    cover: Vec<CoverOp>,
-    set_pieces: Vec<SetPiece>,
+    /// Ground level before the stamps.
+    pub(crate) base: i32,
+    pub(crate) terrain: Vec<TerrainOp>,
+    pub(crate) cover: Vec<CoverOp>,
+    pub(crate) set_pieces: Vec<SetPiece>,
 }
 
-impl Writer<'_> {
+impl<'a> Writer<'a> {
+    pub(crate) fn new(rng: &'a mut Pcg32, tiles: i32, base: i32) -> Self {
+        Writer {
+            rng,
+            tiles,
+            mid: tiles / 2,
+            base,
+            terrain: Vec::new(),
+            cover: Vec::new(),
+            set_pieces: Vec::new(),
+        }
+    }
+
     /// A whole number from `lo` to `hi`, both included.
-    fn range(&mut self, lo: i32, hi: i32) -> i32 {
+    pub(crate) fn range(&mut self, lo: i32, hi: i32) -> i32 {
         lo + self.rng.below((hi - lo + 1) as u32) as i32
     }
 
-    fn stamp(&mut self, shape: Shape, mode: Mode, height: i32, edge: i32) {
+    pub(crate) fn stamp(&mut self, shape: Shape, mode: Mode, height: i32, edge: i32) {
         self.terrain.push(TerrainOp {
             shape,
             mode,
@@ -201,11 +210,7 @@ impl Writer<'_> {
             (self.mid - offsets[0], self.mid)
         };
         self.stamp(Shape::Disc { at, r: width + 1 }, Mode::Set, FORD, 3);
-        self.set_pieces.push(SetPiece {
-            kind: SetPieceKind::Ford,
-            at,
-            label: "The ford".into(),
-        });
+        self.set_piece(SetPieceKind::Ford, at, "The ford");
         // A rise behind one of the gaps, to hold it from.
         let d = offsets.last().copied().unwrap_or(0);
         let hill = (self.mid - d, self.mid - self.range(16, 24));
@@ -245,11 +250,7 @@ impl Writer<'_> {
         for &at in &fords {
             self.stamp(Shape::Disc { at, r }, Mode::Set, FORD, 3);
         }
-        self.set_pieces.push(SetPiece {
-            kind: SetPieceKind::Ford,
-            at: fords[0],
-            label: "The ford".into(),
-        });
+        self.set_piece(SetPieceKind::Ford, fords[0], "The ford");
         // A rise above the first ford, far enough back that its slope
         // stops short of the middle line, where a centre ford meets the
         // turned copy's rise.
@@ -265,11 +266,7 @@ impl Writer<'_> {
         let height = BASE + self.range(64, 88);
         let edge = self.range(20, 28);
         self.stamp(Shape::Disc { at, r }, Mode::Raise, height, edge);
-        self.set_pieces.push(SetPiece {
-            kind: SetPieceKind::High,
-            at,
-            label: "The hill".into(),
-        });
+        self.set_piece(SetPieceKind::High, at, "The hill");
         let side = (
             self.range(self.tiles / 8, self.tiles / 4),
             self.mid - self.range(10, 16),
@@ -292,14 +289,20 @@ impl Writer<'_> {
         self.rise(east, "The east rise");
     }
 
-    /// A hill a line can hold, named as a set piece.
-    fn rise(&mut self, at: Pos, label: &str) {
+    /// A hill a line can hold, named as a set piece. Its slope reaches
+    /// [`RISE_REACH`] tiles.
+    pub(crate) fn rise(&mut self, at: Pos, label: &str) {
         let r = self.range(3, 5);
-        let height = BASE + self.range(40, 56);
+        let height = self.base + self.range(40, 56);
         let edge = self.range(10, 14);
         self.stamp(Shape::Disc { at, r }, Mode::Raise, height, edge);
+        self.set_piece(SetPieceKind::High, at, label);
+    }
+
+    /// Name a spot as a set piece.
+    pub(crate) fn set_piece(&mut self, kind: SetPieceKind, at: Pos, label: &str) {
         self.set_pieces.push(SetPiece {
-            kind: SetPieceKind::High,
+            kind,
             at,
             label: label.into(),
         });

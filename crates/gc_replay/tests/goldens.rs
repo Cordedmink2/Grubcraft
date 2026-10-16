@@ -63,7 +63,13 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::SetFormation { .. } => "SetFormation",
         Command::DeployZone { .. } => "DeployZone",
         Command::Ready => "Ready",
+        Command::SpawnStructure { .. } => "SpawnStructure",
+        Command::AttackStructure { .. } => "AttackStructure",
+        Command::RemoveStructure { .. } => "RemoveStructure",
     };
+    // Not yet in KINDS: the Conquest commands, which join it with a
+    // Conquest golden once replays record Conquest matches (M3 step 4,
+    // when the game plays them).
     const KINDS: [&str; 8] = [
         "SpawnRegiment",
         "MoveTo",

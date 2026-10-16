@@ -30,6 +30,7 @@ mod regiments;
 pub mod scenario;
 pub mod stances;
 mod state;
+pub mod structures;
 pub mod terrain;
 pub mod verdict;
 pub mod vision;
@@ -40,6 +41,9 @@ pub use hash::StateHasher;
 pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
+pub use structures::{
+    BuildingId, BuildingStats, ConquestSetup, Refusal, StructureHandle, StructureView, Structures,
+};
 pub use terrain::{Cover, Ground, Terrain};
 pub use verdict::{HOLD_TICKS, Verdict};
 pub use vision::Ambush;
@@ -55,7 +59,7 @@ use vision::Vision;
 
 /// The parts of the simulation's state, in the order [`World::state_hash`]
 /// hashes them and [`World::system_hashes`] lists them.
-pub const SYSTEMS: [&str; 10] = [
+pub const SYSTEMS: [&str; 11] = [
     "clock",
     "random streams",
     "unit stats",
@@ -66,6 +70,7 @@ pub const SYSTEMS: [&str; 10] = [
     "deployment",
     "verdict",
     "champions",
+    "structures",
 ];
 
 /// The simulation's rules version. Two builds with the same version play
@@ -506,6 +511,20 @@ pub enum Command {
     /// During deployment: you are done placing. The battle starts when
     /// every player with a zone is, or when time runs out.
     Ready,
+    /// Conquest setup and sandbox: put up a finished building of the
+    /// issuing player's with its north-west tile at `tile` (see
+    /// [`structures`]). Refused where it doesn't fit.
+    SpawnStructure {
+        building: BuildingId,
+        tile: (i16, i16),
+    },
+    /// Close with an enemy building and knock it down.
+    AttackStructure {
+        regiment: RegimentHandle,
+        structure: StructureHandle,
+    },
+    /// Sandbox: take a building off the field (any player's).
+    RemoveStructure { structure: StructureHandle },
 }
 
 impl Command {
@@ -518,11 +537,14 @@ impl Command {
             Command::MoveTo { .. }
             | Command::Attack { .. }
             | Command::SetFormation { .. }
-            | Command::Ready => true,
+            | Command::Ready
+            | Command::AttackStructure { .. } => true,
             Command::SpawnRegiment { .. }
             | Command::RemoveRegiment { .. }
             | Command::TuneUnit { .. }
-            | Command::DeployZone { .. } => false,
+            | Command::DeployZone { .. }
+            | Command::SpawnStructure { .. }
+            | Command::RemoveStructure { .. } => false,
         }
     }
 }
@@ -564,6 +586,8 @@ pub struct World {
     /// What happened in the last tick (see [`events`]); not part of the
     /// match's state.
     events: Events,
+    /// Conquest only: the buildings (see [`World::conquest`]).
+    structures: Option<Structures>,
     pub regiments: Regiments,
 }
 
@@ -598,8 +622,49 @@ impl World {
             judge: verdict::Judge::default(),
             events: Events::new(setup.capacities.regiments as usize),
             scratch: false,
+            structures: None,
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
+    }
+
+    /// Make this a Conquest match: buildings, and later the economy. Only
+    /// on a match's own world with a map, before its first tick, once;
+    /// returns whether it was done.
+    pub fn conquest(&mut self, setup: &ConquestSetup) -> bool {
+        if self.tick != 0 || self.scratch || self.structures.is_some() || !self.nav.has_map() {
+            return false;
+        }
+        self.structures = Some(Structures::new(
+            setup.buildings,
+            setup.breakers,
+            setup.structures,
+            self.regiments.capacity(),
+        ));
+        self.events.reserve(setup.structures as usize);
+        true
+    }
+
+    /// The buildings on the field (Conquest only).
+    pub fn structures(&self) -> Option<&Structures> {
+        self.structures.as_ref()
+    }
+
+    /// Whether a building of type `building` could go up now with its
+    /// north-west tile at `tile`, and if not, why: the check
+    /// [`Command::SpawnStructure`] makes.
+    pub fn can_build(&self, building: BuildingId, tile: (i32, i32)) -> Result<(), Refusal> {
+        self.structures.as_ref().ok_or(Refusal::NoBuildings)?.check(
+            building,
+            tile,
+            &self.nav,
+            &self.regiments,
+        )
+    }
+
+    /// The building regiment `h` is attacking, if any.
+    pub fn siege_target(&self, h: RegimentHandle) -> Option<StructureHandle> {
+        let i = self.regiments.resolve(h)?;
+        self.structures.as_ref()?.siege_of(&self.regiments, i)
     }
 
     /// The match's regiment types, indexed by [`UnitId`].
@@ -670,6 +735,9 @@ impl World {
             self.tick,
             &mut self.combat_rng,
         );
+        if let Some(structures) = &mut self.structures {
+            structures.update(&mut self.regiments, &self.units, &mut self.nav);
+        }
         morale::update(
             &mut self.regiments,
             &self.combat,
@@ -698,6 +766,9 @@ impl World {
         if !self.scratch {
             self.events
                 .after(&self.regiments, &self.combat, self.vision.ambushes());
+            if let Some(structures) = &self.structures {
+                self.events.fallen(&structures.fallen);
+            }
         }
         self.tick += 1;
         self.judge
@@ -713,6 +784,7 @@ impl World {
                 pc.command,
                 Command::DeployZone { .. }
                     | Command::SpawnRegiment { .. }
+                    | Command::SpawnStructure { .. }
                     | Command::MoveTo { .. }
                     | Command::SetFormation { .. }
                     | Command::Ready
@@ -765,15 +837,21 @@ impl World {
                 }
                 // Players may only order their own regiments.
                 match self.regiments.owner(regiment) {
-                    Some(owner) if owner == pc.player => self.regiments.order(
-                        regiment,
-                        Order {
-                            target,
-                            facing,
-                            files,
-                            pace,
-                        },
-                    ),
+                    Some(owner) if owner == pc.player => {
+                        let done = self.regiments.order(
+                            regiment,
+                            Order {
+                                target,
+                                facing,
+                                files,
+                                pace,
+                            },
+                        );
+                        if done {
+                            self.leave_off_siege(regiment);
+                        }
+                        done
+                    }
                     _ => false,
                 }
             }
@@ -784,7 +862,11 @@ impl World {
                             && self.stances.hostile(owner, enemy)
                             && self.sees(owner, target) =>
                     {
-                        self.regiments.attack(regiment, target)
+                        let done = self.regiments.attack(regiment, target);
+                        if done {
+                            self.leave_off_siege(regiment);
+                        }
+                        done
                     }
                     _ => false,
                 }
@@ -813,6 +895,53 @@ impl World {
                     .set_zone(pc.player, Zone { center, radius }, self.tick)
             }
             Command::Ready => self.deploy.set_ready(pc.player, self.tick),
+            Command::SpawnStructure { building, tile } => {
+                let Some(structures) = &mut self.structures else {
+                    return false;
+                };
+                let tile = (i32::from(tile.0), i32::from(tile.1));
+                usize::from(pc.player) < MAX_PARTIES
+                    && structures
+                        .check(building, tile, &self.nav, &self.regiments)
+                        .is_ok()
+                    && structures
+                        .spawn(pc.player, building, tile, &mut self.nav, &self.regiments)
+                        .is_some()
+            }
+            Command::AttackStructure {
+                regiment,
+                structure,
+            } => {
+                let Some(structures) = &mut self.structures else {
+                    return false;
+                };
+                match (
+                    self.regiments.resolve(regiment),
+                    structures.owner(structure),
+                ) {
+                    (Some(r), Some(enemy))
+                        if self.regiments.owner[r] == pc.player
+                            && self.stances.hostile(pc.player, enemy)
+                            && !self.regiments.morale_state[r].broken() =>
+                    {
+                        structures.besiege(&mut self.regiments, r, structure);
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            Command::RemoveStructure { structure } => self
+                .structures
+                .as_mut()
+                .is_some_and(|s| s.despawn(structure, &mut self.nav, &self.regiments)),
+        }
+    }
+
+    /// Regiment `h` was given another order: it stops attacking any
+    /// building.
+    fn leave_off_siege(&mut self, h: RegimentHandle) {
+        if let (Some(structures), Some(i)) = (&mut self.structures, self.regiments.resolve(h)) {
+            structures.stop(i);
         }
     }
 
@@ -1018,6 +1147,12 @@ impl World {
             "champions" => {
                 if let Some(champions) = &self.champions {
                     champions.hash_into(h);
+                }
+            }
+            // Only in Conquest, so Field Battles hash as before buildings.
+            "structures" => {
+                if let Some(structures) = &self.structures {
+                    structures.hash_into(&self.regiments, h);
                 }
             }
             other => unreachable!("no hash for system {other}"),

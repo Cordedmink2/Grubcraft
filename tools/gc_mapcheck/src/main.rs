@@ -1,9 +1,13 @@
 //! `gc_mapcheck check [FILE|DIR]...` validates maps (default `data/maps`);
-//! `gc_mapcheck png FILE OUT.png` draws one; `gc_mapcheck gen RECIPE TILES
-//! SEED OUT.ron` writes the Field Battle map a recipe makes from a seed
-//! (Pass, Ford, Hill or Open), so a good one can become a hand-tuned map.
+//! `gc_mapcheck png FILE OUT.png` draws one; `gc_mapcheck gen RECIPE SIZE
+//! SEED OUT.ron` writes the map a recipe makes from a seed, so a good one
+//! can become a hand-tuned map: a Field Battle recipe (Pass, Ford, Hill or
+//! Open) takes a size in tiles, a Conquest recipe (Teeth, Bowl or Fen)
+//! takes Duel, Skirmish or Warfield and rerolls the seed until the checker
+//! passes the map.
 
-use gc_mapcheck::{Map, MapDef, check, preview};
+use gc_map::conquest::{CONQUEST_SIZES, ConquestRecipe};
+use gc_mapcheck::{Map, MapDef, check, generate, preview};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -13,14 +17,30 @@ fn png_cmd(src: &str, out: &str) -> Result<(), String> {
     std::fs::write(out, preview::png(side, &rgb)).map_err(|e| format!("{out}: {e}"))
 }
 
-fn gen_cmd(recipe: &str, tiles: &str, seed: &str, out: &str) -> Result<(), String> {
-    let recipe = gc_map::recipe::Recipe::ALL
-        .into_iter()
-        .find(|r| r.name().eq_ignore_ascii_case(recipe))
-        .ok_or_else(|| format!("no recipe called {recipe}"))?;
-    let tiles = tiles.parse().map_err(|_| format!("{tiles} isn't a size"))?;
+fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String> {
     let seed = seed.parse().map_err(|_| format!("{seed} isn't a seed"))?;
-    let def = gc_map::recipe::describe(recipe, tiles, seed);
+    let named = |name: &str| name.eq_ignore_ascii_case(recipe);
+    let def = if let Some(field) = gc_map::recipe::Recipe::ALL
+        .into_iter()
+        .find(|r| named(r.name()))
+    {
+        let tiles = size
+            .parse()
+            .map_err(|_| format!("{size} isn't a size in tiles"))?;
+        gc_map::recipe::describe(field, tiles, seed)
+    } else if let Some(conquest) = ConquestRecipe::ALL.into_iter().find(|r| named(r.name())) {
+        let size = CONQUEST_SIZES
+            .into_iter()
+            .find(|s| format!("{s:?}").eq_ignore_ascii_case(size))
+            .ok_or_else(|| format!("{size} isn't Duel, Skirmish or Warfield"))?;
+        let (used, def) = generate(conquest, size, seed).map_err(|e| e.join("\n"))?;
+        if used != seed {
+            eprintln!("seed {seed} failed the checker; seed {used} passed");
+        }
+        def
+    } else {
+        return Err(format!("no recipe called {recipe}"));
+    };
     std::fs::write(out, def.to_ron()).map_err(|e| format!("{out}: {e}"))
 }
 
@@ -109,7 +129,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: gc_mapcheck check [FILE|DIR]...\n       gc_mapcheck png FILE OUT.png\n       gc_mapcheck gen RECIPE TILES SEED OUT.ron"
+                "usage: gc_mapcheck check [FILE|DIR]...\n       gc_mapcheck png FILE OUT.png\n       gc_mapcheck gen RECIPE SIZE SEED OUT.ron"
             );
             ExitCode::FAILURE
         }

@@ -8,16 +8,26 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use gc_assets::{Kind, PackWriter, table_bytes};
+use gc_data::conquest::{BUILDING_SCHEMA, CONQUEST_UNIT_SCHEMA};
 use gc_data::{
-    ANGLE_STEPS_PER_TURN, Faction, MANIFEST_PATH, NAME_BYTES, UNIT_SCHEMA, UNITS_PATH, UnitRecord,
-    WEAPON_REACH, WEAPON_SHIELD, WEAPON_SWING_ROOM,
+    ANGLE_STEPS_PER_TURN, BUILDINGS_PATH, CONQUEST_UNITS_PATH, Faction, MANIFEST_PATH, NAME_BYTES,
+    UNIT_SCHEMA, UNITS_PATH, UnitRecord, WEAPON_REACH, WEAPON_SHIELD, WEAPON_SWING_ROOM,
 };
 use gc_fixed::Fx;
-use serde::Deserialize;
+use rosters::{FactionDef, Stats};
+
+mod conquest;
+pub mod rosters;
 
 /// The data files the baker reads, relative to the data directory. Build
 /// scripts use this list to know when to re-bake.
-pub const DATA_FILES: &[&str] = &["units.ron"];
+pub const DATA_FILES: &[&str] = &[
+    "units.ron",
+    "rosters/ember_clans.ron",
+    "rosters/brood.ron",
+    "rosters/choir.ron",
+    "rosters/carrion_concord.ron",
+];
 
 #[derive(Debug)]
 pub enum BakeError {
@@ -45,75 +55,6 @@ impl fmt::Display for BakeError {
 
 impl std::error::Error for BakeError {}
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UnitDef {
-    name: String,
-    faction: FactionDef,
-    models: u16,
-    hp_per_model: u16,
-    files: u16,
-    speed: f64,
-    /// Degrees per second.
-    turn_rate: f64,
-    file_spacing: f64,
-    rank_spacing: f64,
-    melee_attack: u8,
-    melee_defence: u8,
-    melee_damage: u16,
-    /// Percent extra melee damage when a charge hits home.
-    charge_bonus: u8,
-    /// Morale when fresh, 1 to 100; `never_routs: true` instead for units
-    /// that fight to the last (the Concord's undead).
-    #[serde(default)]
-    morale: u8,
-    #[serde(default)]
-    never_routs: bool,
-    /// Shooting: range in tiles, damage per arrow, seconds between volleys,
-    /// percent of arrows that hit. Leave out for regiments that don't shoot.
-    #[serde(default)]
-    ranged: Option<RangedDef>,
-    /// Light (swarms), Medium (the default) or Heavy (cavalry, monsters).
-    #[serde(default)]
-    mass: MassDef,
-    /// Spears and pikes: fight from two ranks, strike first when lines meet.
-    #[serde(default)]
-    reach: bool,
-    /// Big swinging weapons: cramped in Tight order.
-    #[serde(default)]
-    swing_room: bool,
-    /// Shields: may form a shield wall.
-    #[serde(default)]
-    shield: bool,
-    /// Cost in a Field Battle army's points budget.
-    points: u16,
-}
-
-#[derive(Deserialize, Clone, Copy, Default)]
-enum MassDef {
-    Light,
-    #[default]
-    Medium,
-    Heavy,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RangedDef {
-    range: f64,
-    damage: u16,
-    reload: f64,
-    accuracy: u8,
-}
-
-#[derive(Deserialize, Clone, Copy)]
-enum FactionDef {
-    EmberClans,
-    Brood,
-    Choir,
-    CarrionConcord,
-}
-
 impl From<FactionDef> for Faction {
     fn from(f: FactionDef) -> Faction {
         match f {
@@ -125,29 +66,50 @@ impl From<FactionDef> for Faction {
     }
 }
 
+fn invalid(file: &Path, entry: &str, why: impl Into<String>) -> BakeError {
+    BakeError::Invalid {
+        file: file.into(),
+        entry: entry.into(),
+        why: why.into(),
+    }
+}
+
 /// The result of a bake.
 pub struct Baked {
     pub pack: Vec<u8>,
     /// BLAKE3 of every data table.
     pub data_hash: [u8; 32],
     pub units: usize,
+    pub buildings: usize,
+    pub conquest_units: usize,
 }
 
 /// Bake everything under `data_dir` into a pack.
 pub fn bake(data_dir: &Path) -> Result<Baked, BakeError> {
     let units_file = data_dir.join("units.ron");
     let units = bake_units(&units_file)?;
+    let (buildings, conquest_units) = conquest::bake_rosters(data_dir, &units)?;
     let units_table = table_bytes(UNIT_SCHEMA, &units);
+    let buildings_table = table_bytes(BUILDING_SCHEMA, &buildings);
+    let conquest_table = table_bytes(CONQUEST_UNIT_SCHEMA, &conquest_units);
 
-    let data_hash = data_hash(&[(UNITS_PATH, &units_table)]);
+    let data_hash = data_hash(&[
+        (UNITS_PATH, &units_table),
+        (BUILDINGS_PATH, &buildings_table),
+        (CONQUEST_UNITS_PATH, &conquest_table),
+    ]);
 
     let mut pack = PackWriter::new();
     pack.add(UNITS_PATH, Kind::Table, &units_table);
+    pack.add(BUILDINGS_PATH, Kind::Table, &buildings_table);
+    pack.add(CONQUEST_UNITS_PATH, Kind::Table, &conquest_table);
     pack.add(MANIFEST_PATH, Kind::Blob, &data_hash);
     Ok(Baked {
         pack: pack.finish(),
         data_hash,
         units: units.len(),
+        buildings: buildings.len(),
+        conquest_units: conquest_units.len(),
     })
 }
 
@@ -166,12 +128,7 @@ fn data_hash(tables: &[(&str, &[u8])]) -> [u8; 32] {
 
 fn bake_units(file: &Path) -> Result<Vec<UnitRecord>, BakeError> {
     let text = std::fs::read_to_string(file).map_err(|e| BakeError::Read(file.into(), e))?;
-    let defs: Vec<UnitDef> = ron::from_str(&text).map_err(|e| BakeError::Parse(file.into(), e))?;
-    let invalid = |entry: &str, why: String| BakeError::Invalid {
-        file: file.into(),
-        entry: entry.into(),
-        why,
-    };
+    let defs: Vec<Stats> = ron::from_str(&text).map_err(|e| BakeError::Parse(file.into(), e))?;
 
     let mut records = Vec::with_capacity(defs.len());
     for def in &defs {
@@ -179,74 +136,78 @@ fn bake_units(file: &Path) -> Result<Vec<UnitRecord>, BakeError> {
             .iter()
             .any(|r: &UnitRecord| r.name() == def.name.as_str())
         {
-            return Err(invalid(&def.name, "defined twice".into()));
+            return Err(invalid(file, &def.name, "defined twice"));
         }
-        if def.name.len() > NAME_BYTES || def.name.contains('\0') {
-            return Err(invalid(
-                &def.name,
-                format!("names are at most {NAME_BYTES} bytes, with no NUL"),
-            ));
-        }
-        let mut name = [0u8; NAME_BYTES];
-        name[..def.name.len()].copy_from_slice(def.name.as_bytes());
-        let record = UnitRecord {
-            name,
-            speed: to_fx(def.speed).map_err(|why| invalid(&def.name, format!("speed {why}")))?,
-            file_spacing: to_fx(def.file_spacing)
-                .map_err(|why| invalid(&def.name, format!("file_spacing {why}")))?,
-            rank_spacing: to_fx(def.rank_spacing)
-                .map_err(|why| invalid(&def.name, format!("rank_spacing {why}")))?,
-            turn_rate: to_angle_rate(def.turn_rate)
-                .map_err(|why| invalid(&def.name, format!("turn_rate {why}")))?,
-            models: def.models,
-            hp_per_model: def.hp_per_model,
-            files: def.files,
-            faction: Faction::from(def.faction) as u8,
-            mass: def.mass as u8,
-            range: match &def.ranged {
-                Some(r) => {
-                    to_fx(r.range).map_err(|why| invalid(&def.name, format!("range {why}")))?
-                }
-                None => 0,
-            },
-            melee_damage: def.melee_damage,
-            missile_damage: def.ranged.as_ref().map_or(0, |r| r.damage),
-            reload_ticks: match &def.ranged {
-                Some(r) => {
-                    to_ticks(r.reload).map_err(|why| invalid(&def.name, format!("reload {why}")))?
-                }
-                None => 0,
-            },
-            melee_attack: def.melee_attack,
-            melee_defence: def.melee_defence,
-            charge_bonus: def.charge_bonus,
-            accuracy: def.ranged.as_ref().map_or(0, |r| r.accuracy),
-            morale: match (def.morale, def.never_routs) {
-                (m @ 1..=100, false) => m,
-                (0, true) => 0,
-                _ => {
-                    return Err(invalid(
-                        &def.name,
-                        "needs either morale (1 to 100) or never_routs: true".into(),
-                    ));
-                }
-            },
-            weapons: (u8::from(def.reach) * WEAPON_REACH)
-                | (u8::from(def.swing_room) * WEAPON_SWING_ROOM)
-                | (u8::from(def.shield) * WEAPON_SHIELD),
-            points: def.points,
-            reserved: 0,
-        };
-        gc_data::validate_unit(&record).map_err(|why| invalid(&def.name, why.into()))?;
+        let record = unit_record(file, def, def.points)?;
+        gc_data::validate_unit(&record).map_err(|why| invalid(file, &def.name, why))?;
         records.push(record);
     }
     if records.is_empty() {
-        return Err(invalid("(file)", "defines no units".into()));
+        return Err(invalid(file, "(file)", "defines no units"));
     }
     if records.len() > u16::MAX as usize {
-        return Err(invalid("(file)", "too many units".into()));
+        return Err(invalid(file, "(file)", "too many units"));
     }
     Ok(records)
+}
+
+/// A name as the zero-padded bytes of a record.
+fn name_bytes(name: &str) -> Result<[u8; NAME_BYTES], String> {
+    if name.len() > NAME_BYTES || name.contains('\0') {
+        return Err(format!("names are at most {NAME_BYTES} bytes, with no NUL"));
+    }
+    let mut bytes = [0u8; NAME_BYTES];
+    bytes[..name.len()].copy_from_slice(name.as_bytes());
+    Ok(bytes)
+}
+
+/// One stats block as the record the simulation reads: a `units.ron` entry,
+/// or the `stats` of a roster unit. `points` is its Field Battle cost (0 for
+/// a roster unit with none).
+fn unit_record(file: &Path, def: &Stats, points: u16) -> Result<UnitRecord, BakeError> {
+    let bad = |why: String| invalid(file, &def.name, why);
+    let record = UnitRecord {
+        name: name_bytes(&def.name).map_err(bad)?,
+        speed: to_fx(def.speed).map_err(|why| bad(format!("speed {why}")))?,
+        file_spacing: to_fx(def.file_spacing).map_err(|why| bad(format!("file_spacing {why}")))?,
+        rank_spacing: to_fx(def.rank_spacing).map_err(|why| bad(format!("rank_spacing {why}")))?,
+        turn_rate: to_angle_rate(def.turn_rate).map_err(|why| bad(format!("turn_rate {why}")))?,
+        models: def.models,
+        hp_per_model: def.hp_per_model,
+        files: def.files,
+        faction: Faction::from(def.faction) as u8,
+        mass: def.mass as u8,
+        range: match &def.ranged {
+            Some(r) => to_fx(r.range).map_err(|why| bad(format!("range {why}")))?,
+            None => 0,
+        },
+        melee_damage: def.melee_damage,
+        missile_damage: def.ranged.as_ref().map_or(0, |r| r.damage),
+        reload_ticks: match &def.ranged {
+            Some(r) => to_ticks(r.reload).map_err(|why| bad(format!("reload {why}")))?,
+            None => 0,
+        },
+        melee_attack: def.melee_attack,
+        melee_defence: def.melee_defence,
+        charge_bonus: def.charge_bonus,
+        accuracy: def.ranged.as_ref().map_or(0, |r| r.accuracy),
+        morale: match (def.morale, def.never_routs) {
+            (m @ 1..=100, false) => m,
+            (0, true) => 0,
+            _ => {
+                return Err(bad(
+                    "needs either morale (1 to 100) or never_routs: true".into()
+                ));
+            }
+        },
+        weapons: (u8::from(def.reach) * WEAPON_REACH)
+            | (u8::from(def.swing_room) * WEAPON_SWING_ROOM)
+            | (u8::from(def.shield) * WEAPON_SHIELD),
+        points,
+        reserved: 0,
+    };
+    gc_data::validate_stats(&record).map_err(|why| bad(why.into()))?;
+    Ok(record)
 }
 
 /// Convert a decimal from the source file to `Fx` raw. Decimal parsing and
@@ -307,9 +268,30 @@ mod tests {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(dir.join("rosters")).unwrap();
         std::fs::write(dir.join("units.ron"), units).unwrap();
+        for (path, faction) in conquest::ROSTER_FILES {
+            std::fs::write(dir.join(path), small_roster(&format!("{faction:?}"))).unwrap();
+        }
         dir
+    }
+
+    /// A faction's roster with a hall and a worker, named for the faction so
+    /// no two rosters share a name.
+    fn small_roster(faction: &str) -> String {
+        format!(
+            r#"(faction: {faction}, meter: (name: "Meter", max: 1, abilities: []),
+            starting_buildings: ["{faction} Hall"], starting_units: [("{faction} Hand", 2)],
+            buildings: [(name: "{faction} Hall", role: Main, tier: 1, cost: (grub: 100, marrow: 0),
+                build_time: 30.0, hp: 1000, armour: Fortified, footprint: (4, 4), supply: 12,
+                flags: [DropOffGrub], effect: "Main building.")],
+            units: [(tier: 1, class: Worker, cost: (grub: 50, marrow: 0), supply: 1, train_time: 12.0,
+                from: Building("{faction} Hall"), abilities: [],
+                stats: (name: "{faction} Hand", faction: {faction}, models: 1, hp_per_model: 20,
+                    files: 1, speed: 3.0, turn_rate: 180.0, file_spacing: 1.0, rank_spacing: 1.0,
+                    melee_attack: 5, melee_defence: 5, melee_damage: 2, charge_bonus: 0, morale: 20))],
+            heroes: [])"#
+        )
     }
 
     /// Copy a pack into 16-byte-aligned storage, as the game's loaders do.
@@ -351,7 +333,7 @@ mod tests {
         let hex: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,
-            "f2576d38844c3292757cbc6b9c159c3d07ff25536003d8619d98aaf7d7854858"
+            "4378277b5779a4ab8496f9a82fa41e463ccbc2d97c151aa992075354d4639344"
         );
     }
 
@@ -367,6 +349,113 @@ mod tests {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
         let baked = bake(&dir).unwrap();
         assert!(baked.units >= 4);
+        assert!(baked.buildings >= 4 && baked.conquest_units >= 4);
+    }
+
+    #[test]
+    fn data_files_lists_every_roster() {
+        for (path, _) in conquest::ROSTER_FILES {
+            assert!(DATA_FILES.contains(&path), "{path}");
+        }
+    }
+
+    #[test]
+    fn bakes_rosters_in_faction_order() {
+        let baked = bake(&temp_data(ONE)).unwrap();
+        assert_eq!((baked.buildings, baked.conquest_units), (4, 4));
+        let store = aligned(&baked.pack);
+        let bytes = &bytemuck::cast_slice::<u128, u8>(&store)[..baked.pack.len()];
+        let pack = Pack::parse(bytes).unwrap();
+        let data = GameData::from_pack(&pack).unwrap();
+        for (i, faction) in Faction::ALL.into_iter().enumerate() {
+            let (b, u) = (&data.buildings[i], &data.conquest_units[i]);
+            assert_eq!(b.name(), format!("{faction:?} Hall"));
+            assert_eq!((b.faction(), b.start_count), (faction, 1));
+            assert_eq!((b.build_ticks, b.hp, b.supply), (600, 1000, 12));
+            assert_eq!(
+                (b.width, b.depth, b.upgrades_from),
+                (4, 4, gc_data::conquest::NONE)
+            );
+            assert_eq!(b.flags, gc_data::conquest::BUILDING_DROP_OFF_GRUB);
+            assert_eq!(u.name(), format!("{faction:?} Hand"));
+            assert_eq!((u.faction(), u.start_count), (faction, 2));
+            assert_eq!(u.trained_at, u16::try_from(i).unwrap());
+            assert_eq!((u.train_ticks, u.cost_grub, u.supply), (240, 50, 1));
+            assert!(u.worker());
+            // The roster leaves points out; a unit units.ron doesn't list has none.
+            assert_eq!(u.stats.points, 0);
+        }
+    }
+
+    /// Bake the small fixture with one roster file replaced.
+    fn bake_with(file: &str, roster: String) -> String {
+        let dir = temp_data(ONE);
+        std::fs::write(dir.join("rosters").join(file), roster).unwrap();
+        bake(&dir).err().expect("should not bake").to_string()
+    }
+
+    #[test]
+    fn rejects_bad_rosters() {
+        let brood = small_roster("Brood");
+        let err = bake_with("brood.ron", small_roster("Choir"));
+        assert!(
+            err.contains("brood.ron") && err.contains("must be Brood"),
+            "{err}"
+        );
+
+        let err = bake_with(
+            "brood.ron",
+            brood.replace(
+                "flags: [DropOffGrub]",
+                r#"upgrades_from: Some("Nope"), flags: []"#,
+            ),
+        );
+        assert!(
+            err.contains("Brood Hall: upgrades unknown building Nope"),
+            "{err}"
+        );
+
+        let err = bake_with(
+            "brood.ron",
+            brood.replace(
+                "flags: [DropOffGrub]",
+                "attack: Some((range: 10.0, damage: 0, reload: 2.0, shots: 1))",
+            ),
+        );
+        assert!(err.contains("Brood Hall: a tower needs"), "{err}");
+
+        let err = bake_with("brood.ron", brood.replace("Brood Hand\", 2", "Nobody\", 2"));
+        assert!(err.contains("starting_units: no unit Nobody"), "{err}");
+
+        let err = bake_with(
+            "brood.ron",
+            brood.replace(
+                r#"from: Building("Brood Hall")"#,
+                r#"from: Evolves("EmberClans Hand")"#,
+            ),
+        );
+        assert!(
+            err.contains("evolves from unknown unit EmberClans Hand"),
+            "{err}"
+        );
+
+        let err = bake_with(
+            "brood.ron",
+            brood.replace(
+                r#"from: Building("Brood Hall")"#,
+                r#"from: Building("Hall")"#,
+            ),
+        );
+        assert!(err.contains("trained at unknown building Hall"), "{err}");
+
+        let err = bake_with(
+            "brood.ron",
+            brood.replace("train_time: 12.0", "train_time: 0.0"),
+        );
+        assert!(err.contains("train_time"), "{err}");
+
+        let err = bake_with("brood.ron", brood.replace("Brood Hall", "EmberClans Hall"));
+        assert!(err.contains("EmberClans Hall: defined twice"), "{err}");
     }
 
     #[test]

@@ -31,6 +31,7 @@ use gc_fixed::{Fx, FxVec2};
 
 use crate::StateHasher;
 use crate::regiments::Regiments;
+use crate::structures::Refusal;
 
 /// Grid cells along one tile.
 pub const CELLS_PER_TILE: i32 = 2;
@@ -40,6 +41,10 @@ pub const SECTOR: i32 = 32;
 /// the nearest blocked cell is at least this many steps away. Three cells
 /// leaves 1.25 tiles from the centre to the edge of blocked ground.
 pub const CLEARANCE: u8 = 3;
+/// Clearances are measured up to this many cells (16 tiles) and no further:
+/// nothing asks about open ground wider than that, and it keeps a change of
+/// ground (a building going up) from reaching across the map.
+pub const CLEAR_CAP: u8 = 32;
 /// Cost of a cell no regiment can enter.
 pub const BLOCKED: u8 = 0;
 /// Waypoints stored per regiment. A longer route is followed in parts: when
@@ -80,13 +85,25 @@ const DIRS: [(i32, i32); 8] = [
     (-1, -1),
 ];
 
-/// The walkable map and its portal graph. Built once when the match starts,
-/// and shared with any scratch world on the same map (see [`Nav::sharing`]).
+#[path = "nav_reblock.rs"]
+mod reblock;
+
+/// The walkable map and its portal graph. Built when the match starts, and
+/// shared with any scratch world on the same map (see [`Nav::sharing`]);
+/// brought up to date when buildings change the ground (see `reblock`).
+#[derive(Clone)]
 struct Grid {
     /// Cells per side.
     side: i32,
+    /// Each cell's cost: the ground's own ([`Grid::ground`]), or
+    /// [`BLOCKED`] under a building.
     cost: Vec<u8>,
-    /// Steps (8-way) to the nearest blocked cell or the map edge, capped at 255.
+    /// The ground's own cost of each cell, as the map gave it.
+    ground: Vec<u8>,
+    /// Buildings standing on each cell (see [`Nav::set_built`]).
+    built: Vec<u8>,
+    /// Steps (8-way) to the nearest blocked cell or the map edge, capped at
+    /// [`CLEAR_CAP`].
     clear: Vec<u8>,
     /// Connected area of each open cell (1, 2, ...); 0 for cells not open.
     area: Vec<u32>,
@@ -277,6 +294,10 @@ struct Search {
     to_goal: Vec<u32>,
     node_stamp: u32,
     node_heap: BinaryHeap<Reverse<(u32, u32)>>,
+    /// The most the portal search's heap may hold: what the graph needs,
+    /// whatever the heap's capacity grew to, so every world on the same
+    /// grid searches alike.
+    node_room: usize,
     links: Vec<(u32, u32)>,
     /// Cells of the portal route: start, portals, goal.
     coarse: Vec<u32>,
@@ -286,6 +307,38 @@ struct Search {
 }
 
 impl Search {
+    /// Room for searches over `grid`'s portal graph.
+    fn for_grid(grid: &Grid) -> Search {
+        let (nodes, edges, most) = Search::room(grid);
+        Search::new(nodes, edges, most)
+    }
+
+    /// Nodes, links and the most nodes in one sector, in `grid`'s graph.
+    fn room(grid: &Grid) -> (usize, usize, usize) {
+        let most = grid
+            .sector_first
+            .windows(2)
+            .map(|w| (w[1] - w[0]) as usize)
+            .max()
+            .unwrap_or(0);
+        (grid.node_cell.len(), grid.edge_to.len(), most)
+    }
+
+    /// Make room for searches over `grid`'s portal graph after it changed
+    /// (see `Grid::changed`), keeping what is already reserved.
+    fn fit(&mut self, grid: &Grid) {
+        let (nodes, edges, most) = Search::room(grid);
+        self.node_g.resize(nodes + 2, 0);
+        self.node_parent.resize(nodes + 2, NONE);
+        self.node_seen.resize(nodes + 2, 0);
+        self.to_goal.resize(nodes + 2, 0);
+        // `reserve` makes room beyond what is there, so at least this much.
+        self.node_room = edges + 2 * most + 8;
+        self.node_heap.reserve(self.node_room);
+        self.links.reserve(most);
+        self.coarse.reserve(nodes + 2);
+    }
+
     fn new(nodes: usize, edges: usize, max_sector_nodes: usize) -> Search {
         let cells = (SECTOR * SECTOR) as usize;
         Search {
@@ -300,6 +353,7 @@ impl Search {
             to_goal: vec![0; nodes + 2],
             node_stamp: 0,
             node_heap: BinaryHeap::with_capacity(edges + 2 * max_sector_nodes + 8),
+            node_room: edges + 2 * max_sector_nodes + 8,
             links: Vec::with_capacity(max_sector_nodes),
             coarse: Vec::with_capacity(nodes + 2),
             chain: Vec::with_capacity(CHAIN_CAPACITY),
@@ -475,7 +529,7 @@ impl Search {
             let relax = |m: u32, cost: u32, s: &mut Search| {
                 let ng = g + cost;
                 if (s.node_seen[m as usize] != stamp || ng < s.node_g[m as usize])
-                    && s.node_heap.len() < s.node_heap.capacity()
+                    && s.node_heap.len() < s.node_room
                 {
                     s.node_seen[m as usize] = stamp;
                     s.node_g[m as usize] = ng;
@@ -606,18 +660,9 @@ impl Nav {
     }
 
     fn on(grid: Option<Arc<Grid>>, regiments: usize) -> Nav {
-        let search = match &grid {
-            Some(g) => {
-                let max_sector_nodes = g
-                    .sector_first
-                    .windows(2)
-                    .map(|w| (w[1] - w[0]) as usize)
-                    .max()
-                    .unwrap_or(0);
-                Search::new(g.node_cell.len(), g.edge_to.len(), max_sector_nodes)
-            }
-            None => Search::new(0, 0, 0),
-        };
+        let search = grid
+            .as_deref()
+            .map_or(Search::new(0, 0, 0), Search::for_grid);
         Nav {
             grid,
             search,
@@ -636,6 +681,11 @@ impl Nav {
         }
     }
 
+    /// Whether there is a map (a walkable grid) at all.
+    pub fn has_map(&self) -> bool {
+        self.grid.is_some()
+    }
+
     /// Whether a regiment's centre may stand at `p` (always true with no map).
     pub fn walkable(&self, p: FxVec2) -> bool {
         self.grid.as_ref().is_none_or(|g| g.open_cell(g.cell_at(p)))
@@ -643,7 +693,9 @@ impl Nav {
 
     /// Whether a regiment at `p` has open ground all round for at least
     /// `tiles` (always true with no map): nothing blocked that near.
+    /// `tiles` is at most half [`CLEAR_CAP`].
     pub fn open_around(&self, p: FxVec2, tiles: i32) -> bool {
+        debug_assert!(tiles * CELLS_PER_TILE <= i32::from(CLEAR_CAP));
         self.grid
             .as_ref()
             .is_none_or(|g| i32::from(g.clear[g.cell_at(p) as usize]) >= tiles * CELLS_PER_TILE)
@@ -655,6 +707,74 @@ impl Nav {
         self.grid
             .as_ref()
             .is_none_or(|g| g.line_open(g.cell_at(from), g.cell_at(to), &mut 0))
+    }
+
+    /// Put up (`on`) or pull down a building on the tiles `x..x + w` ×
+    /// `y..y + d`, all on the map: while one stands there no regiment may
+    /// walk on them. Routes that might cross the changed ground are searched
+    /// again. No effect with no map.
+    pub(crate) fn set_built(&mut self, tiles: [i32; 4], on: bool, regs: &Regiments) {
+        let Some(grid) = &mut self.grid else {
+            return;
+        };
+        // Linking the grid again isn't the routes' search work this tick.
+        let work = self.search.work;
+        let changed = Arc::make_mut(grid).set_built(tiles, on, &mut self.search);
+        self.search.work = work;
+        let Some([x0, y0, x1, y1]) = changed else {
+            return;
+        };
+        // Any route passing near the change is found again, and, once ground
+        // is freed, any that found no way may find one now.
+        let reach = i32::from(CLEAR_CAP);
+        let tile = |c: i32| Fx::from_ratio(c, CELLS_PER_TILE);
+        let (lo, hi) = (
+            FxVec2::new(tile(x0 - reach), tile(y0 - reach)),
+            FxVec2::new(tile(x1 + reach), tile(y1 + reach)),
+        );
+        for i in 0..self.route.len() {
+            if !regs.alive[i] {
+                continue;
+            }
+            let ahead = match self.route[i] {
+                Route::Direct => core::slice::from_ref(&self.goal[i]),
+                Route::Waypoints => {
+                    &self.way[i * MAX_WAYPOINTS..]
+                        [self.way_next[i] as usize..self.way_len[i] as usize]
+                }
+                Route::Failed if !on => {
+                    self.lost(i);
+                    continue;
+                }
+                Route::Failed | Route::Idle | Route::Waiting => continue,
+            };
+            let (mut a, mut b) = (regs.position[i], regs.position[i]);
+            for p in ahead {
+                a = FxVec2::new(a.x.min(p.x), a.y.min(p.y));
+                b = FxVec2::new(b.x.max(p.x), b.y.max(p.y));
+            }
+            if a.x <= hi.x && a.y <= hi.y && b.x >= lo.x && b.y >= lo.y {
+                self.lost(i);
+            }
+        }
+    }
+
+    /// Whether a building could stand on the tiles `x..x + w` × `y..y + d`:
+    /// all on the map, on ground a regiment could walk on, with no building
+    /// on them (always, with no map).
+    pub(crate) fn footing(&self, tiles: [i32; 4]) -> Result<(), Refusal> {
+        let Some(g) = &self.grid else {
+            return Ok(());
+        };
+        let [x0, y0, x1, y1] = g.cells(tiles).ok_or(Refusal::OffMap)?;
+        let cells = || (y0..y1).flat_map(move |cy| (x0..x1).map(move |cx| g.idx(cx, cy) as usize));
+        if cells().any(|i| g.ground[i] == BLOCKED) {
+            return Err(Refusal::Rough);
+        }
+        if cells().any(|i| g.built[i] > 0) {
+            return Err(Refusal::Built);
+        }
+        Ok(())
     }
 
     /// Portal nodes in the graph (for the dev overlay and tests).
@@ -1066,6 +1186,8 @@ impl Grid {
         let mut grid = Grid {
             side,
             cost: costs.to_vec(),
+            ground: costs.to_vec(),
+            built: vec![0; n],
             clear: vec![0; n],
             area: vec![0; n],
             sectors: (side + SECTOR - 1) / SECTOR,
@@ -1076,52 +1198,44 @@ impl Grid {
             edge_to: Vec::new(),
             edge_cost: Vec::new(),
         };
-        grid.measure_clearance();
+        grid.measure_clearance_in(0, 0, side, side);
         grid.label_areas();
         let partner = grid.place_portals();
-        grid.link_portals(&partner);
+        grid.link_portals(&partner, &mut Search::new(0, 0, 0));
         grid
     }
 
-    /// Chessboard distance from every cell to the nearest blocked cell (the
-    /// ground beyond the map edge counts as blocked), in two sweeps.
-    fn measure_clearance(&mut self) {
-        let side = self.side;
-        let at = |clear: &[u8], x: i32, y: i32| -> u16 {
-            if x < 0 || y < 0 || x >= side || y >= side {
-                0
-            } else {
-                u16::from(clear[(y * side + x) as usize])
-            }
-        };
-        for y in 0..side {
-            for x in 0..side {
-                let i = (y * side + x) as usize;
-                if self.cost[i] == BLOCKED {
-                    continue;
-                }
-                let c = &self.clear;
-                let d = at(c, x - 1, y)
-                    .min(at(c, x - 1, y - 1))
-                    .min(at(c, x, y - 1))
-                    .min(at(c, x + 1, y - 1));
-                self.clear[i] = (d + 1).min(255) as u8;
-            }
-        }
-        for y in (0..side).rev() {
-            for x in (0..side).rev() {
-                let i = (y * side + x) as usize;
-                if self.clear[i] == 0 {
-                    continue;
-                }
-                let c = &self.clear;
-                let d = at(c, x + 1, y)
-                    .min(at(c, x + 1, y + 1))
-                    .min(at(c, x, y + 1))
-                    .min(at(c, x - 1, y + 1));
-                self.clear[i] = self.clear[i].min((d + 1).min(255) as u8);
+    /// The cells of the tiles `x..x + w` × `y..y + d`: `[x0, y0, x1, y1]`,
+    /// ends exclusive. `None` unless there are some and all are on the map.
+    fn cells(&self, [x, y, w, d]: [i32; 4]) -> Option<[i32; 4]> {
+        let c = [x, y, x + w, y + d].map(|v| v * CELLS_PER_TILE);
+        let on = |v: i32| (0..=self.side).contains(&v);
+        (c.iter().all(|&v| on(v)) && c[0] < c[2] && c[1] < c[3]).then_some(c)
+    }
+
+    /// Put up or pull down a building on the tiles `x..x + w` × `y..y + d`
+    /// and bring the grid up to date, searching in `search`'s room. Returns
+    /// the cells changed; `None` (and no change) unless the tiles are on
+    /// the map.
+    fn set_built(&mut self, tiles: [i32; 4], on: bool, search: &mut Search) -> Option<[i32; 4]> {
+        let [x0, y0, x1, y1] = self.cells(tiles)?;
+        for cy in y0..y1 {
+            for cx in x0..x1 {
+                let i = self.idx(cx, cy) as usize;
+                self.built[i] = if on {
+                    self.built[i].saturating_add(1)
+                } else {
+                    self.built[i].saturating_sub(1)
+                };
+                self.cost[i] = if self.built[i] > 0 {
+                    BLOCKED
+                } else {
+                    self.ground[i]
+                };
             }
         }
+        self.changed(x0, y0, x1, y1, search);
+        Some([x0, y0, x1, y1])
     }
 
     /// Number the connected areas of open ground, so a search never starts
@@ -1235,32 +1349,45 @@ impl Grid {
 
     /// Link each portal node to its partner across the edge and to every
     /// node it can reach inside its own sector, with the walking cost.
-    fn link_portals(&mut self, partner: &[u32]) {
+    fn link_portals(&mut self, partner: &[u32], search: &mut Search) {
         let nodes = self.node_cell.len();
-        let mut search = Search::new(nodes, 0, 0);
         let (mut first, mut to, mut cost) = (Vec::with_capacity(nodes + 1), Vec::new(), Vec::new());
         first.push(0);
         for (u, &p) in partner.iter().enumerate() {
-            let cell = self.node_cell[u];
             to.push(p);
-            cost.push(self.step_cost(cell, self.node_cell[p as usize], false));
-            let sec = self.sector_of(cell);
-            search.sector(self, sec, cell, None);
-            for &v in &self.sector_nodes[self.sector_first[sec as usize] as usize
-                ..self.sector_first[sec as usize + 1] as usize]
-            {
-                if v as usize == u {
-                    continue;
-                }
-                if let Some(c) = search.cost_to(self, sec, self.node_cell[v as usize]) {
-                    to.push(v);
-                    cost.push(c);
-                }
-            }
+            cost.push(self.step_cost(self.node_cell[u], self.node_cell[p as usize], false));
+            self.link_in_sector(search, u, &mut to, &mut cost);
             first.push(to.len() as u32);
         }
         self.edge_first = first;
         self.edge_to = to;
         self.edge_cost = cost;
+    }
+
+    /// Link node `u` to every node it can reach inside its own sector.
+    fn link_in_sector(
+        &self,
+        search: &mut Search,
+        u: usize,
+        to: &mut Vec<u32>,
+        cost: &mut Vec<u32>,
+    ) {
+        let cell = self.node_cell[u];
+        let sec = self.sector_of(cell);
+        search.sector(self, sec, cell, None);
+        for &v in self.nodes_in(sec as usize) {
+            if v as usize == u {
+                continue;
+            }
+            if let Some(c) = search.cost_to(self, sec, self.node_cell[v as usize]) {
+                to.push(v);
+                cost.push(c);
+            }
+        }
+    }
+
+    /// The portal nodes of sector `s`, in order.
+    fn nodes_in(&self, s: usize) -> &[u32] {
+        &self.sector_nodes[self.sector_first[s] as usize..self.sector_first[s + 1] as usize]
     }
 }
