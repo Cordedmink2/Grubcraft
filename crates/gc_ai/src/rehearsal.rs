@@ -34,6 +34,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
 
+use gc_platform::tagged_alloc::Tag;
+use gc_platform::thread::{spawn_scoped_tagged, spawn_tagged, workers_leaving};
 use gc_sim::{MoraleState, PlayerCommand, PlayerId, Standing, World};
 
 use crate::captain::{self, Captain, Doctrine, Plan, Stance};
@@ -51,10 +53,16 @@ pub const HORIZON: u32 = 90 * TICKS as u32;
 pub const DELAY: u32 = TICKS as u32;
 /// Ticks between rounds.
 pub const EVERY: u32 = 10 * TICKS as u32;
+/// Rounds of different Warlords start on one of this many beats within
+/// [`EVERY`].
+pub const BEATS: u32 = 8;
+const _: () = assert!(EVERY.is_multiple_of(BEATS));
 /// How many times each plan is played, with different luck.
 pub const SEEDS: u64 = 6;
 /// A plan must beat the one it follows by this much to replace it.
 pub const STICK: f32 = 0.1;
+/// Cores a round leaves alone, for the render and sim threads.
+const SPARE_CORES: usize = 2;
 /// A rehearsal stops early once one side has held the field this long.
 const DECIDED: u32 = 5 * TICKS as u32;
 /// The estimator's view of the fight left at the end counts this much
@@ -148,7 +156,9 @@ impl Round {
         let stop = Arc::new(AtomicBool::new(false));
         let job = {
             let stop = stop.clone();
-            thread::spawn(move || rehearse_all(&template, &brief, &plans, &stop))
+            spawn_tagged(Tag::Ai, move || {
+                rehearse_all(&template, &brief, &plans, &stop)
+            })
         };
         Some(Round {
             asked: view.tick,
@@ -219,9 +229,9 @@ fn plans_for(view: &Perception, terrain: &Terrain, mind: &Mind) -> Vec<Plan> {
     plans
 }
 
-/// Play every plan [`SEEDS`] times, spread over the machine's cores but
-/// one (the game's), and average each plan's scores (unless `stop` is set
-/// first). The results are the same whatever the cores.
+/// Play every plan [`SEEDS`] times, spread over the machine's cores less
+/// [`SPARE_CORES`] (kept for the game), and average each plan's scores
+/// (unless `stop` is set first). The results are the same whatever the cores.
 fn rehearse_all(
     template: &World,
     brief: &Brief,
@@ -230,7 +240,7 @@ fn rehearse_all(
 ) -> Vec<(Plan, f32)> {
     let seeds = SEEDS as usize;
     let jobs = plans.len() * seeds;
-    let workers = thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).max(1));
+    let workers = workers_leaving(SPARE_CORES);
     let capacity = template.regiments.capacity() as u32;
     let next = AtomicUsize::new(0);
     let mut scores = vec![0.0; jobs];
@@ -243,7 +253,7 @@ fn rehearse_all(
                 let next = &next;
                 // Rehearsals take very different times (some are decided in
                 // seconds), so each worker takes the next one when done.
-                s.spawn(move || {
+                spawn_scoped_tagged(s, Tag::Ai, move || {
                     let mut done = Vec::new();
                     loop {
                         let j = next.fetch_add(1, Ordering::Relaxed);

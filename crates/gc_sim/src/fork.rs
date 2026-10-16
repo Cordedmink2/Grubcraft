@@ -206,7 +206,7 @@ mod tests {
             .filter(|&i| r.alive[i])
             .map(|i| {
                 let mut h = StateHasher::new();
-                r.hash_slot(i, &mut h);
+                r.hash_fields(i, &mut h);
                 (i, h.finish())
             })
             .collect()

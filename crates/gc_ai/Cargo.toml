@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 gc_fixed.workspace = true
+gc_platform.workspace = true
 gc_sim.workspace = true
 glam.workspace = true
 ron.workspace = true

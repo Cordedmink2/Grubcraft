@@ -4,3 +4,4 @@ pub mod diag;
 pub mod fsutil;
 pub mod memory;
 pub mod tagged_alloc;
+pub mod thread;

@@ -140,7 +140,10 @@ impl Mind {
             wants: Vec::new(),
             sight: Perception::new(),
             round: None,
-            next_round: 0,
+            // Rounds start on a beat of their own too, so several Warlords
+            // (up to 6 players) don't all set out their rehearsals in one tick.
+            next_round: u32::from(config.party) % rehearsal::BEATS
+                * (rehearsal::EVERY / rehearsal::BEATS),
             verdict: None,
             readings: Vec::new(),
             live: false,

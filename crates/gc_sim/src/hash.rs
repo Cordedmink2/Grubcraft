@@ -36,6 +36,11 @@ impl StateHasher {
         self.0.update(&v.to_le_bytes());
     }
 
+    #[inline]
+    pub(crate) fn bytes(&mut self, v: &[u8]) {
+        self.0.update(v);
+    }
+
     pub fn finish(&self) -> u64 {
         self.0.digest()
     }

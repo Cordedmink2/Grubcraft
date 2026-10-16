@@ -28,6 +28,7 @@ pub mod nav;
 mod regiments;
 pub mod scenario;
 pub mod stances;
+mod state;
 pub mod terrain;
 pub mod verdict;
 pub mod vision;
@@ -70,7 +71,7 @@ pub const SYSTEMS: [&str; 10] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 4;
+pub const SIM_VERSION: u32 = 5;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -302,9 +303,10 @@ pub struct UnitStats {
 }
 
 impl UnitStats {
-    /// The same stats forced into the ranges the simulation relies on. The
-    /// data baker already rejects anything outside them; this keeps the sim
-    /// safe whatever it is handed.
+    /// The same stats forced into the ranges the simulation relies on, so
+    /// it is safe whatever it is handed. The unit data's own checks
+    /// (`gc_data`) are mostly stricter but not the same: a turn rate under
+    /// one step a tick passes them and is raised to one step a tick here.
     pub fn sanitized(self) -> UnitStats {
         let models = self.models.clamp(1, MAX_MODELS);
         UnitStats {
