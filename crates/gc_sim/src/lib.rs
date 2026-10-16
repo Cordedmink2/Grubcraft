@@ -50,6 +50,21 @@ use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 use nav::Nav;
 use vision::Vision;
 
+/// The parts of the simulation's state, in the order [`World::state_hash`]
+/// hashes them and [`World::system_hashes`] lists them.
+pub const SYSTEMS: [&str; 10] = [
+    "clock",
+    "random streams",
+    "unit stats",
+    "regiments",
+    "combat",
+    "pathfinding",
+    "vision",
+    "deployment",
+    "verdict",
+    "champions",
+];
+
 /// The simulation's rules version. Two builds with the same version play
 /// the same commands out the same way, whatever else differs, so the
 /// lobby lets them play together and a replay made on one plays as
@@ -927,29 +942,57 @@ impl World {
     /// 64-bit hash of the complete simulation state, for desync detection.
     pub fn state_hash(&self) -> u64 {
         let mut h = StateHasher::new();
-        h.u32(self.tick);
-        let (state, inc) = self.rng.raw_state();
-        h.u64(state);
-        h.u64(inc);
-        let (state, inc) = self.combat_rng.raw_state();
-        h.u64(state);
-        h.u64(inc);
-        h.u32(self.units.len() as u32);
-        for u in &self.units {
-            u.hash_into(&mut h);
-        }
-        self.regiments.hash_into(&mut h);
-        self.combat.hash_into(&mut h);
-        self.nav.hash_into(&mut h);
-        self.vision.hash_into(&self.regiments, &mut h);
-        self.deploy.hash_into(&mut h);
-        self.judge.hash_into(&mut h);
-        // Only in matches that allow champions, so other worlds hash as
-        // they did before champions existed.
-        if let Some(champions) = &self.champions {
-            champions.hash_into(&mut h);
+        for system in 0..SYSTEMS.len() {
+            self.hash_system(system, &mut h);
         }
         h.finish()
+    }
+
+    /// Each part of [`World::state_hash`] hashed on its own, in the order
+    /// of [`SYSTEMS`]: when two machines' worlds part, comparing these
+    /// names the system that went first (review fix R12).
+    pub fn system_hashes(&self) -> [u64; SYSTEMS.len()] {
+        core::array::from_fn(|system| {
+            let mut h = StateHasher::new();
+            self.hash_system(system, &mut h);
+            h.finish()
+        })
+    }
+
+    /// Feed one of [`SYSTEMS`] into `h`. Matching on the name keeps each
+    /// arm tied to its entry: a name with no arm fails every test that
+    /// hashes a world.
+    fn hash_system(&self, system: usize, h: &mut StateHasher) {
+        match SYSTEMS[system] {
+            "clock" => h.u32(self.tick),
+            "random streams" => {
+                for rng in [&self.rng, &self.combat_rng] {
+                    let (state, inc) = rng.raw_state();
+                    h.u64(state);
+                    h.u64(inc);
+                }
+            }
+            "unit stats" => {
+                h.u32(self.units.len() as u32);
+                for u in &self.units {
+                    u.hash_into(h);
+                }
+            }
+            "regiments" => self.regiments.hash_into(h),
+            "combat" => self.combat.hash_into(h),
+            "pathfinding" => self.nav.hash_into(h),
+            "vision" => self.vision.hash_into(&self.regiments, h),
+            "deployment" => self.deploy.hash_into(h),
+            "verdict" => self.judge.hash_into(h),
+            // Only in matches that allow champions, so other worlds hash as
+            // they did before champions existed.
+            "champions" => {
+                if let Some(champions) = &self.champions {
+                    champions.hash_into(h);
+                }
+            }
+            other => unreachable!("no hash for system {other}"),
+        }
     }
 
     /// The champions' challenge, once one has been called (it stays after

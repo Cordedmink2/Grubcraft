@@ -27,6 +27,6 @@ pub mod proto;
 pub mod wire;
 
 pub use lan::{
-    DEFAULT_PORT, HASH_EVERY, HostMap, INPUT_DELAY, Identity, Lan, MAX_DELAY, MIN_DELAY,
-    MatchEvent, PLAYER_TIMEOUT, PORTS, RECONNECT_WAIT, TURN,
+    DEFAULT_PORT, HASH_EVERY, HASHES_KEPT, HostMap, INPUT_DELAY, Identity, Lan, MAX_DELAY,
+    MIN_DELAY, MatchEvent, PLAYER_TIMEOUT, PORTS, RECONNECT_WAIT, TURN,
 };

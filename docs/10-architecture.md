@@ -340,7 +340,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 ## Tooling
 | Tool | Purpose |
 |---|---|
-| `gc_replay` | Run a replay headless at maximum speed and verify its state hashes: `cargo run --release -p gc_replay -- verify` (all of `replays/`), `bless FILE` (store the hashes the sim produces now), `info FILE` (with who played and which build recorded it), `compare A B` (where two machines' recordings of one match, such as desync reports, first disagree). Dumping state at a tick is still to come |
+| `gc_replay` | Run a replay headless at maximum speed and verify its state hashes: `cargo run --release -p gc_replay -- verify` (all of `replays/`), `bless FILE` (store the hashes the sim produces now), `info FILE` (with who played and which build recorded it), `compare A B` (where two machines' recordings of one match, such as desync reports, first disagree, and for two desync reports which systems parted first). Dumping state at a tick is still to come |
 | `gc_bench` | Fixed benchmark scenarios; reports tick time, frame time, memory by tag; enforces budgets |
 | `gc_mapcheck` | `cargo run -p gc_mapcheck -- check [FILE\|DIR]` (default `data/maps`) builds each map and reports errors (exit code 1) and the numbers behind them; `png FILE OUT.png` draws a map with its objects. Runs in CI. See [07 · Map format and tooling](07-world-and-maps.md#map-format-and-tooling) |
 | `gc_bake` | Data baker |

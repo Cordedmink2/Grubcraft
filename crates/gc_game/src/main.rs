@@ -2627,17 +2627,20 @@ impl Running {
             } else {
                 "on this machine"
             };
+            let recorder = gc_replay::Recorder::new(
+                &setup,
+                &self.world,
+                format!("{mode} on {map}, played {place}"),
+            );
             self.recording = Some(Recording {
-                recorder: gc_replay::Recorder::new(
-                    &setup,
-                    &self.world,
-                    format!("{mode} on {map}, played {place}"),
-                )
-                .checkpoint_every(if net_seed.is_some() {
-                    gc_net::HASH_EVERY
-                } else {
-                    gc_replay::CHECKPOINT_EVERY
-                }),
+                // A network match hashes as often as the machines compare,
+                // and keeps each system's hashes for a desync report.
+                recorder: match net_seed {
+                    Some(_) => recorder
+                        .checkpoint_every(gc_net::HASH_EVERY)
+                        .with_system_trail(),
+                    None => recorder,
+                },
                 path: replays::new_path(&dir, replays::now(), mode),
                 saved_at: None,
             });
@@ -2872,8 +2875,7 @@ impl Running {
             return "Nothing was recorded to report".into();
         };
         // The recording carries on as a replay once the report is out.
-        rec.recorder.header_mut().desync_tick = Some(tick);
-        let report = rec.recorder.replay();
+        let report = &rec.recorder.desync_report(tick);
         let who = report.header.recorded_by.map_or(0, |p| u32::from(p) + 1);
         let path = replays::new_path(
             &replays::desync_folder(),
@@ -2881,7 +2883,6 @@ impl Running {
             &format!("desync player{who}"),
         );
         let saved = replays::save(report, &path);
-        rec.recorder.header_mut().desync_tick = None;
         let line = match saved {
             Ok(()) => format!(
                 "Saved a desync report for the developers: {}",
