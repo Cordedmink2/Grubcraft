@@ -88,6 +88,11 @@ pub struct Sounds {
     reopen: Option<(Instant, Duration)>,
 }
 
+fn forget_match(seen: &mut [Option<Seen>], flights: &mut Vec<Flight>) {
+    seen.fill(None);
+    flights.clear();
+}
+
 /// Open the default output with the embedded sound bank.
 fn open_audio() -> Result<Audio, gc_audio::AudioError> {
     Bank::parse(BANK)
@@ -126,6 +131,13 @@ impl Sounds {
                 None
             }
         }
+    }
+
+    /// A new match is starting: forget the last one. A fresh world reissues
+    /// the same regiment handles, so a leftover cool-down would mute the new
+    /// match's blows, and volleys still in the air will never land.
+    pub fn new_match(&mut self) {
+        forget_match(&mut self.seen, &mut self.flights);
     }
 
     /// Tell a freshly opened output what the player has set: mute, music
@@ -341,6 +353,34 @@ impl Sounds {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_match_hears_nothing_of_the_last() {
+        let handle = RegimentHandle {
+            index: 0,
+            generation: 1,
+        };
+        let mut seen = vec![
+            Some(Seen {
+                handle,
+                morale: MoraleState::Steady,
+                models: 10,
+                engaged: true,
+                quiet_until: 900,
+            });
+            4
+        ];
+        let mut flights = vec![Flight {
+            key: (1, 2, 3, 4),
+            aim: Vec2::ZERO,
+            shots: 8,
+            in_view: true,
+        }];
+        forget_match(&mut seen, &mut flights);
+        assert!(seen.iter().all(Option::is_none));
+        assert_eq!(seen.len(), 4, "one slot per regiment stays");
+        assert!(flights.is_empty());
+    }
 
     #[test]
     fn embedded_sound_bank_is_complete() {

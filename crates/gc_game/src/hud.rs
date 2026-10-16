@@ -364,7 +364,7 @@ impl Running {
             if !seen {
                 continue;
             }
-            let p = from_fx_vec(r.position);
+            let p = crate::drawn_position(&self.prev_positions, self.alpha, &r);
             hud.dots.push(Dot {
                 pos: [p.x, p.y],
                 color: crate::color_of(&self.parties, r.owner),
