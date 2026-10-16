@@ -23,8 +23,6 @@ static BANK: &[u8] = include_bytes!("../../../assets/audio/sounds.gcsnd");
 /// camera distance, in tiles.
 const HEAR_BASE: f32 = 50.0;
 const HEAR_PER_ZOOM: f32 = 0.8;
-/// Music volume while playing.
-const MUSIC_VOLUME: f32 = 0.6;
 /// Engaged regiments near the camera that bring the battle music to full.
 const FULL_BATTLE: f32 = 4.0;
 /// Ticks between blows heard from one regiment.
@@ -82,6 +80,9 @@ pub struct Sounds {
     last_intensity: u8,
     muted: bool,
     music_on: bool,
+    /// The Master and Music sliders from Settings, 0..=100.
+    master: u8,
+    music: u8,
     /// When the output may next be reopened, and how long to wait after
     /// that if it fails again. Kept after a success, so a stream that dies
     /// again at once still waits.
@@ -93,6 +94,20 @@ fn forget_match(seen: &mut [Option<Seen>], flights: &mut Vec<Flight>) {
     flights.clear();
 }
 
+/// A Settings slider (0..=100) as a volume, 0.0..=1.0.
+fn slider_gain(slider: u8) -> f32 {
+    f32::from(slider.min(100)) / 100.0
+}
+
+/// The master and music volumes to send to the mixer: the sliders, with M
+/// (mute) silencing everything and N (music off) the music alone.
+fn levels(master: u8, music: u8, muted: bool, music_on: bool) -> (f32, f32) {
+    (
+        if muted { 0.0 } else { slider_gain(master) },
+        if music_on { slider_gain(music) } else { 0.0 },
+    )
+}
+
 /// Open the default output with the embedded sound bank.
 fn open_audio() -> Result<Audio, gc_audio::AudioError> {
     Bank::parse(BANK)
@@ -101,9 +116,10 @@ fn open_audio() -> Result<Audio, gc_audio::AudioError> {
 }
 
 impl Sounds {
-    /// Open the sound card and start the music. None (with a note on stderr)
-    /// if there is no usable output; the game then runs silently.
-    pub fn start(regiment_capacity: usize) -> Option<Sounds> {
+    /// Open the sound card and start the music, at the Master and Music
+    /// sliders' settings (0..=100). None (with a note on stderr) if there
+    /// is no usable output; the game then runs silently.
+    pub fn start(regiment_capacity: usize, master: u8, music: u8) -> Option<Sounds> {
         match open_audio() {
             Ok(audio) => {
                 logln!(
@@ -121,6 +137,8 @@ impl Sounds {
                     last_intensity: 0,
                     muted: false,
                     music_on: true,
+                    master,
+                    music,
                     reopen: None,
                 };
                 sounds.apply_state();
@@ -143,10 +161,9 @@ impl Sounds {
     /// Tell a freshly opened output what the player has set: mute, music
     /// on or off, and how much of the battle layer is playing.
     fn apply_state(&self) {
-        self.audio
-            .set_master_volume(if self.muted { 0.0 } else { 1.0 });
-        self.audio
-            .set_music_volume(if self.music_on { MUSIC_VOLUME } else { 0.0 });
+        let (master, music) = levels(self.master, self.music, self.muted, self.music_on);
+        self.audio.set_master_volume(master);
+        self.audio.set_music_volume(music);
         self.audio
             .set_music_intensity(f32::from(self.last_intensity) / 20.0);
     }
@@ -319,6 +336,17 @@ impl Sounds {
         self.audio.play(id, 0.8, 0.0, PRI_UI);
     }
 
+    /// The Master and Music sliders moved (0..=100): applies at once.
+    pub fn set_volumes(&mut self, master: u8, music: u8) {
+        // Any settings change comes here, a typed name included.
+        if (master, music) == (self.master, self.music) {
+            return;
+        }
+        self.master = master;
+        self.music = music;
+        self.apply_state();
+    }
+
     /// M: silence or restore everything.
     pub fn toggle_mute(&mut self) {
         self.muted = !self.muted;
@@ -380,6 +408,23 @@ mod tests {
         assert!(seen.iter().all(Option::is_none));
         assert_eq!(seen.len(), 4, "one slot per regiment stays");
         assert!(flights.is_empty());
+    }
+
+    #[test]
+    fn sliders_become_volumes() {
+        assert_eq!(slider_gain(0), 0.0);
+        assert_eq!(slider_gain(50), 0.5);
+        assert_eq!(slider_gain(100), 1.0);
+        // A hand-edited setting past the end does not boost.
+        assert_eq!(slider_gain(200), 1.0);
+    }
+
+    #[test]
+    fn mute_and_music_off_override_the_sliders() {
+        assert_eq!(levels(80, 60, false, true), (0.8, 0.6));
+        assert_eq!(levels(80, 60, true, true), (0.0, 0.6));
+        assert_eq!(levels(80, 60, false, false), (0.8, 0.0));
+        assert_eq!(levels(0, 0, false, true), (0.0, 0.0));
     }
 
     #[test]
