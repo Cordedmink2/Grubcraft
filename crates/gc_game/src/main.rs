@@ -1053,6 +1053,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Focused(f) => {
                 r.input.focused = f;
+                r.input.turn = [false; 2];
                 // A button let go outside the window never reports it.
                 r.hud.reset();
             }
@@ -1154,8 +1155,8 @@ impl ApplicationHandler for App {
                         KeyCode::ArrowDown => r.input.arrows[1] = down,
                         KeyCode::ArrowLeft => r.input.arrows[2] = down,
                         KeyCode::ArrowRight => r.input.arrows[3] = down,
-                        KeyCode::Comma => r.input.turn[0] = down,
-                        KeyCode::Period => r.input.turn[1] = down,
+                        KeyCode::Comma => r.input.turn[0] = down && !r.input.command,
+                        KeyCode::Period => r.input.turn[1] = down && !r.input.command,
                         KeyCode::Home if down => r.camera.reset_rotation(),
                         KeyCode::F11 | KeyCode::Backquote if down && !event.repeat => {
                             r.overlay = !r.overlay;
@@ -2956,7 +2957,10 @@ impl Running {
             // A slow sway behind the main menu.
             self.camera.yaw = 0.3 * (self.started.elapsed().as_secs_f32() * 0.12).sin();
         }
-        if !self.menu_open {
+        if self.menu_open {
+            // The menu eats key releases; don't resume with a key stuck down.
+            self.input.turn = [false; 2];
+        } else {
             let [l, r] = self.input.turn;
             self.camera
                 .rotate((f32::from(u8::from(r)) - f32::from(u8::from(l))) * KEY_TURN_RATE * dt);
