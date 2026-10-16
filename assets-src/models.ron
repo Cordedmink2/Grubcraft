@@ -72,6 +72,26 @@
             )),
         ),
         (
+            name: "Fire Spirit",
+            // The Onmyoji's summon: a kitsune of flame, fully custom on its
+            // own 29-bone rig with clips made in its script. The rest pose
+            // stands on the ground; every clip lifts it into a hover.
+            source: "shared:grubcraft/ember/fire-spirit/fire-spirit.glb",
+            height: 0.93,
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Lunge",
+                "Shoot": "Spirit_Bolt", "Hit": "Hit", "Die": "Death", "Cheer": "Cheer",
+            },
+            lod_triangles: (12000, 4000, 1400, 450),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/fire-spirit/albedo.png",
+                team: Some("shared:grubcraft/ember/fire-spirit/team.png"),
+                normal: Some("shared:grubcraft/ember/fire-spirit/normal.png"),
+                orm: Some("shared:grubcraft/ember/fire-spirit/orm.png"),
+                emissive: Some("shared:grubcraft/ember/fire-spirit/emissive.png"),
+            )),
+        ),
+        (
             name: "Hands",
             // Ember Clans worker, on the Farmer body and rig: mallet in the
             // right hand, a back basket of glowing Grub.
