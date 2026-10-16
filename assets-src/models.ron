@@ -132,6 +132,46 @@
             )),
         ),
         (
+            name: "Ember Rocket Cart",
+            // Ember Clans artillery: an ashigaru pushing a two-wheeled hwacha
+            // with a rack of thirty fire-arrows; his hands are held to the
+            // push bar in the cart clips, and the salvo leaves in a burst.
+            source: "shared:grubcraft/ember/rocket-cart/rocket-cart.glb",
+            height: 1.24,
+            clips: {
+                "Idle": "Cart_Idle", "Walk": "Cart_Walk", "Run": "Cart_Run", "Attack": "Cart_Bash",
+                "Shoot": "Cart_Fire", "Hit": "Cart_Hit", "Die": "Cart_Death", "Cheer": "Cart_Cheer",
+            },
+            lod_triangles: (20000, 7000, 2400, 800),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/rocket-cart/albedo.png",
+                team: Some("shared:grubcraft/ember/rocket-cart/team.png"),
+                normal: Some("shared:grubcraft/ember/rocket-cart/normal.png"),
+                orm: Some("shared:grubcraft/ember/rocket-cart/orm.png"),
+                emissive: Some("shared:grubcraft/ember/rocket-cart/emissive.png"),
+            )),
+        ),
+        (
+            name: "War Kite",
+            // Ember Clans air: a rider hanging from a painted washi kite. The
+            // game has no flying layer yet, so it stands on the ground at rest
+            // and every clip lifts it about 1.8 above the field.
+            source: "shared:grubcraft/ember/war-kite/war-kite.glb",
+            height: 1.83,
+            clips: {
+                "Idle": "Kite_Idle", "Walk": "Kite_Glide", "Run": "Kite_Dive", "Attack": "Kite_Drop",
+                "Shoot": "Kite_Drop", "Hit": "Kite_Hit", "Die": "Kite_Death", "Cheer": "Kite_Cheer",
+            },
+            lod_triangles: (20000, 7000, 2400, 800),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/war-kite/albedo.png",
+                team: Some("shared:grubcraft/ember/war-kite/team.png"),
+                normal: Some("shared:grubcraft/ember/war-kite/normal.png"),
+                orm: Some("shared:grubcraft/ember/war-kite/orm.png"),
+                emissive: Some("shared:grubcraft/ember/war-kite/emissive.png"),
+            )),
+        ),
+        (
             name: "Hands",
             // Ember Clans worker, on the Farmer body and rig: mallet in the
             // right hand, a back basket of glowing Grub.
