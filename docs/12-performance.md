@@ -48,7 +48,7 @@ The whole game stays under **6 GB** on the largest map with six players at maxim
 | Network and replay (`net`) | Rings, turn buffers, replay writer |
 | AI (`ai`) | Host only: each AI's beliefs, influence maps, terrain analysis and scratch worlds for rehearsal (≤ 16 MB per AI player) |
 
-Each tag is tracked live by the tagged allocator and the renderer's GPU allocation wrapper. The simulation keeps its own tight limit (under 8 MB, gated in `gc_bench`) because snapshot size drives rejoin and desync recovery, not because of the memory budget.
+Each tag is tracked live by the tagged allocator. GPU memory is not: there is no allocation wrapper on the graphics device, so the renderer adds up the sizes of the buffers and textures it creates (`Renderer::gpu_bytes`). That total is for display only (the dev overlay and the window title), and it leaves out what the driver adds for itself and a few small buffers. The simulation keeps its own tight limit (under 8 MB, gated in `gc_bench`) because snapshot size drives rejoin and desync recovery, not because of the memory budget.
 
 ## Time budget
 
@@ -111,7 +111,7 @@ Performance work is continuous, measured and recorded.
 ### Instruments
 - **Dev overlay (`` ` `` or `F11`):** frame time breakdown, sim tick time, memory per tag, GPU memory, draw calls, instance counts, network RTT/jitter/delay.
 - **Tracy** profiling in instrumented builds.
-- **Tagged allocator** and **GPU allocation wrapper** for exact memory attribution.
+- **Tagged allocator** for exact memory attribution on the CPU side. GPU memory is a sum the renderer keeps by hand (see the memory budget above); a real GPU allocation wrapper is planned for when the renderer gets its next pass.
 - **Allocation-in-tick tripwire:** a test and the `gc_bench` gate fail if the sim allocates during a tick.
 
 ### Benchmark suite (`gc_bench`)

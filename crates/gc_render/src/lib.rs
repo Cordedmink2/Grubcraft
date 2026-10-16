@@ -137,6 +137,48 @@ pub struct RenderStats {
     pub boxes_drawn: u32,
     pub soldiers_drawn: u32,
     pub triangles: u64,
+    /// Boxes and soldiers asked for beyond the fixed instance buffers this
+    /// frame, so left undrawn. Zero unless a match outgrows the capacity.
+    pub dropped: u32,
+}
+
+/// What a frame draws, for leaving out the soldiers nobody would see: the
+/// camera's view and, with shadows on, the sun's shadow map (a soldier
+/// outside the screen can still cast onto it).
+#[derive(Clone, Copy, Debug)]
+pub struct Cull {
+    camera: [Vec4; 6],
+    sun: Option<[Vec4; 6]>,
+}
+
+impl Cull {
+    /// Sees everything; for before the first frame.
+    pub const EVERYTHING: Cull = Cull {
+        camera: [Vec4::new(0.0, 0.0, 0.0, 1.0); 6],
+        sun: None,
+    };
+
+    fn new(camera: Mat4, sun: Option<Mat4>) -> Cull {
+        // A broken matrix (a window with no size yet) draws everything
+        // rather than nothing.
+        if !camera.is_finite() || sun.is_some_and(|m| !m.is_finite()) {
+            return Cull::EVERYTHING;
+        }
+        Cull {
+            camera: unit_planes(frustum_planes(camera)),
+            sun: sun.map(|m| unit_planes(frustum_planes(m))),
+        }
+    }
+
+    /// Whether a sphere of `radius` around `center` touches what is drawn.
+    pub fn sees(&self, center: Vec3, radius: f32) -> bool {
+        let inside = |planes: &[Vec4; 6]| {
+            planes
+                .iter()
+                .all(|p| p.truncate().dot(center) + p.w >= -radius)
+        };
+        inside(&self.camera) || self.sun.as_ref().is_some_and(inside)
+    }
 }
 
 #[repr(C)]
@@ -601,7 +643,32 @@ impl Renderer {
         self.stats
     }
 
-    /// GPU memory allocated by the renderer itself, in bytes.
+    /// What a frame seen through `view_proj` will draw, for [`Cull::sees`].
+    pub fn cull(&self, view_proj: Mat4) -> Cull {
+        let sun = self
+            .terrain
+            .as_ref()
+            .and_then(|t| self.sun_view(view_proj, t))
+            .map(|(m, _)| m);
+        Cull::new(view_proj, sun)
+    }
+
+    /// The sun's view and projection, and the size of one shadow texel in
+    /// tiles, for a camera seen through `view_proj`; none with shadows off.
+    fn sun_view(&self, view_proj: Mat4, terrain: &TerrainGpu) -> Option<(Mat4, f32)> {
+        self.options.shadows.then(|| {
+            shadows::sun_view_proj(
+                view_proj,
+                SUN.normalize(),
+                terrain.tiles as f32,
+                terrain.max_height,
+            )
+        })
+    }
+
+    /// GPU memory allocated by the renderer itself, in bytes: the sizes of the
+    /// buffers and textures it creates, added up by hand (there is no
+    /// allocation wrapper), so a figure to read, not to enforce.
     pub fn gpu_bytes(&self) -> u64 {
         self.static_gpu_bytes
             + self.terrain_gpu_bytes
@@ -815,16 +882,9 @@ impl Renderer {
         let fog_color = self.fog_color;
         let sun = SUN.normalize();
         let shadows = self.options.shadows;
-        let (sun_view_proj, texel) = if shadows {
-            shadows::sun_view_proj(
-                frame.view_proj,
-                sun,
-                terrain.tiles as f32,
-                terrain.max_height,
-            )
-        } else {
-            (Mat4::IDENTITY, 0.0)
-        };
+        let (sun_view_proj, texel) = self
+            .sun_view(frame.view_proj, terrain)
+            .unwrap_or((Mat4::IDENTITY, 0.0));
         let mut globals = Globals {
             view_proj: frame.view_proj.to_cols_array_2d(),
             camera_pos: frame.camera_pos.extend(1.0).to_array(),
@@ -893,7 +953,9 @@ impl Renderer {
             self.visible_chunks.clear();
             self.sun_chunks.clear();
         }
+        let mut dropped = 0;
         let boxes = if self.options.draw_blocks {
+            dropped += boxes.len().saturating_sub(MAX_BOX_INSTANCES);
             &boxes[..boxes.len().min(MAX_BOX_INSTANCES)]
         } else {
             &[]
@@ -904,6 +966,7 @@ impl Renderer {
         }
         let soldiers = match &self.soldiers.models {
             Some(_) if self.options.draw_blocks => {
+                dropped += soldiers.len().saturating_sub(MAX_SOLDIER_INSTANCES);
                 &soldiers[..soldiers.len().min(MAX_SOLDIER_INSTANCES)]
             }
             _ => &[],
@@ -1091,6 +1154,7 @@ impl Renderer {
             boxes_drawn: boxes.len() as u32,
             soldiers_drawn,
             triangles,
+            dropped: dropped as u32,
         };
         FrameOutcome::Presented
     }
@@ -1387,6 +1451,15 @@ fn frustum_planes(view_proj: Mat4) -> [Vec4; 6] {
     [r3 + r0, r3 - r0, r3 + r1, r3 - r1, r2, r3 - r2]
 }
 
+/// `planes` scaled so each normal has length one, which makes the distance
+/// to a plane a distance in tiles.
+fn unit_planes(planes: [Vec4; 6]) -> [Vec4; 6] {
+    planes.map(|p| {
+        let len = p.truncate().length();
+        if len > 0.0 { p / len } else { p }
+    })
+}
+
 fn aabb_visible(planes: &[Vec4; 6], min: Vec3, max: Vec3) -> bool {
     planes.iter().all(|p| {
         // The box corner furthest along the plane normal.
@@ -1440,6 +1513,35 @@ mod tests {
             Vec3::new(-5.0, 0.0, 20.0),
             Vec3::new(5.0, 2.0, 30.0)
         ));
+    }
+
+    #[test]
+    fn soldiers_off_screen_are_culled_unless_the_sun_sees_them() {
+        use glam::camera::rh::{proj::directx::perspective, view::look_at_mat4};
+        let view = look_at_mat4(
+            Vec3::new(0.0, 10.0, 0.0),
+            Vec3::new(0.0, 0.0, -10.0),
+            Vec3::Y,
+        );
+        let proj = perspective(1.0, 1.5, 0.5, 500.0);
+        let on_screen = Vec3::new(0.0, 1.0, -25.0);
+        let behind = Vec3::new(0.0, 1.0, 25.0);
+        let cull = Cull::new(proj * view, None);
+        assert!(cull.sees(on_screen, 1.0));
+        assert!(!cull.sees(behind, 1.0));
+        // A soldier's size counts: its edge reaches the screen.
+        let beside = Vec3::new(-30.0, 1.0, -10.0);
+        assert!(!cull.sees(beside, 1.0));
+        assert!(cull.sees(beside, 20.0));
+        // Behind the camera but inside the sun's box: still drawn, for the
+        // shadow it casts.
+        let sun_view = look_at_mat4(Vec3::new(0.0, 50.0, 30.0), Vec3::ZERO, Vec3::Y);
+        let sun_proj =
+            glam::camera::rh::proj::directx::orthographic(-40.0, 40.0, -40.0, 40.0, 0.0, 200.0);
+        let cull = Cull::new(proj * view, Some(sun_proj * sun_view));
+        assert!(cull.sees(behind, 1.0));
+        assert!(Cull::EVERYTHING.sees(behind, 0.0));
+        assert!(Cull::new(Mat4::from_cols_array(&[f32::NAN; 16]), None).sees(behind, 0.0));
     }
 
     #[test]

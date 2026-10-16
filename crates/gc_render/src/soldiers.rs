@@ -8,6 +8,9 @@ use gc_assets::model::{
     ModelVertex, Models, TEXTURE_MIPS, TEXTURE_SIZE,
 };
 
+/// The finest level of detail the shadow pass draws.
+const SHADOW_MIN_LOD: u8 = 2;
+
 /// Fixed capacity of the soldier instance buffer; never reallocated.
 pub const MAX_SOLDIER_INSTANCES: usize = 65_536;
 
@@ -228,7 +231,14 @@ impl SoldiersGpu {
                 });
                 textured_now = Some(textured);
             }
-            let [first, len] = lods[(b.lod as usize).min(LODS - 1)];
+            // The sun only needs a silhouette, so its pass never draws the
+            // finer meshes, however close the soldier is to the camera.
+            let lod = if shadow {
+                b.lod.max(SHADOW_MIN_LOD)
+            } else {
+                b.lod
+            };
+            let [first, len] = lods[(lod as usize).min(LODS - 1)];
             let end = (b.first + b.count).min(count as u32);
             if b.first >= end || len == 0 {
                 continue;

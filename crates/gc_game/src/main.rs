@@ -523,6 +523,8 @@ struct LodView {
     eye: glam::Vec3,
     forward: glam::Vec3,
     pixel_scale: f32,
+    /// What the frame draws, for skipping soldiers nobody would see.
+    cull: gc_render::Cull,
     /// Every soldier at this level, from `--lod`.
     force: Option<usize>,
 }
@@ -535,12 +537,21 @@ impl LodView {
             lod_for(height, (pos - self.eye).dot(self.forward), self.pixel_scale)
         })
     }
+
+    /// The level for a model `height` tiles tall standing at `pos`, or none
+    /// when it is worth no drawing: it is neither on screen nor casting a
+    /// shadow where one is drawn.
+    fn place(&self, height: f32, pos: glam::Vec3) -> Option<usize> {
+        self.cull
+            .sees(pos + glam::Vec3::Y * (height * 0.5), height)
+            .then(|| self.lod(height, pos))
+    }
 }
 
 impl Art {
     /// Empty the buckets for a frame seen from `camera` on a viewport
     /// `height` pixels tall.
-    fn begin(&mut self, camera: &RtsCamera, height: f32) {
+    fn begin(&mut self, camera: &RtsCamera, height: f32, cull: gc_render::Cull) {
         for b in &mut self.buckets {
             b.clear();
         }
@@ -548,6 +559,7 @@ impl Art {
             eye: camera.eye(),
             forward: camera.forward(),
             pixel_scale: camera.pixel_scale(height),
+            cull,
             force: self.view.force,
         };
     }
@@ -827,6 +839,7 @@ impl App {
                         eye: glam::Vec3::ZERO,
                         forward: glam::Vec3::NEG_Z,
                         pixel_scale: 0.0,
+                        cull: gc_render::Cull::EVERYTHING,
                         force: opts.lod,
                     },
                     buckets: vec![Vec::new(); models.models.len() * LODS],
@@ -1896,7 +1909,8 @@ impl Running {
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
             .map(|(h, _)| h);
         if let Some(art) = &mut self.art {
-            art.begin(&self.camera, self.window.inner_size().height as f32);
+            let cull = self.renderer.cull(self.camera.view_proj());
+            art.begin(&self.camera, self.window.inner_size().height as f32, cull);
         }
         self.mark_shooting();
         self.scenery.push(
@@ -2062,6 +2076,11 @@ impl Running {
                 let highlight = if selected { 70 } else { 0 };
                 self.puppets
                     .update(&block, r.owner, game_dt.as_secs_f32(), |s| {
+                        let ground = heightmap.height_at(s.pos.x, s.pos.y);
+                        let at = glam::Vec3::new(s.pos.x, ground, s.pos.y);
+                        let Some(lod) = view.place(height, at) else {
+                            return;
+                        };
                         let seconds = time + s.phase * 4.0;
                         let pose = match s.fight {
                             Some(fight) => clips.fight(model, fight, seconds),
@@ -2079,8 +2098,6 @@ impl Running {
                         let Some((pose, flat)) = pose else {
                             return;
                         };
-                        let ground = heightmap.height_at(s.pos.x, s.pos.y);
-                        let lod = view.lod(height, glam::Vec3::new(s.pos.x, ground, s.pos.y));
                         buckets[model * LODS + lod].push(SoldierInstance {
                             pos: s.pos.to_array(),
                             facing: s.facing.to_array(),
@@ -3027,7 +3044,9 @@ impl Running {
                 if let Some((pose, flat)) = art.clips.death(model, c.age) {
                     let ground = self.heightmap.height_at(c.pos.x, c.pos.y);
                     let at = glam::Vec3::new(c.pos.x, ground, c.pos.y);
-                    let lod = art.view.lod(art.heights[model], at);
+                    let Some(lod) = art.view.place(art.heights[model], at) else {
+                        continue;
+                    };
                     art.buckets[model * LODS + lod].push(SoldierInstance {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),
@@ -3199,6 +3218,11 @@ impl Running {
             .filter(|&&t| tagged_alloc::live_bytes(t) > 0)
             .map(|&t| format!("{} {:.2}", t.name(), mb(tagged_alloc::live_bytes(t))))
             .collect();
+        let dropped = if rs.dropped > 0 {
+            format!("   {} NOT DRAWN: over capacity", rs.dropped)
+        } else {
+            String::new()
+        };
         let info = self.renderer.adapter_info();
         let text = format!(
             "GRUBCRAFT DEV OVERLAY                          ` or F11 hides\n\
@@ -3206,7 +3230,7 @@ impl Running {
              sim     tick {:<7} {tick_avg:6.3} ms avg   {:6.3} ms worst\n\
              routes  {} portals   {} waiting\n\
              ai      {} computer players   {ai_avg:6.3} ms a tick\n\
-             render  {} draw calls   {}/{} chunks   {} boxes   {} soldiers   {}k triangles\n\
+             render  {} draw calls   {}/{} chunks   {} boxes   {} soldiers   {}k triangles{dropped}\n\
              memory  process {process}   heap {:.1} MB   gpu {:.1} MB\n\
              heap    {}\n\
              data    {}\n\
@@ -3964,6 +3988,7 @@ mod lod_tests {
             eye: glam::Vec3::ZERO,
             forward: glam::Vec3::NEG_Z,
             pixel_scale: 1000.0,
+            cull: gc_render::Cull::EVERYTHING,
             force: None,
         };
         assert_eq!(view.lod(2.0, glam::Vec3::new(0.0, 0.0, -20.0)), 0);
