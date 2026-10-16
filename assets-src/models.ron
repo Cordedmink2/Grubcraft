@@ -111,6 +111,66 @@
             )),
         ),
         (
+            name: "Mounted Samurai",
+            // Ember Clans cavalry: a Farmer-rig rider grafted onto
+            // Quaternius's CC0 Horse in one 58-bone skeleton. Black lacquer
+            // armour, crescent kabuto and sashimono; the horse wears tack.
+            source: "shared:grubcraft/ember/mounted-samurai/mounted-samurai.glb",
+            height: 2.08,
+            clips: {
+                "Idle": "Ride_Idle", "Walk": "Ride_Walk", "Run": "Ride_Run", "Attack": "Ride_Slash",
+                "Attack2": "Ride_Rear", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Cheer",
+            },
+            lod_triangles: (14000, 5000, 1700, 550),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/mounted-samurai/albedo.png",
+                team: Some("shared:grubcraft/ember/mounted-samurai/team.png"),
+                normal: Some("shared:grubcraft/ember/mounted-samurai/normal.png"),
+                orm: Some("shared:grubcraft/ember/mounted-samurai/orm.png"),
+                emissive: Some("shared:grubcraft/ember/mounted-samurai/emissive.png"),
+            )),
+        ),
+        (
+            name: "Yabusame Riders",
+            // Ember Clans horse archers on the same rider-and-horse rig, with
+            // Ranger bow clips mirrored onto the rider; a 59th bone draws the
+            // string. Ayaigasa hat, ebira quiver and a chestnut horse.
+            source: "shared:grubcraft/ember/yabusame/yabusame.glb",
+            height: 1.58,
+            clips: {
+                "Idle": "Ride_Idle", "Walk": "Ride_Walk", "Run": "Ride_Run", "Attack": "Ride_Bash",
+                "Shoot": "Ride_Shoot", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Cheer",
+            },
+            lod_triangles: (14000, 5000, 1700, 550),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/yabusame/albedo.png",
+                team: Some("shared:grubcraft/ember/yabusame/team.png"),
+                normal: Some("shared:grubcraft/ember/yabusame/normal.png"),
+                orm: Some("shared:grubcraft/ember/yabusame/orm.png"),
+                emissive: Some("shared:grubcraft/ember/yabusame/emissive.png"),
+            )),
+        ),
+        (
+            name: "The Daimyo",
+            // Ember Clans general hero on Quaternius's CC0 white horse: red
+            // lacquer armour, a gold-crested horo cape, glowing katana and a
+            // gunbai war fan. The horse wears a bamen face mask.
+            source: "shared:grubcraft/ember/daimyo/daimyo.glb",
+            height: 1.57,
+            clips: {
+                "Idle": "Ride_Idle", "Walk": "Ride_Walk", "Run": "Ride_Run", "Attack": "Ride_Slash",
+                "Attack2": "Ride_Rear", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Rally",
+            },
+            lod_triangles: (14000, 5000, 1700, 550),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/daimyo/albedo.png",
+                team: Some("shared:grubcraft/ember/daimyo/team.png"),
+                normal: Some("shared:grubcraft/ember/daimyo/normal.png"),
+                orm: Some("shared:grubcraft/ember/daimyo/orm.png"),
+                emissive: Some("shared:grubcraft/ember/daimyo/emissive.png"),
+            )),
+        ),
+        (
             name: "Yumi Ashigaru",
             // Ember Clans roster art on the Farmer body and rig. Its bow
             // clips come from Quaternius's Ranger, mirrored onto this rig;
