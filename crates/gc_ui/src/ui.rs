@@ -41,6 +41,11 @@ pub struct UiInput {
     pub backspace: bool,
     pub enter: bool,
     pub escape: bool,
+    /// An arrow key went down since the last frame.
+    pub up: bool,
+    pub down: bool,
+    pub left: bool,
+    pub right: bool,
 }
 
 impl UiInput {
@@ -52,6 +57,10 @@ impl UiInput {
         self.backspace = false;
         self.enter = false;
         self.escape = false;
+        self.up = false;
+        self.down = false;
+        self.left = false;
+        self.right = false;
     }
 }
 

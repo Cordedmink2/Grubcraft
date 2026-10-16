@@ -59,6 +59,8 @@ pub enum MenuAction {
     ListReplays,
     /// Watch the replay saved at this path.
     WatchReplay(PathBuf),
+    /// The Unit viewer button: the game should open the viewer.
+    OpenViewer,
     Quit,
 }
 
@@ -429,9 +431,11 @@ impl<N: Network> Menu<N> {
 
     fn main_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
         let (w, h) = ui.screen;
-        let button_h = 52;
-        let count = if self.in_match { 6 } else { 5 };
-        let total = 120 + count * (button_h + 14);
+        let count = if self.in_match { 7 } else { 6 };
+        // Up to 66 pixels for each button and its gap, less in a short window.
+        let step = ((h - 120 - 24) / count).clamp(40, 66);
+        let (button_h, gap) = (step - step / 5, step / 5);
+        let total = 120 + count * step;
         let area = centered(ui.screen, 360, total);
         let title = "GRUBCRAFT";
         let tw = crate::draw::text_width(title, 4);
@@ -446,7 +450,7 @@ impl<N: Network> Menu<N> {
             x: area.x + 30,
             y: area.y + 120,
             w: area.w - 60,
-            gap: 14,
+            gap,
         };
         let mut action = MenuAction::None;
         if self.in_match && ui.button(stack.next(button_h), "Resume", ButtonStyle::Primary, true) {
@@ -471,6 +475,14 @@ impl<N: Network> Menu<N> {
         if ui.button(stack.next(button_h), "Replays", ButtonStyle::Normal, true) {
             self.go(ui, Screen::Replays);
             action = MenuAction::ListReplays;
+        }
+        if ui.button(
+            stack.next(button_h),
+            "Unit viewer",
+            ButtonStyle::Normal,
+            true,
+        ) {
+            action = MenuAction::OpenViewer;
         }
         if ui.button(stack.next(button_h), "Settings", ButtonStyle::Normal, true) {
             self.go(ui, Screen::Settings);
@@ -1696,6 +1708,22 @@ mod tests {
             ..Default::default()
         });
         assert!(matches!(h.last, MenuAction::Quit));
+    }
+
+    #[test]
+    fn the_unit_viewer_button_asks_the_game_to_open_the_viewer() {
+        let mut h = Harness::new();
+        assert!(h.has("Unit viewer"));
+        let (x, y) = h.text_pos("Unit viewer");
+        h.frame(UiInput {
+            mouse: (x, y),
+            pressed: true,
+            released: true,
+            ..Default::default()
+        });
+        assert!(matches!(h.last, MenuAction::OpenViewer));
+        // The menu stays on the main screen; the game shows the viewer over it.
+        assert_eq!(h.menu.screen(), Screen::Main);
     }
 
     #[test]

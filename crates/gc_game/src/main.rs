@@ -95,7 +95,9 @@
 //! `--showroom all|NAME[,NAME...]` stands the named soldier models (names as in
 //! `assets-src/models.ron`) in a row on an empty field under a fixed camera,
 //! cycling through idle, walk, attack and death, and `--showroom-clip
-//! idle|walk|attack|shoot|cheer|die` holds one clip instead.
+//! idle|walk|attack|shoot|cheer|die` holds one clip instead;
+//! `--viewer NAME|start` opens the Unit viewer (main menu) on the named unit,
+//! or on the first unit with a model.
 
 mod battle;
 #[cfg(test)]
@@ -122,6 +124,7 @@ mod scenery;
 mod showroom;
 mod sounds;
 mod terrain_view;
+mod viewer;
 
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -296,6 +299,9 @@ struct Options {
     /// (`--showroom-clip`).
     showroom: Option<Vec<usize>>,
     showroom_clip: Option<showroom::Clip>,
+    /// Open the unit viewer at start (`--viewer`): on this unit, or the
+    /// first one for "start".
+    viewer: Option<String>,
     render: RendererOptions,
 }
 
@@ -317,6 +323,7 @@ fn parse_args() -> Options {
         lod: None,
         showroom: None,
         showroom_clip: None,
+        viewer: None,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -409,6 +416,10 @@ fn parse_args() -> Options {
                 opts.showroom = Some(showroom_models(&value));
                 true
             }
+            "--viewer" if !value.trim().is_empty() => {
+                opts.viewer = Some(value.trim().to_string());
+                true
+            }
             "--showroom-clip" => showroom::Clip::parse(&value)
                 .map(|c| opts.showroom_clip = Some(c))
                 .is_some(),
@@ -447,6 +458,20 @@ fn parse_args() -> Options {
         // The showroom goes straight into the field.
         opts.menu = Some(false);
     }
+    // The viewer is over the menu: it is not a match, or the showroom.
+    if opts.viewer.is_some()
+        && (opts.sandbox
+            || opts.battle.is_some()
+            || opts.conquest.is_some()
+            || opts.host
+            || opts.join.is_some()
+            || opts.showroom.is_some())
+    {
+        usage();
+    }
+    if opts.viewer.is_some() {
+        opts.menu = Some(true);
+    }
     opts
 }
 
@@ -473,7 +498,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--showroom all|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--showroom all|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start]"
     );
     std::process::exit(2);
 }
@@ -569,6 +594,10 @@ struct Running {
     scenery: scenery::Scenery,
     /// The models on show instead of a match, with `--showroom`.
     showroom: Option<showroom::Showroom>,
+    /// The unit viewer, over the main menu, while it is open.
+    viewer: Option<viewer::Viewer>,
+    /// Wheel movement over the viewer's panels not yet worth a whole row.
+    viewer_scroll: f32,
     /// Sandbox: draw regiments hidden from the side you command too (V).
     reveal_all: bool,
     /// Data hash and size, for the overlay.
@@ -1205,6 +1234,8 @@ impl App {
             show_blocked: false,
             scenery,
             showroom,
+            viewer: None,
+            viewer_scroll: 0.0,
             reveal_all: false,
             data_label: format!(
                 "{:016x}   {} unit types",
@@ -1233,6 +1264,9 @@ impl App {
         });
         if let Some(r) = self.running.as_mut() {
             r.menu.set_in_match(r.match_started);
+            if let Some(unit) = &opts.viewer {
+                r.open_viewer(unit);
+            }
             if opts.host || opts.join.is_some() {
                 let me = r.menu.profile();
                 let result = match &opts.join {
@@ -1287,6 +1321,9 @@ impl ApplicationHandler for App {
             return;
         };
         if r.menu_open {
+            if r.viewer_event(&event) {
+                return;
+            }
             match &event {
                 WindowEvent::MouseInput { state, button, .. } => {
                     if *button == MouseButton::Left {
@@ -2148,9 +2185,14 @@ impl Running {
             self.plan_order(order);
             self.push_order_preview();
         }
-        self.push_placement_ghost();
-        self.push_building_ghost();
-        self.push_buildings();
+        // The unit viewer shows one model on a bare field: none of the
+        // battlefield is drawn behind it.
+        let viewing = self.viewer.is_some();
+        if !viewing {
+            self.push_placement_ghost();
+            self.push_building_ghost();
+            self.push_buildings();
+        }
         self.puppets.advance(game_dt.as_secs_f32());
         let world = &self.world;
         self.puppets.pair(|a, b| world.hostile(a, b));
@@ -2166,14 +2208,16 @@ impl Running {
             art.begin(&self.camera, self.window.inner_size().height as f32, cull);
         }
         self.mark_shooting();
-        self.scenery.push(
-            self.camera.focus,
-            self.camera.distance,
-            !self.commander,
-            &mut self.instances,
-        );
+        if !viewing {
+            self.scenery.push(
+                self.camera.focus,
+                self.camera.distance,
+                !self.commander,
+                &mut self.instances,
+            );
+        }
         let viewer = self.sandbox.side;
-        if let Some(zone) = self.world.deploy_zone(viewer) {
+        if let Some(zone) = self.world.deploy_zone(viewer).filter(|_| !viewing) {
             Self::push_zone_ring(
                 &mut self.instances,
                 from_fx_vec(zone.center),
@@ -2187,7 +2231,7 @@ impl Running {
         } else {
             1.0
         };
-        for r in self.world.regiments.iter() {
+        for r in self.world.regiments.iter().take_while(|_| !viewing) {
             // Enemies hidden in woods and tall grass aren't drawn (their
             // soldiers keep marching out of sight, below).
             let seen = self.reveal_all || self.world.sees(viewer, r.handle);
@@ -2378,8 +2422,11 @@ impl Running {
                     });
                 });
         }
-        if !self.commander {
+        if !self.commander && !viewing {
             self.push_corpses();
+        }
+        if let (Some(stage), Some(art)) = (&self.viewer, &mut self.art) {
+            stage.push(art, &mut self.instances, color_of(&self.parties, HUMAN));
         }
         if let (Some(room), Some(art)) = (&self.showroom, &mut self.art) {
             let heightmap = &self.heightmap;
@@ -2394,9 +2441,11 @@ impl Running {
         if let Some(art) = &mut self.art {
             art.finish();
         }
-        self.push_arrows(now);
-        self.push_routes();
-        if self.lens && !self.minds.is_empty() {
+        if !viewing {
+            self.push_arrows(now);
+            self.push_routes();
+        }
+        if self.lens && !self.minds.is_empty() && !viewing {
             let lenses = lens::lenses(&self.minds);
             let parties = &self.parties;
             let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
@@ -2409,7 +2458,7 @@ impl Running {
                 &mut self.instances,
             );
         }
-        if self.show_blocked {
+        if self.show_blocked && !viewing {
             self.instances.extend_from_slice(&self.blocked_marks);
         }
 
@@ -2756,6 +2805,18 @@ impl Running {
             }
         }
         self.ui.begin_frame(input, screen);
+        if let Some(viewer) = &mut self.viewer {
+            // The viewer's panels stand in for the menu while it is open.
+            let escape = self.ui.input.escape;
+            let leave =
+                viewer.panel.frame(&mut self.ui, escape) == gc_ui::viewer::ViewerAction::Back;
+            self.ui.end_frame();
+            hud::upload_ui(&mut self.renderer, &mut self.ui_quads, &self.ui.draw, scale);
+            if leave {
+                self.close_viewer();
+            }
+            return;
+        }
         let action = self.menu.frame(&mut self.ui);
         self.map_previews.poll(&mut self.menu);
         self.ui.end_frame();
@@ -2771,6 +2832,7 @@ impl Running {
             MenuAction::Resume => self.close_menu(),
             MenuAction::Quit => self.quit = true,
             MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox),
+            MenuAction::OpenViewer => self.open_viewer("start"),
             MenuAction::ListReplays => {
                 // A replay being saved now belongs in the list.
                 self.save_recording();
@@ -2805,6 +2867,126 @@ impl Running {
                 self.start_match(MatchKind::Battle(setup));
             }
         }
+    }
+
+    /// Open the unit viewer over the menu, on the unit called `unit` (or the
+    /// first one with a model, for "start").
+    fn open_viewer(&mut self, unit: &str) {
+        let models = match models::load() {
+            Ok(m) if self.art.is_some() => m,
+            result => {
+                if let Err(e) = result {
+                    logln!("grubcraft: unit viewer: {e}");
+                }
+                self.menu
+                    .tell("The unit viewer needs the 3D models, which did not load.".into());
+                return;
+            }
+        };
+        let heightmap = &self.heightmap;
+        let mut viewer = viewer::Viewer::new(
+            &models,
+            heightmap.tiles as f32,
+            |p| heightmap.height_at(p.x, p.y),
+            &self.camera,
+        );
+        if !unit.eq_ignore_ascii_case("start") && !viewer.panel.select_named(unit) {
+            logln!("grubcraft: --viewer: no unit named {unit:?}; showing the first");
+        }
+        self.viewer = Some(viewer);
+        // Nothing of the battlefield view carries over.
+        self.commander = false;
+        self.reset_ui_input();
+    }
+
+    /// Forget a half-made click and anything typed or pressed.
+    fn reset_ui_input(&mut self) {
+        self.ui.reset();
+        self.ui_input = UiInput::default();
+    }
+
+    /// Leave the unit viewer for the main menu, with the camera as it was.
+    fn close_viewer(&mut self) {
+        if let Some(viewer) = self.viewer.take() {
+            self.camera = viewer.saved_camera().clone();
+            self.camera.aspect = self.renderer.aspect_ratio();
+        }
+        self.reset_ui_input();
+    }
+
+    /// Mouse, wheel and keys while the unit viewer is open. True when the
+    /// event is dealt with (the menu never sees it).
+    fn viewer_event(&mut self, event: &WindowEvent) -> bool {
+        let (screen, _) = self.ui_screen();
+        let size = self.window.inner_size();
+        let cursor = self.input.cursor.unwrap_or_default();
+        let at = self.ui_cursor();
+        let over_panel = gc_ui::viewer::over_panel(screen, at);
+        let Some(viewer) = self.viewer.as_mut() else {
+            return false;
+        };
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input.cursor = Some(*position);
+                viewer.drag_to((position.x, position.y), (size.width, size.height));
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let slot = match button {
+                    MouseButton::Left => 0,
+                    MouseButton::Right => 1,
+                    MouseButton::Middle => 2,
+                    _ => return true,
+                };
+                let down = *state == ElementState::Pressed;
+                if slot == 0 {
+                    // The panels' buttons use the left button.
+                    if down {
+                        self.ui_input.pressed = true;
+                    } else {
+                        self.ui_input.released = true;
+                    }
+                }
+                if down && !over_panel {
+                    viewer.press(slot, self.input.shift, (cursor.x, cursor.y));
+                } else if !down {
+                    viewer.release(slot);
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let up = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => *y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                };
+                // Over a panel the wheel scrolls it; over the model it zooms.
+                if over_panel {
+                    // A trackpad sends fractions of a row: collect them.
+                    self.viewer_scroll -= up;
+                    let rows = self.viewer_scroll.trunc();
+                    self.viewer_scroll -= rows;
+                    if rows != 0.0 {
+                        viewer.panel.wheel(screen, at, rows as i32);
+                    }
+                } else {
+                    viewer.zoom(0.88f32.powf(up));
+                }
+            }
+            WindowEvent::PinchGesture { delta, .. } => viewer.zoom(1.0 - *delta as f32),
+            WindowEvent::RotationGesture { delta, .. } => viewer.turn(delta.to_radians()),
+            WindowEvent::KeyboardInput { event: key, .. } => {
+                if key.state == ElementState::Pressed {
+                    match key.physical_key {
+                        PhysicalKey::Code(KeyCode::ArrowUp) => self.ui_input.up = true,
+                        PhysicalKey::Code(KeyCode::ArrowDown) => self.ui_input.down = true,
+                        PhysicalKey::Code(KeyCode::ArrowLeft) => self.ui_input.left = true,
+                        PhysicalKey::Code(KeyCode::ArrowRight) => self.ui_input.right = true,
+                        PhysicalKey::Code(KeyCode::Home | KeyCode::KeyR) => viewer.reset_view(),
+                        _ => self.menu_key(key),
+                    }
+                }
+            }
+            _ => return false,
+        }
+        true
     }
 
     fn close_menu(&mut self) {
@@ -3549,6 +3731,11 @@ impl Running {
         if let Some(room) = &self.showroom {
             let heightmap = &self.heightmap;
             room.aim(&mut self.camera, |p| heightmap.height_at(p.x, p.y));
+            return;
+        }
+        // The unit viewer's camera orbits the model on show.
+        if let Some(viewer) = &mut self.viewer {
+            viewer.update(dt, &mut self.camera);
             return;
         }
         if self.menu_open && !self.match_started {

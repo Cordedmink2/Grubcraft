@@ -18,6 +18,7 @@ use rosters::{FactionDef, Stats};
 
 mod conquest;
 pub mod rosters;
+pub mod viewer;
 
 /// The data files the baker reads, relative to the data directory. Build
 /// scripts use this list to know when to re-bake.

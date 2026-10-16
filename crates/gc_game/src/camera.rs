@@ -1,4 +1,4 @@
-//! Bird's-eye RTS camera: fixed pitch, limited yaw, zoom by distance.
+//! Bird's-eye RTS camera: a set pitch (the unit viewer tilts it), limited yaw, zoom by distance.
 //! See docs/08-ui-ux.md#camera.
 
 use glam::camera::rh::{proj::directx::perspective, view::look_at_mat4};
@@ -10,12 +10,16 @@ const MAX_YAW: f32 = 45.0 * std::f32::consts::PI / 180.0;
 pub const MIN_DISTANCE: f32 = 14.0;
 pub const MAX_DISTANCE: f32 = 260.0;
 
+#[derive(Clone, Debug)]
 pub struct RtsCamera {
     /// Ground point the camera looks at, in tiles.
     pub focus: Vec2,
     /// Height of the ground under the focus (smoothed by the caller).
     pub focus_height: f32,
     pub distance: f32,
+    /// How steeply the camera looks down, in radians. The battlefield view
+    /// keeps `PITCH`; only the unit viewer tilts it.
+    pub pitch: f32,
     /// Rotation away from the default north-facing view, in radians.
     pub yaw: f32,
     /// The view Home returns to, and the middle of the turning range: north
@@ -31,6 +35,7 @@ impl RtsCamera {
             focus,
             focus_height: 0.0,
             distance: 110.0,
+            pitch: PITCH,
             yaw: 0.0,
             home_yaw: 0.0,
             map_size,
@@ -40,7 +45,7 @@ impl RtsCamera {
 
     fn offset_dir(&self) -> Vec3 {
         let (s, c) = self.yaw.sin_cos();
-        Vec3::new(s * PITCH.cos(), PITCH.sin(), c * PITCH.cos())
+        Vec3::new(s * self.pitch.cos(), self.pitch.sin(), c * self.pitch.cos())
     }
 
     /// The direction the camera looks.
@@ -58,8 +63,18 @@ impl RtsCamera {
 
     pub fn view_proj(&self) -> Mat4 {
         let view = look_at_mat4(self.eye(), self.target(), Vec3::Y);
-        let proj = perspective(FOV_Y, self.aspect, 1.0, self.distance * 3.0 + 300.0);
+        // Close up (the unit viewer) the near plane comes in so a model's
+        // nearest edge is not cut; from battlefield heights it stays at 1.
+        let near = (self.distance * 0.1).clamp(0.05, 1.0);
+        let proj = perspective(FOV_Y, self.aspect, near, self.distance * 3.0 + 300.0);
         proj * view
+    }
+
+    /// The directions that are right and up on the screen.
+    pub fn screen_axes(&self) -> (Vec3, Vec3) {
+        let back = self.offset_dir();
+        let right = Vec3::Y.cross(back).normalize();
+        (right, back.cross(right))
     }
 
     /// How many pixels tall something 1 tile tall shows, 1 tile from the
@@ -74,8 +89,7 @@ impl RtsCamera {
     /// middle `fill` of the window (1 is edge to edge).
     pub fn fit_distance(&self, points: impl IntoIterator<Item = Vec3>, fill: f32) -> f32 {
         let back = self.offset_dir();
-        let right = Vec3::Y.cross(back).normalize();
-        let up = back.cross(right);
+        let (right, up) = self.screen_axes();
         let half = (FOV_Y * 0.5).tan() * fill;
         points.into_iter().fold(0.0, |need: f32, p| {
             // The point across the screen, up it, and how much nearer the
@@ -139,6 +153,24 @@ impl RtsCamera {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screen_axes_are_perpendicular_to_each_other_and_the_view() {
+        let mut cam = RtsCamera::new(256.0, Vec2::ZERO);
+        for (yaw, pitch) in [(0.0, 0.4), (1.0, 1.2), (-2.0, 0.05)] {
+            cam.yaw = yaw;
+            cam.pitch = pitch;
+            let (right, up) = cam.screen_axes();
+            let back = -cam.forward();
+            assert!(right.dot(up).abs() < 1e-5);
+            assert!(right.dot(back).abs() < 1e-5);
+            assert!(up.dot(back).abs() < 1e-5);
+            assert!(up.y > 0.0, "up is up");
+        }
+        // Turned to the default, right is east.
+        cam.yaw = 0.0;
+        assert!((cam.screen_axes().0 - Vec3::X).length() < 1e-5);
+    }
 
     #[test]
     fn centre_ray_hits_focus() {
