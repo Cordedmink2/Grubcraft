@@ -5,8 +5,8 @@ use gc_sim::MoraleState;
 use gc_sim::formation::GroupOrder;
 use gc_ui::DrawList;
 use gc_ui::hud::{
-    Card, CardState, DeployStatus, Dot, Hud, HudData, HudEvent, HudInput, MinimapData,
-    MinimapTerrain,
+    Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, Hud, HudData, HudEvent, HudInput,
+    MinimapData, MinimapTerrain, SlotState,
 };
 use glam::{Vec2, Vec3};
 
@@ -16,6 +16,33 @@ use crate::{Running, from_fx_vec, fx_vec, sounds};
 /// Cells per side of the minimap's ground picture.
 const TERRAIN_CELLS: usize = 48;
 
+/// A plain move to `p`: the units choose their own facing and frontage.
+pub fn move_order(p: Vec2) -> GroupOrder {
+    GroupOrder {
+        target: fx_vec(p),
+        facing: None,
+        width: None,
+    }
+}
+
+/// An order that waits for the click that completes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Armed {
+    Move,
+    Attack,
+}
+
+/// Slots of the command grid, row by row (docs/08-ui-ux.md#screen-layout-1080p-reference).
+pub const SLOT_MOVE: usize = 0;
+pub const SLOT_ATTACK: usize = 1;
+pub const SLOT_FORMATION: usize = 3;
+// Run (C) and Retire (V) share keys with the sandbox's credits and reveal-all
+// tools; those move when the two orders arrive.
+const LABELS: [&str; GRID_SLOTS] = [
+    "Move", "Attack", "Hold", "Form", "Skill1", "Skill2", "Skill3", "Ultim", "Skirm", "Charge",
+    "Run", "Retire",
+];
+
 /// Everything the HUD keeps between frames.
 #[derive(Default)]
 pub struct HudState {
@@ -24,6 +51,9 @@ pub struct HudState {
     /// Mouse events collected since the last frame (position is filled in
     /// when the HUD runs).
     input: HudInput,
+    /// Q or W was pressed: the next left click says where to go or whom to
+    /// attack.
+    pub armed: Option<Armed>,
     /// A button went down on the bar (or the minimap drag), so its release
     /// is the bar's, wherever the mouse is by then.
     left_held: bool,
@@ -72,6 +102,7 @@ impl HudState {
     /// Forget any half-finished click, e.g. when a menu opens over the bar.
     pub fn reset(&mut self) {
         self.hud = Hud::default();
+        self.armed = None;
         self.input = HudInput::default();
         self.left_held = false;
         self.right_held = false;
@@ -169,6 +200,9 @@ impl Running {
             .retain(|&h| self.world.regiments.get(h).is_some());
 
         let hud = &mut self.hud;
+        if self.selected.is_empty() {
+            hud.armed = None;
+        }
         hud.dots.clear();
         hud.cards.clear();
         hud.picked.clear();
@@ -227,6 +261,25 @@ impl Running {
             hud.view.push(view_corner(&self.camera, ndc, map));
         }
 
+        // A replay plays its recorded orders and nobody else's.
+        let has_orders = !self.selected.is_empty() && self.watching.is_none();
+        let ready = |on: bool| if on { SlotState::Ready } else { SlotState::Off };
+        let mut grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|i| GridSlot {
+            label: LABELS[i],
+            ..GridSlot::default()
+        });
+        grid[SLOT_MOVE].state = ready(has_orders);
+        grid[SLOT_ATTACK].state = ready(has_orders);
+        grid[SLOT_FORMATION].state = ready(has_orders);
+        match hud.armed {
+            Some(Armed::Move) => grid[SLOT_MOVE].state = SlotState::Armed,
+            Some(Armed::Attack) => grid[SLOT_ATTACK].state = SlotState::Armed,
+            None => {}
+        }
+        if let Some(Some(f)) = self.shown_formation {
+            grid[SLOT_FORMATION].detail = f.name();
+        }
+
         let mut input = std::mem::take(&mut hud.input);
         input.mouse = cursor;
         input.shift = self.input.shift;
@@ -234,6 +287,7 @@ impl Running {
         hud.draw.clear();
         hud.events.clear();
         let data = HudData {
+            grid: &grid,
             minimap: MinimapData {
                 map_tiles: map,
                 terrain: &hud.terrain,
@@ -295,6 +349,7 @@ impl Running {
                 }
                 self.ui_sound(sounds::UiSound::Select);
             }
+            HudEvent::Command(slot) => self.grid_press(slot),
             HudEvent::Ready => {
                 self.human_orders.push(gc_sim::PlayerCommand {
                     player: self.sandbox.side,
@@ -304,14 +359,47 @@ impl Running {
             }
             HudEvent::Order([x, z]) => {
                 if !self.selected.is_empty() {
-                    self.issue_group_order(GroupOrder {
-                        target: fx_vec(Vec2::new(x, z)),
-                        facing: None,
-                        width: None,
-                    });
+                    self.issue_group_order(move_order(Vec2::new(x, z)));
                 }
             }
         }
+    }
+
+    /// A grid button clicked or its key pressed. Slots whose orders the
+    /// simulation doesn't have yet do nothing.
+    pub fn grid_press(&mut self, slot: usize) {
+        if self.selected.is_empty() || self.watching.is_some() || self.sandbox.placing {
+            return;
+        }
+        match slot {
+            SLOT_MOVE | SLOT_ATTACK => {
+                let want = if slot == SLOT_MOVE {
+                    Armed::Move
+                } else {
+                    Armed::Attack
+                };
+                // Pressing it again puts it down.
+                self.hud.armed = (self.hud.armed != Some(want)).then_some(want);
+            }
+            SLOT_FORMATION => self.cycle_formation(),
+            _ => {}
+        }
+    }
+
+    /// The click after Q or W: send the selection there, or at the enemy there.
+    pub fn finish_armed_order(&mut self) {
+        let (Some(armed), Some(p)) = (self.hud.armed, self.ground_under_cursor()) else {
+            return;
+        };
+        // A click that finds nothing to attack keeps the order armed.
+        match armed {
+            Armed::Move => self.issue_group_order(move_order(p)),
+            Armed::Attack => match self.enemy_at(p) {
+                Some(target) => self.issue_attack(target),
+                None => return,
+            },
+        }
+        self.hud.armed = None;
     }
 
     fn own_regiment(&self, id: u32) -> Option<gc_sim::RegimentHandle> {

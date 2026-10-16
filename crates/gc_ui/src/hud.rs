@@ -15,10 +15,18 @@ use crate::ui::theme;
 pub const BAR_HEIGHT: i32 = 168;
 const MARGIN: i32 = 8;
 /// Width kept free at the bar's right end for the command grid.
-const GRID_WIDTH: i32 = 212;
+const GRID_WIDTH: i32 = 244;
 const CARD_MIN_W: i32 = 48;
 const CARD_MAX_W: i32 = 84;
 const CARD_GAP: i32 = 4;
+/// The command grid is 4 columns by 3 rows, row by row.
+pub const GRID_COLS: usize = 4;
+pub const GRID_ROWS: usize = 3;
+pub const GRID_SLOTS: usize = GRID_COLS * GRID_ROWS;
+/// The key on each slot (docs/08-ui-ux.md: one grid, the same keys everywhere).
+pub const GRID_KEYS: [char; GRID_SLOTS] =
+    ['Q', 'W', 'E', 'R', 'A', 'S', 'D', 'F', 'Z', 'X', 'C', 'V'];
+const GRID_GAP: i32 = 4;
 /// Two clicks on a card within this long are a double-click.
 const DOUBLE_CLICK_MS: u64 = 400;
 
@@ -123,7 +131,28 @@ pub struct Card {
     pub selected: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SlotState {
+    /// Not available now (no selection, or the game can't do it yet).
+    #[default]
+    Off,
+    Ready,
+    /// Waiting for the click that says where.
+    Armed,
+}
+
+/// One button of the command grid.
+#[derive(Clone, Debug, Default)]
+pub struct GridSlot {
+    /// At most 6 characters.
+    pub label: &'static str,
+    /// A second, smaller line, e.g. the current formation.
+    pub detail: &'static str,
+    pub state: SlotState,
+}
+
 pub struct HudData<'a> {
+    pub grid: &'a [GridSlot; GRID_SLOTS],
     pub minimap: MinimapData<'a>,
     pub cards: &'a [Card],
     /// Shown above the cards, e.g. "Selected" or "Group 2".
@@ -164,6 +193,8 @@ pub enum HudEvent {
     Select { id: u32, add: bool },
     /// Move the camera to this regiment.
     Centre(u32),
+    /// A command grid button was clicked (its index, row by row).
+    Command(usize),
     /// Done deploying.
     Ready,
 }
@@ -207,6 +238,66 @@ impl Hud {
         self.tray(draw, &layout, input, data, events);
         if let Some(deploy) = data.deployment {
             deploy_panel(draw, layout.grid, input, deploy, events);
+        } else {
+            self.grid(draw, &layout, input, data.grid, events);
+        }
+    }
+
+    fn grid(
+        &mut self,
+        draw: &mut DrawList,
+        layout: &HudLayout,
+        input: HudInput,
+        slots: &[GridSlot; GRID_SLOTS],
+        events: &mut Vec<HudEvent>,
+    ) {
+        let r = layout.grid;
+        let cell_w = (r.w - (GRID_COLS as i32 - 1) * GRID_GAP) / GRID_COLS as i32;
+        let cell_h = (r.h - (GRID_ROWS as i32 - 1) * GRID_GAP) / GRID_ROWS as i32;
+        if cell_w < 24 || cell_h < 24 {
+            return;
+        }
+        for (i, slot) in slots.iter().enumerate() {
+            let (col, row) = ((i % GRID_COLS) as i32, (i / GRID_COLS) as i32);
+            let cell = Rect::new(
+                r.x + col * (cell_w + GRID_GAP),
+                r.y + row * (cell_h + GRID_GAP),
+                cell_w,
+                cell_h,
+            );
+            let hot = slot.state != SlotState::Off && cell.contains(input.mouse.0, input.mouse.1);
+            if hot && input.left_pressed {
+                events.push(HudEvent::Command(i));
+            }
+            let (back, edge, text) = match slot.state {
+                SlotState::Off => (theme::FIELD, theme::PANEL_EDGE, theme::DISABLED),
+                SlotState::Ready if hot => (theme::BUTTON_HOT, theme::PANEL_EDGE, theme::TEXT),
+                SlotState::Ready => (theme::BUTTON, theme::PANEL_EDGE, theme::TEXT),
+                SlotState::Armed => (theme::PRIMARY, theme::ACCENT, theme::TEXT),
+            };
+            draw.rect(cell, back);
+            draw.border(cell, 1, edge);
+            let inner = cell.inset(3);
+            let chars = (inner.w / 8).max(1) as usize;
+            let mut key = [0u8; 4];
+            draw.text(
+                inner.x,
+                inner.y,
+                1,
+                theme::MUTED,
+                GRID_KEYS[i].encode_utf8(&mut key),
+            );
+            let label_y = inner.y + 16;
+            draw.text(inner.x, label_y, 1, text, &fit(slot.label, chars));
+            if !slot.detail.is_empty() {
+                draw.text(
+                    inner.x,
+                    label_y + 14,
+                    1,
+                    theme::MUTED,
+                    &fit(slot.detail, chars),
+                );
+            }
         }
     }
 
@@ -534,7 +625,17 @@ mod tests {
         dots: &[Dot],
     ) -> (Vec<HudEvent>, DrawList) {
         let t = terrain();
+        let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|i| GridSlot {
+            label: "Move",
+            detail: "",
+            state: if i == 0 {
+                SlotState::Ready
+            } else {
+                SlotState::Off
+            },
+        });
         let data = HudData {
+            grid: &grid,
             minimap: MinimapData {
                 map_tiles: 256.0,
                 terrain: &t,
@@ -556,8 +657,10 @@ mod tests {
         let l = HudLayout::new(SCREEN);
         let button = (l.grid.x + l.grid.w / 2, l.grid.bottom() - 20);
         let t = terrain();
+        let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
         let frame = |ready, input| {
             let data = HudData {
+                grid: &grid,
                 minimap: MinimapData {
                     map_tiles: 256.0,
                     terrain: &t,
@@ -726,6 +829,29 @@ mod tests {
         let (_, draw) = run(&mut hud, HudInput::default(), &cards, &dots);
         assert!(draw.quads.len() < 3000, "{}", draw.quads.len());
         assert!(!draw.quads.is_empty());
+    }
+
+    #[test]
+    fn only_a_ready_button_reports_a_click() {
+        let mut hud = Hud::default();
+        let l = HudLayout::new(SCREEN);
+        let cell_w = (l.grid.w - 3 * GRID_GAP) / GRID_COLS as i32;
+        let cell_h = (l.grid.h - 2 * GRID_GAP) / GRID_ROWS as i32;
+        let at = |col: i32, row: i32| HudInput {
+            mouse: (
+                l.grid.x + 6 + col * (cell_w + GRID_GAP),
+                l.grid.y + 6 + row * (cell_h + GRID_GAP),
+            ),
+            left_pressed: true,
+            ..HudInput::default()
+        };
+        let (ev, _) = run(&mut hud, at(0, 0), &[], &[]);
+        assert_eq!(ev, vec![HudEvent::Command(0)]);
+        // The next slot is off in this test, and clicks on it do nothing.
+        let (ev, _) = run(&mut hud, at(1, 0), &[], &[]);
+        assert!(ev.is_empty());
+        let (ev, _) = run(&mut hud, at(3, 2), &[], &[]);
+        assert!(ev.is_empty());
     }
 
     #[test]

@@ -286,7 +286,7 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 - Factions, units, abilities, upgrades and maps are defined in RON under `data/`, compiled by `gc_bake` into binary tables.
 - The game's build script bakes `data/` and embeds the resulting data pack in the executable, so a build can never run with stale or mismatched data. Art and audio (from M1) go in a separate pack that is memory-mapped, as above.
 - The compiled data has a **BLAKE3 hash**. The lobby refuses to start unless every player has the same game build hash and data hash, which rules out the most common cause of desyncs.
-- In solo sandbox, RON files hot-reload for balance tuning. **Built so far (M1 step 7):** `R` re-bakes `data/units.ron` with `gc_bake` (the same checks as the build) and sends a `TuneUnit` command for each type that changed; the stats panel sends the same command. Tuning goes through the command stream like any order, so it is deterministic and will replay. The unit table is part of the state hash. Adding or removing unit types still needs a restart.
+- In solo sandbox, RON files hot-reload for balance tuning. **Built so far (M1 step 7):** `Shift`+`R` re-bakes `data/units.ron` with `gc_bake` (the same checks as the build) and sends a `TuneUnit` command for each type that changed; the stats panel sends the same command. Tuning goes through the command stream like any order, so it is deterministic and will replay. The unit table is part of the state hash. Adding or removing unit types still needs a restart.
 
 ## Maps
 - Heightmap (`u16`), tile types (`u8`), water depth layer (reserved for naval), object list, Bloodseep sites and a small event-script block.

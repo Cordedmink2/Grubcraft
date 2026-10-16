@@ -10,7 +10,7 @@
 //! Shift + Delete clears it. P pauses; - and = slow the game down to a tenth
 //! or speed it up to four times. T opens the stats panel for the chosen type:
 //! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
-//! and regiments on the field change at once. R reloads `data/units.ron`
+//! and regiments on the field change at once. Shift+R reloads `data/units.ron`
 //! when the game runs from the repository. H hides the sandbox panel; C
 //! shows the credits for the art. I hands the side you command to the
 //! battle AI (Recruit, then Veteran, then General, then back to you); the
@@ -23,7 +23,8 @@
 //!
 //! The bottom bar has a minimap (click or drag to move the camera, right-click
 //! to send the selection there) and an army tray of regiment cards (click to
-//! select, Shift-click to toggle, double-click to centre).
+//! select, Shift-click to toggle, double-click to centre). The command grid
+//! has Q (move) and W (attack), each followed by a left-click, and R (formation).
 //! Orders: left-click one of your regiments to select it, or left-drag a box around
 //! several; Shift adds or removes. Right-click the ground to march the
 //! selection there side by side, facing the way they travel; right-drag to
@@ -31,7 +32,7 @@
 //! away from the camera side of the line); a big selection forms several
 //! lines. Right-click an enemy regiment to attack it; archers (each army's
 //! back two rows) also shoot enemies in range on their own, and blocks that
-//! touch fight. F changes the selection's formation (not while locked in
+//! touch fight. R (or F) changes the selection's formation (not while locked in
 //! melee): Line, Tight (stronger to hold, cramped for swinging blades),
 //! Loose (gaps for blades to swing and arrows to miss) and, for regiments
 //! with shields, Shield wall (turns arrows from the front, marches at half
@@ -1077,6 +1078,9 @@ impl ApplicationHandler for App {
                     if r.sandbox.tuning && down && r.tune_key(code) {
                         return;
                     }
+                    let reload_key = code == KeyCode::KeyR && r.input.shift;
+                    let grid_key =
+                        down && !event.repeat && !r.input.shift && !r.input.command && !r.input.alt;
                     // The sandbox's clock and side keys would change this
                     // machine's game and nobody else's; its editing tools
                     // also change what a replay plays.
@@ -1097,8 +1101,7 @@ impl ApplicationHandler for App {
                             | KeyCode::Delete
                             | KeyCode::Backspace
                             | KeyCode::KeyT
-                            | KeyCode::KeyR
-                    );
+                    ) || reload_key;
                     // P carries on without a player the match is paused for.
                     if code == KeyCode::KeyP
                         && down
@@ -1150,6 +1153,7 @@ impl ApplicationHandler for App {
                         KeyCode::KeyI if down && !event.repeat => r.cycle_mind(),
                         KeyCode::KeyB if down && !event.repeat => {
                             r.sandbox.placing = !r.sandbox.placing;
+                            r.hud.armed = None;
                             r.sandbox.dirty = true;
                         }
                         KeyCode::BracketLeft if down => r.choose_unit(-1),
@@ -1162,7 +1166,15 @@ impl ApplicationHandler for App {
                             r.input.arrows = [false; 4];
                             r.sandbox.dirty = true;
                         }
-                        KeyCode::KeyR if down && !event.repeat => r.reload_data(),
+                        // Shift+R: the dev tool; plain R is the grid's Formation.
+                        KeyCode::KeyR if down && !event.repeat && reload_key => r.reload_data(),
+                        // The grid's keys leave Cmd/Ctrl/Alt chords to the system.
+                        KeyCode::KeyQ if grid_key => r.grid_press(hud::SLOT_MOVE),
+                        KeyCode::KeyW if grid_key => r.grid_press(hud::SLOT_ATTACK),
+                        // F stays as R's twin until the Ultimate slot has an ability.
+                        KeyCode::KeyR | KeyCode::KeyF if grid_key => {
+                            r.grid_press(hud::SLOT_FORMATION);
+                        }
                         KeyCode::KeyC if down && !event.repeat => {
                             r.sandbox.credits = !r.sandbox.credits;
                             r.sandbox.dirty = true;
@@ -1184,7 +1196,6 @@ impl ApplicationHandler for App {
                             r.reveal_all = !r.reveal_all;
                             r.sandbox.dirty = true;
                         }
-                        KeyCode::KeyF if down && !event.repeat => r.cycle_formation(),
                         KeyCode::KeyL if down && !event.repeat => {
                             r.lens = !r.lens;
                             r.sandbox.dirty = true;
@@ -1199,6 +1210,7 @@ impl ApplicationHandler for App {
                                 s.toggle_music();
                             }
                         }
+                        KeyCode::Escape if down && r.hud.armed.take().is_some() => {}
                         KeyCode::Escape
                             if down
                                 && (r.sandbox.placing || r.sandbox.tuning || r.sandbox.credits) =>
@@ -1278,6 +1290,13 @@ impl Running {
             (MouseButton::Left, ElementState::Pressed) => {
                 self.input.left_down = self.input.cursor;
             }
+            // Q or W was pressed: this click says where (or at whom).
+            (MouseButton::Left, ElementState::Released)
+                if self.hud.armed.is_some() && !self.hud_wants_mouse() =>
+            {
+                self.finish_armed_order();
+                self.input.left_down = None;
+            }
             (MouseButton::Left, ElementState::Released) if self.sandbox.placing => {
                 self.place_regiment();
                 self.input.left_down = None;
@@ -1309,6 +1328,8 @@ impl Running {
                 self.input.right_down = self.input.cursor.zip(self.ground_under_cursor());
             }
             (MouseButton::Right, ElementState::Released) => {
+                // A right-click order takes the place of an armed one.
+                self.hud.armed = None;
                 let drag = self.drag_order();
                 let enemy = drag
                     .is_none()
@@ -1316,22 +1337,10 @@ impl Running {
                     .flatten()
                     .and_then(|p| self.enemy_at(p));
                 if let Some(target) = enemy {
-                    if !self.selected.is_empty() {
-                        self.attack_mark = Some((target, Instant::now()));
-                        self.ui_sound(sounds::UiSound::Attack);
-                    }
-                    self.human_orders
-                        .extend(self.selected.iter().map(|&regiment| PlayerCommand {
-                            player: self.sandbox.side,
-                            command: gc_sim::Command::Attack { regiment, target },
-                        }));
-                } else if let Some(order) = drag.or_else(|| {
-                    self.ground_under_cursor().map(|p| GroupOrder {
-                        target: fx_vec(p),
-                        facing: None,
-                        width: None,
-                    })
-                }) {
+                    self.issue_attack(target);
+                } else if let Some(order) =
+                    drag.or_else(|| self.ground_under_cursor().map(hud::move_order))
+                {
                     self.issue_group_order(order);
                 }
                 self.input.right_down = None;
@@ -1398,6 +1407,19 @@ impl Running {
             .extend(self.group_commands.iter().map(|&command| PlayerCommand {
                 player: self.sandbox.side,
                 command,
+            }));
+    }
+
+    /// Send the selection to attack `target`.
+    fn issue_attack(&mut self, target: RegimentHandle) {
+        if !self.selected.is_empty() {
+            self.attack_mark = Some((target, Instant::now()));
+            self.ui_sound(sounds::UiSound::Attack);
+        }
+        self.human_orders
+            .extend(self.selected.iter().map(|&regiment| PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::Attack { regiment, target },
             }));
     }
 
@@ -1574,7 +1596,7 @@ impl Running {
             .map(|(h, _)| h)
     }
 
-    /// F: the selection's next formation, Line, Tight, Loose, then Shield
+    /// R (or F): the selection's next formation, Line, Tight, Loose, then Shield
     /// wall when any of them carry shields. Regiments without shields form
     /// Tight instead of a shield wall.
     fn cycle_formation(&mut self) {
@@ -3219,7 +3241,7 @@ impl Running {
     fn reload_data(&mut self) {
         let Some(dir) = sandbox::data_dir() else {
             self.say(
-                "R reloads data/units.ron, but there is none here (run from the repository)."
+                "Shift+R reloads data/units.ron, but there is none here (run from the repository)."
                     .into(),
             );
             return;
@@ -3380,7 +3402,7 @@ impl Running {
                 format!("B: place regiments   [ ]: type ({name})")
             },
             format!("game     {speed}   P: pause   - =: slower, faster"),
-            "Delete: remove selected   Shift+Delete: clear field   T: tune stats   R: reload data"
+            "Delete: remove selected   Shift+Delete: clear field   T: tune stats   Shift+R: reload data"
                 .to_string(),
             if self.commander {
                 "view     Commander View: one banner per regiment (zoom in for soldiers)   C: credits"
@@ -3437,10 +3459,10 @@ impl Running {
     fn formation_line(&self) -> String {
         match self.selection_formation() {
             None => {
-                "order    F: formation (Line, Tight, Loose, Shield wall) for the selection".into()
+                "order    R: formation (Line, Tight, Loose, Shield wall) for the selection".into()
             }
-            Some(Some(f)) => format!("order    {}   F: next formation", f.name()),
-            Some(None) => "order    mixed formations   F: next formation".into(),
+            Some(Some(f)) => format!("order    {}   R: next formation", f.name()),
+            Some(None) => "order    mixed formations   R: next formation".into(),
         }
     }
 
