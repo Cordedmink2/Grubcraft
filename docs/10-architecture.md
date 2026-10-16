@@ -136,6 +136,13 @@ Crates marked *(later)* don't exist yet. Until `gc_present` is needed, interpola
 
 **Built so far:** commands (including the sandbox's `RemoveRegiment` and `TuneUnit`, and `SetFormation`), then combat's contact, charge and chase checks, then lines that push (losers give ground, winners follow, the pinned are disordered), then route planning (budgeted searches), then movement and turning along the routes, then melee blows and volleys, then morale, then the champions' challenge, then vision (on maps with woods and tall grass: who sees each regiment, springing ambushes, ending chases after targets gone out of sight; see [Fog of war](#fog-of-war)). While a Field Battle's armies deploy (`gc_sim::deploy`), a tick applies its commands and does nothing else. The state hash is computed on request (the determinism test checks it every 600 ticks); snapshots come with M2.
 
+### What happened: sim events
+After each tick the sim tells what it did (`gc_sim::events`, `World::events()`), so the game's sounds, falling soldiers, shooting marks and alerts read it instead of comparing what they saw before with what they see now:
+- `Loosed` (a volley's id, shooter and target) and `Landed` (where it came down and how many of its target fell to it). A volley's id is its pool slot and launch tick, and `World::volleys()` shows each one in the air with its id and shooter.
+- `Losses` (soldiers a regiment lost this tick to anything; all it had when wiped out), `Morale` (a change of heart: wavered, broke, rallied, shattered), `Contact` (a regiment met an enemy in melee, having fought nobody the tick before) and `Ambush`.
+
+Events are not part of the match's state: not hashed, not in snapshots, and gone at the next tick, so a viewer that skips ticks (catching up, seeking a replay) just doesn't read them. Regiments placed or removed by commands aren't told. A rehearsal's scratch world tells nothing and keeps no room for it; a match's world reserves all its room when the match starts, so telling allocates nothing in the tick.
+
 ### Spatial partitioning
 A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt incrementally (entities move bucket only when they cross a boundary). Used for collision, targeting, vision and area effects.
 

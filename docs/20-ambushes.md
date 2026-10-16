@@ -196,7 +196,7 @@ On the [campaign](19-campaign.md), ambushes are a host's choice of where to wait
 - **Order within a tick:** commands (an Attack must name a target the issuer's side sees), contacts, movement, melee and volleys (archers pick seen targets; hidden archers hold fire; caught-off-guard blows deal 70%; combat lists each volley loosed, shooter and target), morale (only seen enemies count toward being outnumbered, or toward a router's flight and rally), then **vision**: timers count down; the volleys loosed and the new melee contacts are checked for surprise against what each side saw before this tick, and the shocks applied; then each regiment's cover and movement give its spotting distance, those in cover look for spotters with the combat grid's neighbour search, and sightings and lingering are updated; chases after targets that went out of sight become marches to the last place seen.
 - **Cost:** regiments in the open cost a few comparisons; only regiments in cover search for spotters. No allocation in the tick (the no-allocation test runs a map with cover).
 - **Determinism:** integers only, index order, all of it hashed while the map has cover.
-- **API:** `World::sees(party, regiment)`, `World::hidden(regiment)` (no enemy sees it), `World::caught_off_guard(regiment)`, and `World::ambushes()`, the ambushes sprung this tick (ambusher, victim), for the game's alert.
+- **API:** `World::sees(party, regiment)`, `World::hidden(regiment)` (no enemy sees it), `World::caught_off_guard(regiment)`, and `World::ambushes()`, the ambushes sprung this tick (ambusher, victim), for the game's alert; each is also told as an `Event::Ambush` in `World::events()` (see [10 · Architecture](10-architecture.md#what-happened-sim-events)).
 
 ### The game
 

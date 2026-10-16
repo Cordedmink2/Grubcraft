@@ -22,6 +22,7 @@ use core::cell::Cell;
 
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
+use crate::events::{Event, VolleyId};
 use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_PINNED, SHOCK_REAR, WAVERING_DAMAGE_PERCENT};
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments, Strike, hash_handle};
@@ -278,8 +279,13 @@ pub struct Combat {
     /// Ground each regiment gives this tick (see [`Combat::push_lines`]).
     give: Vec<FxVec2>,
     volleys: Volleys,
-    /// Volleys loosed this tick: (shooter, target), for vision.
-    loosed: Vec<(RegimentHandle, RegimentHandle)>,
+    /// Volleys loosed this tick: (volley, shooter, target), for vision
+    /// and the tick's events.
+    loosed: Vec<(VolleyId, RegimentHandle, RegimentHandle)>,
+    /// Volleys that came down this tick, for the tick's events (kept only
+    /// while `tell`: a rehearsal's world tells no one).
+    landed: Vec<Event>,
+    tell: bool,
 }
 
 /// Where every regiment is, borrowed field by field from [`Regiments`] so a
@@ -315,6 +321,9 @@ struct Volleys {
     alive: Vec<bool>,
     owner: Vec<PlayerId>,
     target: Vec<RegimentHandle>,
+    /// Who loosed it: only told to viewers (it changes nothing in play, so
+    /// it isn't hashed).
+    shooter: Vec<RegimentHandle>,
     from: Vec<FxVec2>,
     aim: Vec<FxVec2>,
     launch: Vec<u32>,
@@ -328,6 +337,9 @@ struct Volleys {
 /// One volley in flight, for presentation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VolleyView {
+    pub id: VolleyId,
+    /// The regiment that loosed it (it may have fallen since).
+    pub shooter: RegimentHandle,
     pub owner: PlayerId,
     pub from: FxVec2,
     pub aim: FxVec2,
@@ -370,6 +382,7 @@ impl Combat {
                 alive: vec![false; MAX_VOLLEYS],
                 owner: vec![0; MAX_VOLLEYS],
                 target: vec![none; MAX_VOLLEYS],
+                shooter: vec![none; MAX_VOLLEYS],
                 from: vec![FxVec2::ZERO; MAX_VOLLEYS],
                 aim: vec![FxVec2::ZERO; MAX_VOLLEYS],
                 launch: vec![0; MAX_VOLLEYS],
@@ -380,12 +393,28 @@ impl Combat {
                 free: (0..MAX_VOLLEYS as u32).rev().collect(),
             },
             loosed: Vec::with_capacity(regiment_capacity),
+            landed: Vec::with_capacity(MAX_VOLLEYS),
+            tell: true,
         }
     }
 
-    /// The volleys loosed in the last tick: (shooter, target).
-    pub(crate) fn loosed(&self) -> &[(RegimentHandle, RegimentHandle)] {
+    /// This combat for a world that tells no one what happens in it.
+    pub(crate) fn untold(self) -> Combat {
+        Combat {
+            landed: Vec::new(),
+            tell: false,
+            ..self
+        }
+    }
+
+    /// The volleys loosed in the last tick: (volley, shooter, target).
+    pub(crate) fn loosed(&self) -> &[(VolleyId, RegimentHandle, RegimentHandle)] {
         &self.loosed
+    }
+
+    /// The volleys that came down in the last tick, as events.
+    pub(crate) fn landed(&self) -> &[Event] {
+        &self.landed
     }
 
     /// Volleys in flight, in pool order.
@@ -394,6 +423,11 @@ impl Combat {
         (0..MAX_VOLLEYS)
             .filter(|&i| v.alive[i])
             .map(|i| VolleyView {
+                id: VolleyId {
+                    slot: i as u32,
+                    launch_tick: v.launch[i],
+                },
+                shooter: v.shooter[i],
                 owner: v.owner[i],
                 from: v.from[i],
                 aim: v.aim[i],
@@ -1084,6 +1118,7 @@ impl Combat {
         rng: &mut Pcg32,
     ) {
         self.loosed.clear();
+        self.landed.clear();
         // Melee.
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
@@ -1218,9 +1253,14 @@ impl Combat {
                 index: i as u32,
                 generation: regs.generation[i],
             };
-            self.loosed.push((shooter, target));
+            let id = VolleyId {
+                slot: v as u32,
+                launch_tick: tick,
+            };
+            self.loosed.push((id, shooter, target));
             let vs = &mut self.volleys;
             vs.alive[v] = true;
+            vs.shooter[v] = shooter;
             vs.owner[v] = regs.owner[i];
             vs.target[v] = target;
             vs.from[v] = regs.position[i];
@@ -1242,12 +1282,27 @@ impl Combat {
             }
             vs.alive[v] = false;
             vs.free.push(v as u32);
+            let landed = |lost| Event::Landed {
+                volley: VolleyId {
+                    slot: v as u32,
+                    launch_tick: vs.launch[v],
+                },
+                target: vs.target[v],
+                at: vs.aim[v],
+                lost,
+            };
             let Some(j) = regs.resolve(vs.target[v]) else {
+                if self.tell {
+                    self.landed.push(landed(0));
+                }
                 continue;
             };
             let block = Block::of(regs, units, j);
             // The target walked out from under the arrows.
             if (block.centre - vs.aim[v]).length() > block.radius() + Fx::ONE {
+                if self.tell {
+                    self.landed.push(landed(0));
+                }
                 continue;
             }
             let area = i64::from((block.half_width * block.half_depth).raw()) * 4;
@@ -1270,7 +1325,10 @@ impl Combat {
                 * shields
                 * trees
                 / (100 * 100);
-            deal(regs, units, j, expected, side, rng);
+            let lost = deal(regs, units, j, expected, side, rng);
+            if self.tell {
+                self.landed.push(landed(lost));
+            }
         }
 
         // The fallen.
@@ -1383,7 +1441,7 @@ fn deal(
     expected: u64,
     side: Side,
     rng: &mut Pcg32,
-) {
+) -> u16 {
     regs.shock[j] |= match side {
         Side::Front => 0,
         Side::Flank => SHOCK_FLANK,
@@ -1393,11 +1451,12 @@ fn deal(
     let total = rolled + u64::from(regs.damage_carry[j]);
     regs.damage_carry[j] = (total % 256) as u16;
     let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
-    regs.take_damage(j, (total / 256).min(u64::from(u32::MAX)) as u32);
+    let lost = regs.take_damage(j, (total / 256).min(u64::from(u32::MAX)) as u32);
     let ranks_after = formation::ranks(regs.files[j], regs.models[j]);
     if regs.models[j] > 0 && ranks_after < ranks_before {
         let (_, spacing) = units[regs.unit[j] as usize].spacing(regs.formation[j]);
         let step = Fx::from_raw(spacing.raw() * i32::from(ranks_before - ranks_after) / 2);
         regs.position[j] += regs.facing[j].to_vec() * step;
     }
+    lost
 }

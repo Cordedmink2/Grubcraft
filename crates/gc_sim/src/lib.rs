@@ -20,6 +20,7 @@ use alloc::vec::Vec;
 pub mod champions;
 pub mod combat;
 pub mod deploy;
+pub mod events;
 pub mod fork;
 pub mod formation;
 mod hash;
@@ -46,6 +47,7 @@ pub use vision::Ambush;
 use champions::Champions;
 use combat::Combat;
 use deploy::{Deployment, Zone};
+use events::Events;
 use formation::MAX_MODELS;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 use nav::Nav;
@@ -559,6 +561,9 @@ pub struct World {
     /// A scratch copy (see [`World::scratch`]), the only kind that may be
     /// changed other than by commands: rehearsals set out their own field.
     scratch: bool,
+    /// What happened in the last tick (see [`events`]); not part of the
+    /// match's state.
+    events: Events,
     pub regiments: Regiments,
 }
 
@@ -591,6 +596,7 @@ impl World {
                 )
             }),
             judge: verdict::Judge::default(),
+            events: Events::new(setup.capacities.regiments as usize),
             scratch: false,
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
@@ -620,11 +626,16 @@ impl World {
                 stats.commands_rejected += 1;
             }
         }
+        self.events.clear();
         // Time stands still while the armies deploy.
         if self.deploying() {
             self.judge.deploying();
             self.tick += 1;
             return stats;
+        }
+        // A rehearsal has nobody to tell.
+        if !self.scratch {
+            self.events.before(&self.regiments);
         }
         self.combat.before_move(
             &mut self.regiments,
@@ -684,6 +695,10 @@ impl World {
             &self.stances,
             &self.terrain,
         );
+        if !self.scratch {
+            self.events
+                .after(&self.regiments, &self.combat, self.vision.ambushes());
+        }
         self.tick += 1;
         self.judge
             .update(&self.regiments, &self.stances, &self.vision, self.tick);
@@ -919,6 +934,14 @@ impl World {
         self.regiments
             .resolve(h)
             .is_some_and(|i| self.vision.off_guard(i))
+    }
+
+    /// What happened in the last tick, in a fixed order: volleys loosed,
+    /// volleys landed, then each regiment's losses, change of heart and
+    /// first contact, by slot, then ambushes. None in a rehearsal's scratch
+    /// world.
+    pub fn events(&self) -> &[events::Event] {
+        self.events.list()
     }
 
     /// The ambushes sprung in the last tick.
