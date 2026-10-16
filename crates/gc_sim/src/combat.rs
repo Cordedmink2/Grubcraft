@@ -3,10 +3,12 @@
 //! Each tick, in this order:
 //! 1. [`Combat::before_move`] finds which enemy blocks touch (oriented
 //!    rectangles plus a little reach). A regiment in contact is locked in
-//!    melee with the nearest one; contact made at speed starts a charge.
-//!    Regiments ordered to attack chase their target.
+//!    melee with the nearest one, and stays locked with it until the lines
+//!    are clearly apart; contact made at speed starts a charge. Regiments
+//!    ordered to attack chase their target.
 //! 2. [`Combat::push_lines`]: a regiment losing its melee gives ground and
 //!    the enemies fighting it follow; one with nowhere to go is pinned.
+//!    Lines that have drifted a little apart close up again.
 //! 3. The regiments move (`Regiments::step_movement`).
 //! 4. [`Combat::after_move`] resolves melee blows, looses and lands volleys,
 //!    and removes regiments with no soldiers left.
@@ -34,6 +36,14 @@ use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formati
 pub const STRIKE_INTERVAL: u32 = TICKS_PER_SECOND;
 /// How far apart two blocks' edges can be and still fight, in tiles.
 pub const REACH: Fx = Fx::from_ratio(1, 2);
+/// A regiment locked in melee stays locked with its foe until their edges
+/// are this far apart, in tiles: lines that shrink as soldiers fall or
+/// turn to face each other don't brush apart, and a nearer enemy coming up
+/// doesn't pull a regiment off the foe it is fighting.
+const LET_GO: Fx = Fx::from_int(2);
+/// Locked lines that have drifted more than [`REACH`] apart close up again
+/// at this many tiles a tick (a tile a second, slower than a walk).
+const CLOSE_UP: Fx = Fx::from_ratio(1, 20);
 /// How long a charge bonus lasts after contact, fading to nothing.
 pub const CHARGE_TICKS: u16 = 3 * TICKS_PER_SECOND as u16;
 /// How many ticks a regiment must have stepped forward since it last halted
@@ -278,6 +288,12 @@ pub struct Combat {
     search: Cell<u32>,
     /// Ground each regiment gives this tick (see [`Combat::push_lines`]).
     give: Vec<FxVec2>,
+    /// Where each regiment steps in [`Combat::push_lines`], worked out for
+    /// everyone before anyone moves.
+    steps: Vec<Option<FxVec2>>,
+    /// Whether any regiment stayed locked with a foe out of reach this
+    /// tick, so someone may close up (see [`Combat::close_up`]).
+    drifted: bool,
     volleys: Volleys,
     /// Volleys loosed this tick: (volley, shooter, target), for vision
     /// and the tick's events.
@@ -378,6 +394,8 @@ impl Combat {
             seen: vec![Cell::new(0); regiment_capacity],
             search: Cell::new(0),
             give: vec![FxVec2::ZERO; regiment_capacity],
+            steps: vec![None; regiment_capacity],
+            drifted: false,
             volleys: Volleys {
                 alive: vec![false; MAX_VOLLEYS],
                 owner: vec![0; MAX_VOLLEYS],
@@ -812,6 +830,7 @@ impl Combat {
     ) {
         self.build_grid(regs, units);
         self.crowding(regs, stances, tick);
+        self.drifted = false;
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 continue;
@@ -822,24 +841,39 @@ impl Combat {
                 continue;
             }
             let me = self.blocks[i];
-            let mut best: Option<(u64, usize)> = None;
-            let blocks = &self.blocks;
-            let radius = &self.radius;
-            self.near_enemies(me.centre, radius[i], regs.owner[i], |j| {
-                if !stances.hostile(regs.owner[i], regs.owner[j]) || !regs.alive[j] {
-                    return;
-                }
-                let them = &blocks[j];
-                // Cheap circle test before the rectangle one.
-                let d = (them.centre - me.centre).length_sq_raw();
-                let reach = (radius[i] + radius[j] + REACH).raw() as u64;
-                if d > reach * reach || !me.touches(them, REACH) {
-                    return;
-                }
-                if best.is_none_or(|(bd, bj)| (d, j) < (bd, bj)) {
-                    best = Some((d, j));
-                }
+            // Locked in: a regiment keeps fighting the foe it is touching.
+            let foe = regs.foe(i).filter(|&j| {
+                stances.hostile(regs.owner[i], regs.owner[j]) && !regs.morale_state[j].broken()
             });
+            let mut best = foe.filter(|&j| me.touches(&self.blocks[j], REACH));
+            if best.is_none() {
+                let mut nearest: Option<(u64, usize)> = None;
+                let blocks = &self.blocks;
+                let radius = &self.radius;
+                self.near_enemies(me.centre, radius[i], regs.owner[i], |j| {
+                    if !stances.hostile(regs.owner[i], regs.owner[j]) || !regs.alive[j] {
+                        return;
+                    }
+                    let them = &blocks[j];
+                    // Cheap circle test before the rectangle one.
+                    let d = (them.centre - me.centre).length_sq_raw();
+                    let reach = (radius[i] + radius[j] + REACH).raw() as u64;
+                    if d > reach * reach || !me.touches(them, REACH) {
+                        return;
+                    }
+                    if nearest.is_none_or(|(bd, bj)| (d, j) < (bd, bj)) {
+                        nearest = Some((d, j));
+                    }
+                });
+                best = nearest.map(|(_, j)| j);
+            }
+            if best.is_none() {
+                // Drifted a little apart from its foe, with no other enemy in
+                // reach: it stays locked while it closes up again (striking
+                // only once back in reach, see `after_move`).
+                best = foe.filter(|&j| me.touches(&self.blocks[j], LET_GO));
+                self.drifted |= best.is_some();
+            }
             let previous = regs.engaged[i];
             let was_engaged = previous.is_some();
             // Pushed or turned out of reach mid-fight: press back in, unless
@@ -851,7 +885,7 @@ impl Combat {
             {
                 regs.attack_target[i] = previous;
             }
-            let engaged = best.map(|(_, j)| RegimentHandle {
+            let engaged = best.map(|j| RegimentHandle {
                 index: j as u32,
                 generation: regs.generation[j],
             });
@@ -862,7 +896,7 @@ impl Combat {
                 regs.giving[i] = 0;
             }
             regs.engaged[i] = engaged;
-            if let Some((_, j)) = best {
+            if let Some(j) = best {
                 if !was_engaged {
                     // Hitting home at speed after a run-up is a charge, but
                     // nobody charges out of a river, from behind a shield
@@ -960,7 +994,8 @@ impl Combat {
     /// the line bends where it is losing.
     /// One with nowhere to go (see [`ground_ends`] and
     /// [`Combat::backs_into`]) stands and is crushed instead: it falls into
-    /// disorder and loses heart.
+    /// disorder and loses heart. Locked lines that have drifted apart close
+    /// up (see [`Combat::close_up`]).
     pub(crate) fn push_lines(
         &mut self,
         regs: &mut Regiments,
@@ -1018,20 +1053,30 @@ impl Combat {
                 anyone = true;
             }
         }
-        if !anyone {
+        if !anyone && !self.drifted {
             return;
         }
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
+                self.steps[i] = None;
                 continue;
             }
-            let step = if self.give[i] == FxVec2::ZERO {
+            self.steps[i] = if self.give[i] != FxVec2::ZERO {
+                Some(self.give[i])
+            } else if anyone {
                 self.follow(regs, nav, i)
             } else {
-                Some(self.give[i])
-            };
+                None
+            }
+            .or_else(|| {
+                self.drifted
+                    .then(|| self.close_up(regs, stances, terrain, units, nav, i))
+                    .flatten()
+            });
+        }
+        for (p, step) in regs.position.iter_mut().zip(&self.steps) {
             if let Some(step) = step {
-                regs.position[i] += step;
+                *p += *step;
             }
         }
     }
@@ -1078,7 +1123,38 @@ impl Combat {
         None
     }
 
-    /// Whether regiment `i` stepping back to `next` would back into another
+    /// The step regiment `i` takes toward the foe it is locked with when
+    /// their lines have drifted more than [`REACH`] apart (but less than
+    /// [`LET_GO`]), unless either is giving ground (lines that push move
+    /// them, see [`Combat::follow`]), the ground is blocked, or it would push
+    /// into another block. Reads only where everyone stood at the start of
+    /// the tick.
+    fn close_up(
+        &self,
+        regs: &Regiments,
+        stances: &Stances,
+        terrain: &Terrain,
+        units: &[UnitStats],
+        nav: &Nav,
+        i: usize,
+    ) -> Option<FxVec2> {
+        let j = regs.foe(i)?;
+        let (me, them) = (self.blocks[i], self.blocks[j]);
+        if regs.giving[i] > 0
+            || regs.giving[j] > 0
+            || regs.morale_state[i].broken()
+            || me.touches(&them, REACH)
+        {
+            return None;
+        }
+        let mass = units[regs.unit[i] as usize].mass;
+        let step =
+            (them.centre - me.centre).normalized() * terrain.going(CLOSE_UP, me.centre, mass);
+        let next = me.centre + step;
+        (!nav.blocks(me.centre, next) && !self.backs_into(regs, stances, i, next)).then_some(step)
+    }
+
+    /// Whether regiment `i` stepping to `next` would back (or close) into another
     /// block: a friend more than [`PUSHING`] deep or any enemy (unbroken
     /// either way), by more than it overlaps them now.
     fn backs_into(&self, regs: &Regiments, stances: &Stances, i: usize, next: FxVec2) -> bool {
@@ -1153,6 +1229,10 @@ impl Combat {
             let defender = &units[regs.unit[j] as usize];
             let me = Block::of(regs, units, i);
             let them = Block::of(regs, units, j);
+            if !me.touches(&them, REACH) {
+                // Locked but drifted apart: closing up, out of reach.
+                continue;
+            }
             let (files, models) = (regs.files[i], regs.models[i]);
             // Soldiers who can reach the foe, in percent of a soldier.
             let fighters = match me.side_facing(them.centre) {
