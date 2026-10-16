@@ -1,6 +1,6 @@
 # 12 · Performance Budgets and Hill Climbing
 
-Performance is a feature with tests. Every number here is measured automatically and a regression fails the build.
+Performance is a feature with tests. The numbers that CI can measure are checked on every build, and a regression fails the build. The other numbers here are targets; see [Gates in CI](#gates-in-ci) for what is checked.
 
 ## Reference hardware
 
@@ -32,23 +32,21 @@ If a friend's machine is older than the low tier, the Battery preset is the safe
 
 ## Memory budget
 
-The whole game stays under **6 GB** on the largest map with six players at maximum supply. There are no per-subsystem limits inside that ceiling; instead each subsystem is tracked so growth is visible:
+The target is that the whole game stays under **6 GB** on the largest map with six players at maximum supply. Apart from the simulation's heap gate and the AI target below, there are no per-subsystem limits inside that ceiling; instead each subsystem is tracked so growth is visible:
 
 | Subsystem (tag) | Main contents |
 |---|---|
 | Code and static data | Executable, static tables |
-| Simulation (`sim`) | Entity pools, nav grid, flow-field cache, fog, snapshot buffer |
+| Simulation (`sim`) | Entity pools, nav grid, route plans, vision (fog of war) state |
 | Map, CPU side (`map`) | Heightmap, tile layers, nav sectors, decals |
-| Textures, GPU (`tex`) | Terrain material arrays, palettes, splat, baked terrain lighting, particles, UI and font atlases |
-| Meshes and animation (`mesh`) | Quantised meshes, bone animation textures (about 0.6 MB for the five M1 models) |
-| Render targets (`rt`) | Colour, depth, shadow map, post buffers |
+| Renderer, CPU side (`render`) | Renderer setup and scenery. GPU memory is not tagged: terrain material arrays, meshes, bone animation textures (about 0.6 MB for the five M1 models), colour, depth, shadow and post buffers are counted by `Renderer::gpu_bytes` instead |
 | Presentation (`present`) | Soldier puppets, instance buffers, interpolation |
 | Audio (`audio`) | Effects, music stream buffers, mixer |
 | UI (`ui`) | Layout scratch, text cache |
 | Network and replay (`net`) | Rings, turn buffers, replay writer |
-| AI (`ai`) | Host only: each AI's beliefs, influence maps, terrain analysis and scratch worlds for rehearsal (≤ 16 MB per AI player) |
+| AI (`ai`) | Host only: each AI's beliefs, influence maps, terrain analysis and scratch worlds for rehearsal (target: ≤ 16 MB per AI player, not gated yet) |
 
-Each tag is tracked live by the tagged allocator. GPU memory is not: there is no allocation wrapper on the graphics device, so the renderer adds up the sizes of the buffers and textures it creates (`Renderer::gpu_bytes`). That total is for display only (the dev overlay and the window title), and it leaves out what the driver adds for itself and a few small buffers. The simulation keeps its own tight limit (under 8 MB, gated in `gc_bench`) because snapshot size drives rejoin and desync recovery, not because of the memory budget.
+Each tag is tracked live by the tagged allocator. GPU memory is not: there is no allocation wrapper on the graphics device, so the renderer adds up the sizes of the buffers and textures it creates (`Renderer::gpu_bytes`). That total is for display only (the dev overlay and the window title), and it leaves out what the driver adds for itself and a few small buffers. The simulation keeps its own tight limit (under 8 MB, gated in `gc_bench`) because snapshot size will drive rejoin and desync recovery once snapshots exist, not because of the memory budget.
 
 ## Time budget
 
@@ -95,27 +93,27 @@ Collected here so they're easy to find; detailed in [10 · Architecture](10-arch
 2. **Lockstep networking.** Bandwidth and replays scale with clicks, not units.
 3. **Small shared textures.** Stand-in units and buildings are palette-coloured; textured soldiers share one 512 × 512 texture array, BC7-compressed to about 1 MB per material (4 MB as RGBA8).
 4. **Bone animation textures with four-bone skinning.** Kilobytes per unit type instead of megabytes.
-5. **One instanced draw call per unit type**, 16 bytes per soldier.
+5. **One instanced draw per model and level of detail**, 36 bytes per soldier (16 bytes is a target).
 6. **Commander View.** Zooming out makes rendering *cheaper*.
-7. **Baked terrain lighting** for the fixed per-map sun; only dynamic objects cast real-time shadows. (Until a profile says otherwise the terrain also casts into the shadow map in real time.)
-8. **Memory-mapped, zero-copy, GPU-ready asset pack.** Upload and forget; nothing parsed.
+7. **Target: baked terrain lighting** for the fixed per-map sun, so only dynamic objects cast real-time shadows. Today the terrain also casts into the shadow map in real time; baking waits on a profile showing the shadow pass costs too much.
+8. **Zero-copy, GPU-ready asset packs,** compiled into the executable with `include_bytes!` and read in place.
 9. **Fixed pools, zero allocations per tick**, verified by test.
-10. **Incremental fog of war** with reference-counted vision stamps.
-11. **Shared flow fields** for armies heading the same way.
-12. **Compressed-in-memory audio** (ADPCM decoded during mixing; music streamed).
+10. **Incremental fog of war.** The first step is built (vision timers per party, for regiments in cover); sight ranges and the explored layer are a target for M3.
+11. **Target: shared flow fields** for armies heading the same way. Pathing uses waypoint routes for now.
+12. **Compressed-in-memory audio** (ADPCM decoded during mixing; music is looped from the embedded bank today, streaming is a target).
 
 ## Hill-climbing process
 
 Performance work is continuous, measured and recorded.
 
 ### Instruments
-- **Dev overlay (`` ` `` or `F11`):** frame time breakdown, sim tick time, memory per tag, GPU memory, draw calls, instance counts, network RTT/jitter/delay.
+- **Dev overlay (`` ` `` or `F11`):** frame time, sim tick time, memory per tag, GPU memory, draw calls, instance counts. Network RTT, jitter and delay are a target.
 - **Tracy** profiling in instrumented builds.
-- **Tagged allocator** for exact memory attribution on the CPU side. GPU memory is a sum the renderer keeps by hand (see the memory budget above); a real GPU allocation wrapper is planned for when the renderer gets its next pass.
+- **Tagged allocator** for exact memory attribution on the CPU side. GPU memory is a sum the renderer keeps by hand (see the memory budget above); a real GPU allocation wrapper is a target for the renderer's next pass.
 - **Allocation-in-tick tripwire:** a test and the `gc_bench` gate fail if the sim allocates during a tick.
 
 ### Benchmark suite (`gc_bench`)
-Scenarios replayed headless (sim) and rendered with a scripted camera (frame):
+Target suite, replayed headless (sim) and rendered with a scripted camera (frame). Only `drill`, `pathing-storm` and the headless half of `field-8000pt-2v2` exist so far:
 
 | Scenario | What it stresses |
 |---|---|
@@ -136,8 +134,8 @@ The other scenarios need features that don't exist yet (a recorded hour-long 6-p
 
 ### Gates in CI
 - Every pull request runs the headless benchmarks on CI machines and compares them against a stored baseline: **> 5% regression in any tracked metric fails**, unless the PR updates the baseline with a written reason (PRF-7). The tracked metric is the number of instructions each scenario executes under valgrind's callgrind (`scripts/bench-gate.py`, on the Linux runner, against `tools/gc_bench/baseline.json`). Instruction counts do not move with how busy a shared machine is: repeat runs agree to better than 0.001%, where wall-clock times on a CI runner vary far more than 5%. The fixed budgets above (p99 tick, heap, allocations) stay as an outer net. The scenarios are smaller than the timing runs so each takes about half a minute under callgrind: `drill` with 150 regiments a player for 1,200 ticks, `pathing-storm`, and the whole `field-8000pt-2v2` replay. A PR that changes how much work the simulation does on purpose runs `scripts/bench-gate.py bless` in the same PR and says why; the gate prints a note when a PR is more than 5% faster, so the gain can be locked in the same way. The counts also go up as the `bench-instructions` artifact of each run. *(Not covered yet: the computer players' cost. `gc_bench` does not depend on `gc_ai`, and the Warlord's rehearsals are known to run over their budget, see [18 · AI](18-ai.md).)*
-- Memory per tag is compared against the budget table above; exceeding a budget fails.
-- Frame benchmarks run on real reference hardware (Mario's machines) before each release, since CI machines have no representative GPU.
+- The simulation heap (8 MB) is gated in `gc_bench`. Per-tag memory is reported but not gated. `scripts/smoke-run.py` fails the build if the game's process memory goes over 6 GB during its 300-frame battle, on Linux with a software GPU and on the Windows build's zip. That is a short battle, not the 60-minute six-player match in the headline table.
+- Frame benchmarks are a target: `gc_bench` has none yet. They will run on real reference hardware (Mario's machines), since CI machines have no representative GPU.
 
 ### The loop
 1. Each milestone ends with a **performance pass**: profile the benchmark suite, list the top three costs.
