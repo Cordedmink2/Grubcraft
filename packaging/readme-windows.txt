@@ -34,6 +34,8 @@ Hosting a game
 1. In the main menu, click Play.
 2. Under "Host a game", click Host.
 3. The lobby shows your join code (like K7QD-M2XA) and your address.
+   With Tailscale running it also shows a Tailscale code for friends
+   who are not on your Wi-Fi.
    Friends on the same network will also see your game in their list.
 4. When everyone is in, click Start.
 
@@ -47,6 +49,8 @@ Joining a game
 Everyone must run the same version of Grubcraft. If the lobby says the
 versions differ, get the same zip from the same person.
 
-Playing over the internet needs a virtual LAN tool such as Tailscale or
-ZeroTier. Then join by typing the host's address on that tool (the
-join code shows the home network address, which friends elsewhere cannot reach).
+Playing over the internet: everyone installs Tailscale (tailscale.com)
+and signs in. The host shares their computer with the others from the
+Tailscale admin page (Share). Friends then type the lobby's Tailscale code
+(or the host's address starting with 100.) into Join. The game list only
+finds games on the same Wi-Fi.

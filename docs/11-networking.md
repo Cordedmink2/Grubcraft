@@ -90,7 +90,7 @@ Host                         Client
 ```
 
 - **Discovery:** UDP broadcast beacon plus mDNS service `_grubcraft._udp`. Friends on the same network see the game without typing anything.
-- **Direct join:** IP and port, or a short **join code** that encodes them (for virtual LANs and port-forwarding). *Built in step 3 (`gc_net::joincode`):* the code is eight characters of Crockford base 32, like `K7QD-M2XA`. It holds the host's IPv4 address, which of the four game ports it is on, and six check bits that catch most typos. Case and dashes don't matter, and O, I and L read as 0, 1 and 1. The host's lobby shows its code and address.
+- **Direct join:** IP and port, or a short **join code** that encodes them (for virtual LANs and port-forwarding). *Built in step 3 (`gc_net::joincode`):* the code is eight characters of Crockford base 32, like `K7QD-M2XA`. It holds the host's IPv4 address, which of the four game ports it is on, and six check bits that catch most typos. Case and dashes don't matter, and O, I and L read as 0, 1 and 1. The host's lobby shows its code and address. When Tailscale is running it also shows a **Tailscale code** for the host's Tailscale address (100.64.0.0/10, found by asking which address would reach Tailscale's own 100.100.100.100), so friends anywhere can join with a code (`joincode::tailscale_ip`).
 - **Version gate:** the Hello carries the build hash and the game-data hash. Mismatches are rejected with a clear message naming both versions.
 - Optional lobby password. *Built in step 3:* the host types it on the Play screen, and it goes into the link keys rather than across the network. The Join list marks locked games "(password)". A joiner is told "That game needs a password", "Wrong password" or "That game has no password".
 
@@ -125,7 +125,7 @@ Determinism is engineered and tested ([10 · Architecture](10-architecture.md#te
 
 In order of effort:
 
-1. **Now:** a virtual LAN tool such as Tailscale or ZeroTier. Friends install it once, then join by join code or IP. No code needed from us, and traffic is end-to-end encrypted by the tool as well as by us.
+1. **Now:** a virtual LAN tool such as Tailscale or ZeroTier. Friends install it once, the host shares their computer with them in Tailscale, and they join with the lobby's Tailscale code or the host's 100.x address. The Join list only finds games on the same Wi-Fi. No code needed from us, and traffic is end-to-end encrypted by the tool as well as by us.
 2. **Later:** port forwarding on the host's router, with a connection-test button in the Host screen.
 3. **Later still:** UDP hole punching through a tiny rendezvous service so join codes work across the internet without extra software.
 

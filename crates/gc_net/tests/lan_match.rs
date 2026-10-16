@@ -686,7 +686,10 @@ fn friends_join_with_a_code() {
     // The lobby shows a code for this machine's network address (when it
     // has one); here, a code for this machine itself.
     if let Some(invite) = host.invite() {
-        assert!(invite.starts_with("Join code "), "{invite}");
+        assert!(
+            invite.starts_with("Join code ") || invite.starts_with("Tailscale code "),
+            "{invite}"
+        );
     }
     let code =
         gc_net::joincode::encode(std::net::Ipv4Addr::LOCALHOST, host.port().unwrap()).unwrap();

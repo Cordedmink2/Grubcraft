@@ -1640,15 +1640,7 @@ impl Network for Lan {
         self.leave();
         let socket = Lan::open(Lan::bind_host()?)?;
         let port = socket.local_addr().map_or(DEFAULT_PORT, |a| a.port());
-        let invite = joincode::local_ip().and_then(|ip| {
-            let code = joincode::encode(ip, port)?;
-            let address = if port == DEFAULT_PORT {
-                ip.to_string()
-            } else {
-                format!("{ip}:{port}")
-            };
-            Some(format!("Join code {code} (or {address})"))
-        });
+        let invite = joincode::invite(port, joincode::tailscale_ip(), joincode::local_ip());
         let mut slots = [Slot::open(0), Slot::open(1), Slot::open(2), Slot::open(3)];
         slots[0] = Slot {
             kind: SlotKind::Human,
