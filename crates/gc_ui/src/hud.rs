@@ -11,6 +11,7 @@
 
 use crate::alerts::{self, AlertData};
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, text_width};
+use crate::hero::{self, HeroPanel};
 use crate::ui::theme;
 
 /// Height of the bottom bar, in UI pixels.
@@ -28,6 +29,8 @@ pub const GRID_SLOTS: usize = GRID_COLS * GRID_ROWS;
 /// The key on each slot (docs/08-ui-ux.md: one grid, the same keys everywhere).
 pub const GRID_KEYS: [char; GRID_SLOTS] =
     ['Q', 'W', 'E', 'R', 'A', 'S', 'D', 'F', 'Z', 'X', 'C', 'V'];
+/// A hero's four abilities take the A, S, D and F slots.
+pub const HERO_SLOT_FIRST: usize = 4;
 const GRID_GAP: i32 = 4;
 /// Two clicks on a card within this long are a double-click.
 const DOUBLE_CLICK_MS: u64 = 400;
@@ -145,16 +148,18 @@ pub enum SlotState {
 
 /// One button of the command grid.
 #[derive(Clone, Debug, Default)]
-pub struct GridSlot {
+pub struct GridSlot<'a> {
     /// At most 6 characters.
-    pub label: &'static str,
+    pub label: &'a str,
     /// A second, smaller line, e.g. the current formation.
-    pub detail: &'static str,
+    pub detail: &'a str,
     pub state: SlotState,
 }
 
 pub struct HudData<'a> {
-    pub grid: &'a [GridSlot; GRID_SLOTS],
+    pub grid: &'a [GridSlot<'a>; GRID_SLOTS],
+    /// The selected hero, once there are heroes (docs/05-combat.md#heroes).
+    pub hero: Option<HeroPanel<'a>>,
     pub minimap: MinimapData<'a>,
     pub cards: &'a [Card],
     /// Shown above the cards, e.g. "Selected" or "Group 2".
@@ -215,7 +220,7 @@ pub struct Hud {
     over: Vec<Rect>,
 }
 
-fn rgb(c: [u8; 3]) -> Color {
+pub(crate) fn rgb(c: [u8; 3]) -> Color {
     [c[0], c[1], c[2], 255]
 }
 
@@ -253,6 +258,9 @@ impl Hud {
             self.grid(draw, &layout, input, data.grid, events);
         }
         self.over.clear();
+        if let Some(h) = &data.hero {
+            hero::draw(draw, layout.bar.y, h, &mut self.over);
+        }
         alerts::draw(
             draw,
             screen,
@@ -564,11 +572,7 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
 
     // Model count, then morale.
     let bar = |draw: &mut DrawList, y: i32, frac: f32, color: Color| {
-        let track = Rect::new(inner.x, y, inner.w, 6);
-        draw.rect(track, theme::FIELD);
-        let w = (track.w as f32 * frac.clamp(0.0, 1.0)).round() as i32;
-        let w = if frac > 0.0 { w.max(1) } else { 0 };
-        draw.rect(Rect::new(track.x, track.y, w, track.h), color);
+        draw.meter(Rect::new(inner.x, y, inner.w, 6), frac, color, theme::FIELD);
     };
     let health = f32::from(c.models) / f32::from(c.max_models.max(1));
     let health_color = if health < 0.35 {
@@ -600,7 +604,7 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
     );
 }
 
-fn luma(c: [u8; 3]) -> u32 {
+pub(crate) fn luma(c: [u8; 3]) -> u32 {
     (u32::from(c[0]) * 3 + u32::from(c[1]) * 6 + u32::from(c[2])) / 10
 }
 
@@ -667,6 +671,7 @@ mod tests {
             tray_title: "Selected",
             deployment: None,
             alerts: AlertData::default(),
+            hero: None,
         };
         let mut draw = DrawList::default();
         let mut events = Vec::new();
@@ -696,6 +701,7 @@ mod tests {
                     ready,
                 }),
                 alerts: AlertData::default(),
+                hero: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             Hud::default().frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -709,6 +715,49 @@ mod tests {
         assert_eq!(frame(false, click), vec![HudEvent::Ready]);
         assert!(frame(true, click).is_empty(), "already ready");
         assert!(Hud::default().wants(SCREEN, button));
+    }
+
+    #[test]
+    fn the_hero_panel_takes_the_mouse_from_the_battlefield() {
+        let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
+        let t = terrain();
+        let hero = HeroPanel {
+            name: "The Daimyo",
+            role: "Commander",
+            color: [200, 60, 50],
+            level: 1,
+            hp: 10,
+            max_hp: 10,
+            xp: 0.0,
+            abilities: Default::default(),
+            items: [None; 3],
+            revive_secs: None,
+        };
+        let data = HudData {
+            grid: &grid,
+            hero: Some(hero),
+            minimap: MinimapData {
+                map_tiles: 256.0,
+                terrain: &t,
+                dots: &[],
+                view: &[],
+            },
+            cards: &[],
+            tray_title: "",
+            deployment: None,
+            alerts: AlertData::default(),
+        };
+        let l = HudLayout::new(SCREEN);
+        let over_panel = (30, l.bar.y - 40);
+        let mut hud = Hud::default();
+        assert!(!hud.wants(SCREEN, over_panel), "no panel drawn yet");
+        let (mut draw, mut events) = (DrawList::default(), Vec::new());
+        hud.frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);
+        assert!(hud.wants(SCREEN, over_panel));
+        assert!(
+            !hud.wants(SCREEN, (600, l.bar.y - 40)),
+            "the field beside it"
+        );
     }
 
     #[test]

@@ -158,6 +158,7 @@ Warcraft III's best idea, kept:
 - Leadership aura: friendly regiments nearby have higher morale. A dead hero shakes nearby morale.
 - Dead heroes can be revived at the hero altar for Grub, Marrow and time.
 - One hero available at tier 1, two at tier 2, three at tier 3.
+- **Hero panel (Conquest UI piece 4):** built as a display, with no hero data yet; see [08 · UI](08-ui-ux.md#screen-layout-1080p-reference).
 
 ## Champions before battle
 

@@ -27,6 +27,7 @@
 //! has Q (move) and W (attack), each followed by a left-click, and R (formation).
 //! Badges on the screen edge point at your regiments under attack, ambushes and
 //! routs that are out of view; click one or press Space to look there.
+//! Shift+H previews the hero panel (there are no heroes yet).
 //! Orders: left-click one of your regiments to select it, or left-drag a box around
 //! several; Shift adds or removes. Right-click the ground to march the
 //! selection there side by side, facing the way they travel; right-drag to
@@ -1173,7 +1174,9 @@ impl ApplicationHandler for App {
                         // The grid's keys leave Cmd/Ctrl/Alt chords to the system.
                         KeyCode::KeyQ if grid_key => r.grid_press(hud::SLOT_MOVE),
                         KeyCode::KeyW if grid_key => r.grid_press(hud::SLOT_ATTACK),
-                        // F stays as R's twin until the Ultimate slot has an ability.
+                        // The hero's fourth ability owns F while a hero is shown.
+                        KeyCode::KeyF if grid_key && r.hud.hero_shown() => {}
+                        // Otherwise F stays as R's twin until the Ultimate slot has an ability.
                         KeyCode::KeyR | KeyCode::KeyF if grid_key => {
                             r.grid_press(hud::SLOT_FORMATION);
                         }
@@ -1181,6 +1184,11 @@ impl ApplicationHandler for App {
                         KeyCode::KeyC if down && !event.repeat => {
                             r.sandbox.credits = !r.sandbox.credits;
                             r.sandbox.dirty = true;
+                        }
+                        KeyCode::KeyH
+                            if down && !event.repeat && r.input.shift && r.online.is_none() =>
+                        {
+                            r.hud.toggle_hero_preview();
                         }
                         KeyCode::KeyH if down && !event.repeat => {
                             r.sandbox.panel = !r.sandbox.panel;
@@ -3432,6 +3440,7 @@ impl Running {
             format!("game     {speed}   P: pause   - =: slower, faster"),
             "Delete: remove selected   Shift+Delete: clear field   T: tune stats   Shift+R: reload data"
                 .to_string(),
+            "Shift+H: preview the hero panel (no heroes in the game yet)".to_string(),
             if self.commander {
                 "view     Commander View: one banner per regiment (zoom in for soldiers)   C: credits"
                     .to_string()

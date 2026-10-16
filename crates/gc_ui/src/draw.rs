@@ -159,6 +159,15 @@ impl DrawList {
         }
     }
 
+    /// A horizontal meter: `track` in `empty`, with `frac` (0 to 1) of it
+    /// filled in `color`. A little is always visible when `frac` is above 0.
+    pub fn meter(&mut self, track: Rect, frac: f32, color: Color, empty: Color) {
+        self.rect(track, empty);
+        let w = (track.w as f32 * frac.clamp(0.0, 1.0)).round() as i32;
+        let w = if frac > 0.0 { w.max(1) } else { 0 };
+        self.rect(Rect::new(track.x, track.y, w, track.h), color);
+    }
+
     /// Text centred in `r`.
     pub fn text_centered(&mut self, r: Rect, scale: i32, color: Color, text: &str) {
         let x = r.x + (r.w - text_width(text, scale)) / 2;

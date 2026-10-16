@@ -12,6 +12,7 @@
 
 pub mod alerts;
 pub mod draw;
+pub mod hero;
 pub mod hud;
 pub mod lobby;
 pub mod menu;

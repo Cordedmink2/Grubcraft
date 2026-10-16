@@ -56,7 +56,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Ember Clans economy and Honor; Brood veins, larvae, metamorphosis, Reclaimers.
 - Unit, hero, ability and building data for all four factions is already drafted in `data/rosters/` ([17 · Unit Rosters](17-unit-rosters.md), [21 · Buildings](21-buildings.md)); M3 bakes it into the game.
 - Heroes: levelling, abilities from the effect-primitive system, items, altar revive.
-- Fog of war (built on the ambush vision rules, [20](20-ambushes.md#from-hidden-regiments-to-fog-of-war)), minimap, army tray, command grid, edge notifications. *Built early (2026-10-15, Conquest UI thread): the minimap and army tray, the command grid, and edge alerts for attacks, ambushes and routs, on today's battles; the hero panel and the economy parts follow.*
+- Fog of war (built on the ambush vision rules, [20](20-ambushes.md#from-hidden-regiments-to-fog-of-war)), minimap, army tray, command grid, edge notifications. *Built early (2026-10-15, Conquest UI thread): the minimap and army tray, the command grid, and edge alerts for attacks, ambushes and routs, and the hero panel on a made-up hero (Shift+H), on today's battles; the economy parts, fog and the real hero data follow.*
 - Annihilation and Titan's Heart victories.
 - One Duel map (Ribcage Pass) and one Warfield map (The Four Teeth).
   - **Progress (2026-10-15):** both maps and the map validator `gc_mapcheck` are built (`data/maps/`, [07 · Map format and tooling](07-world-and-maps.md#map-format-and-tooling)): first versions with plain terrain, checked for fairness, and not yet loaded by the game.

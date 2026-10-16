@@ -5,9 +5,10 @@ use gc_sim::formation::GroupOrder;
 use gc_sim::{MoraleState, PlayerId, RegimentHandle};
 use gc_ui::DrawList;
 use gc_ui::alerts::{Alert, AlertData, AlertKind};
+use gc_ui::hero::{HeroAbility, HeroPanel};
 use gc_ui::hud::{
-    Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, Hud, HudData, HudEvent, HudInput,
-    MinimapData, MinimapTerrain, SlotState,
+    Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, Hud, HudData,
+    HudEvent, HudInput, MinimapData, MinimapTerrain, SlotState,
 };
 use glam::{Vec2, Vec3};
 
@@ -37,6 +38,7 @@ pub enum Armed {
 pub const SLOT_MOVE: usize = 0;
 pub const SLOT_ATTACK: usize = 1;
 pub const SLOT_FORMATION: usize = 3;
+/// The first of the four slots (A, S, D, F) a hero's abilities use.
 // Run (C) and Retire (V) share keys with the sandbox's credits and reveal-all
 // tools; those move when the two orders arrive.
 const LABELS: [&str; GRID_SLOTS] = [
@@ -105,6 +107,8 @@ pub struct HudState {
     /// The tick the regiments were last compared at.
     watched_tick: u32,
     alerts: Vec<Alert>,
+    /// Dev preview of the hero panel (Shift+H); there are no heroes yet.
+    hero_preview: bool,
 }
 
 impl HudState {
@@ -137,6 +141,16 @@ impl HudState {
 
     pub fn right_captured(&self) -> bool {
         self.right_held
+    }
+
+    /// Show or hide the made-up hero (there are no heroes in the game yet).
+    /// Whether a hero is on show, and so owns the A, S, D and F keys.
+    pub fn hero_shown(&self) -> bool {
+        self.hero_preview
+    }
+
+    pub fn toggle_hero_preview(&mut self) {
+        self.hero_preview = !self.hero_preview;
     }
 
     /// Forget any half-finished click, e.g. when a menu opens over the bar.
@@ -385,6 +399,13 @@ impl Running {
             hud.view.push(view_corner(&self.camera, ndc, map));
         }
 
+        let hero = hud
+            .hero_preview
+            .then(|| preview_hero(crate::color_of(&self.parties, side)));
+        let ability_status: [String; 4] = match &hero {
+            Some(h) => h.abilities.map(|a| a.status()),
+            None => Default::default(),
+        };
         // A replay plays its recorded orders and nobody else's.
         let has_orders = !self.selected.is_empty() && self.watching.is_none();
         let ready = |on: bool| if on { SlotState::Ready } else { SlotState::Off };
@@ -395,6 +416,16 @@ impl Running {
         grid[SLOT_MOVE].state = ready(has_orders);
         grid[SLOT_ATTACK].state = ready(has_orders);
         grid[SLOT_FORMATION].state = ready(has_orders);
+        // A hero's abilities take the A, S, D and F slots.
+        if let Some(h) = &hero {
+            for (i, a) in h.abilities.iter().enumerate() {
+                let slot = &mut grid[HERO_SLOT_FIRST + i];
+                slot.label = a.short;
+                slot.detail = &ability_status[i];
+                slot.state =
+                    ready(a.usable() && h.revive_secs.is_none() && self.watching.is_none());
+            }
+        }
         match hud.armed {
             Some(Armed::Move) => grid[SLOT_MOVE].state = SlotState::Armed,
             Some(Armed::Attack) => grid[SLOT_ATTACK].state = SlotState::Armed,
@@ -424,6 +455,7 @@ impl Running {
         hud.events.clear();
         let data = HudData {
             grid: &grid,
+            hero,
             minimap: MinimapData {
                 map_tiles: map,
                 terrain: &hud.terrain,
@@ -575,6 +607,35 @@ impl Running {
         self.camera.focus_height = self
             .heightmap
             .height_at(self.camera.focus.x, self.camera.focus.y);
+    }
+}
+
+/// A made-up Daimyo for looking at the panel and the grid it feeds: level 3,
+/// wounded, one ability cooling down (docs/17-unit-rosters.md).
+fn preview_hero(color: [u8; 3]) -> HeroPanel<'static> {
+    let ability = |short, rank, passive, cooldown_secs| HeroAbility {
+        short,
+        rank,
+        max_rank: 3,
+        passive,
+        cooldown_secs,
+    };
+    HeroPanel {
+        name: "The Daimyo",
+        role: "Commander",
+        color,
+        level: 3,
+        hp: 212,
+        max_hp: 340,
+        xp: 0.4,
+        abilities: [
+            ability("Rally", 2, false, 0),
+            ability("Aura", 1, true, 0),
+            ability("Chall", 1, false, 12),
+            ability("Banner", 0, false, 0),
+        ],
+        items: [Some("Jade Charm"), None, None],
+        revive_secs: None,
     }
 }
 
