@@ -45,6 +45,8 @@ pub enum InitError {
     Surface(wgpu::CreateSurfaceError),
     Adapter(wgpu::RequestAdapterError),
     Device(wgpu::RequestDeviceError),
+    /// The GPU lacks something soldier skinning needs.
+    Unsupported(&'static str),
 }
 
 impl std::fmt::Display for InitError {
@@ -53,6 +55,7 @@ impl std::fmt::Display for InitError {
             InitError::Surface(e) => write!(f, "could not create a drawing surface: {e}"),
             InitError::Adapter(e) => write!(f, "no suitable GPU found: {e}"),
             InitError::Device(e) => write!(f, "could not open the GPU: {e}"),
+            InitError::Unsupported(what) => write!(f, "this GPU cannot {what}"),
         }
     }
 }
@@ -332,6 +335,20 @@ impl Renderer {
             })
             .await
             .map_err(InitError::Adapter)?;
+        // Soldiers are posed by a compute pass into buffers that the vertex
+        // shaders read. Vulkan, Metal and Direct3D 12 all can.
+        let downlevel = adapter.get_downlevel_capabilities().flags;
+        for (flag, what) in [
+            (wgpu::DownlevelFlags::COMPUTE_SHADERS, "run compute shaders"),
+            (
+                wgpu::DownlevelFlags::VERTEX_STORAGE,
+                "read storage buffers in vertex shaders",
+            ),
+        ] {
+            if !downlevel.contains(flag) {
+                return Err(InitError::Unsupported(what));
+            }
+        }
         // The HDR image at 4 bytes a pixel where the GPU can draw into that
         // format (Apple, most desktop GPUs), else 8.
         let small_hdr = adapter
@@ -410,12 +427,14 @@ impl Renderer {
         let globals = uniform("globals");
         let shadow_globals = uniform("sun globals");
 
+        // The skinning pass stands soldiers on the terrain too.
+        let world_stages = wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE;
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("world"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    visibility: world_stages,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -425,7 +444,7 @@ impl Renderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    visibility: world_stages,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Uint,
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -676,7 +695,11 @@ impl Renderer {
             + self.post_targets.gpu_bytes
             + self.overlay.gpu_bytes
             + self.ui.gpu_bytes
-            + self.soldiers.models.as_ref().map_or(0, |m| m.gpu_bytes)
+            + self
+                .soldiers
+                .models
+                .as_ref()
+                .map_or(0, soldiers::ModelGpu::gpu_bytes)
     }
 
     /// Upload the soldier models and their bone animation texture.
@@ -688,10 +711,18 @@ impl Renderer {
                 models.bone_rows()
             ));
         }
+        // One batch per model and level of detail is one skinning job.
+        if models.models.len() * gc_assets::model::LODS > soldiers::MAX_JOBS {
+            return Err(format!(
+                "{} models, more than the {} the soldier skinning pass takes",
+                models.models.len(),
+                soldiers::MAX_JOBS / gc_assets::model::LODS
+            ));
+        }
         self.soldiers.models = Some(soldiers::upload(
             &self.device,
             &self.queue,
-            &self.soldiers.bones_layout,
+            &self.soldiers,
             models,
         ));
         Ok(())
@@ -975,6 +1006,11 @@ impl Renderer {
             self.queue
                 .write_buffer(&self.soldiers.instances, 0, bytemuck::cast_slice(soldiers));
         }
+        // Which soldiers are drawn at which level of detail, and where the
+        // skinning pass puts their vertices.
+        dropped += self
+            .soldiers
+            .prepare(&self.device, &self.queue, soldiers.len(), batches);
         let (mut soldiers_drawn, mut triangles) = (0, 0);
 
         // The overlay draws in the composite pass, which a bare frame skips.
@@ -1031,6 +1067,10 @@ impl Renderer {
             pass.draw_indexed(0..*count, 0, 0..chunks.len() as u32);
             1
         };
+        // Pose the soldiers once for both passes below.
+        if !bare {
+            self.soldiers.skin(&mut encoder, &terrain.bind_group);
+        }
         if shadows && !bare {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sun shadow"),
@@ -1049,10 +1089,7 @@ impl Renderer {
             });
             pass.set_bind_group(0, &terrain.shadow_bind_group, &[]);
             draw_calls += draw_terrain(&mut pass, true);
-            draw_calls += self
-                .soldiers
-                .draw(&mut pass, soldiers.len(), batches, true)
-                .0;
+            draw_calls += self.soldiers.draw(&mut pass, true).0;
             draw_calls += draw_boxes(&mut pass, &self.block_shadow_pipeline);
         }
         if !bare {
@@ -1086,9 +1123,7 @@ impl Renderer {
             });
             pass.set_bind_group(0, &terrain.bind_group, &[]);
             draw_calls += draw_terrain(&mut pass, false);
-            let (calls, drawn, tris) =
-                self.soldiers
-                    .draw(&mut pass, soldiers.len(), batches, false);
+            let (calls, drawn, tris) = self.soldiers.draw(&mut pass, false);
             draw_calls += calls;
             soldiers_drawn = drawn;
             triangles = tris;

@@ -288,36 +288,74 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
 // texture holds, per animation frame, a 3 × 4 matrix per bone that moves a
 // vertex from where it is stored into that frame's pose. Each instance names
 // two frame rows and how far to blend between them; the vertex blends its
-// bones' matrices by their weights (linear blend skinning). Models painted in
-// vertex colours draw with `vs_soldier` and `fs_soldier`; textured ones with
-// `vs_soldier_textured` and `fs_soldier_textured`, which read three layers
-// of the material array (albedo and team mask, normal with occlusion and
-// roughness, emitted light with metalness).
+// bones' matrices by their weights (linear blend skinning).
+//
+// Skinning happens once a frame, in `cs_skin`, before any pass draws: it
+// poses every vertex of every soldier the frame draws and keeps its world
+// position, normal and tangent. The shadow pass and the world pass then read
+// those (`skin_pos`, `skin_shade`) and only transform them. A soldier's
+// vertices lie together, `skin_origin[instance] + vertex_index` being the
+// first (see `soldiers.rs`). Models painted in vertex colours draw with
+// `vs_soldier` and `fs_soldier`; textured ones with `vs_soldier_textured`
+// and `fs_soldier_textured`, which read three layers of the material array
+// (albedo and team mask, normal with occlusion and roughness, emitted light
+// with metalness).
 
-@group(1) @binding(0) var bones: texture_2d<f32>;
+@group(1) @binding(0) var<storage, read> skin_pos: array<f32>;
 @group(1) @binding(1) var materials_srgb: texture_2d_array<f32>;
 @group(1) @binding(2) var materials_linear: texture_2d_array<f32>;
 @group(1) @binding(3) var material_sampler: sampler;
+@group(1) @binding(4) var<storage, read> skin_shade: array<u32>;
+@group(1) @binding(5) var<storage, read> skin_origin: array<u32>;
+
+// The skinning pass's own bindings, in the same group of its own pipeline.
+@group(1) @binding(8) var bones: texture_2d<f32>;
+@group(1) @binding(9) var<storage, read> set_vertices: array<SetVertex>;
+@group(1) @binding(10) var<storage, read> instances: array<u32>;
+@group(1) @binding(11) var<uniform> jobs: Jobs;
+@group(1) @binding(12) var<storage, read_write> out_pos: array<f32>;
+@group(1) @binding(13) var<storage, read_write> out_shade: array<u32>;
+
+// A model vertex as stored (`ModelVertex`), in words.
+struct SetVertex {
+    // x and y, 16-bit signed, in 1/4096 tiles
+    xy: u32,
+    // z likewise; the high half holds the team weight and material plus one
+    zw: u32,
+    bones: u32,
+    weights: u32,
+    normal: u32,
+    tangent: u32,
+    color: u32,
+    uv: u32,
+};
+
+// A run of soldiers of one model at one level of detail: their first
+// instance, the first vertex of the level's vertices and how many there are,
+// and the first output slot. Thread `n` of the pass belongs to the last job
+// whose slot is at or before it.
+struct Job {
+    run: vec4<u32>,
+};
+
+struct Jobs {
+    // x: jobs, y: threads
+    count: vec4<u32>,
+    job: array<Job, 256>,
+};
 
 struct SoldierIn {
-    // x, y, z in 1/4096 tiles; w's low byte is the team weight, its second
-    // byte the material plus one.
-    @location(0) vpos: vec4<i32>,
-    // Heaviest first; weights sum to 1 and unused slots weigh 0.
-    @location(1) vbones: vec4<u32>,
-    @location(2) vweights: vec4<f32>,
-    @location(3) vnormal: vec4<f32>,
-    @location(4) vtangent: vec4<f32>,
-    @location(5) vcolor: vec4<f32>,
-    @location(6) vuv: vec2<f32>,
-    @location(7) pos: vec2<f32>,
-    @location(8) facing: vec2<f32>,
-    @location(9) frames: vec2<u32>,
-    // x: blend toward frames.y, y: selection highlight, z: lies fallen
-    @location(10) flags: vec4<f32>,
-    @location(11) team_color: vec4<f32>,
-    @location(12) lift: f32,
-    @location(13) scale: f32,
+    @builtin(vertex_index) index: u32,
+    @builtin(instance_index) instance: u32,
+    // The team weight (0 to 255) and the material plus one.
+    @location(0) team_material: vec2<u32>,
+    // The tangent's last two bytes; the second is the bitangent's handedness.
+    @location(1) tangent_w: vec2<f32>,
+    @location(2) vcolor: vec4<f32>,
+    @location(3) vuv: vec2<f32>,
+    // y: selection highlight
+    @location(4) flags: vec4<f32>,
+    @location(5) team_color: vec4<f32>,
 };
 
 struct SoldierOut {
@@ -354,6 +392,106 @@ fn bone_rows(frames: vec2<u32>, bone: u32, t: f32) -> mat3x4<f32> {
     );
 }
 
+// Byte `i` of a word as a signed value, 127 being 1.
+fn snorm8(w: u32, i: u32) -> f32 {
+    return max(f32(bitcast<i32>(w << (24u - 8u * i)) >> 24u) / 127.0, -1.0);
+}
+
+// A model-space direction moved by the blended bones, laid down with the
+// fallen, and turned to the soldier's facing. Model space is x to the
+// soldier's left, y up, z forward (glTF's convention).
+fn model_dir_to_world(m: mat3x4<f32>, d: vec3<f32>, facing: vec2<f32>, fallen: bool) -> vec3<f32> {
+    var l = vec3<f32>(dot(m[0].xyz, d), dot(m[1].xyz, d), dot(m[2].xyz, d));
+    if fallen {
+        l = vec3<f32>(l.x, -l.z, l.y);
+    }
+    let left = vec2<f32>(facing.y, -facing.x);
+    let xz = left * l.x + facing * l.z;
+    return vec3<f32>(xz.x, l.y, xz.y);
+}
+
+// Pose one vertex of one soldier and keep it for the passes that draw it.
+@compute @workgroup_size(128)
+fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
+    let n = id.x;
+    if n >= jobs.count.y {
+        return;
+    }
+    var lo = 0u;
+    var hi = jobs.count.x;
+    while hi - lo > 1u {
+        let mid = (lo + hi) / 2u;
+        if jobs.job[mid].run.w <= n {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let run = jobs.job[lo].run;
+    let at = n - run.w;
+    let soldier = run.x + at / run.z;
+    let sv = set_vertices[run.y + at % run.z];
+
+    // The instance (`SoldierInstance`), nine words.
+    let i = soldier * 9u;
+    let pos = vec2<f32>(bitcast<f32>(instances[i]), bitcast<f32>(instances[i + 1u]));
+    let facing = vec2<f32>(bitcast<f32>(instances[i + 2u]), bitcast<f32>(instances[i + 3u]));
+    let frames = vec2<u32>(instances[i + 4u] & 0xffffu, instances[i + 4u] >> 16u);
+    let flags = instances[i + 5u];
+    let lift = bitcast<f32>(instances[i + 7u]);
+    let scale = bitcast<f32>(instances[i + 8u]);
+    let t = f32(flags & 0xffu) / 255.0;
+    let fallen = ((flags >> 16u) & 0xffu) > 127u;
+
+    let p = vec4<f32>(
+        vec3<f32>(
+            f32(bitcast<i32>(sv.xy << 16u) >> 16u),
+            f32(bitcast<i32>(sv.xy) >> 16u),
+            f32(bitcast<i32>(sv.zw << 16u) >> 16u),
+        ) / 4096.0,
+        1.0,
+    );
+    // Most vertices follow one or two bones; stop at the first empty slot.
+    var m = bone_rows(frames, sv.bones & 0xffu, t) * (f32(sv.weights & 0xffu) / 255.0);
+    for (var b = 1u; b < 4u; b++) {
+        let w = f32((sv.weights >> (8u * b)) & 0xffu) / 255.0;
+        if w <= 0.0 {
+            break;
+        }
+        m += bone_rows(frames, (sv.bones >> (8u * b)) & 0xffu, t) * w;
+    }
+    var local = vec3<f32>(dot(m[0], p), dot(m[1], p), dot(m[2], p)) * scale;
+    if fallen {
+        // No death clip: lay the soldier on his back.
+        local = vec3<f32>(local.x, -local.z + 0.12 * scale, local.y);
+    }
+    let left = vec2<f32>(facing.y, -facing.x);
+    let xz = pos + left * local.x + facing * local.z;
+    let ground = max(height_at(pos), g.misc.x - 0.05);
+    let world = vec3<f32>(xz.x, ground + lift + local.y, xz.y);
+    let normal = normalize(model_dir_to_world(
+        m,
+        vec3<f32>(snorm8(sv.normal, 0u), snorm8(sv.normal, 1u), snorm8(sv.normal, 2u)),
+        facing,
+        fallen,
+    ) + vec3<f32>(0.0, 1e-4, 0.0));
+    // Textured models only: the pixel shader renormalises it anyway.
+    var tangent = model_dir_to_world(
+        m,
+        vec3<f32>(snorm8(sv.tangent, 0u), snorm8(sv.tangent, 1u), snorm8(sv.tangent, 2u)),
+        facing,
+        fallen,
+    );
+    tangent = tangent / max(length(tangent), 1e-6);
+
+    out_pos[n * 3u] = world.x;
+    out_pos[n * 3u + 1u] = world.y;
+    out_pos[n * 3u + 2u] = world.z;
+    out_shade[n * 3u] = pack2x16snorm(normal.xy);
+    out_shade[n * 3u + 1u] = pack2x16snorm(vec2<f32>(normal.z, tangent.x));
+    out_shade[n * 3u + 2u] = pack2x16snorm(tangent.yz);
+}
+
 // A posed vertex in the world.
 struct Posed {
     clip: vec4<f32>,
@@ -362,57 +500,38 @@ struct Posed {
     tangent: vec3<f32>,
 };
 
-// A model-space direction moved by the blended bones, laid down with the
-// fallen, and turned to the soldier's facing. Model space is x to the
-// soldier's left, y up, z forward (glTF's convention).
-fn model_dir_to_world(m: mat3x4<f32>, d: vec3<f32>, v: SoldierIn) -> vec3<f32> {
-    var l = vec3<f32>(dot(m[0].xyz, d), dot(m[1].xyz, d), dot(m[2].xyz, d));
-    if v.flags.z > 0.5 {
-        l = vec3<f32>(l.x, -l.z, l.y);
-    }
-    let left = vec2<f32>(v.facing.y, -v.facing.x);
-    let xz = left * l.x + v.facing * l.z;
-    return vec3<f32>(xz.x, l.y, xz.y);
+// Where `cs_skin` kept the vertex this invocation draws.
+fn skin_slot(instance: u32, index: u32) -> u32 {
+    return skin_origin[instance] + index;
 }
 
-fn pose(v: SoldierIn) -> Posed {
-    let p = vec4<f32>(vec3<f32>(v.vpos.xyz) / 4096.0, 1.0);
-    let t = v.flags.x;
-    // Most vertices follow one or two bones; stop at the first empty slot.
-    var m = bone_rows(v.frames, v.vbones.x, t) * v.vweights.x;
-    for (var i = 1u; i < 4u; i++) {
-        let w = v.vweights[i];
-        if w <= 0.0 {
-            break;
-        }
-        m += bone_rows(v.frames, v.vbones[i], t) * w;
-    }
-    var local = vec3<f32>(dot(m[0], p), dot(m[1], p), dot(m[2], p)) * v.scale;
-    if v.flags.z > 0.5 {
-        // No death clip: lay the soldier on his back.
-        local = vec3<f32>(local.x, -local.z + 0.12 * v.scale, local.y);
-    }
-    let left = vec2<f32>(v.facing.y, -v.facing.x);
-    let xz = v.pos + left * local.x + v.facing * local.z;
-    let ground = max(height_at(v.pos), g.misc.x - 0.05);
+fn skinned_world(slot: u32) -> vec3<f32> {
+    return vec3<f32>(skin_pos[slot * 3u], skin_pos[slot * 3u + 1u], skin_pos[slot * 3u + 2u]);
+}
+
+// The vertex `cs_skin` kept for this invocation.
+fn skinned(v: SoldierIn) -> Posed {
+    let slot = skin_slot(v.instance, v.index);
     var out: Posed;
-    out.world = vec3<f32>(xz.x, ground + v.lift + local.y, xz.y);
+    out.world = skinned_world(slot);
     out.clip = g.view_proj * vec4<f32>(out.world, 1.0);
-    let n = model_dir_to_world(m, v.vnormal.xyz, v);
-    out.normal = normalize(n + vec3<f32>(0.0, 1e-4, 0.0));
-    out.tangent = model_dir_to_world(m, v.vtangent.xyz, v);
+    let a = unpack2x16snorm(skin_shade[slot * 3u]);
+    let b = unpack2x16snorm(skin_shade[slot * 3u + 1u]);
+    let c = unpack2x16snorm(skin_shade[slot * 3u + 2u]);
+    out.normal = vec3<f32>(a, b.x);
+    out.tangent = vec3<f32>(b.y, c);
     return out;
 }
 
 @vertex
 fn vs_soldier(v: SoldierIn) -> SoldierOut {
-    let posed = pose(v);
+    let p = skinned(v);
     var out: SoldierOut;
-    out.clip = posed.clip;
-    out.world = posed.world;
-    out.normal = posed.normal;
+    out.clip = p.clip;
+    out.world = p.world;
+    out.normal = p.normal;
     // Team parts take the team colour, keeping the painted light and shade.
-    let team = f32(bitcast<u32>(v.vpos.w) & 0xffu) / 255.0;
+    let team = f32(v.team_material.x) / 255.0;
     let shade_of = dot(v.vcolor.rgb, vec3<f32>(0.3, 0.59, 0.11));
     let tinted = v.team_color.rgb * (0.45 + shade_of * 1.1);
     out.color = mix(v.vcolor.rgb, tinted, team);
@@ -422,8 +541,11 @@ fn vs_soldier(v: SoldierIn) -> SoldierOut {
 
 // Position only, for the shadow map.
 @vertex
-fn vs_soldier_depth(v: SoldierIn) -> @builtin(position) vec4<f32> {
-    return pose(v).clip;
+fn vs_soldier_depth(
+    @builtin(vertex_index) index: u32,
+    @builtin(instance_index) instance: u32,
+) -> @builtin(position) vec4<f32> {
+    return g.view_proj * vec4<f32>(skinned_world(skin_slot(instance, index)), 1.0);
 }
 
 @fragment
@@ -437,14 +559,14 @@ fn fs_soldier(in: SoldierOut, @builtin(front_facing) front: bool) -> @location(0
 
 @vertex
 fn vs_soldier_textured(v: SoldierIn) -> TexturedOut {
-    let posed = pose(v);
+    let p = skinned(v);
     var out: TexturedOut;
-    out.clip = posed.clip;
-    out.world = posed.world;
-    out.normal = posed.normal;
-    out.tangent = vec4<f32>(posed.tangent, v.vtangent.w);
+    out.clip = p.clip;
+    out.world = p.world;
+    out.normal = p.normal;
+    out.tangent = vec4<f32>(p.tangent, v.tangent_w.y);
     out.uv = v.vuv;
-    out.layer = (i32((bitcast<u32>(v.vpos.w) >> 8u) & 0xffu) - 1) * 3;
+    out.layer = (i32(v.team_material.y) - 1) * 3;
     out.team_color = srgb_to_linear(v.team_color.rgb);
     out.highlight = v.flags.y;
     return out;
