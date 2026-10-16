@@ -1,6 +1,8 @@
 //! Immediate-mode widgets: call `button(..)` each frame, get back whether it
 //! was clicked. Widget identity is the order of calls within a frame, so a
-//! screen must lay out its widgets the same way every frame.
+//! screen must lay out its widgets the same way every frame: a list whose
+//! length changes under the player (games found on the network) calls
+//! `reserve_ids` for the rows it does not draw.
 
 use crate::draw::{Color, DrawList, Rect, fit, text_width};
 
@@ -51,6 +53,54 @@ impl UiInput {
     }
 }
 
+/// The rule for a click, shared by the menu widgets and the HUD: pressing
+/// on a widget arms it, and releasing on that same widget is the click.
+/// Releasing anywhere else cancels it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Press {
+    armed: Option<u32>,
+}
+
+impl Press {
+    /// Widget `id` over `r`, given the mouse and this frame's button events.
+    /// Returns (clicked, held down). Widgets drawn later win a press they
+    /// overlap, so the top one takes the click.
+    pub fn widget(
+        &mut self,
+        id: u32,
+        r: Rect,
+        mouse: (i32, i32),
+        pressed: bool,
+        released: bool,
+    ) -> (bool, bool) {
+        let hot = r.contains(mouse.0, mouse.1);
+        if hot && pressed {
+            self.armed = Some(id);
+        }
+        let held = self.armed == Some(id) && hot;
+        (released && held, held)
+    }
+
+    /// Call once per frame, after every widget: a release ends any press.
+    pub fn end_frame(&mut self, released: bool) {
+        if released {
+            self.armed = None;
+        }
+    }
+
+    fn arm(&mut self, id: u32) {
+        self.armed = Some(id);
+    }
+
+    fn is(&self, id: u32) -> bool {
+        self.armed == Some(id)
+    }
+
+    fn clear(&mut self) {
+        self.armed = None;
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ButtonStyle {
     Normal,
@@ -63,10 +113,12 @@ pub struct Ui {
     pub input: UiInput,
     /// Screen size in UI pixels.
     pub screen: (i32, i32),
-    active: Option<u32>,
+    active: Press,
     focus: Option<u32>,
     next_id: u32,
     enter_taken: bool,
+    /// A text field drew this frame with the focus.
+    focus_claimed: bool,
 }
 
 impl Default for Ui {
@@ -81,10 +133,11 @@ impl Ui {
             draw: DrawList::default(),
             input: UiInput::default(),
             screen: (1280, 760),
-            active: None,
+            active: Press::default(),
             focus: None,
             next_id: 0,
             enter_taken: false,
+            focus_claimed: false,
         }
     }
 
@@ -94,17 +147,21 @@ impl Ui {
         self.draw.clear();
         self.next_id = 0;
         self.enter_taken = false;
+        self.focus_claimed = false;
     }
 
     pub fn end_frame(&mut self) {
-        if self.input.released {
-            self.active = None;
+        self.active.end_frame(self.input.released);
+        // The field that had the focus is gone (the screen changed under
+        // it): don't leave typing and Enter pointed at nothing.
+        if !self.focus_claimed {
+            self.focus = None;
         }
     }
 
     /// Drop keyboard focus and any half-finished click, e.g. on a new screen.
     pub fn reset(&mut self) {
-        self.active = None;
+        self.active.clear();
         self.focus = None;
     }
 
@@ -117,20 +174,24 @@ impl Ui {
         self.next_id
     }
 
+    /// Skip `n` ids, so widgets after a list that can be shorter than its
+    /// maximum keep the ids they have when it is full.
+    pub fn reserve_ids(&mut self, n: usize) {
+        self.next_id += n as u32;
+    }
+
     fn hovered(&self, r: Rect) -> bool {
         r.contains(self.input.mouse.0, self.input.mouse.1)
     }
 
     /// Press and release handling shared by clickable widgets.
     fn click(&mut self, id: u32, r: Rect) -> (bool, bool) {
-        let hot = self.hovered(r);
-        if hot && self.input.pressed {
-            self.active = Some(id);
+        let (mouse, pressed, released) =
+            (self.input.mouse, self.input.pressed, self.input.released);
+        if self.hovered(r) && pressed {
             self.focus = None;
         }
-        let down = self.active == Some(id) && hot;
-        let clicked = self.input.released && self.active == Some(id) && hot;
-        (clicked, down)
+        self.active.widget(id, r, mouse, pressed, released)
     }
 
     pub fn panel(&mut self, r: Rect) {
@@ -216,7 +277,7 @@ impl Ui {
         let id = self.id();
         let hot = self.hovered(r);
         if hot && self.input.pressed {
-            self.active = Some(id);
+            self.active.arm(id);
             self.focus = None;
         }
         let track = Rect::new(
@@ -226,7 +287,7 @@ impl Ui {
             10,
         );
         let mut changed = false;
-        if self.active == Some(id) {
+        if self.active.is(id) {
             let t = (self.input.mouse.0 - track.x) as f32 / track.w as f32;
             let v = (t.clamp(0.0, 1.0) * 100.0).round() as u8;
             if v != *value {
@@ -245,7 +306,7 @@ impl Ui {
         let knob = Rect::new(knob_x - 5, r.y + (r.h - 22) / 2, 10, 22);
         self.draw.rect(
             knob,
-            if hot || self.active == Some(id) {
+            if hot || self.active.is(id) {
                 theme::TEXT
             } else {
                 theme::MUTED
@@ -324,11 +385,12 @@ impl Ui {
         let hot = self.hovered(r);
         if hot && self.input.pressed {
             self.focus = Some(id);
-            self.active = None;
+            self.active.clear();
         } else if self.input.pressed && self.focus == Some(id) {
             self.focus = None;
         }
         let focused = self.focus == Some(id);
+        self.focus_claimed |= focused;
         let mut changed = false;
         if focused {
             for ch in self.input.typed.chars() {
@@ -502,6 +564,28 @@ mod tests {
             (800, 600),
         );
         assert!(!ui.button(r, "x", ButtonStyle::Normal, true));
+    }
+
+    #[test]
+    fn press_clicks_only_on_release_over_the_same_widget() {
+        let r = Rect::new(0, 0, 50, 50);
+        let other = Rect::new(100, 0, 50, 50);
+        let mut p = Press::default();
+        assert_eq!(p.widget(1, r, (5, 5), true, false), (false, true));
+        assert_eq!(p.widget(1, r, (5, 5), false, false), (false, true));
+        assert_eq!(p.widget(1, r, (5, 5), false, true), (true, true));
+        p.end_frame(true);
+        // Released on another widget, or off the first one: no click.
+        p.widget(1, r, (5, 5), true, false);
+        assert!(!p.widget(2, other, (105, 5), false, true).0);
+        assert!(!p.widget(1, r, (200, 5), false, true).0);
+        p.end_frame(true);
+        assert!(!p.widget(1, r, (5, 5), false, true).0, "press was cleared");
+        // Overlapping widgets: the one asked last takes the press.
+        p.widget(1, r, (5, 5), true, false);
+        p.widget(2, r, (5, 5), true, false);
+        assert!(!p.widget(1, r, (5, 5), false, true).0);
+        assert!(p.widget(2, r, (5, 5), false, true).0);
     }
 
     #[test]

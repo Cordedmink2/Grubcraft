@@ -12,7 +12,7 @@
 use crate::alerts::{self, AlertData};
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, text_width};
 use crate::hero::{self, HeroPanel};
-use crate::ui::theme;
+use crate::ui::{Press, theme};
 
 /// Height of the bottom bar, in UI pixels.
 pub const BAR_HEIGHT: i32 = 168;
@@ -178,6 +178,13 @@ pub struct DeployStatus {
     pub ready: bool,
 }
 
+/// Widget ids for [`Press`]: a kind in the top byte, the widget's number below.
+pub(crate) const WIDGET_READY: u32 = 1 << 24;
+pub(crate) const WIDGET_IDLE: u32 = 2 << 24;
+const WIDGET_SLOT: u32 = 3 << 24;
+const WIDGET_CARD: u32 = 4 << 24;
+pub(crate) const WIDGET_ALERT: u32 = 5 << 24;
+
 /// What the mouse did since the last frame, in UI pixels.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HudInput {
@@ -216,6 +223,9 @@ pub struct Hud {
     /// Dragging across the minimap with the left button.
     dragging: bool,
     last_card_click: Option<(u32, u64)>,
+    /// Which button the mouse went down on. Buttons fire on release, as the
+    /// menus' do; the minimap, like a slider, follows the press.
+    press: Press,
     /// Alert badges and buttons over the battlefield as last drawn.
     over: Vec<Rect>,
 }
@@ -253,7 +263,7 @@ impl Hud {
         self.minimap(draw, &layout, input, &data.minimap, events);
         self.tray(draw, &layout, input, data, events);
         if let Some(deploy) = data.deployment {
-            deploy_panel(draw, layout.grid, input, deploy, events);
+            deploy_panel(draw, &mut self.press, layout.grid, input, deploy, events);
         } else {
             self.grid(draw, &layout, input, data.grid, events);
         }
@@ -266,10 +276,12 @@ impl Hud {
             screen,
             layout.bar.h,
             input,
+            &mut self.press,
             data.alerts,
             &mut self.over,
             events,
         );
+        self.press.end_frame(input.left_released);
     }
 
     fn grid(
@@ -294,8 +306,17 @@ impl Hud {
                 cell_w,
                 cell_h,
             );
-            let hot = slot.state != SlotState::Off && cell.contains(input.mouse.0, input.mouse.1);
-            if hot && input.left_pressed {
+            let on = slot.state != SlotState::Off;
+            let hot = on && cell.contains(input.mouse.0, input.mouse.1);
+            let (clicked, _) = self.press.widget(
+                WIDGET_SLOT + i as u32,
+                cell,
+                input.mouse,
+                on && input.left_pressed,
+                input.left_released,
+            );
+            // A slot that went off between the press and the release is no click.
+            if clicked && on {
                 events.push(HudEvent::Command(i));
             }
             let (back, edge, text) = match slot.state {
@@ -442,7 +463,14 @@ impl Hud {
                 row.h.min(CARD_MAX_W * 3 / 2),
             );
             let hot = rect.contains(input.mouse.0, input.mouse.1);
-            if hot && input.left_pressed {
+            let (clicked, _) = self.press.widget(
+                WIDGET_CARD + i as u32,
+                rect,
+                input.mouse,
+                input.left_pressed,
+                input.left_released,
+            );
+            if clicked {
                 let double = self.last_card_click.is_some_and(|(id, at)| {
                     id == card.id && input.now_ms.wrapping_sub(at) < DOUBLE_CLICK_MS
                 });
@@ -471,6 +499,7 @@ impl Hud {
 /// to do, and the Ready button.
 fn deploy_panel(
     draw: &mut DrawList,
+    press: &mut Press,
     r: Rect,
     input: HudInput,
     deploy: DeployStatus,
@@ -509,9 +538,18 @@ fn deploy_panel(
         return;
     }
     let hot = button.contains(input.mouse.0, input.mouse.1);
+    let (clicked, down) = press.widget(
+        WIDGET_READY,
+        button,
+        input.mouse,
+        input.left_pressed,
+        input.left_released,
+    );
     draw.rect(
         button,
-        if hot {
+        if down {
+            theme::PRIMARY_DOWN
+        } else if hot {
             theme::PRIMARY_HOT
         } else {
             theme::PRIMARY
@@ -519,7 +557,7 @@ fn deploy_panel(
     );
     let scale = if inner.w >= CELL_W * 2 * 6 { 2 } else { 1 };
     draw.text_centered(button, scale, theme::TEXT, "Ready");
-    if hot && input.left_pressed {
+    if clicked {
         events.push(HudEvent::Ready);
     }
 }
@@ -710,11 +748,77 @@ mod tests {
         let click = HudInput {
             mouse: button,
             left_pressed: true,
+            left_released: true,
             ..HudInput::default()
         };
         assert_eq!(frame(false, click), vec![HudEvent::Ready]);
         assert!(frame(true, click).is_empty(), "already ready");
         assert!(Hud::default().wants(SCREEN, button));
+    }
+
+    #[test]
+    fn hud_buttons_fire_on_release_over_the_same_button() {
+        let l = HudLayout::new(SCREEN);
+        let ready = (l.grid.x + l.grid.w / 2, l.grid.bottom() - 20);
+        let t = terrain();
+        let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
+        let mut hud = Hud::default();
+        let mut frame = |input| {
+            let data = HudData {
+                grid: &grid,
+                minimap: MinimapData {
+                    map_tiles: 256.0,
+                    terrain: &t,
+                    dots: &[],
+                    view: &[],
+                },
+                cards: &[],
+                tray_title: "",
+                deployment: Some(DeployStatus {
+                    seconds_left: 87,
+                    ready: false,
+                }),
+                alerts: AlertData::default(),
+                hero: None,
+            };
+            let (mut draw, mut events) = (DrawList::default(), Vec::new());
+            hud.frame(&mut draw, SCREEN, input, &data, &mut events);
+            events
+        };
+        let at = |mouse, left_pressed, left_released| HudInput {
+            mouse,
+            left_pressed,
+            left_released,
+            ..HudInput::default()
+        };
+        assert!(frame(at(ready, true, false)).is_empty(), "not on press");
+        assert!(frame(at(ready, false, false)).is_empty(), "nor while held");
+        assert_eq!(frame(at(ready, false, true)), vec![HudEvent::Ready]);
+        // Pressed on Ready, released elsewhere: no click, and the next
+        // release over Ready is not one either.
+        frame(at(ready, true, false));
+        assert!(frame(at((5, 5), false, true)).is_empty());
+        assert!(frame(at(ready, false, true)).is_empty());
+        // Pressed elsewhere, released over Ready.
+        frame(at((5, 5), true, false));
+        assert!(frame(at(ready, false, true)).is_empty());
+    }
+
+    #[test]
+    fn a_grid_button_fires_on_release_not_press() {
+        let mut hud = Hud::default();
+        let l = HudLayout::new(SCREEN);
+        let spot = (l.grid.x + 6, l.grid.y + 6);
+        let at = |left_pressed, left_released| HudInput {
+            mouse: spot,
+            left_pressed,
+            left_released,
+            ..HudInput::default()
+        };
+        let (ev, _) = run(&mut hud, at(true, false), &[], &[]);
+        assert!(ev.is_empty());
+        let (ev, _) = run(&mut hud, at(false, true), &[], &[]);
+        assert_eq!(ev, vec![HudEvent::Command(0)]);
     }
 
     #[test]
@@ -864,6 +968,7 @@ mod tests {
         let click = |ms, shift| HudInput {
             mouse: (l.tray.x + 20, l.tray.y + 40),
             left_pressed: true,
+            left_released: true,
             shift,
             now_ms: ms,
             ..HudInput::default()
@@ -915,6 +1020,7 @@ mod tests {
                 l.grid.y + 6 + row * (cell_h + GRID_GAP),
             ),
             left_pressed: true,
+            left_released: true,
             ..HudInput::default()
         };
         let (ev, _) = run(&mut hud, at(0, 0), &[], &[]);

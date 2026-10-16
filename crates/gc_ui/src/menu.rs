@@ -68,7 +68,8 @@ pub struct Menu<N: Network = LocalNetwork> {
     host_password: String,
     address: String,
     join_password: String,
-    selected_game: Option<usize>,
+    /// The `address` of the listed game picked on the Play screen.
+    selected_game: Option<String>,
     message: Option<(String, bool)>,
     in_match: bool,
     /// The regiment types the army builder offers.
@@ -409,15 +410,19 @@ impl<N: Network> Menu<N> {
         if games.is_empty() {
             ui.label_centered(list, 1, theme::DISABLED, "No games found yet");
         }
-        for (i, g) in games.iter().take(3).enumerate() {
+        const LISTED: usize = 3;
+        for (i, g) in games.iter().take(LISTED).enumerate() {
             let row = Rect::new(
                 list.x + 4,
                 list.y + 4 + i as i32 * sp(34),
                 list.w - 8,
                 sp(30),
             );
-            if ui.row(row, self.selected_game == Some(i)) {
-                self.selected_game = Some(i);
+            if ui.row(
+                row,
+                self.selected_game.as_deref() == Some(g.address.as_str()),
+            ) {
+                self.selected_game = Some(g.address.clone());
             }
             let text = format!(
                 "{}  {}  {}/{}{}{}",
@@ -436,13 +441,13 @@ impl<N: Network> Menu<N> {
                 theme::TEXT,
                 &fit(&text, (row.w / 8 - 12) as usize),
             );
-            let bad = games
-                .get(i)
-                .is_some_and(|g| !crate::lobby::plays_with(&g.version, &self.version));
-            if bad {
+            if !crate::lobby::plays_with(&g.version, &self.version) {
                 ui.label_right(row.right() - 8, ty, 1, theme::BAD, &g.version);
             }
         }
+        // Games come and go while the player types: the fields below keep
+        // the same ids whatever the list shows.
+        ui.reserve_ids(LISTED - games.len().min(LISTED));
         s.y = list.bottom() + sp(14);
         let mut address = std::mem::take(&mut self.address);
         if ui.text_field(s.next(sp(36)), &mut address, 40, "Address or join code") {
@@ -458,9 +463,19 @@ impl<N: Network> Menu<N> {
         );
         self.join_password = password;
         let join_btn = Rect::new(s.x, panel.bottom() - sp(64) - 60, card_w, 52);
+        // A game that has gone, or fallen off the rows shown, is no longer
+        // picked: it would come back unseen if it reappeared.
+        let shown = |a: &String| games.iter().take(LISTED).any(|g| &g.address == a);
+        if self.selected_game.as_ref().is_some_and(|a| !shown(a)) {
+            self.selected_game = None;
+        }
         // A game listed without a password is joined without one, whatever
         // is left in the box.
-        let (target, password) = match self.selected_game.and_then(|i| games.get(i)) {
+        let picked = self
+            .selected_game
+            .as_ref()
+            .and_then(|a| games.iter().find(|g| &g.address == a));
+        let (target, password) = match picked {
             Some(g) if !g.locked => (g.address.clone(), ""),
             Some(g) => (g.address.clone(), self.join_password.as_str()),
             None => (self.address.trim().to_string(), self.join_password.as_str()),
@@ -1208,6 +1223,9 @@ fn army_summary(army_len: usize, spent: u32, budget: u32) -> String {
 mod tests {
     use super::*;
     use crate::draw::{DrawList, SOLID};
+    use crate::lobby::{
+        DiscoveredGame, LobbyState, MatchStart, NetError, NetEvent, Profile, SlotEdit,
+    };
     use crate::ui::UiInput;
 
     struct Harness {
@@ -1634,6 +1652,117 @@ mod tests {
         assert_eq!(h.menu.screen(), Screen::Settings);
         h.key(|i| i.escape = true);
         assert_eq!(h.menu.screen(), Screen::Main);
+    }
+
+    /// A practice network that also hears games on the "LAN".
+    #[derive(Default)]
+    struct Found {
+        inner: LocalNetwork,
+        games: Vec<DiscoveredGame>,
+    }
+
+    impl Network for Found {
+        fn host(&mut self, me: &Profile, s: LobbySettings, pw: &str) -> Result<(), NetError> {
+            self.inner.host(me, s, pw)
+        }
+        fn discovered(&mut self) -> &[DiscoveredGame] {
+            &self.games
+        }
+        fn join(&mut self, me: &Profile, target: &str, pw: &str) -> Result<(), NetError> {
+            self.inner.join(me, target, pw)
+        }
+        fn lobby(&self) -> Option<&LobbyState> {
+            self.inner.lobby()
+        }
+        fn edit_slot(&mut self, slot: usize, edit: SlotEdit) {
+            self.inner.edit_slot(slot, edit);
+        }
+        fn edit_settings(&mut self, s: LobbySettings) {
+            self.inner.edit_settings(s);
+        }
+        fn start_match(&mut self) -> Result<MatchStart, NetError> {
+            self.inner.start_match()
+        }
+        fn leave(&mut self) {
+            self.inner.leave();
+        }
+        fn poll(&mut self) -> Vec<NetEvent> {
+            self.inner.poll()
+        }
+    }
+
+    fn game(n: u8) -> DiscoveredGame {
+        DiscoveredGame {
+            host: format!("Host{n}"),
+            map: "Marsh".into(),
+            players: 1,
+            max_players: 4,
+            version: "0.1.0".into(),
+            locked: false,
+            playing: false,
+            address: format!("10.0.0.{n}:7777"),
+        }
+    }
+
+    fn found_frame(menu: &mut Menu<Found>, ui: &mut Ui, input: UiInput) {
+        ui.begin_frame(input, (1280, 760));
+        menu.frame(ui);
+        ui.end_frame();
+    }
+
+    #[test]
+    fn a_game_appearing_or_expiring_does_not_move_text_focus() {
+        let mut menu = Menu::new(Found::default(), Settings::default(), None, "0.1.0");
+        let mut ui = Ui::new();
+        menu.show(Screen::Play);
+        found_frame(&mut menu, &mut ui, UiInput::default());
+        let (x, y) = find_text(&ui.draw, "Address or join code").unwrap();
+        let click = UiInput {
+            mouse: (x, y),
+            pressed: true,
+            released: true,
+            ..Default::default()
+        };
+        found_frame(&mut menu, &mut ui, click);
+        let typed = |s: &str| UiInput {
+            mouse: (x, y),
+            typed: s.into(),
+            ..Default::default()
+        };
+        found_frame(&mut menu, &mut ui, typed("10."));
+        // Games appear and expire between keystrokes.
+        for games in [1, 3, 0, 2] {
+            menu.net.games = (1..=games).map(game).collect();
+            found_frame(&mut menu, &mut ui, typed("1"));
+        }
+        assert_eq!(menu.address, "10.1111");
+        assert!(
+            menu.join_password.is_empty(),
+            "nothing leaked into the password"
+        );
+        assert!(ui.text_focused());
+    }
+
+    #[test]
+    fn a_selected_game_is_kept_by_address_when_the_list_changes() {
+        let mut menu = Menu::new(Found::default(), Settings::default(), None, "0.1.0");
+        let mut ui = Ui::new();
+        menu.show(Screen::Play);
+        menu.net.games = vec![game(1), game(2)];
+        found_frame(&mut menu, &mut ui, UiInput::default());
+        let (x, y) = find_text(&ui.draw, "Host2").unwrap();
+        let click = UiInput {
+            mouse: (x, y),
+            pressed: true,
+            released: true,
+            ..Default::default()
+        };
+        found_frame(&mut menu, &mut ui, click);
+        assert_eq!(menu.selected_game.as_deref(), Some("10.0.0.2:7777"));
+        // The first game expires: the pick is still the same game.
+        menu.net.games = vec![game(2)];
+        found_frame(&mut menu, &mut ui, UiInput::default());
+        assert_eq!(menu.selected_game.as_deref(), Some("10.0.0.2:7777"));
     }
 
     #[test]

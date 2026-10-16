@@ -6,8 +6,8 @@
 //! pointing outwards. Events that are in view get no badge.
 
 use crate::draw::{DrawList, Rect};
-use crate::hud::{HudEvent, HudInput};
-use crate::ui::theme;
+use crate::hud::{HudEvent, HudInput, WIDGET_ALERT, WIDGET_IDLE};
+use crate::ui::{Press, theme};
 
 /// Side of an alert badge, in UI pixels.
 const BADGE: i32 = 28;
@@ -134,11 +134,13 @@ fn idle_button(screen: (i32, i32), bar_height: i32) -> Rect {
 
 /// Draw the alert badges and the idle-worker button, report clicks, and note
 /// in `over` every rectangle that now takes the mouse from the battlefield.
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     draw: &mut DrawList,
     screen: (i32, i32),
     bar_height: i32,
     input: HudInput,
+    press: &mut Press,
     data: AlertData,
     over: &mut Vec<Rect>,
     events: &mut Vec<HudEvent>,
@@ -150,7 +152,14 @@ pub fn draw(
             continue;
         };
         let hot = r.contains(input.mouse.0, input.mouse.1);
-        if hot && input.left_pressed {
+        let (hit, _) = press.widget(
+            WIDGET_ALERT + (a.id & 0xFF_FFFF),
+            r,
+            input.mouse,
+            input.left_pressed,
+            input.left_released,
+        );
+        if hit {
             clicked = Some(a.id);
         }
         let color = a.kind.color();
@@ -166,7 +175,14 @@ pub fn draw(
     if let Some(n) = data.idle_workers {
         let r = idle_button(screen, bar_height);
         let hot = n > 0 && r.contains(input.mouse.0, input.mouse.1);
-        if hot && input.left_pressed {
+        let (hit, _) = press.widget(
+            WIDGET_IDLE,
+            r,
+            input.mouse,
+            n > 0 && input.left_pressed,
+            input.left_released,
+        );
+        if hit && n > 0 {
             events.push(HudEvent::IdleWorker);
         }
         draw.rect(
@@ -187,6 +203,7 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::Press;
 
     const SCREEN: (i32, i32) = (1280, 760);
     const BAR: i32 = 168;
@@ -206,7 +223,17 @@ mod tests {
             alerts,
             idle_workers: idle,
         };
-        draw(&mut d, SCREEN, BAR, input, data, &mut over, &mut events);
+        let mut press = Press::default();
+        draw(
+            &mut d,
+            SCREEN,
+            BAR,
+            input,
+            &mut press,
+            data,
+            &mut over,
+            &mut events,
+        );
         (events, over)
     }
 
@@ -250,6 +277,7 @@ mod tests {
         let click = HudInput {
             mouse: (r.x + 3, r.y + 3),
             left_pressed: true,
+            left_released: true,
             ..HudInput::default()
         };
         let (events, over) = frame(&[alert([-500.0, 250.0])], None, click);
@@ -265,6 +293,7 @@ mod tests {
             HudInput {
                 mouse: (640, 300),
                 left_pressed: true,
+                left_released: true,
                 ..HudInput::default()
             },
         );
@@ -281,6 +310,7 @@ mod tests {
         let click = HudInput {
             mouse: (r.x + 3, r.y + 3),
             left_pressed: true,
+            left_released: true,
             ..HudInput::default()
         };
         assert_eq!(
@@ -296,6 +326,7 @@ mod tests {
         let click = HudInput {
             mouse: (r.x + 5, r.y + 5),
             left_pressed: true,
+            left_released: true,
             ..HudInput::default()
         };
         assert_eq!(frame(&[], Some(3), click).0, vec![HudEvent::IdleWorker]);
