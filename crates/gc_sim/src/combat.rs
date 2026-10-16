@@ -290,6 +290,9 @@ pub struct Combat {
     /// Where each regiment steps in [`Combat::push_lines`], worked out for
     /// everyone before anyone moves.
     steps: Vec<Option<FxVec2>>,
+    /// Whether any regiment stayed locked with a foe out of reach this
+    /// tick, so someone may close up (see [`Combat::close_up`]).
+    drifted: bool,
     volleys: Volleys,
     /// Volleys loosed this tick: (shooter, target), for vision.
     loosed: Vec<(RegimentHandle, RegimentHandle)>,
@@ -380,6 +383,7 @@ impl Combat {
             search: Cell::new(0),
             give: vec![FxVec2::ZERO; regiment_capacity],
             steps: vec![None; regiment_capacity],
+            drifted: false,
             volleys: Volleys {
                 alive: vec![false; MAX_VOLLEYS],
                 owner: vec![0; MAX_VOLLEYS],
@@ -792,6 +796,7 @@ impl Combat {
     ) {
         self.build_grid(regs, units);
         self.crowding(regs, stances, tick);
+        self.drifted = false;
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 continue;
@@ -833,6 +838,7 @@ impl Combat {
                 // reach: it stays locked while it closes up again (striking
                 // only once back in reach, see `after_move`).
                 best = foe.filter(|&j| me.touches(&self.blocks[j], LET_GO));
+                self.drifted |= best.is_some();
             }
             let previous = regs.engaged[i];
             let was_engaged = previous.is_some();
@@ -1013,6 +1019,9 @@ impl Combat {
                 anyone = true;
             }
         }
+        if !anyone && !self.drifted {
+            return;
+        }
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 self.steps[i] = None;
@@ -1025,7 +1034,11 @@ impl Combat {
             } else {
                 None
             }
-            .or_else(|| self.close_up(regs, stances, terrain, units, nav, i));
+            .or_else(|| {
+                self.drifted
+                    .then(|| self.close_up(regs, stances, terrain, units, nav, i))
+                    .flatten()
+            });
         }
         for (p, step) in regs.position.iter_mut().zip(&self.steps) {
             if let Some(step) = step {
