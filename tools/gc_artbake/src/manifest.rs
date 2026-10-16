@@ -52,6 +52,11 @@ fn read(path: &Path) -> Result<Vec<u8>, String> {
 
 /// Write the manifest for a pack just baked from `config` (whose file text
 /// is `config_text`).
+/// The hash of `models.ron`, whatever line endings a checkout gave it.
+fn config_hash(text: &str) -> String {
+    hash_hex(text.replace("\r\n", "\n").as_bytes())
+}
+
 pub fn write(
     opts: &Options,
     config_text: &str,
@@ -62,7 +67,7 @@ pub fn write(
     m.set("manifest", FORMAT);
     m.set("baker", &format!("gc_artbake {BAKER_VERSION}"));
     m.set("schema", &MODEL_SCHEMA.to_string());
-    m.set("config", &hash_hex(config_text.as_bytes()));
+    m.set("config", &config_hash(config_text));
     m.set("pack", &hash_hex(pack));
     m.set("pack_bytes", &pack.len().to_string());
     for src in sources(config) {
@@ -108,11 +113,7 @@ pub fn check(opts: &Options) -> Result<(), String> {
     expect("manifest format", "manifest", FORMAT.into());
     expect("baker", "baker", format!("gc_artbake {BAKER_VERSION}"));
     expect("model schema", "schema", MODEL_SCHEMA.to_string());
-    expect(
-        "models.ron hash",
-        "config",
-        hash_hex(config_text.as_bytes()),
-    );
+    expect("models.ron hash", "config", config_hash(&config_text));
     match read(&opts.out) {
         Ok(pack) => {
             expect("pack hash", "pack", hash_hex(&pack));
@@ -132,13 +133,17 @@ pub fn check(opts: &Options) -> Result<(), String> {
         let then = value.split(' ').next().unwrap_or_default();
         // A shared file can only be compared on a machine that has the folder.
         let file = opts.resolve(src)?;
-        let Ok(bytes) = std::fs::read(&file) else {
-            if src.starts_with("repo:") {
-                stale.push(format!("{src}: {} is missing", file.display()));
-            } else {
+        let bytes = match std::fs::read(&file) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !src.starts_with("repo:") => {
                 unchecked += 1;
+                continue;
             }
-            continue;
+            // A repo file that is missing, or any file that can't be read.
+            Err(e) => {
+                stale.push(format!("{src}: {}: {e}", file.display()));
+                continue;
+            }
         };
         compared += 1;
         if hash_hex(&bytes) != then {
