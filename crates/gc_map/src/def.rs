@@ -11,9 +11,9 @@
 //! adds the rotated copies, with owners moved on, so the result is exactly
 //! symmetric by construction.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum SizeClass {
     /// 128 × 128 tiles, 2 players.
     Duel,
@@ -21,7 +21,15 @@ pub enum SizeClass {
     Skirmish,
     /// 256 × 256 tiles, 4 players.
     Warfield,
+    /// 320 × 320 tiles, 5 to 6 players.
+    Grand,
+    /// A Field Battle map of this many tiles a side, for 2 to 6 players:
+    /// armies and their starts, no economy.
+    Field(i32),
 }
+
+/// The sides a Field map may have, in tiles.
+pub const FIELD_TILES: std::ops::RangeInclusive<i32> = 64..=512;
 
 impl SizeClass {
     pub fn tiles(self) -> i32 {
@@ -29,6 +37,8 @@ impl SizeClass {
             SizeClass::Duel => 128,
             SizeClass::Skirmish => 192,
             SizeClass::Warfield => 256,
+            SizeClass::Grand => 320,
+            SizeClass::Field(tiles) => tiles,
         }
     }
 
@@ -37,11 +47,13 @@ impl SizeClass {
             SizeClass::Duel => 2..=2,
             SizeClass::Skirmish => 2..=3,
             SizeClass::Warfield => 4..=4,
+            SizeClass::Grand => 5..=6,
+            SizeClass::Field(_) => 2..=6,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Symmetry {
     None,
     /// Turned half a circle about the centre; players 0 and 1 swap places.
@@ -63,7 +75,7 @@ impl Symmetry {
 /// A point or tile as (x, y), x to the east and y to the south.
 pub type Pos = (i32, i32);
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub enum Shape {
     /// Everything within `r` tiles of a point.
     Disc { at: Pos, r: i32 },
@@ -71,7 +83,7 @@ pub enum Shape {
     Line { a: Pos, b: Pos, half_width: i32 },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Mode {
     /// Pull the ground to the height.
     Set,
@@ -82,7 +94,7 @@ pub enum Mode {
 }
 
 /// One stamp on the height field.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct TerrainOp {
     pub shape: Shape,
     pub mode: Mode,
@@ -93,7 +105,7 @@ pub struct TerrainOp {
     pub edge: i32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum CoverKind {
     Grass,
     Wood,
@@ -101,13 +113,13 @@ pub enum CoverKind {
     Open,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct CoverOp {
     pub shape: Shape,
     pub kind: CoverKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Kind {
     /// A player's base centre.
     Start,
@@ -128,7 +140,7 @@ pub enum Kind {
     FrontierSlot,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Object {
     pub kind: Kind,
     pub at: Pos,
@@ -144,7 +156,7 @@ pub struct Object {
     pub once: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum SetPieceKind {
     /// A hill or ridge a defending line can hold.
     High,
@@ -153,14 +165,25 @@ pub enum SetPieceKind {
 }
 
 /// A place the author says makes a good Field Battle ([07](../../docs/07-world-and-maps.md)).
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SetPiece {
     pub kind: SetPieceKind,
     pub at: Pos,
     pub label: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+/// Rolling ground under the stamps: smooth integer noise, made symmetric
+/// by averaging it over the map's rotations.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct Noise {
+    pub seed: u32,
+    /// From the lowest to the highest ground it adds, in sixteenths of a tile.
+    pub amplitude: i32,
+    /// Tiles across one swell of the coarsest layer.
+    pub scale: i32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MapDef {
     pub name: String,
     pub size: SizeClass,
@@ -170,6 +193,8 @@ pub struct MapDef {
     pub base: i32,
     /// The water line, in sixteenths of a tile.
     pub water: i32,
+    #[serde(default)]
+    pub noise: Option<Noise>,
     #[serde(default)]
     pub terrain: Vec<TerrainOp>,
     #[serde(default)]
@@ -181,7 +206,22 @@ pub struct MapDef {
 
 impl MapDef {
     pub fn parse(text: &str) -> Result<MapDef, String> {
-        ron::from_str(text).map_err(|e| e.to_string())
+        let def: MapDef = ron::from_str(text).map_err(|e| e.to_string())?;
+        match def.size {
+            SizeClass::Field(tiles) if !FIELD_TILES.contains(&tiles) => Err(format!(
+                "a Field map is {} to {} tiles a side, not {tiles}",
+                FIELD_TILES.start(),
+                FIELD_TILES.end()
+            )),
+            _ => Ok(def),
+        }
+    }
+
+    /// The description as RON text, as an author would save it.
+    pub fn to_ron(&self) -> String {
+        let config = ron::ser::PrettyConfig::new().depth_limit(3);
+        // Plain data with no maps or floats: it always serialises.
+        ron::ser::to_string_pretty(self, config).unwrap_or_default()
     }
 
     /// Read and parse a map file; the error names the file.

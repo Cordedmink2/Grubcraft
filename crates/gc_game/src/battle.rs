@@ -411,8 +411,8 @@ fn champion_news(
 }
 
 /// `--battle`: you against one AI of `level`, as the lobby would set it up.
-/// The AI plays your faction.
-pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
+/// The AI plays your faction, on the Proving Ground made from `map_seed`.
+pub fn quick_battle(level: u8, settings: &Settings, map_seed: u64) -> MatchStart {
     let mut me = Slot::open(0);
     me.kind = SlotKind::Human;
     me.name.clone_from(&settings.player_name);
@@ -425,7 +425,10 @@ pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
     ai.color = (me.color + 1) % COLORS;
     ai.ai_level = level;
     MatchStart {
-        settings: LobbySettings::default(),
+        settings: LobbySettings {
+            map_seed,
+            ..LobbySettings::default()
+        },
         players: vec![me, ai],
         local_player: 0,
         seed: None,

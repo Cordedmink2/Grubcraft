@@ -3,11 +3,13 @@
 
 use std::path::PathBuf;
 
-use crate::draw::{Rect, fit};
+use crate::draw::{Rect, fit, text_width};
+use crate::hud::{MinimapTerrain, draw_terrain};
 use crate::lobby::{
     AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MAX_ARMY,
     MAX_PLAYERS, MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile, RosterUnit,
-    SlotEdit, SlotKind, Tempo, army_points, thousands,
+    SlotEdit, SlotKind, Tempo, army_points, field_map_tiles, fresh_map_seed, map_code,
+    parse_map_code, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -60,6 +62,23 @@ pub enum MenuAction {
     Quit,
 }
 
+/// Which map picture a screen wants: the map choice (an index into
+/// [`MAPS`]), its size in tiles ([`field_map_tiles`]) and the map seed. See
+/// [`Menu::wanted_map_preview`].
+pub type MapPreviewKey = (usize, u32, u64);
+
+/// A picture of a map the game made for the lobby.
+struct MapPreview {
+    key: MapPreviewKey,
+    terrain: MinimapTerrain,
+    /// Start positions, as fractions of the map's side (0 to 1).
+    starts: Vec<[f32; 2]>,
+}
+
+/// What the map code box says when the host types something that isn't a
+/// map code.
+const NOT_A_CODE: &str = "Not a map code (16 hex digits)";
+
 /// The menus, talking to the network through `N` ([`LocalNetwork`] for a
 /// practice lobby on one machine, `gc_net::Lan` for real LAN play).
 pub struct Menu<N: Network = LocalNetwork> {
@@ -85,6 +104,18 @@ pub struct Menu<N: Network = LocalNetwork> {
     replay_page: usize,
     /// The game is still reading the replay folder.
     replays_loading: bool,
+    /// What the map code box holds: the code of the map seed, or what the
+    /// host is typing.
+    code_entry: String,
+    /// The map seed `code_entry` was made from, so the box follows the seed
+    /// when it changes (a new map, or a code that was accepted).
+    code_for: Option<u64>,
+    /// Why the host's last map code was refused.
+    code_note: Option<&'static str>,
+    /// The map picture the screen on show wants, if it shows one.
+    wanted_preview: Option<MapPreviewKey>,
+    /// The latest picture the game made.
+    preview: Option<MapPreview>,
 }
 
 /// Vertical flow of equally wide rows.
@@ -138,7 +169,57 @@ impl<N: Network> Menu<N> {
             replays: Vec::new(),
             replay_page: 0,
             replays_loading: false,
+            code_entry: String::new(),
+            code_for: None,
+            code_note: None,
+            wanted_preview: None,
+            preview: None,
         }
+    }
+
+    /// Start the Host a game card on this map seed (`grubcraft --seed`).
+    pub fn set_host_map_seed(&mut self, seed: u64) {
+        self.host.map_seed = seed;
+    }
+
+    /// The map picture the screen on show would like: the map choice, its
+    /// size and the map seed (see [`MapPreviewKey`]).
+    /// `None` when no screen shows one. It is worked out while a frame
+    /// draws, so ask after [`Menu::frame`]; when it changes the game makes
+    /// that map (off the frame loop, it takes a moment) and answers with
+    /// [`Menu::set_map_preview`]. Until then a grey box stands in.
+    pub fn wanted_map_preview(&self) -> Option<MapPreviewKey> {
+        self.wanted_preview
+    }
+
+    /// The picture for `key`: the ground, and the start positions as
+    /// fractions of the map's side. It shows only while `key` is still the
+    /// one wanted, so a late answer for a map nobody is looking at is
+    /// harmless.
+    pub fn set_map_preview(
+        &mut self,
+        key: MapPreviewKey,
+        terrain: MinimapTerrain,
+        starts: Vec<[f32; 2]>,
+    ) {
+        self.preview = Some(MapPreview {
+            key,
+            terrain,
+            starts,
+        });
+    }
+
+    /// The key of the map picture now on screen, if a real one is (not the
+    /// grey box).
+    pub fn shown_map_preview(&self) -> Option<MapPreviewKey> {
+        self.current_preview().map(|p| p.key)
+    }
+
+    /// The map picture, if it is for the map now wanted.
+    fn current_preview(&self) -> Option<&MapPreview> {
+        self.preview
+            .as_ref()
+            .filter(|p| Some(p.key) == self.wanted_preview)
     }
 
     /// The regiment types the army builder offers: the game's unit table,
@@ -191,6 +272,13 @@ impl<N: Network> Menu<N> {
     pub fn show(&mut self, screen: Screen) {
         self.screen = screen;
         self.message = None;
+        self.forget_code_entry();
+    }
+
+    /// The map code box starts again from the map's own code.
+    fn forget_code_entry(&mut self) {
+        self.code_for = None;
+        self.code_note = None;
     }
 
     /// Whether a match is running behind the menu, which adds Resume.
@@ -211,7 +299,65 @@ impl<N: Network> Menu<N> {
     fn go(&mut self, ui: &mut Ui, screen: Screen) {
         self.screen = screen;
         self.message = None;
+        self.forget_code_entry();
         ui.reset();
+    }
+
+    /// The host's map code box (`field`) and the button that uses what was
+    /// typed (`use_btn`), for a map on `seed`. Returns the new seed when a
+    /// different, valid code was entered; a code that isn't one is
+    /// ignored, and `code_note` says so.
+    fn code_box(&mut self, ui: &mut Ui, field: Rect, use_btn: Rect, seed: u64) -> Option<u64> {
+        if self.code_for != Some(seed) {
+            self.code_entry = map_code(seed);
+            self.code_for = Some(seed);
+            self.code_note = None;
+        }
+        let (changed, submitted) = ui.text_entry(field, &mut self.code_entry, 24, "Map code");
+        if changed {
+            self.code_note = None;
+        }
+        let differs = self.code_entry != map_code(seed);
+        let used = ui.button(use_btn, "Use", ButtonStyle::Normal, differs);
+        if !(used || (submitted && differs)) {
+            return None;
+        }
+        match parse_map_code(&self.code_entry) {
+            Some(code) => {
+                // The same map typed another way (lower case, no dashes)
+                // shows as its tidy code again.
+                self.code_for = None;
+                (code != seed).then_some(code)
+            }
+            None => {
+                self.code_note = Some(NOT_A_CODE);
+                None
+            }
+        }
+    }
+
+    /// The map picture in `r` (square): the ground and the start
+    /// positions when the game has made the map `key`, a grey box until
+    /// then. Drawing it is what asks the game for that map.
+    fn draw_map_preview(&mut self, ui: &mut Ui, r: Rect, key: MapPreviewKey) {
+        self.wanted_preview = Some(key);
+        let Some(p) = self.current_preview() else {
+            ui.draw.rect(r, theme::FIELD);
+            ui.draw.text_centered(r, 1, theme::DISABLED, "...");
+            ui.draw.border(r, 2, theme::PANEL_EDGE);
+            return;
+        };
+        draw_terrain(&mut ui.draw, r, &p.terrain);
+        let inner = r.inset(3);
+        for s in &p.starts {
+            let x = r.x + (s[0] * r.w as f32) as i32;
+            let y = r.y + (s[1] * r.h as f32) as i32;
+            if inner.contains(x, y) {
+                ui.draw.rect(Rect::new(x - 3, y - 3, 7, 7), theme::FIELD);
+                ui.draw.rect(Rect::new(x - 2, y - 2, 5, 5), theme::ACCENT);
+            }
+        }
+        ui.draw.border(r, 2, theme::PANEL_EDGE);
     }
 
     fn save_settings(&mut self) {
@@ -229,12 +375,14 @@ impl<N: Network> Menu<N> {
     /// Lay out, draw and handle one frame. Call between `Ui::begin_frame`
     /// and `Ui::end_frame`.
     pub fn frame(&mut self, ui: &mut Ui) -> MenuAction {
+        self.wanted_preview = None;
         for event in self.net.poll() {
             match event {
                 NetEvent::Started(start) => return MenuAction::StartMatch(start),
                 NetEvent::Left(why) => {
                     self.screen = Screen::Play;
                     self.message = Some((why, true));
+                    self.forget_code_entry();
                 }
             }
         }
@@ -329,7 +477,9 @@ impl<N: Network> Menu<N> {
     fn play_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
         let k = (ui.screen.1 as f32 / 720.0).clamp(0.72, 1.0);
         let sp = |n: i32| (n as f32 * k).round() as i32;
-        let panel = centered(ui.screen, 880, sp(470));
+        // Five host rows (map, map code, mode, tempo, password), then the
+        // Host and Back buttons, which keep a fixed pixel size.
+        let panel = centered(ui.screen, 880, sp(64 + 74 + 5 * 48 + 8) + 124);
         ui.panel(panel);
         ui.label(panel.x + 24, panel.y + 16, 2, theme::TEXT, "Play");
         let card_w = (panel.w - 72) / 2;
@@ -344,18 +494,37 @@ impl<N: Network> Menu<N> {
         };
         ui.label(s.x, s.y, 2, theme::ACCENT, "Host a game");
         s.skip(sp(40));
-        ui.label(
-            s.x,
-            s.y,
-            1,
-            theme::MUTED,
-            "Friends on your Wi-Fi see it automatically.",
-        );
+        let hint_y = s.y;
         s.skip(sp(34));
+        // The map, a button for another one like it, and the map's code
+        // (to type in one a friend shared).
+        let map_row = s.next(sp(36));
+        let new_w = 96;
         let mut map = self.host.map;
-        if ui.stepper(s.next(sp(36)), "Map", &mut map, &MAPS) {
+        let map_r = Rect::new(map_row.x, map_row.y, map_row.w - new_w - 8, map_row.h);
+        if ui.stepper(map_r, "Map", &mut map, &MAPS) {
             self.host.map = map;
         }
+        let new_r = Rect::new(map_row.right() - new_w, map_row.y, new_w, map_row.h);
+        if ui.button(new_r, "New map", ButtonStyle::Normal, true) {
+            self.host.map_seed = fresh_map_seed();
+        }
+        let code_row = s.next(sp(36));
+        let use_w = 64;
+        let field = Rect::new(code_row.x, code_row.y, code_row.w - use_w - 8, code_row.h);
+        let use_r = Rect::new(code_row.right() - use_w, code_row.y, use_w, code_row.h);
+        if let Some(seed) = self.code_box(ui, field, use_r, self.host.map_seed) {
+            self.host.map_seed = seed;
+        }
+        let (hint, hint_color) = match self.code_note {
+            Some(note) => (note, theme::BAD),
+            None => ("Friends on your Wi-Fi see it automatically.", theme::MUTED),
+        };
+        ui.label(s.x, hint_y, 1, hint_color, hint);
+        // The map's picture sits beside the three rows below it.
+        let pv = 3 * sp(36) + 2 * sp(12);
+        let preview_r = Rect::new(s.x + card_w - pv, s.y, pv, pv);
+        s.w = card_w - pv - 12;
         let mode_names: Vec<String> = GameMode::ALL
             .iter()
             .map(|m| {
@@ -385,6 +554,10 @@ impl<N: Network> Menu<N> {
         let mut password = std::mem::take(&mut self.host_password);
         ui.text_field(s.next(sp(36)), &mut password, 24, "Password (optional)");
         self.host_password = password;
+        // A Field Battle map is made for the players in it; the card can't
+        // know yet, so it shows the size two players get.
+        let key = (self.host.map, field_map_tiles(2), self.host.map_seed);
+        self.draw_map_preview(ui, preview_r, key);
         s.skip(sp(8));
         let host_btn = Rect::new(s.x, panel.bottom() - sp(64) - 60, card_w, 52);
         let playable = self.host.mode.playable();
@@ -524,12 +697,18 @@ impl<N: Network> Menu<N> {
         };
         let k = (ui.screen.1 as f32 / 720.0).clamp(0.72, 1.0);
         let sp = |n: i32| (n as f32 * k).round() as i32;
-        // Header and settings, one row per lobby slot, then the footer (three
-        // lines of text and the buttons, which keep a fixed pixel size).
-        let row_h = sp(56);
+        // Header and settings, the map's picture and code, one row per lobby
+        // slot, then the footer (three lines of text and the buttons, which
+        // keep a fixed pixel size).
+        let (row_h, preview_side) = lobby_sizes(ui.screen.1, k);
+        let strip_h = preview_side.max(sp(36));
         let row_gap = sp(6);
         let rows_h = MAX_PLAYERS as i32 * (row_h + row_gap);
-        let panel = centered(ui.screen, 880, sp(64 + 36 + 20 + 4) + rows_h + 124);
+        let panel = centered(
+            ui.screen,
+            880,
+            sp(64 + 36 + 20 + 4) + strip_h + rows_h + 124,
+        );
         ui.panel(panel);
         ui.label(panel.x + 24, panel.y + 16, 2, theme::TEXT, "Lobby");
         let host_name = lobby
@@ -633,12 +812,59 @@ impl<N: Network> Menu<N> {
             let on = if settings.champions { "on" } else { "off" };
             ui.label_centered(champions_r, 1, theme::MUTED, &format!("{CHAMPIONS}: {on}"));
         }
+
+        // The map: its picture (when there is room), its name and its code.
+        // The host can ask for a new map or type in a code; everyone sees
+        // the code.
+        let strip = Rect::new(panel.x + 24, y + sp(36) + sp(10), panel.w - 48, strip_h);
+        let (mut x, mut w) = (strip.x, strip.w);
+        if preview_side > 0 {
+            let occupied = lobby.slots.iter().filter(|s| s.occupied()).count();
+            let picture = Rect::new(strip.x, strip.y, preview_side, preview_side);
+            let key = (settings.map, field_map_tiles(occupied), settings.map_seed);
+            self.draw_map_preview(ui, picture, key);
+            (x, w) = (strip.x + preview_side + 16, strip.w - preview_side - 16);
+            let name = MAPS.get(settings.map).copied().unwrap_or("?");
+            ui.label(x, strip.y, 2, theme::TEXT, &fit(name, (w / 16) as usize));
+            // The orange dots on the picture, said once, if there is room.
+            if preview_side >= sp(88) {
+                let hint = "Orange dots are the start positions.";
+                ui.label(x, strip.y + 38, 1, theme::MUTED, hint);
+            }
+        }
+        let code_r = Rect::new(x, strip.bottom() - sp(36), w, sp(36));
+        let text_y = code_r.y + (code_r.h - 16) / 2;
+        ui.label(code_r.x, text_y, 1, theme::MUTED, "Map code");
+        let field_x = code_r.x + text_width("Map code", 1) + 8;
+        if lobby.is_host {
+            let field = Rect::new(field_x, code_r.y, 180, code_r.h);
+            let use_r = Rect::new(field.right() + 8, code_r.y, 52, code_r.h);
+            let new_r = Rect::new(use_r.right() + 8, code_r.y, 96, code_r.h);
+            if let Some(seed) = self.code_box(ui, field, use_r, settings.map_seed) {
+                settings.map_seed = seed;
+                changed = true;
+            }
+            if ui.button(new_r, "New map", ButtonStyle::Normal, true) {
+                settings.map_seed = fresh_map_seed();
+                changed = true;
+            }
+            if let Some(note) = self.code_note {
+                let note_x = new_r.right() + 12;
+                let room = ((code_r.right() - note_x) / 8).max(0) as usize;
+                ui.label(note_x, text_y, 1, theme::BAD, &fit(note, room));
+            }
+        } else {
+            let code = map_code(settings.map_seed);
+            let scale = if code_r.h >= 32 { 2 } else { 1 };
+            let code_y = code_r.y + (code_r.h - 16 * scale) / 2;
+            ui.label(field_x, code_y, scale, theme::TEXT, &code);
+        }
         if changed {
             self.net.edit_settings(settings);
         }
 
         // Player rows.
-        let rows_top = y + sp(36) + sp(20);
+        let rows_top = strip.bottom() + sp(10);
         for (i, slot) in lobby.slots.iter().enumerate() {
             let row = Rect::new(
                 panel.x + 24,
@@ -1215,6 +1441,36 @@ impl<N: Network> Menu<N> {
             action = MenuAction::SettingsChanged;
         }
         action
+    }
+}
+
+/// How tall the lobby's player rows are and how big the map picture is
+/// (its side in pixels, 0 for none), on a screen `screen_h` tall at scale
+/// `k`. The picture gets 96 pixels (scaled) when there is room; the rows
+/// give up a little height first, then the picture gets smaller, and on a
+/// short screen the picture goes and only the map code row remains.
+fn lobby_sizes(screen_h: i32, k: f32) -> (i32, i32) {
+    let sp = |n: i32| (n as f32 * k).round() as i32;
+    let avail = screen_h - 24;
+    // Everything but the rows and the map strip: header, settings, gaps
+    // and the footer.
+    let fixed = sp(64 + 36 + 20 + 4) + 124;
+    let (full_row, min_row, gap) = (sp(56), sp(48), sp(6));
+    let total = |row: i32, strip: i32| fixed + strip + MAX_PLAYERS as i32 * (row + gap);
+    let code_row = sp(36);
+    // The tallest rows that fit under a strip `strip` tall.
+    let rows_for = |strip: i32| {
+        let over = (total(full_row, strip) - avail).max(0);
+        let give = (over + MAX_PLAYERS as i32 - 1) / MAX_PLAYERS as i32;
+        full_row - give.min(full_row - min_row)
+    };
+    let want = sp(96);
+    let row = rows_for(want);
+    let side = want - (total(row, want) - avail).max(0);
+    if side >= sp(64) {
+        (row, side)
+    } else {
+        (rows_for(code_row), 0)
     }
 }
 
@@ -1801,6 +2057,336 @@ mod tests {
         menu.net.games = vec![game(2)];
         found_frame(&mut menu, &mut ui, UiInput::default());
         assert_eq!(menu.selected_game.as_deref(), Some("10.0.0.2:7777"));
+    }
+
+    /// Where the picture of a map shows: a flat colour nothing else uses.
+    const PICTURE: [u8; 4] = [1, 2, 3, 255];
+
+    fn picture_quads(draw: &DrawList) -> usize {
+        draw.quads.iter().filter(|q| q.color == PICTURE).count()
+    }
+
+    fn send_picture(menu: &mut Menu) {
+        let key = menu.wanted_map_preview().expect("a picture is wanted");
+        let terrain = MinimapTerrain::from_fn(8, |_, _| PICTURE);
+        menu.set_map_preview(key, terrain, vec![[0.25, 0.25], [0.75, 0.75]]);
+    }
+
+    /// Type `text` into the focused field.
+    fn type_text(h: &mut Harness, text: &str) {
+        h.frame(UiInput {
+            typed: text.into(),
+            ..Default::default()
+        });
+    }
+
+    fn lobby_seed(h: &Harness) -> u64 {
+        h.menu.net.lobby().unwrap().settings.map_seed
+    }
+
+    /// Click in the map code box and empty it.
+    fn clear_code_box(h: &mut Harness) {
+        let code = map_code(lobby_seed(h));
+        h.click(&code);
+        for _ in 0..24 {
+            h.frame(UiInput {
+                backspace: true,
+                ..Default::default()
+            });
+        }
+    }
+
+    #[test]
+    fn the_lobby_shows_the_map_picture_code_and_new_map_button() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        assert_eq!(h.menu.screen(), Screen::Lobby);
+        assert!(h.has("New map") && h.has("Map code") && h.has("0000-0000-6772-7562"));
+        // The lobby asks for the map it is on, sized for the players in it.
+        let seed = crate::lobby::DEFAULT_MAP_SEED;
+        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
+        // Up to four players share a map, so a new one changes nothing.
+        h.click("Add AI");
+        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
+        // Until the game answers there is a grey box, not a picture.
+        assert_eq!(picture_quads(&h.ui.draw), 0);
+        assert_eq!(h.menu.shown_map_preview(), None);
+        send_picture(&mut h.menu);
+        h.frame(UiInput::default());
+        assert_eq!(h.menu.shown_map_preview(), Some((0, 256, seed)));
+        assert!(picture_quads(&h.ui.draw) > 0);
+        // A picture of some other map is not shown.
+        h.menu
+            .set_map_preview((1, 256, seed), MinimapTerrain::default(), Vec::new());
+        h.frame(UiInput::default());
+        assert_eq!(h.menu.shown_map_preview(), None);
+        assert_eq!(picture_quads(&h.ui.draw), 0);
+    }
+
+    #[test]
+    fn the_lobby_picture_follows_the_map_choice_and_seed() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        h.click("Map: Pro");
+        let wanted = h.menu.wanted_map_preview().unwrap();
+        assert_eq!(wanted.0, 1);
+        assert_eq!(MAPS[wanted.0], "Random: Pass");
+        h.click("New map");
+        assert_ne!(h.menu.wanted_map_preview().unwrap().2, wanted.2);
+        assert_eq!(h.menu.wanted_map_preview().unwrap().2, lobby_seed(&h));
+        // Out of the lobby, nothing is wanted.
+        h.click("Leave");
+        h.click("Back");
+        assert_eq!(h.menu.wanted_map_preview(), None);
+    }
+
+    #[test]
+    fn new_map_in_the_lobby_changes_the_seed_and_the_code() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        let before = lobby_seed(&h);
+        h.click("New map");
+        let after = lobby_seed(&h);
+        assert_ne!(before, after);
+        assert!(h.has(&map_code(after)));
+        assert!(!h.has(&map_code(before)));
+        h.click("New map");
+        assert_ne!(lobby_seed(&h), after);
+    }
+
+    #[test]
+    fn the_host_types_in_a_map_code() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        clear_code_box(&mut h);
+        type_text(&mut h, "deadbeef01234567");
+        // Nothing happens until the code is used.
+        assert_eq!(lobby_seed(&h), crate::lobby::DEFAULT_MAP_SEED);
+        h.click("Use");
+        assert_eq!(lobby_seed(&h), 0xDEAD_BEEF_0123_4567);
+        assert!(h.has("DEAD-BEEF-0123-4567"));
+        // Enter does it too.
+        clear_code_box(&mut h);
+        type_text(&mut h, "0000 0000 0000 00ff");
+        h.frame(UiInput {
+            enter: true,
+            ..Default::default()
+        });
+        assert_eq!(lobby_seed(&h), 0xFF);
+        assert!(!h.has("Not a map code"));
+    }
+
+    #[test]
+    fn a_map_code_that_is_not_one_is_ignored_with_a_message() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        h.click("Add AI");
+        assert!(h.has("Everyone is ready."));
+        clear_code_box(&mut h);
+        type_text(&mut h, "not a code");
+        // Enter in the box submits the code, not the match.
+        h.frame(UiInput {
+            enter: true,
+            ..Default::default()
+        });
+        assert!(!matches!(h.last, MenuAction::StartMatch(_)));
+        assert_eq!(lobby_seed(&h), crate::lobby::DEFAULT_MAP_SEED);
+        assert!(h.has("Not a map code"));
+        // Typing again takes the message away.
+        h.click("not a code");
+        type_text(&mut h, "x");
+        assert!(!h.has("Not a map code"));
+    }
+
+    /// A lobby that somebody else hosts.
+    struct Guest(LobbyState);
+
+    impl Network for Guest {
+        fn host(&mut self, _: &Profile, _: LobbySettings, _: &str) -> Result<(), NetError> {
+            Ok(())
+        }
+        fn discovered(&mut self) -> &[DiscoveredGame] {
+            &[]
+        }
+        fn join(&mut self, _: &Profile, _: &str, _: &str) -> Result<(), NetError> {
+            Ok(())
+        }
+        fn lobby(&self) -> Option<&LobbyState> {
+            Some(&self.0)
+        }
+        fn edit_slot(&mut self, _: usize, _: SlotEdit) {}
+        fn edit_settings(&mut self, _: LobbySettings) {}
+        fn start_match(&mut self) -> Result<MatchStart, NetError> {
+            Err(NetError::Unavailable("guest".into()))
+        }
+        fn leave(&mut self) {}
+        fn poll(&mut self) -> Vec<NetEvent> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn a_joiner_sees_the_map_code_and_picture_but_cannot_change_them() {
+        let mut local = LocalNetwork::new();
+        let settings = LobbySettings {
+            map: 2,
+            map_seed: 0xABCD_EF01_2345_6789,
+            ..Default::default()
+        };
+        let host = Menu::new(LocalNetwork::new(), Settings::default(), None, "0.1.0").profile();
+        local.host(&host, settings, "").unwrap();
+        let mut lobby = local.lobby().unwrap().clone();
+        lobby.is_host = false;
+        lobby.slots[1] = {
+            let mut s = lobby.slots[0].clone();
+            s.name = "Guest".into();
+            s
+        };
+        lobby.local_slot = 1;
+        let mut menu = Menu::new(Guest(lobby), Settings::default(), None, "0.1.0");
+        let mut ui = Ui::new();
+        menu.show(Screen::Lobby);
+        ui.begin_frame(UiInput::default(), (1280, 760));
+        menu.frame(&mut ui);
+        ui.end_frame();
+        assert!(find_text(&ui.draw, "ABCD-EF01-2345-6789").is_some());
+        assert!(find_text(&ui.draw, "Map code").is_some());
+        assert!(find_text(&ui.draw, "Map: Random: Ford").is_some());
+        assert!(find_text(&ui.draw, "New map").is_none());
+        assert!(find_text(&ui.draw, "Use").is_none());
+        assert_eq!(
+            menu.wanted_map_preview(),
+            Some((2, 256, 0xABCD_EF01_2345_6789))
+        );
+    }
+
+    #[test]
+    fn the_host_card_has_new_map_a_code_box_and_a_picture() {
+        let mut h = Harness::new();
+        h.click("Play");
+        let seed = crate::lobby::DEFAULT_MAP_SEED;
+        assert!(h.has("New map") && h.has(&map_code(seed)));
+        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
+        send_picture(&mut h.menu);
+        h.frame(UiInput::default());
+        assert!(picture_quads(&h.ui.draw) > 0);
+        h.click("New map");
+        let fresh = h.menu.wanted_map_preview().unwrap().2;
+        assert_ne!(fresh, seed);
+        assert!(h.has(&map_code(fresh)));
+        // The new map's picture isn't here yet.
+        assert_eq!(picture_quads(&h.ui.draw), 0);
+        // A code typed in is used, a junk one is refused.
+        h.click(&map_code(fresh));
+        for _ in 0..24 {
+            h.frame(UiInput {
+                backspace: true,
+                ..Default::default()
+            });
+        }
+        type_text(&mut h, "0123456789abcdef");
+        h.click("Use");
+        assert_eq!(
+            h.menu.wanted_map_preview().unwrap().2,
+            0x0123_4567_89AB_CDEF
+        );
+        h.click("0123-4567-89AB-CDEF");
+        h.frame(UiInput {
+            backspace: true,
+            ..Default::default()
+        });
+        h.click("Use");
+        assert!(h.has("Not a map code"));
+        assert_eq!(
+            h.menu.wanted_map_preview().unwrap().2,
+            0x0123_4567_89AB_CDEF
+        );
+        // The hosted lobby is on the chosen map.
+        h.click_last("Host");
+        assert_eq!(lobby_seed(&h), 0x0123_4567_89AB_CDEF);
+    }
+
+    #[test]
+    fn a_starting_map_seed_can_be_set_for_the_host_card() {
+        let mut h = Harness::new();
+        h.menu.set_host_map_seed(12345);
+        h.click("Play");
+        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, 12345)));
+        assert!(h.has(&map_code(12345)));
+        h.click_last("Host");
+        assert_eq!(lobby_seed(&h), 12345);
+    }
+
+    #[test]
+    fn the_lobby_fits_with_the_picture_at_every_size() {
+        for size in [
+            (1280, 760),
+            (1280, 720),
+            (1024, 600),
+            (960, 540),
+            (853, 506),
+        ] {
+            let mut h = Harness::new();
+            h.click("Play");
+            h.click_last("Host");
+            for _ in 0..MAX_PLAYERS - 1 {
+                h.click("Add AI");
+            }
+            for round in 0..2 {
+                h.ui.begin_frame(UiInput::default(), size);
+                h.menu.frame(&mut h.ui);
+                h.ui.end_frame();
+                let wanted = h.menu.wanted_map_preview();
+                if round == 0 {
+                    // Six players: a bigger map.
+                    assert!(wanted.is_none_or(|w| w.1 == 320), "{size:?}");
+                    if wanted.is_some() {
+                        send_picture(&mut h.menu);
+                    }
+                } else if wanted.is_some() {
+                    assert!(picture_quads(&h.ui.draw) > 0, "{size:?}");
+                }
+                for q in &h.ui.draw.quads {
+                    let right = i32::from(q.pos[0]) + i32::from(q.size[0]);
+                    let bottom = i32::from(q.pos[1]) + i32::from(q.size[1]);
+                    assert!(right <= size.0 && bottom <= size.1, "{size:?}: {q:?}");
+                }
+                let (_, last_row) = h.text_pos("AI 6");
+                let (_, code) = h.text_pos("Map code");
+                let (_, leave) = h.text_pos("Leave");
+                assert!(code < last_row && last_row < leave, "{size:?}");
+            }
+            // The picture is there at the common sizes and goes only on the
+            // shortest windows.
+            if size.1 >= 600 {
+                assert!(h.menu.wanted_map_preview().is_some(), "{size:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn lobby_sizes_keep_the_rows_tall_enough_and_the_picture_big_enough() {
+        for h in [506, 540, 600, 720, 760, 900, 1080, 1440] {
+            let k = (h as f32 / 720.0).clamp(0.72, 1.0);
+            let sp = |n: i32| (n as f32 * k).round() as i32;
+            let (row, side) = lobby_sizes(h, k);
+            assert!(row >= sp(48) && row <= sp(56), "{h}: rows {row}");
+            assert!(
+                side == 0 || (sp(64)..=sp(96)).contains(&side),
+                "{h}: {side}"
+            );
+            let total =
+                sp(64 + 36 + 20 + 4) + 124 + side.max(sp(36)) + MAX_PLAYERS as i32 * (row + sp(6));
+            assert!(total <= h - 24, "{h}: {total} tall");
+        }
+        // A tall window gets everything at full size.
+        let (row, side) = lobby_sizes(1080, 1.0);
+        assert_eq!((row, side), (56, 96));
     }
 
     #[test]

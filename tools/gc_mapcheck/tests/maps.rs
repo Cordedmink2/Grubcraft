@@ -207,3 +207,29 @@ fn ground_above_the_highest_is_an_error() {
         "{e:?}"
     );
 }
+
+/// A Field Battle map has no economy to count, but its starts are still
+/// checked: a missing one is an error, not a crash.
+#[test]
+fn a_field_map_missing_a_start_is_an_error() {
+    let text =
+        "MapDef(name: \"Short\", size: Field(128), symmetry: None, players: 2, base: 40, water: 24,
+        terrain: [], cover: [],
+        objects: [(kind: Start, at: (32, 64), owner: Some(0))])";
+    let errors = errors_of(text);
+    assert!(
+        errors.iter().any(|e| e.contains("player 1 has 0 starts")),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn a_field_map_of_no_size_is_refused() {
+    for size in ["Field(0)", "Field(-100)", "Field(100000)"] {
+        let text = format!(
+            "MapDef(name: \"Odd\", size: {size}, symmetry: None, players: 2, base: 40, water: 24,
+                terrain: [], cover: [], objects: [])"
+        );
+        assert!(MapDef::parse(&text).is_err(), "{size}");
+    }
+}

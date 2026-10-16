@@ -52,7 +52,7 @@ These run in `gc_bake` and in `gc_game`'s build script (and in the game itself o
 
 | Asset | Used by | Licence |
 |---|---|---|
-| Soldier models (`assets/models.pak`) | Soldiers on the field | CC0: the Yari Ashigaru and the Ember Clans models made for Grubcraft on Quaternius's Farmer (the archer's bow clips from Quaternius's Ranger), Quaternius (Alien, Orc Skull) and CDmir (Alien Bug); listed in `CREDITS.md` and on the in-game credits screen |
+| Soldier models (`assets/models.pak`) | Soldiers on the field | CC0: the Yari Ashigaru and the Ember Clans models made for Grubcraft on Quaternius's Farmer (the archer's bow clips from Quaternius's Ranger, the Onmyoji's casting clips from Quaternius's Wizard), Quaternius (Alien, Orc Skull) and CDmir (Alien Bug); listed in `CREDITS.md` and on the in-game credits screen |
 | Sound effects and music loops (`assets/audio/sounds.gcsnd`) | Game audio | Synthesised by `tools/gc_sfx`; original work, no third-party licence |
 | Glyphs rasterised from DejaVu Sans Mono (`crates/gc_render/src/debug_font.rs`) | Dev overlay text | Bitstream Vera / DejaVu licence: free to use, modify and redistribute, including embedded; the fonts' names may not be reused for modified versions. Copyright (c) 2003 Bitstream, Inc. (Bitstream Vera); DejaVu changes are in the public domain |
 

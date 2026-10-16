@@ -30,8 +30,7 @@ fn id(version: &str) -> Identity {
     Identity {
         version: version.into(),
         data_hash: 42,
-        seed: SEED,
-        map_hash: 7,
+        map_hash: |_, _| 7,
     }
 }
 

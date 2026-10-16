@@ -98,7 +98,6 @@ impl Map {
         }
         let mut map = Map::from_samples(tiles, heights, WATER);
         map.name = format!("Seed {seed}");
-        map.seed = Some(seed);
         map.players = START_PLATEAUS as u8;
         map.cover = map.grow_cover(seed);
         map.objects = (0..)
@@ -115,11 +114,11 @@ impl Map {
 }
 
 /// Fixed point for map making: 1.0.
-const ONE: i64 = 1 << 16;
+pub(crate) const ONE: i64 = 1 << 16;
 
 /// Woods and tall grass stay this far from the start plateaus' centres
 /// (tiles), so armies deploy in the open and see each other.
-const COVER_CLEAR_OF_STARTS: i64 = 34;
+pub(crate) const COVER_CLEAR_OF_STARTS: i64 = 34;
 /// ... and this far from the map's edge.
 const COVER_CLEAR_OF_EDGE: i64 = 10;
 /// Ground steeper than this (height units per tile) grows no wood or grass.
@@ -222,8 +221,8 @@ fn smoothstep(e0: i64, e1: i64, x: i64) -> i64 {
 const OCTAVE_FREQ: [i64; 5] = [65_536, 133_038, 270_067, 548_237, 1_112_920];
 
 /// Smooth value noise in fixed point, 0 to 1.
-struct Noise {
-    seed: u32,
+pub(crate) struct Noise {
+    pub(crate) seed: u32,
 }
 
 impl Noise {
@@ -252,7 +251,7 @@ impl Noise {
     }
 
     /// `octaves` layers of noise, each finer and half as strong.
-    fn fbm(&self, x: i64, y: i64, octaves: usize) -> i64 {
+    pub(crate) fn fbm(&self, x: i64, y: i64, octaves: usize) -> i64 {
         debug_assert!(octaves <= OCTAVE_FREQ.len(), "add octave frequencies");
         let (mut sum, mut norm) = (0, 0);
         for (i, freq) in OCTAVE_FREQ[..octaves].iter().enumerate() {
