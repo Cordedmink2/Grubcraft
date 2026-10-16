@@ -79,12 +79,10 @@ pub fn new_path(dir: &Path, secs: u64, what: &str) -> PathBuf {
         .expect("a free name")
 }
 
-/// Save `replay` to `path`, making its folder.
+/// Save `replay` to `path`, making its folder. A crash while saving leaves
+/// the earlier copy, not a torn file.
 pub fn save(replay: &Replay, path: &Path) -> Result<(), String> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    replay.save(path).map_err(|e| e.to_string())
+    gc_platform::fsutil::write_atomic(path, &replay.encode()).map_err(|e| e.to_string())
 }
 
 /// The replay files in `dir`, oldest first (none if there is no folder).

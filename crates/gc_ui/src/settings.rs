@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use gc_platform::logln;
 use serde::{Deserialize, Serialize};
 
 use crate::lobby::Faction;
@@ -112,23 +113,45 @@ impl Settings {
         }
     }
 
-    /// Read settings; a missing or broken file gives the defaults.
+    /// Read settings; a missing file gives the defaults. A file that cannot
+    /// be read or does not parse also gives the defaults, but is first
+    /// copied to `settings.ron.broken` and logged, so one typo or a
+    /// half-written file does not silently wipe what the player had.
     pub fn load(path: &Path) -> Settings {
-        let mut s = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| ron::from_str::<Settings>(&text).ok())
-            .unwrap_or_default();
+        let mut s = match std::fs::read(path) {
+            Ok(bytes) => std::str::from_utf8(&bytes)
+                .map_err(|e| e.to_string())
+                .and_then(|text| ron::from_str::<Settings>(text).map_err(|e| e.to_string()))
+                .unwrap_or_else(|e| {
+                    let mut broken = path.as_os_str().to_owned();
+                    broken.push(".broken");
+                    let kept = match gc_platform::fsutil::write_atomic(Path::new(&broken), &bytes) {
+                        Ok(()) => format!("a copy is in {}", Path::new(&broken).display()),
+                        Err(e) => format!("the copy failed too: {e}"),
+                    };
+                    logln!(
+                        "grubcraft: {} would not load ({e}); using the defaults, {kept}",
+                        path.display()
+                    );
+                    Settings::default()
+                }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings::default(),
+            Err(e) => {
+                logln!(
+                    "grubcraft: cannot read {} ({e}); using the defaults",
+                    path.display()
+                );
+                Settings::default()
+            }
+        };
         s.sanitize();
         s
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
         let text = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
             .map_err(std::io::Error::other)?;
-        std::fs::write(path, text)
+        gc_platform::fsutil::write_durable(path, text.as_bytes())
     }
 }
 
@@ -183,7 +206,11 @@ mod tests {
         let path = temp("broken");
         std::fs::write(&path, "this is not ron").unwrap();
         assert_eq!(Settings::load(&path), Settings::default());
+        // The broken file is kept for the player to look at.
+        let broken = PathBuf::from(format!("{}.broken", path.display()));
+        assert_eq!(std::fs::read_to_string(&broken).unwrap(), "this is not ron");
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&broken);
     }
 
     #[test]

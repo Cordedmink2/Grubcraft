@@ -116,11 +116,8 @@ fn rotate(logs: &Path) {
         0 => logs.join("grubcraft.log"),
         i => logs.join(format!("grubcraft.{i}.log")),
     };
-    // Renaming over an existing file replaces it on every platform we ship
-    // to except Windows, so remove the target first.
     for i in (0..LOG_FILES - 1).rev() {
         if name(i).exists() {
-            let _ = fs::remove_file(name(i + 1));
             let _ = fs::rename(name(i), name(i + 1));
         }
     }
