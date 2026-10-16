@@ -14,6 +14,7 @@ use gc_audio::{Audio, Bank, SoundId};
 use gc_platform::logln;
 use gc_sim::{MoraleState, RegimentHandle, World};
 use glam::Vec2;
+use std::time::{Duration, Instant};
 
 /// The sound bank written by `cargo run -p gc_sfx`.
 static BANK: &[u8] = include_bytes!("../../../assets/audio/sounds.gcsnd");
@@ -37,6 +38,12 @@ const PRI_BLOWS: u8 = 100;
 const PRI_CHARGE: u8 = 170;
 const PRI_MORALE: u8 = 220;
 const PRI_UI: u8 = 255;
+
+/// How long to wait before the first try to reopen a lost sound output, and
+/// the most between tries. The wait doubles after each failure, because
+/// probing for a device blocks the frame loop for a moment.
+const REOPEN_FIRST: Duration = Duration::from_secs(3);
+const REOPEN_MAX: Duration = Duration::from_secs(60);
 
 /// Short clicks for the interface.
 #[derive(Clone, Copy, Debug)]
@@ -75,24 +82,31 @@ pub struct Sounds {
     last_intensity: u8,
     muted: bool,
     music_on: bool,
+    /// When the output may next be reopened, and how long to wait after
+    /// that if it fails again. Kept after a success, so a stream that dies
+    /// again at once still waits.
+    reopen: Option<(Instant, Duration)>,
+}
+
+/// Open the default output with the embedded sound bank.
+fn open_audio() -> Result<Audio, gc_audio::AudioError> {
+    Bank::parse(BANK)
+        .map_err(gc_audio::AudioError::from)
+        .and_then(Audio::start)
 }
 
 impl Sounds {
     /// Open the sound card and start the music. None (with a note on stderr)
     /// if there is no usable output; the game then runs silently.
     pub fn start(regiment_capacity: usize) -> Option<Sounds> {
-        let started = Bank::parse(BANK)
-            .map_err(gc_audio::AudioError::from)
-            .and_then(Audio::start);
-        match started {
+        match open_audio() {
             Ok(audio) => {
                 logln!(
                     "audio: {} at {} Hz",
                     audio.device_name(),
                     audio.sample_rate()
                 );
-                audio.set_music_volume(MUSIC_VOLUME);
-                Some(Sounds {
+                let sounds = Sounds {
                     audio,
                     seen: vec![None; regiment_capacity],
                     flights: Vec::with_capacity(256),
@@ -102,11 +116,59 @@ impl Sounds {
                     last_intensity: 0,
                     muted: false,
                     music_on: true,
-                })
+                    reopen: None,
+                };
+                sounds.apply_state();
+                Some(sounds)
             }
             Err(e) => {
                 logln!("audio off: {e}");
                 None
+            }
+        }
+    }
+
+    /// Tell a freshly opened output what the player has set: mute, music
+    /// on or off, and how much of the battle layer is playing.
+    fn apply_state(&self) {
+        self.audio
+            .set_master_volume(if self.muted { 0.0 } else { 1.0 });
+        self.audio
+            .set_music_volume(if self.music_on { MUSIC_VOLUME } else { 0.0 });
+        self.audio
+            .set_music_intensity(f32::from(self.last_intensity) / 20.0);
+    }
+
+    /// If the sound card went away (headphones unplugged), open the default
+    /// one again, waiting longer after each failed try, keeping the player's
+    /// mute and music settings. Call once a frame.
+    pub fn reopen_if_lost(&mut self) {
+        if !self.audio.stream_lost() {
+            return;
+        }
+        let (at, wait) = self
+            .reopen
+            .unwrap_or_else(|| (Instant::now(), REOPEN_FIRST));
+        if Instant::now() < at {
+            return;
+        }
+        logln!("audio: the output was lost, trying to reopen it");
+        match open_audio() {
+            Ok(audio) => {
+                logln!(
+                    "audio: reopened {} at {} Hz",
+                    audio.device_name(),
+                    audio.sample_rate()
+                );
+                self.audio = audio;
+                self.apply_state();
+                // A stream that dies again at once waits too, instead of
+                // being rebuilt every frame.
+                self.reopen = Some((Instant::now() + REOPEN_FIRST, REOPEN_FIRST));
+            }
+            Err(e) => {
+                logln!("audio: could not reopen it ({e}); trying again in {wait:?}");
+                self.reopen = Some((Instant::now() + wait, (wait * 2).min(REOPEN_MAX)));
             }
         }
     }
@@ -248,15 +310,13 @@ impl Sounds {
     /// M: silence or restore everything.
     pub fn toggle_mute(&mut self) {
         self.muted = !self.muted;
-        self.audio
-            .set_master_volume(if self.muted { 0.0 } else { 1.0 });
+        self.apply_state();
     }
 
     /// N: music off or on, effects stay.
     pub fn toggle_music(&mut self) {
         self.music_on = !self.music_on;
-        self.audio
-            .set_music_volume(if self.music_on { MUSIC_VOLUME } else { 0.0 });
+        self.apply_state();
     }
 
     /// One line for the dev overlay.

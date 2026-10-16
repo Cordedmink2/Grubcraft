@@ -17,6 +17,8 @@ mod shadows;
 mod soldiers;
 
 use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
@@ -196,6 +198,8 @@ pub struct Renderer {
     terrain_gpu_bytes: u64,
     stats: RenderStats,
     adapter_info: wgpu::AdapterInfo,
+    /// What the GPU driver reported behind our back; see [`GpuHealth`].
+    health: Arc<GpuHealth>,
     /// Scratch lists of chunk coordinates the camera and the sun see,
     /// reused every frame.
     visible_chunks: Vec<[u32; 2]>,
@@ -204,6 +208,45 @@ pub struct Renderer {
     soldiers: soldiers::SoldiersGpu,
     /// Menu and lobby screens, drawn under the dev overlay.
     ui: OverlayGpu,
+}
+
+/// How many driver messages are kept between two looks at them, and how
+/// many different ones are remembered so a repeating error is logged once.
+const MAX_GPU_MESSAGES: usize = 16;
+const MAX_GPU_DISTINCT: usize = 64;
+
+/// Problems the GPU driver reports from its own threads: a lost device, or
+/// (in release builds, where we log instead of panicking) an error that no
+/// code was waiting for. The game polls it once a frame.
+#[derive(Default)]
+struct GpuHealth {
+    lost: AtomicBool,
+    messages: Mutex<GpuMessages>,
+}
+
+#[derive(Default)]
+struct GpuMessages {
+    /// Not yet taken by the game.
+    pending: Vec<String>,
+    /// Everything reported so far; a repeat is dropped, since an error that
+    /// recurs every frame would otherwise flood the log.
+    seen: Vec<String>,
+}
+
+impl GpuHealth {
+    fn report(&self, message: String) {
+        let Ok(mut m) = self.messages.lock() else {
+            return;
+        };
+        if m.seen.contains(&message) || m.seen.len() >= MAX_GPU_DISTINCT {
+            return;
+        }
+        m.seen.push(message.clone());
+        if m.pending.len() < MAX_GPU_MESSAGES {
+            m.pending
+                .push(format!("{message} (repeats are not logged again)"));
+        }
+    }
 }
 
 struct OverlayGpu {
@@ -267,6 +310,29 @@ impl Renderer {
             })
             .await
             .map_err(InitError::Device)?;
+        let health = Arc::new(GpuHealth::default());
+        let lost = health.clone();
+        device.set_device_lost_callback(move |reason, message| {
+            // Destroyed is our own teardown at exit, not a failure.
+            if matches!(reason, wgpu::DeviceLostReason::Destroyed) {
+                return;
+            }
+            // Never deduplicated or dropped: it is why the game is quitting.
+            if let Ok(mut m) = lost.messages.lock() {
+                m.pending
+                    .push(format!("GPU device lost ({reason:?}): {message}"));
+            }
+            lost.lost.store(true, Ordering::Release);
+        });
+        // wgpu's default handler panics. Debug builds keep that, so a
+        // validation error is a loud bug. A release build logs it and carries
+        // on, since one bad draw is better than a crash in a friend's game.
+        if !cfg!(debug_assertions) {
+            let errors = health.clone();
+            device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| {
+                errors.report(format!("GPU error: {e}"));
+            }));
+        }
 
         let caps = surface.get_capabilities(&adapter);
         let format = caps
@@ -501,6 +567,7 @@ impl Renderer {
             terrain_gpu_bytes: 0,
             stats: RenderStats::default(),
             adapter_info,
+            health,
             visible_chunks: Vec::new(),
             sun_chunks: Vec::new(),
             overlay,
@@ -511,6 +578,22 @@ impl Renderer {
 
     pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
         &self.adapter_info
+    }
+
+    /// True once the GPU device is gone (driver reset, GPU unplugged). The
+    /// renderer cannot draw any more; the game should save and leave.
+    pub fn device_lost(&self) -> bool {
+        self.health.lost.load(Ordering::Acquire)
+    }
+
+    /// Take the driver messages (device loss, uncaptured errors) gathered
+    /// since the last call, for the game to log.
+    pub fn take_gpu_messages(&self) -> Vec<String> {
+        self.health
+            .messages
+            .lock()
+            .map(|mut m| std::mem::take(&mut m.pending))
+            .unwrap_or_default()
     }
 
     pub fn stats(&self) -> RenderStats {
@@ -1385,5 +1468,25 @@ mod tests {
     fn regiment_instance_layout_is_stable() {
         assert_eq!(size_of::<BoxInstance>(), 36);
         assert_eq!(size_of::<SoldierInstance>(), 36);
+    }
+
+    #[test]
+    fn a_repeating_gpu_error_is_reported_once() {
+        let health = GpuHealth::default();
+        let take = |h: &GpuHealth| std::mem::take(&mut h.messages.lock().unwrap().pending);
+        for _ in 0..1000 {
+            health.report("bad bind group".into());
+        }
+        assert_eq!(take(&health).len(), 1);
+        health.report("something else".into());
+        health.report("bad bind group".into());
+        assert_eq!(take(&health).len(), 1);
+        // Endless different messages are bounded too.
+        for n in 0..1000 {
+            health.report(format!("error {n}"));
+        }
+        let m = health.messages.lock().unwrap();
+        assert!(m.seen.len() <= MAX_GPU_DISTINCT);
+        assert!(m.pending.len() <= MAX_GPU_MESSAGES);
     }
 }

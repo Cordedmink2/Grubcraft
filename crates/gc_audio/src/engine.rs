@@ -7,7 +7,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Frames mixed per pass inside the audio callback.
 const CHUNK_FRAMES: usize = 1024;
@@ -46,6 +46,9 @@ fn device_err(e: impl fmt::Display) -> AudioError {
 pub struct Audio {
     commands: Producer,
     meter: Arc<Meter>,
+    /// Set by the stream's error callback (headphones unplugged, device
+    /// removed): the stream is dead and the game should call `start` again.
+    lost: Arc<AtomicBool>,
     device: String,
     rate: u32,
     _stream: Stream,
@@ -68,7 +71,13 @@ impl Audio {
         let meter = Arc::new(Meter::default());
         let mut mixer = Mixer::new(bank, rate, consumer, meter.clone());
         let mut scratch = vec![0.0f32; CHUNK_FRAMES * 2];
-        let on_error = |e| eprintln!("audio stream error: {e}");
+        let lost = Arc::new(AtomicBool::new(false));
+        let on_error = {
+            let lost = lost.clone();
+            // The error text goes nowhere useful from the audio thread; the
+            // game logs that the stream was lost and reopens it.
+            move |_: cpal::StreamError| lost.store(true, Ordering::Release)
+        };
 
         let stream = match format {
             SampleFormat::F32 => device.build_output_stream(
@@ -76,7 +85,7 @@ impl Audio {
                 move |data: &mut [f32], _| {
                     fill(&mut mixer, &mut scratch, data, channels, |s| s);
                 },
-                on_error,
+                on_error.clone(),
                 None,
             ),
             SampleFormat::I16 => device.build_output_stream(
@@ -101,6 +110,7 @@ impl Audio {
         Ok(Audio {
             commands: producer,
             meter,
+            lost,
             device: device.name().unwrap_or_else(|_| "unknown".into()),
             rate,
             _stream: stream,
@@ -150,6 +160,12 @@ impl Audio {
     /// Sounds dropped so far because every voice was busy with something louder.
     pub fn sounds_dropped(&self) -> u32 {
         self.meter.dropped.load(Ordering::Relaxed)
+    }
+
+    /// True once the output stream has died. This `Audio` is silent for good;
+    /// drop it and `start` a new one.
+    pub fn stream_lost(&self) -> bool {
+        self.lost.load(Ordering::Acquire)
     }
 
     pub fn device_name(&self) -> &str {
