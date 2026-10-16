@@ -4,14 +4,27 @@ Grubcraft uses free third-party art and audio. The in-game credits screen (`C` i
 
 ## In the game now
 
-The soldier models baked into `assets/models.pak` (see `assets-src/models.ron`). The game's credits screen (`C`) lists this file.
+The soldier and unit models baked into `assets/models.pak` (see `assets-src/models.ron`). The game's credits screen (`C`) lists this file.
 
 | Model | Author | Licence | Dresses |
 |---|---|---|---|
 | Yari Ashigaru, made for Grubcraft on the Farmer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | Yari Ashigaru |
+| Ledger Clerk, made for Grubcraft on the Worker (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | Ledger Clerk |
+| Caravan, made for Grubcraft (fully custom horse, wagon and cargo) | Grubcraft | CC0 | Caravan |
+| Bone Pikes, made for Grubcraft on the Farmer body and rig of Ultimate Modular Men | Grubcraft; body and rig by Quaternius | CC0 | Bone Pikes |
+| Crossbow Auditors, made for Grubcraft on the Suit (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | Crossbow Auditors |
+| Gravewardens, made for Grubcraft on the Farmer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | Gravewardens |
+| Debt Collectors, made for Grubcraft on the Casual_Hoodie rider (Ultimate Modular Men) with a custom horse | Grubcraft; rider's body and rig by Quaternius | CC0 | Debt Collectors |
+| Lantern Wraiths, made for Grubcraft on the Casual_2 (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | Lantern Wraiths |
+| Mausoleum Engine, made for Grubcraft (fully custom) | Grubcraft | CC0 | Mausoleum Engine |
+| The Insolvent, made for Grubcraft on the Farmer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | The Insolvent |
+| Bound Dead, made for Grubcraft on the Farmer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | Bound Dead |
+| Grubfolk Militia, made for Grubcraft on the Farmer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | Grubfolk Militia |
+| The Magnate, made for Grubcraft on the King (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | The Magnate |
+| The Undertaker, made for Grubcraft on the Suit (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | The Undertaker |
+| The Usurer, made for Grubcraft on the Adventurer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | The Usurer |
 | Ranger (LowPoly RPG Characters) | Quaternius | CC0 | Yumi Ashigaru |
 | Alien (Ultimate Monsters) | Quaternius | CC0 | Shardlings (stand-in) |
-| Orc Skull (Ultimate Monsters) | Quaternius | CC0 | Bone Pikes (stand-in) |
 | Alien Bug | CDmir | CC0 | Skitterlings |
 
 The stand-ins are simplified and recoloured by the baker (team colours, fewer triangles).
