@@ -172,6 +172,59 @@ pub fn ford(
     best.map(|(_, exit)| exit)
 }
 
+/// A place the water can be waded: where a lane straight across goes in
+/// on the near side and comes out on the far side.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ford {
+    pub entry: Vec2,
+    pub exit: Vec2,
+}
+
+/// Every ford across water lying `water.near` to `water.far` tiles ahead of
+/// `from` along `forward`, within `reach` tiles to either side: one for each
+/// stretch of the bank where lanes straight across can be waded, at the
+/// middle of the stretch, nearest `from` first.
+pub fn fords(terrain: &Terrain, from: Vec2, forward: Vec2, water: Crossing, reach: f32) -> Vec<Ford> {
+    let right = right_of(forward);
+    let length = water.far + MIN_WATER * 4.0;
+    let mut found: Vec<Ford> = Vec::new();
+    // The stretch being walked: where it began across, and its lanes.
+    let mut stretch: Vec<(f32, Ford)> = Vec::new();
+    let mut close = |stretch: &mut Vec<(f32, Ford)>| {
+        if !stretch.is_empty() {
+            found.push(stretch[stretch.len() / 2].1);
+            stretch.clear();
+        }
+    };
+    let mut across = -reach;
+    while across <= reach {
+        let start = from + right * across;
+        match crossing_lane(terrain, start, forward, length) {
+            Some(f) => stretch.push((across, f)),
+            None => close(&mut stretch),
+        }
+        across += 1.0;
+    }
+    close(&mut stretch);
+    found.sort_by(|a, b| a.entry.distance(from).total_cmp(&b.entry.distance(from)));
+    found
+}
+
+/// Walking `length` tiles from `start` along `forward`: if the first water
+/// met can be waded all the way across, where it goes in and comes out.
+fn crossing_lane(terrain: &Terrain, start: Vec2, forward: Vec2, length: f32) -> Option<Ford> {
+    let entry = lane(terrain, start, forward, length)?;
+    let mut s = 0.0;
+    while s <= length {
+        let p = entry + forward * s;
+        if !terrain.water(p) {
+            return Some(Ford { entry, exit: p });
+        }
+        s += STEP;
+    }
+    None
+}
+
 /// Walking `length` tiles from `start` along `forward`: if the first water
 /// met can be waded all the way across, where it starts.
 fn lane(terrain: &Terrain, start: Vec2, forward: Vec2, length: f32) -> Option<Vec2> {
@@ -308,6 +361,19 @@ mod tests {
             "{exit}"
         );
         assert_eq!(ford(&t, from, Vec2::Y, water, 10.0), None);
+    }
+
+    #[test]
+    fn each_ford_is_found_once_with_where_it_comes_out() {
+        let t = ground();
+        let from = Vec2::new(12.0, 40.0);
+        let water = crossing(&t, from, Vec2::new(12.0, 62.0)).unwrap();
+        let found = fords(&t, from, Vec2::Y, water, 40.0);
+        assert_eq!(found.len(), 1, "{found:?}");
+        let f = found[0];
+        assert!((28.0..36.0).contains(&f.entry.x), "{f:?}");
+        assert!((f.entry.y - 50.0).abs() <= 0.5 && (f.exit.y - 56.0).abs() <= 0.5, "{f:?}");
+        assert!(fords(&t, from, Vec2::Y, water, 10.0).is_empty());
     }
 
     #[test]

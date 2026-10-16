@@ -433,13 +433,13 @@ pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::terrain_view::plateau_positions;
     use gc_map::Map as Heightmap;
     use gc_sim::{Capacities, MatchSetup};
 
-    const MAP: u32 = 256;
+    pub(crate) const MAP: u32 = 256;
 
     #[test]
     fn you_and_your_allies_start_in_the_south_facing_the_rest() {
@@ -486,7 +486,7 @@ mod tests {
     }
 
     /// The AI level called `name`, or the Veteran for no name.
-    fn level(name: &str) -> Difficulty {
+    pub(crate) fn level(name: &str) -> Difficulty {
         if name.is_empty() {
             return Difficulty::Veteran;
         }
@@ -498,7 +498,7 @@ mod tests {
 
     /// The real game data's unit stats, factions and points, as `set_out`
     /// takes them.
-    fn tables(data: &gc_data::GameData) -> (Vec<UnitStats>, Vec<Faction>, Vec<u32>) {
+    pub(crate) fn tables(data: &gc_data::GameData) -> (Vec<UnitStats>, Vec<Faction>, Vec<u32>) {
         let units = data.units.iter().map(crate::sandbox::stats_of).collect();
         let factions = data
             .units
@@ -511,7 +511,7 @@ mod tests {
 
     /// A lobby setup: slot `k` is `who[k]` (None for you), on team
     /// `teams[k]`, everyone Ember Clans so the armies match.
-    fn lobby(who: &[Option<Difficulty>], teams: &[u8]) -> MatchStart {
+    pub(crate) fn lobby(who: &[Option<Difficulty>], teams: &[u8]) -> MatchStart {
         let players = who
             .iter()
             .zip(teams)
@@ -542,11 +542,11 @@ mod tests {
         }
     }
 
-    struct Played {
+    pub(crate) struct Played {
         battle: Battle,
         /// Who holds the field, once someone does.
-        holder: Option<PlayerId>,
-        ticks: u32,
+        pub(crate) holder: Option<PlayerId>,
+        pub(crate) ticks: u32,
         /// Regiments each party fielded.
         fielded: Vec<usize>,
         /// Time all the minds spent thinking, and the longest single tick.
@@ -755,19 +755,20 @@ mod tests {
     /// Play `setup` on the generated map with the real game data, the human
     /// side standing still, for at most `minutes`.
     fn play(setup: &MatchStart, seed: u64, minutes: u32) -> Played {
-        play_tuned(setup, seed, minutes, |_| {})
+        play_on(setup, seed, minutes, Heightmap::generate(seed, MAP), |_| {})
     }
 
-    /// [`play`], with `tune` free to change the minds once they are seated.
-    fn play_tuned(
+    /// [`play`] on `heightmap`, with `tune` free to change the minds once
+    /// they are seated.
+    pub(crate) fn play_on(
         setup: &MatchStart,
         seed: u64,
         minutes: u32,
+        mut heightmap: Heightmap,
         tune: impl FnOnce(&mut Minds),
     ) -> Played {
         let data = crate::data::load();
         let (units, factions, points) = tables(&data);
-        let mut heightmap = Heightmap::generate(seed, MAP);
         // `AI_COVER=off` plays on bare maps, without woods or tall grass.
         if std::env::var("AI_COVER").as_deref() == Ok("off") {
             heightmap.cover.clear();
@@ -1031,96 +1032,6 @@ mod tests {
         for row in rows {
             println!("{row}");
         }
-    }
-
-    /// Six-player team games, the AI's team play and ground sense against
-    /// the same commanders without them (docs/18-ai.md, "Team games"), at
-    /// `AI_LEVEL` (default General). `AI_MODE=3v3` (the default): three
-    /// against three, the new team taking the south and the north in turn;
-    /// `AI_MODE=2v2v2`: three pairs, the new pair taking each column in
-    /// turn (the middle one is between the other two). `AI_BATTLES` battles
-    /// (default 24) from seed `AI_FROM` (default 1); `AI_OFF=team_play` or
-    /// `AI_OFF=read_ground` takes only that away from the old side; `AI_OLD=1`
-    /// plays old against old, to see where the field stands without it.
-    /// Prints the new side's wins, losses and the undecided.
-    /// `cargo test -p gc_game --release team_table -- --ignored --nocapture`
-    #[test]
-    #[ignore = "slow: dozens of six-player battles, run by hand"]
-    fn team_table() {
-        let ai_level = match std::env::var("AI_LEVEL") {
-            Ok(name) => level(&name),
-            Err(_) => Difficulty::General,
-        };
-        let pairs = std::env::var("AI_MODE").as_deref() == Ok("2v2v2");
-        let n: u64 = std::env::var("AI_BATTLES").map_or(24, |v| v.parse().unwrap());
-        let from: u64 = std::env::var("AI_FROM").map_or(1, |v| v.parse().unwrap());
-        let off = std::env::var("AI_OFF").unwrap_or_default();
-        let both_old = std::env::var_os("AI_OLD").is_some();
-        let (teams, sides): (Vec<u8>, u64) = if pairs {
-            (vec![0, 1, 2, 0, 1, 2], 3)
-        } else {
-            (vec![0, 1, 0, 1, 0, 1], 2)
-        };
-        let old = |knobs: &mut gc_ai::Knobs| {
-            if off.is_empty() || off == "team_play" {
-                knobs.team_play = false;
-            }
-            if off.is_empty() || off == "read_ground" {
-                knobs.read_ground = false;
-            }
-        };
-        let seeds: Vec<u64> = (from..from + n).collect();
-        let results: Vec<(u64, Option<bool>, u32)> = std::thread::scope(|s| {
-            let jobs: Vec<_> = seeds
-                .chunks(seeds.len().div_ceil(4).max(1))
-                .map(|chunk| {
-                    let (teams, old) = (&teams, &old);
-                    s.spawn(move || {
-                        chunk
-                            .iter()
-                            .map(|&seed| {
-                                let new_team = (seed % sides) as u8;
-                                let setup = lobby(&[Some(ai_level); 6], teams);
-                                let played = play_tuned(&setup, seed, 12, |minds| {
-                                    for p in 0..teams.len() {
-                                        if teams[p] == new_team && !both_old {
-                                            continue;
-                                        }
-                                        let m = minds.remove(p as PlayerId).unwrap();
-                                        let mut knobs = *m.knobs();
-                                        old(&mut knobs);
-                                        minds.add(Mind::with_knobs(m.config(), knobs));
-                                    }
-                                });
-                                let won = played
-                                    .holder
-                                    .map(|h| teams[h as usize] == new_team);
-                                (seed, won, played.ticks / gc_sim::TICKS_PER_SECOND)
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                })
-                .collect();
-            jobs.into_iter().flat_map(|j| j.join().unwrap()).collect()
-        });
-        let mut by_place = vec![(0, 0); sides as usize];
-        for &(seed, won, secs) in &results {
-            println!("seed {seed:>3}: {won:?} after {secs} s");
-            let place = &mut by_place[(seed % sides) as usize];
-            place.1 += 1;
-            if won == Some(true) {
-                place.0 += 1;
-            }
-        }
-        let won = results.iter().filter(|r| r.1 == Some(true)).count();
-        let lost = results.iter().filter(|r| r.1 == Some(false)).count();
-        println!(
-            "{} {}: new side won {won}, lost {lost}, undecided {} of {n} ({:.0}%); by place {by_place:?}",
-            ai_level.name(),
-            if pairs { "2v2v2" } else { "3v3" },
-            n as usize - won - lost,
-            100.0 * won as f64 / n as f64,
-        );
     }
 
     #[test]

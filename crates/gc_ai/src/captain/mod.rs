@@ -343,6 +343,9 @@ const FORD_REACH: f32 = 40.0;
 /// Behind water, it crosses only when expecting to win by this much and
 /// after twice its usual patience.
 const CROSS_MARGIN: f32 = 0.3;
+/// It draws back from the water to tempt the enemy across only expecting
+/// a closer fight than this.
+const BAIT_MARGIN: f32 = -0.15;
 /// Longest it waits for two other sides to come to blows, ticks.
 const ONLOOK_TICKS: u32 = 90 * 20;
 
@@ -467,6 +470,12 @@ pub struct Captain {
     river: Option<Crossing>,
     /// It has decided to cross the water after all.
     crossing: bool,
+    /// Where it is crossing to: beyond a ford the enemy isn't watching, and
+    /// where that ford comes out.
+    bridgehead: Option<(Vec2, Vec2)>,
+    /// The enemy watches every ford: it stands well back from the water,
+    /// to tempt them across.
+    baiting: bool,
     next_ground: u32,
     /// The journal's last word on the ground.
     ground_note: String,
@@ -553,6 +562,8 @@ impl Captain {
             covered: 0.0,
             river: None,
             crossing: false,
+            bridgehead: None,
+            baiting: false,
             next_ground: 0,
             ground_note: String::new(),
             focus: None,
@@ -659,6 +670,7 @@ impl Captain {
             return;
         }
         self.choose_posture(ctx, &ours, &fighting);
+        self.hold_bridgehead(ctx, &ours, &fighting);
         self.act(ctx, &ours, &fighting, &foes, wants);
     }
 

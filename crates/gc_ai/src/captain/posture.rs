@@ -130,10 +130,40 @@ impl Captain {
                 && waited > 2.0 * patience.max(5.0)
             {
                 self.crossing = true;
+                if ctx.knobs.read_ground {
+                    self.bridgehead = self.bridgehead_at(ctx, ours, fighting);
+                }
                 ctx.journal.note(
                     now,
                     format!("Crossing the water: expects {}", describe_margin(margin)),
                 );
+            }
+            // Both sides waiting for the other to cross: go over where they
+            // aren't watching, if anywhere.
+            let quiet = self.closing <= 1.0 && !engaged;
+            if ctx.knobs.read_ground
+                && self.river.is_some()
+                && !self.crossing
+                && quiet
+                && waited > site::RIVER_WAIT
+            {
+                match self.bridgehead_at(ctx, ours, fighting) {
+                    Some(b) => {
+                        self.crossing = true;
+                        self.bridgehead = Some(b);
+                        ctx.journal
+                            .note(now, "Crossing at a ford they aren't watching".to_string());
+                    }
+                    // They watch every ford: draw back from the water, to
+                    // tempt them across, unless the ford is all that keeps
+                    // them off.
+                    None if !self.baiting && margin > BAIT_MARGIN => {
+                        self.baiting = true;
+                        ctx.journal
+                            .note(now, "Drawing back from the water to tempt them across".to_string());
+                    }
+                    None => {}
+                }
             }
             let behind_water = self.river.is_some() && !self.crossing;
             // Behind water it waits for them; while its champion fights it
@@ -171,6 +201,11 @@ impl Captain {
                     // fought for longer than anyone waits before going to
                     // fetch an enemy, so it never gives up a standoff first.
                     let quiet = self.closing <= 1.0 && !engaged;
+            if std::env::var_os("AI_DEBUG").is_some() && ctx.knobs.read_ground && self.river.is_some() && now % 200 < 4 {
+                let fs = ground::fords(ctx.terrain, self.anchor, self.forward, self.river.unwrap(), 90.0);
+                let d: Vec<f32> = fs.iter().map(|f| fighting.iter().map(|g| g.pos.distance(f.exit)).fold(f32::MAX, f32::min)).collect();
+                ctx.journal.note(now, format!("DEBUG quiet {quiet} closing {:.1} waited {waited:.0} crossing {} fords {d:?}", self.closing, self.crossing));
+            }
                     if !halted && !only_archers && quiet && !self.fetching {
                         self.fetch_after(
                             ctx,

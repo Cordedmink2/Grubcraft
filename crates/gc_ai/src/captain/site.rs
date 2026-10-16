@@ -48,6 +48,11 @@ impl Captain {
             }
             _ => BANK_BACK,
         };
+        let bank_back = if self.baiting {
+            bank_back.max(BAIT_BACK)
+        } else {
+            bank_back
+        };
         let (anchor, forward, enemy_at) = (self.anchor, self.forward, self.enemy_at);
         let (width, depth, rear) = (self.line_width, self.line_depth, self.rear);
         // Where they would come out of the water: wait just behind it, to
@@ -174,5 +179,106 @@ impl Captain {
             && !self.crossing
             && !terrain.wet(f.pos)
             && ground::crossing(terrain, r.pos, f.pos).is_some()
+    }
+}
+
+/// Behind water with nobody coming and nobody fighting for this long, a
+/// Captain that reads the ground goes across after all, at a ford the
+/// enemy isn't watching (seconds): two armies each waiting for the other
+/// to cross would otherwise wait for ever.
+pub(super) const RIVER_WAIT: f32 = 45.0;
+/// A ford is unwatched when it comes out at least this far from every
+/// enemy regiment, tiles; and worth going for only if it is at most this
+/// much further from the army than from the enemy (who must see us go
+/// before they move).
+const UNWATCHED: f32 = 30.0;
+const LEAD: f32 = 20.0;
+/// Drawing back to tempt the enemy across, the line stands this far back
+/// from the water, tiles: far enough that the ford is no longer watched.
+const BAIT_BACK: f32 = 36.0;
+/// How far along the river it looks for fords, tiles to either side.
+const FORD_SCAN: f32 = 90.0;
+/// Share of the army across before the bridgehead is held and the line
+/// fights on from there.
+const ACROSS_SHARE: f32 = 0.75;
+
+impl Captain {
+    /// Where to cross the water it waits behind: beyond the far bank of the
+    /// ford least watched by the enemy, against the walk there. None if
+    /// every ford comes out near them.
+    /// Returns where the line will stand and where the ford comes out.
+    pub(super) fn bridgehead_at(
+        &self,
+        ctx: &Ctx,
+        ours: &[&Seen],
+        fighting: &[&Seen],
+    ) -> Option<(Vec2, Vec2)> {
+        let t = ctx.terrain;
+        let river = self.river?;
+        let our_c = centroid(ours);
+        let watched = |p: Vec2| {
+            fighting
+                .iter()
+                .map(|f| f.pos.distance(p))
+                .fold(f32::MAX, f32::min)
+        };
+        ground::fords(t, self.anchor, self.forward, river, FORD_SCAN)
+            .into_iter()
+            // Unwatched, and not much further from us than from them: we
+            // get there before they can.
+            .filter(|f| {
+                let theirs = watched(f.exit);
+                theirs >= UNWATCHED && theirs + LEAD >= f.exit.distance(our_c)
+            })
+            .map(|f| {
+                let beyond = f.exit + self.forward * (self.line_depth * 0.5 + 3.0);
+                let at = t.nearest_walkable(beyond, 6.0).unwrap_or(beyond);
+                let score = watched(f.exit).min(60.0) - f.entry.distance(our_c) / 3.0;
+                (score, (at, f.exit))
+            })
+            .filter(|(_, (at, _))| !t.wet(*at))
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, b)| b)
+    }
+
+    /// Crossing to a bridgehead: the line's place is beyond the ford until
+    /// most of the army is across, and it fights on from there.
+    /// If the enemy comes to watch the ford before anyone has gone into the
+    /// water, it goes back to waiting.
+    pub(super) fn hold_bridgehead(&mut self, ctx: &mut Ctx, ours: &[&Seen], fighting: &[&Seen]) {
+        let Some((b, exit)) = self.bridgehead else {
+            return;
+        };
+        let t = ctx.terrain;
+        let wading = ours.iter().any(|r| t.wet(r.pos));
+        let across = ours
+            .iter()
+            .filter(|r| !t.wet(r.pos) && ground::crossing(t, r.pos, b).is_none())
+            .count();
+        let watched = fighting.iter().any(|f| f.pos.distance(exit) < UNWATCHED * 0.7);
+        if watched && !wading && across == 0 {
+            self.bridgehead = None;
+            self.crossing = false;
+            self.standoff_since = ctx.view.tick;
+            self.posture = Posture::Hold;
+            self.posture_since = ctx.view.tick;
+            self.anchor = t.clamp(line_centre(&self.members, ours, centroid(ours)), 4.0);
+            ctx.journal.note(
+                ctx.view.tick,
+                "They have come to watch that ford: waiting again".to_string(),
+            );
+            return;
+        }
+        if across as f32 >= ours.len() as f32 * ACROSS_SHARE {
+            self.bridgehead = None;
+            ctx.journal
+                .note(ctx.view.tick, "Across the water: forming up on the far bank".to_string());
+            return;
+        }
+        self.anchor = b;
+        if self.posture != Posture::Advance {
+            self.posture = Posture::Advance;
+            self.posture_since = ctx.view.tick;
+        }
     }
 }
