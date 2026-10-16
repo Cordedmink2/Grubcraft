@@ -60,7 +60,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Fog of war (built on the ambush vision rules, [20](20-ambushes.md#from-hidden-regiments-to-fog-of-war)), minimap, army tray, command grid, edge notifications. *Built early (2026-10-15, Conquest UI thread): the minimap and army tray, the command grid, and edge alerts for attacks, ambushes and routs, and the hero panel on a made-up hero (Shift+H), on today's battles; the economy parts, fog and the real hero data follow.*
 - Annihilation and Titan's Heart victories.
 - One Duel map (Ribcage Pass) and one Warfield map (The Four Teeth).
-  - **Progress (2026-10-15):** both maps and the map validator `gc_mapcheck` are built (`data/maps/`, [07 · Map format and tooling](07-world-and-maps.md#map-format-and-tooling)): first versions with plain terrain, checked for fairness, and not yet loaded by the game.
+  - **Progress (2026-10-15):** both maps and the map validator `gc_mapcheck` are built (`data/maps/`, [07 · Map format and tooling](07-world-and-maps.md#map-format-and-tooling)): first versions with plain terrain, checked for fairness, and the game opens them only in the sandbox (`--map`).
 - AI track: Conquest AI for the Ember Clans and the Brood; AI allies answer pings; the AI arena (AI-3).
 - **Exit:** a full 6-player Conquest game finishes inside the 6 GB memory budget.
 

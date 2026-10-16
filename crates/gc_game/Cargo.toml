@@ -28,6 +28,7 @@ gc_audio.workspace = true
 gc_bake = { workspace = true, optional = true }
 gc_data.workspace = true
 gc_fixed.workspace = true
+gc_map.workspace = true
 gc_net.workspace = true
 gc_platform.workspace = true
 gc_render.workspace = true

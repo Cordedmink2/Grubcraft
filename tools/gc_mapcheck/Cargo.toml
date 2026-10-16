@@ -15,10 +15,8 @@ name = "gc_mapcheck"
 path = "src/main.rs"
 
 [dependencies]
-blake3.workspace = true
+gc_map.workspace = true
 gc_sim.workspace = true
-ron.workspace = true
-serde.workspace = true
 
 [lints]
 workspace = true

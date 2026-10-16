@@ -76,6 +76,10 @@
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
+//! `--map NAME|FILE` opens on a shipped map (`ribcage_pass`, `four_teeth`) or
+//! a map file instead of the seeded map, to look round it in the sandbox
+//! (Field Battles, replays and network matches still play on seeded maps,
+//! and switch to one);
 //! `--overlay` starts with the dev overlay shown; `--no-audio` never opens
 //! the sound card; `--no-shadows` and `--no-glow` turn off the sun's
 //! shadows and the glow around bright light; `--latency 1|2|3` sets
@@ -105,7 +109,6 @@ mod sandbox;
 mod scenery;
 mod showroom;
 mod sounds;
-mod terrain_gen;
 mod terrain_view;
 
 use std::sync::{Arc, mpsc};
@@ -139,16 +142,15 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use camera::RtsCamera;
+use gc_map::Map;
 use models::Action;
 use puppets::{Block, Fighter, Puppets, Soldier};
-use terrain_gen::Heightmap;
 
 #[global_allocator]
 static ALLOC: TaggedAlloc = TaggedAlloc;
 
+/// Tiles on a side of the seeded battle maps.
 const MAP_TILES: u32 = 256;
-/// The middle of the map, in tiles.
-const MAP_CENTRE: Vec2 = Vec2::splat(MAP_TILES as f32 * 0.5);
 const TICK: Duration = Duration::from_millis(1000 / gc_sim::TICKS_PER_SECOND as u64);
 const HUMAN: PlayerId = 0;
 /// Team colours: Ember red, Brood violet, Choir cyan, Concord bone.
@@ -254,6 +256,8 @@ const _: () = assert!(
 
 struct Options {
     seed: u64,
+    /// A described map to open on (`--map`) instead of the seeded one.
+    map: Option<gc_map::MapDef>,
     /// Start on an empty field with nobody moving on their own.
     sandbox: bool,
     frames: Option<u64>,
@@ -284,6 +288,7 @@ struct Options {
 fn parse_args() -> Options {
     let mut opts = Options {
         seed: 0x6772_7562,
+        map: None,
         sandbox: false,
         frames: None,
         overlay: false,
@@ -336,6 +341,15 @@ fn parse_args() -> Options {
         let value = args.next().unwrap_or_default();
         let ok = match flag.as_str() {
             "--seed" => value.parse().map(|v| opts.seed = v).is_ok(),
+            "--map" => {
+                let def = gc_map::shipped(&value)
+                    .map_or_else(|| gc_map::MapDef::load(std::path::Path::new(&value)), Ok);
+                if let Err(e) = &def {
+                    eprintln!("--map {value}: not a shipped map, and {e}");
+                }
+                opts.map = def.ok();
+                opts.map.is_some()
+            }
             "--join" => {
                 opts.join = Some(value);
                 true
@@ -435,7 +449,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--showroom all|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die]"
     );
     std::process::exit(2);
@@ -446,7 +460,7 @@ struct Running {
     window: Arc<Window>,
     renderer: Renderer,
     camera: RtsCamera,
-    heightmap: Heightmap,
+    heightmap: Map,
     world: World,
     /// Orders the other sides about; None in an empty-field sandbox or a
     /// lobby battle.
@@ -871,15 +885,12 @@ impl App {
             ))
         })?;
         self.memory_timeline.mark("gpu device + pipelines");
-        let heightmap = tagged_alloc::scope(Tag::Map, || Heightmap::generate(opts.seed, MAP_TILES));
+        let heightmap = tagged_alloc::scope(Tag::Map, || match &opts.map {
+            Some(def) => Map::from_def(def),
+            None => Map::generate(opts.seed, MAP_TILES),
+        });
         tagged_alloc::scope(Tag::Render, || {
-            renderer.set_terrain(&Terrain {
-                size: heightmap.size,
-                samples_per_tile: heightmap.samples_per_tile,
-                max_height: heightmap.max_height(),
-                water_level: heightmap.water_level(),
-                heights: &heightmap.heights,
-            });
+            renderer.set_terrain(&terrain_of(&heightmap));
         });
         self.memory_timeline.mark("map generated + uploaded");
 
@@ -945,7 +956,7 @@ impl App {
             .collect();
         let capacities = Capacities::default();
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
-        let blocked_marks = blocked_marks(&nav, MAP_TILES);
+        let blocked_marks = blocked_marks(&nav, heightmap.tiles);
         let scenery = tagged_alloc::scope(Tag::Render, || {
             // The showroom stands on bare ground, with no trees in the way.
             let cover = if opts.showroom.is_some() {
@@ -953,7 +964,7 @@ impl App {
             } else {
                 &heightmap.cover[..]
             };
-            scenery::Scenery::new(cover, MAP_TILES, opts.seed)
+            scenery::Scenery::new(cover, heightmap.tiles, opts.seed)
         });
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
             (
@@ -961,7 +972,7 @@ impl App {
                     seed: opts.seed,
                     capacities,
                     units: &unit_stats,
-                    map_tiles: MAP_TILES,
+                    map_tiles: heightmap.tiles,
                     nav: &nav,
                     teams: &[],
                     ground: heightmap.ground(),
@@ -971,11 +982,15 @@ impl App {
                 Vec::with_capacity(1024),
             )
         });
-        let drill = (!opts.sandbox && opts.showroom.is_none()).then(|| make_drill(opts.seed));
-        let minds = tagged_alloc::scope(Tag::Ai, || Minds::new(heightmap.ai_terrain(&nav)).live());
+        let drill = (!opts.sandbox && opts.showroom.is_none())
+            .then(|| make_drill(opts.seed, heightmap.tiles));
+        let minds = tagged_alloc::scope(Tag::Ai, || {
+            Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav)).live()
+        });
 
-        let start = Vec2::splat(MAP_TILES as f32 * 0.25);
-        let mut camera = RtsCamera::new(MAP_TILES as f32, start + Vec2::new(10.0, 20.0));
+        let start = heightmap.start_positions().first().copied();
+        let start = start.unwrap_or(Vec2::splat(heightmap.tiles as f32 * 0.25));
+        let mut camera = RtsCamera::new(heightmap.tiles as f32, start + Vec2::new(10.0, 20.0));
         camera.focus_height = heightmap.height_at(camera.focus.x, camera.focus.y);
         camera.aspect = renderer.aspect_ratio();
         let showroom = art.as_ref().and_then(|a| {
@@ -983,7 +998,7 @@ impl App {
             Some(showroom::Showroom::new(
                 models,
                 &a.heights,
-                MAP_CENTRE,
+                Vec2::splat(heightmap.tiles as f32 / 2.0),
                 opts.showroom_clip,
             ))
         });
@@ -1025,7 +1040,7 @@ impl App {
         assert!(!opts.crash_test, "--crash-test: a deliberate panic");
 
         let mut hud_state = hud::HudState::default();
-        hud_state.set_terrain(&heightmap, MAP_TILES);
+        hud_state.set_terrain(&heightmap);
         let settings_path = gc_ui::settings::settings_path();
         let settings = settings_path
             .as_deref()
@@ -1035,7 +1050,11 @@ impl App {
             version: online::version(),
             data_hash: game_data.short_hash(),
             seed: opts.seed,
-            map_hash: online::map_hash(&nav, &heightmap.ground()),
+            // Network matches play on the seeded map, whatever `--map` opened.
+            map_hash: match heightmap.seed {
+                Some(_) => gc_map::map_hash(&nav, &heightmap.ground()),
+                None => Map::generate(opts.seed, MAP_TILES).hash(),
+            },
         });
         let mut menu = Menu::new(lan, settings, settings_path, &online::version());
         menu.set_roster(roster);
@@ -1591,7 +1610,7 @@ impl Running {
                     if q.y <= g { hi = mid } else { lo = mid }
                 }
                 let hit = origin + dir * hi;
-                let n = MAP_TILES as f32;
+                let n = self.heightmap.tiles as f32;
                 let inside = (0.0..=n).contains(&hit.x) && (0.0..=n).contains(&hit.z);
                 return inside.then(|| Vec2::new(hit.x, hit.z));
             }
@@ -2662,7 +2681,7 @@ impl Running {
         // gets its trees back.
         if self.showroom.take().is_some() {
             self.scenery = tagged_alloc::scope(Tag::Render, || {
-                scenery::Scenery::new(&self.heightmap.cover, MAP_TILES, self.seed)
+                scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, self.seed)
             });
         }
         // The last battle's recording is done.
@@ -2684,26 +2703,33 @@ impl Running {
             // Starting something else leaves the network match.
             self.menu.net().leave();
         }
-        if let Some(seed) = net_seed {
-            if seed != self.seed {
-                self.use_map(seed);
-            }
+        if net_seed.is_some() {
             self.unit_stats.clone_from(&self.data_stats);
         }
-        // A replay is shown on the map made from its seed, and plays on the
-        // map it stored.
+        // Field Battles play on the seeded map (a network match on the
+        // host's seed), and a replay is shown on the map made from its seed
+        // and plays on the map it stored. A described map opened with
+        // `--map` is for looking round in the sandbox; the first battle or
+        // replay leaves it.
+        let seeded = match &kind {
+            MatchKind::Battle(_) => Some(net_seed.unwrap_or(self.seed)),
+            MatchKind::Replay(r) => Some(r.seed),
+            MatchKind::Sandbox => None,
+        };
+        if let Some(seed) = seeded
+            && self.heightmap.seed != Some(seed)
+        {
+            self.use_map(seed);
+        }
         let mut map_note = None;
         if let MatchKind::Replay(r) = &kind {
-            if r.seed != self.seed {
-                self.use_map(r.seed);
-            }
             stats_before = std::mem::replace(&mut self.unit_stats, r.units.clone());
         }
         self.online = net_seed.map(|_| online::Online::new(self.menu.net().is_host()));
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
         if let MatchKind::Replay(r) = &kind {
             let (shown, stored) = (self.heightmap.ground(), r.setup().ground);
-            if r.map_tiles != MAP_TILES
+            if r.map_tiles != self.heightmap.tiles
                 || r.nav != nav
                 || stored.heights != shown.heights
                 || stored.water_level != shown.water_level
@@ -2725,7 +2751,7 @@ impl Running {
             seed: self.seed,
             capacities: self.capacities,
             units: &self.unit_stats,
-            map_tiles: MAP_TILES,
+            map_tiles: self.heightmap.tiles,
             nav: &nav,
             teams: &teams,
             ground: self.heightmap.ground(),
@@ -2765,7 +2791,7 @@ impl Running {
             });
         }
         self.minds = tagged_alloc::scope(Tag::Ai, || {
-            Minds::new(self.heightmap.ai_terrain(&nav)).live()
+            Minds::new(crate::terrain_view::ai_terrain(&self.heightmap, &nav)).live()
         });
         self.matches += 1;
         self.drill = None;
@@ -2804,7 +2830,7 @@ impl Running {
         if self.online.is_some() {
             // A joiner checks its map came out the same as the host's
             // before saying it is ready.
-            let mine = online::map_hash(&nav, &self.heightmap.ground());
+            let mine = gc_map::map_hash(&nav, &self.heightmap.ground());
             let lan = self.menu.net();
             let result = match lan.host_map() {
                 Some(host) if host.map_hash != mine => Err(format!(
@@ -2821,26 +2847,21 @@ impl Running {
         }
     }
 
-    /// Generate the map for `seed` and put it on screen.
+    /// Generate the seeded map for `seed` and put it on screen.
     fn use_map(&mut self, seed: u64) {
-        logln!("grubcraft: switching to the host's map (seed {seed})");
+        logln!("grubcraft: switching to the map for seed {seed}");
         self.seed = seed;
-        self.heightmap = tagged_alloc::scope(Tag::Map, || Heightmap::generate(seed, MAP_TILES));
+        self.heightmap = tagged_alloc::scope(Tag::Map, || Map::generate(seed, MAP_TILES));
         let hm = &self.heightmap;
         tagged_alloc::scope(Tag::Render, || {
-            self.renderer.set_terrain(&Terrain {
-                size: hm.size,
-                samples_per_tile: hm.samples_per_tile,
-                max_height: hm.max_height(),
-                water_level: hm.water_level(),
-                heights: &hm.heights,
-            });
+            self.renderer.set_terrain(&terrain_of(hm));
         });
-        self.hud.set_terrain(&self.heightmap, MAP_TILES);
-        let nav = self.heightmap.nav_costs();
-        self.blocked_marks = blocked_marks(&nav, MAP_TILES);
+        self.hud.set_terrain(hm);
+        self.camera.map_size = hm.tiles as f32;
+        let nav = hm.nav_costs();
+        self.blocked_marks = blocked_marks(&nav, hm.tiles);
         self.scenery = tagged_alloc::scope(Tag::Render, || {
-            scenery::Scenery::new(&self.heightmap.cover, MAP_TILES, seed)
+            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, seed)
         });
     }
 
@@ -2854,7 +2875,7 @@ impl Running {
                 &self.unit_stats,
                 &self.unit_factions,
                 &self.unit_points,
-                terrain_view::start_positions(MAP_TILES),
+                terrain_view::plateau_positions(self.heightmap.tiles),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,
@@ -2914,7 +2935,7 @@ impl Running {
             })
             .collect();
         let focus = if spawns.is_empty() {
-            MAP_CENTRE
+            Vec2::splat(self.heightmap.tiles as f32 / 2.0)
         } else {
             spawns.iter().sum::<Vec2>() / spawns.len() as f32
         };
@@ -3888,8 +3909,9 @@ impl Running {
 }
 
 /// The scripted opponents of the sandbox.
-fn make_drill(seed: u64) -> Drill {
+fn make_drill(seed: u64, map_tiles: u32) -> Drill {
     let mut drill = Drill::new(seed);
+    drill.map_tiles = map_tiles as i32;
     drill.skip_player = Some(HUMAN);
     // The last unit type is the archers: every army's back two rows.
     drill.unit_of = |player, k, types| {
@@ -3915,6 +3937,17 @@ fn print_memory(renderer: &Renderer) {
     eprintln!("  {:<8} {:>8.2}", "gpu", mb(renderer.gpu_bytes() as usize));
     if let Some(c) = mem.current {
         eprintln!("  process  {:>8.2}", mb(c as usize));
+    }
+}
+
+/// The ground as the renderer draws it.
+fn terrain_of(map: &Map) -> Terrain<'_> {
+    Terrain {
+        size: map.side(),
+        samples_per_tile: gc_map::SAMPLES_PER_TILE,
+        max_height: map.max_height(),
+        water_level: map.water_level(),
+        heights: &map.samples,
     }
 }
 

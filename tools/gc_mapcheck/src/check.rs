@@ -1,7 +1,7 @@
 //! The checks: is the map valid, and is it fair.
 
-use crate::def::*;
 use crate::map::{Ground, Map, Placed};
+use gc_map::def::*;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
@@ -57,8 +57,8 @@ pub fn check(def: &MapDef) -> Report {
     let blocked = map.ground.iter().filter(|g| **g == Ground::Blocked).count();
     r.notes.push(format!(
         "{} × {} tiles, {}% cliff or deep water, {} objects",
-        map.tiles,
-        map.tiles,
+        map.n,
+        map.n,
         blocked * 100 / map.ground.len(),
         map.objects.len()
     ));
@@ -117,6 +117,19 @@ fn header(def: &MapDef, r: &mut Report) -> bool {
     if def.water < 0 {
         r.err("the water line is below zero");
         ok = false;
+    }
+    // Heights are sixteenths of a tile; the ground stops at the highest.
+    let top = (gc_map::MAX_HEIGHT * 16) as i32;
+    let heights = [("the base", def.base), ("the water line", def.water)]
+        .into_iter()
+        .chain(def.terrain.iter().map(|op| ("a terrain stamp", op.height)));
+    for (what, h) in heights {
+        if h > top {
+            r.err(format!(
+                "{what} is at {h}, above the highest ground ({top})"
+            ));
+            ok = false;
+        }
     }
     ok
 }
@@ -188,7 +201,7 @@ fn counts(map: &Map, r: &mut Report) -> bool {
             count(map, Kind::Heart)
         ));
     }
-    let warfield = map.size == SizeClass::Warfield;
+    let warfield = map.size == Some(SizeClass::Warfield);
     let mouths = count(map, Kind::OldMouth);
     if mouths != usize::from(warfield) {
         r.err(format!(
@@ -236,7 +249,7 @@ impl Search {
             if d > dist[i as usize] {
                 continue;
             }
-            let (x, y) = (i as i32 % map.tiles, i as i32 / map.tiles);
+            let (x, y) = (i as i32 % map.n, i as i32 / map.n);
             for dy in -1..=1 {
                 for dx in -1..=1 {
                     if (dx, dy) == (0, 0) {
@@ -269,7 +282,7 @@ impl Search {
         Search {
             dist,
             parent,
-            tiles: map.tiles,
+            tiles: map.n,
         }
     }
 
@@ -317,8 +330,8 @@ fn connectivity(map: &Map, walk: &[bool], from: &[Search], r: &mut Report) {
         }
     }
     let mut seen: Vec<bool> = from[0].dist.iter().map(|&d| d != UNSEEN).collect();
-    for y in 0..map.tiles {
-        for x in 0..map.tiles {
+    for y in 0..map.n {
+        for x in 0..map.n {
             let i = map.idx((x, y));
             if !walk[i] || seen[i] {
                 continue;

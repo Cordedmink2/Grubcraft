@@ -13,8 +13,8 @@ use gc_ui::hud::{
 };
 use glam::{Vec2, Vec3};
 
-use crate::terrain_gen::Heightmap;
 use crate::{Running, from_fx_vec, fx_vec, sounds};
+use gc_map::Map;
 
 /// Cells per side of the minimap's ground picture.
 const TERRAIN_CELLS: usize = 48;
@@ -103,8 +103,8 @@ pub struct HudState {
 }
 
 impl HudState {
-    pub fn set_terrain(&mut self, hm: &Heightmap, tiles: u32) {
-        self.terrain = minimap_terrain(hm, tiles);
+    pub fn set_terrain(&mut self, hm: &Map) {
+        self.terrain = minimap_terrain(hm);
     }
 
     pub fn press_left(&mut self) {
@@ -231,7 +231,8 @@ impl HudState {
 }
 
 /// The ground as colours: water, woods, grass and rising hide.
-fn minimap_terrain(hm: &Heightmap, tiles: u32) -> MinimapTerrain {
+fn minimap_terrain(hm: &Map) -> MinimapTerrain {
+    let tiles = hm.tiles;
     let n = tiles as f32;
     MinimapTerrain::from_fn(TERRAIN_CELLS, |u, v| {
         let (x, z) = (u * n, v * n);
@@ -311,8 +312,7 @@ impl Running {
         let (screen, scale) = self.ui_screen();
         let cursor = self.ui_cursor();
         let side = self.sandbox.side;
-        let map =
-            self.heightmap.size.saturating_sub(1) as f32 / self.heightmap.samples_per_tile as f32;
+        let map = self.heightmap.tiles as f32;
         self.selected
             .retain(|&h| self.world.regiments.get(h).is_some());
 

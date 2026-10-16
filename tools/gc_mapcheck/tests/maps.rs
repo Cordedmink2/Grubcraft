@@ -142,11 +142,13 @@ fn a_lopsided_resource_is_unfair() {
 #[test]
 fn a_walled_off_map_has_no_counter_route() {
     // Close the two passes and the flanks and narrow the ford's gap: one way
-    // across is left, and a rush along it could be walled off.
+    // across is left, and a rush along it could be walled off. The new walls
+    // are thin, so their tops don't join the rib's into a long ledge of
+    // ground no start can reach.
     let text = edited(
         "ribcage_pass.ron",
         "// The ford.",
-        "(shape: Line(a: (88, 40), b: (92, 36), half_width: 3), mode: Raise, height: 120, edge: 2),\n        (shape: Line(a: (108, 20), b: (126, 2), half_width: 3), mode: Raise, height: 120, edge: 2),\n        (shape: Line(a: (60, 68), b: (62, 66), half_width: 3), mode: Raise, height: 120, edge: 2),\n        (shape: Line(a: (66, 62), b: (68, 60), half_width: 3), mode: Raise, height: 120, edge: 2),\n        // The ford.",
+        "(shape: Line(a: (88, 40), b: (92, 36), half_width: 1), mode: Raise, height: 120, edge: 2),\n        (shape: Line(a: (108, 20), b: (126, 2), half_width: 1), mode: Raise, height: 120, edge: 2),\n        (shape: Line(a: (60, 68), b: (62, 66), half_width: 1), mode: Raise, height: 120, edge: 2),\n        (shape: Line(a: (66, 62), b: (68, 60), half_width: 1), mode: Raise, height: 120, edge: 2),\n        // The ford.",
     );
     let e = errors_of(&text);
     assert!(e.iter().any(|m| m.contains("counter-route")), "{e:?}");
@@ -192,4 +194,16 @@ fn the_png_preview_is_a_png() {
     let (side, rgb) = gc_mapcheck::preview::render(&map, 2);
     let png = gc_mapcheck::preview::png(side, &rgb);
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+}
+
+#[test]
+fn ground_above_the_highest_is_an_error() {
+    // 14 tiles (224 sixteenths) is as high as the ground goes; more would
+    // be cut off without a word.
+    let text = edited("ribcage_pass.ron", "height: 68,", "height: 300,");
+    let e = errors_of(&text);
+    assert!(
+        e.iter().any(|m| m.contains("above the highest ground")),
+        "{e:?}"
+    );
 }
