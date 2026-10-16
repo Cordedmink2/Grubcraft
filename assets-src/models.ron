@@ -90,6 +90,27 @@
             )),
         ),
         (
+            name: "The Onmyoji",
+            // Ember Clans hero, on the Farmer body and rig: white kariginu,
+            // tall eboshi and a gohei wand. Casting clips come from
+            // Quaternius's Wizard; a 63rd bone turns the talisman wheel.
+            source: "shared:grubcraft/ember/onmyoji/onmyoji.glb",
+            height: 1.25,
+            clips: {
+                "Idle": "Idle_Staff", "Walk": "Walk_Staff", "Run": "Run_Staff", "Attack": "Staff_Strike",
+                "Attack2": "Spell_Call", "Shoot": "Spell_Bolt", "Hit": "Hit_Staff", "Die": "Death_Staff",
+                "Cheer": "Spell_Call",
+            },
+            lod_triangles: (12000, 4000, 1400, 450),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/onmyoji/albedo.png",
+                team: Some("shared:grubcraft/ember/onmyoji/team.png"),
+                normal: Some("shared:grubcraft/ember/onmyoji/normal.png"),
+                orm: Some("shared:grubcraft/ember/onmyoji/orm.png"),
+                emissive: Some("shared:grubcraft/ember/onmyoji/emissive.png"),
+            )),
+        ),
+        (
             name: "Yumi Ashigaru",
             // Ember Clans roster art on the Farmer body and rig. Its bow
             // clips come from Quaternius's Ranger, mirrored onto this rig;
