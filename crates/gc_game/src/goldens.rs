@@ -442,7 +442,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         let forward = (foe - starts[i]).normalize_or(Vec2::NEG_Y);
         let placed = deploy(&units, &raised, starts[i], forward, golden.rows, &minds);
         if golden.deployment {
-            zones.push(zone_order(party, &placed, starts[i]));
+            zones.push(zone_order(party, &placed, &starts));
             if i > 0 {
                 ready.push(PlayerCommand {
                     player: party,

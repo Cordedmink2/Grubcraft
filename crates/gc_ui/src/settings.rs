@@ -100,7 +100,7 @@ impl Settings {
         if self.player_name.trim().is_empty() {
             self.player_name = "Player".into();
         }
-        self.player_color %= 4;
+        self.player_color %= crate::lobby::COLORS;
         self.ui_scale = self.ui_scale.clamp(75, 150);
         for v in [
             &mut self.volume_master,
@@ -236,7 +236,7 @@ mod tests {
         assert_eq!(s.player_name, "Player");
         assert_eq!(s.ui_scale, 150);
         assert_eq!(s.volume_master, 100);
-        assert_eq!(s.player_color, 1);
+        assert_eq!(s.player_color, 9 % crate::lobby::COLORS);
     }
 
     #[test]

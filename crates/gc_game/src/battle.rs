@@ -9,8 +9,13 @@ use gc_fixed::Fx;
 use gc_sim::champions::{HEART, Outcome};
 use gc_sim::{Challenge, Command, PlayerCommand, PlayerId, UnitStats, World};
 use gc_ui::Settings;
-use gc_ui::lobby::{LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind};
+use gc_ui::lobby::{COLORS, LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind};
 use glam::Vec2;
+
+use crate::terrain_gen::START_PLATEAUS;
+
+// A start plateau for every lobby slot.
+const _: () = assert!(START_PLATEAUS == gc_ui::lobby::MAX_PLAYERS);
 
 /// Whether champions may duel before this battle: the lobby allows it and
 /// a computer player takes part (docs/05-combat.md, "Champions before
@@ -69,7 +74,7 @@ pub fn set_out(
     units: &[UnitStats],
     factions: &[Faction],
     points: &[u32],
-    plateaus: [Vec2; 4],
+    plateaus: [Vec2; START_PLATEAUS],
     roll: u64,
     deploy: bool,
     minds: &mut Minds,
@@ -80,7 +85,7 @@ pub fn set_out(
     let teams: Vec<u8> = players.iter().map(|s| s.team).collect();
     let perspective = if setup.seed.is_some() { 0 } else { me };
     let starts = battle_starts(&teams, perspective, plateaus);
-    let middle = plateaus.iter().copied().sum::<Vec2>() / 4.0;
+    let middle = plateaus.iter().copied().sum::<Vec2>() / START_PLATEAUS as f32;
     // People get a deployment phase; computer players alone don't need one.
     let deployment = players.iter().any(|s| s.kind == SlotKind::Human);
     let mut set = SetOut {
@@ -95,7 +100,7 @@ pub fn set_out(
     for (i, slot) in players.iter().enumerate() {
         let party = i as PlayerId;
         let faction = Faction::from_index(slot.faction.index() as u8);
-        let (colour, color) = PLAYER_COLORS[slot.color as usize % PLAYER_COLORS.len()];
+        let (colour, color) = PLAYER_COLORS[usize::from(slot.color % COLORS)];
         set.parties.push(Party {
             name: format!("{colour} ({})", slot.name),
             color,
@@ -132,7 +137,7 @@ pub fn set_out(
         if deploy {
             let placed = army::deploy(units, &raised, starts[i], forward, minds.terrain());
             if deployment {
-                out.push(zone_order(party, &placed, starts[i]));
+                out.push(zone_order(party, &placed, &starts));
             }
             army::spawn_commands(party, &placed, &mut spawns);
             // The computer keeps the standard deployment.
@@ -185,18 +190,19 @@ pub fn shift_into_zone(world: &World, player: PlayerId, commands: &mut [Command]
     }
 }
 
-/// `party`'s deployment zone round `start`, holding its standard
-/// deployment `placed`.
+/// `party`'s deployment zone round `starts[party]`, holding its standard
+/// deployment `placed` (the zones of `starts` stay clear of each other).
 pub(crate) fn zone_order(
     party: PlayerId,
     placed: &[army::Placement],
-    start: Vec2,
+    starts: &[Vec2],
 ) -> PlayerCommand {
+    let start = starts[party as usize];
     PlayerCommand {
         player: party,
         command: Command::DeployZone {
             center: to_fx_vec(start),
-            radius: Fx::from_int(zone_radius(placed, start)),
+            radius: Fx::from_int(zone_radius(placed, starts, party as usize)),
         },
     }
 }
@@ -206,29 +212,75 @@ const MIN_ZONE: i32 = 24;
 /// Room in a deployment zone around the standard deployment, tiles.
 const ZONE_MARGIN: f32 = 10.0;
 
-/// A deployment zone round `start` that holds the standard deployment
-/// `placed` with room to spare.
-fn zone_radius(placed: &[army::Placement], start: Vec2) -> i32 {
+/// A deployment zone round `starts[who]` that holds the standard deployment
+/// `placed` with room to spare, but is no wider than half the way to the
+/// nearest other start, so that neighbours (the middle plateaus are only a
+/// quarter of the map from the corners) never share ground. The deployment
+/// itself always fits, whatever the room.
+fn zone_radius(placed: &[army::Placement], starts: &[Vec2], who: usize) -> i32 {
+    let start = starts[who];
     let reach = placed
         .iter()
         .map(|p| p.position.distance(start))
         .fold(0.0, f32::max);
-    ((reach + ZONE_MARGIN).ceil() as i32).max(MIN_ZONE)
+    let wanted = ((reach + ZONE_MARGIN).ceil() as i32).max(MIN_ZONE);
+    let room = starts
+        .iter()
+        .enumerate()
+        .filter(|&(j, _)| j != who)
+        .map(|(_, other)| (other.distance(start) / 2.0).floor() as i32 - 1)
+        .min()
+        .unwrap_or(i32::MAX);
+    wanted.min(room).max(reach.ceil() as i32)
 }
 
-/// Where each party of a Field Battle starts, from the map's four start
+/// Where each party of a Field Battle starts, from the map's six start
 /// plateaus (`plateaus` in the order north-west, north-east, south-west,
-/// south-east). The camera looks north, so this machine's player and its
-/// allies take the south and everyone else the north, then what is left.
-/// The lobby has four slots, so there is a plateau for everyone.
-pub fn battle_starts(teams: &[u8], me: usize, plateaus: [Vec2; 4]) -> Vec<Vec2> {
+/// south-east, north, south). The camera looks north, so this machine's
+/// player and its allies take the south and everyone else the north, then
+/// what is left. The lobby has six slots, so there is a plateau for everyone.
+pub fn battle_starts(teams: &[u8], me: usize, plateaus: [Vec2; START_PLATEAUS]) -> Vec<Vec2> {
+    // Four or fewer keep to the corners; the middles are for five or six.
+    let crowd = teams.len() > 4;
     let mut south = vec![plateaus[2], plateaus[3]];
     let mut north = vec![plateaus[0], plateaus[1]];
+    if crowd {
+        south.push(plateaus[5]);
+        north.push(plateaus[4]);
+    }
     let mine = teams.get(me).copied();
     // Me first, then my allies, then everyone else, each in slot order.
     let mut order: Vec<usize> = (0..teams.len()).collect();
     order.sort_by_key(|&p| (p != me, Some(teams[p]) != mine, p));
     let mut starts = vec![plateaus[0]; teams.len()];
+    // Five or six in three teams with pairs among them (2v2v2, 2v2v1): each team
+    // takes a column of the map, south first, so allies stand together:
+    // mine the west, the next team the east, the last the middle.
+    let mut sides: Vec<u8> = Vec::with_capacity(3);
+    for &p in &order {
+        if !sides.contains(&teams[p]) {
+            sides.push(teams[p]);
+        }
+    }
+    let size = |t: u8| teams.iter().filter(|&&x| x == t).count();
+    if crowd
+        && sides.len() == 3
+        && sides.iter().all(|&t| size(t) <= 2)
+        && sides.iter().any(|&t| size(t) == 2)
+    {
+        let columns = [
+            [plateaus[2], plateaus[0]],
+            [plateaus[3], plateaus[1]],
+            [plateaus[5], plateaus[4]],
+        ];
+        let mut filled = [0; 3];
+        for p in order {
+            let c = sides.iter().position(|&t| t == teams[p]).unwrap_or(0);
+            starts[p] = columns[c][filled[c]];
+            filled[c] += 1;
+        }
+        return starts;
+    }
     for p in order {
         let (near, far) = if Some(teams[p]) == mine {
             (&mut south, &mut north)
@@ -365,12 +417,12 @@ pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
     me.kind = SlotKind::Human;
     me.name.clone_from(&settings.player_name);
     me.faction = settings.faction;
-    me.color = settings.player_color % 4;
+    me.color = settings.player_color % COLORS;
     let mut ai = Slot::open(1);
     ai.kind = SlotKind::Ai;
     ai.name = "AI 2".into();
     ai.faction = me.faction;
-    ai.color = (me.color + 1) % 4;
+    ai.color = (me.color + 1) % COLORS;
     ai.ai_level = level;
     MatchStart {
         settings: LobbySettings::default(),
@@ -392,7 +444,7 @@ mod tests {
     #[test]
     fn you_and_your_allies_start_in_the_south_facing_the_rest() {
         let p = start_positions(MAP);
-        let (nw, ne, sw, se) = (p[0], p[1], p[2], p[3]);
+        let (nw, ne, sw, se, n, s) = (p[0], p[1], p[2], p[3], p[4], p[5]);
         // One against one.
         assert_eq!(battle_starts(&[0, 1], 0, p), vec![sw, nw]);
         // You in the second slot.
@@ -403,6 +455,30 @@ mod tests {
         let ffa = battle_starts(&[0, 1, 2, 3], 2, p);
         assert_eq!(ffa[2], sw);
         for (i, a) in ffa.iter().enumerate() {
+            for b in &ffa[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+        // Three against three: you and your allies fill the south (you
+        // first), the others the north.
+        let teams = [0, 1, 0, 1, 0, 1];
+        let trio = battle_starts(&teams, 0, p);
+        assert_eq!(trio, vec![sw, nw, se, ne, s, n]);
+        // The same, seen from the other side's first slot.
+        assert_eq!(battle_starts(&teams, 1, p), vec![nw, sw, ne, se, n, s]);
+        // Three pairs: each pair holds a column, yours the west.
+        let pairs = battle_starts(&[0, 1, 2, 0, 1, 2], 0, p);
+        assert_eq!(pairs, vec![sw, se, s, nw, ne, n]);
+        // Three alone still face each other across the map, and four or
+        // fewer keep to the corners whatever their teams.
+        assert_eq!(battle_starts(&[0, 1, 2], 0, p), vec![sw, nw, ne]);
+        assert_eq!(battle_starts(&[0, 1, 2, 3], 0, p), vec![sw, nw, ne, se]);
+        assert_eq!(battle_starts(&[0, 1, 2, 0], 0, p), vec![sw, nw, ne, se]);
+        // Six for themselves: six different plateaus.
+        let ffa = battle_starts(&[0, 1, 2, 3, 4, 5], 3, p);
+        assert_eq!(ffa[3], sw);
+        for (i, a) in ffa.iter().enumerate() {
+            assert!(p.contains(a));
             for b in &ffa[i + 1..] {
                 assert_ne!(a, b);
             }
@@ -622,6 +698,58 @@ mod tests {
         }
     }
 
+    /// With six on the field, no two deployment zones overlap, even the
+    /// neighbouring plateaus (64 tiles apart on the 256-tile map).
+    #[test]
+    fn six_deployment_zones_do_not_overlap() {
+        let data = crate::data::load();
+        let (units, factions, points) = tables(&data);
+        let heightmap = Heightmap::generate(3, MAP);
+        let nav = heightmap.nav_costs();
+        let ai = Some(Difficulty::Recruit);
+        // Grand Battle armies are wider than the room between neighbours on
+        // this map: their zones only hold the deployment, and may touch.
+        for budget in [gc_ui::lobby::Budget::Skirmish, gc_ui::lobby::Budget::Battle] {
+            let mut setup = lobby(&[None, ai, ai, ai, ai, ai], &[0, 1, 0, 1, 0, 1]);
+            setup.settings.budget = budget;
+            let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
+            let mut world = World::new(&MatchSetup {
+                seed: 3,
+                capacities: Capacities::default(),
+                units: &units,
+                map_tiles: MAP,
+                nav: &nav,
+                teams: &teams,
+                ground: heightmap.ground(),
+                champions: false,
+            });
+            let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+            let mut out = Vec::new();
+            set_out(
+                &setup,
+                &units,
+                &factions,
+                &points,
+                start_positions(MAP),
+                3,
+                true,
+                &mut minds,
+                &mut out,
+            );
+            assert_eq!(world.tick(&out).commands_rejected, 0);
+            let zones: Vec<_> = (0..6).map(|p| world.deploy_zone(p).unwrap()).collect();
+            for (i, a) in zones.iter().enumerate() {
+                for b in &zones[i + 1..] {
+                    let apart = (v2(a.center) - v2(b.center)).length();
+                    assert!(
+                        apart > fx(a.radius) + fx(b.radius),
+                        "{budget:?}: {a:?} overlaps {b:?}"
+                    );
+                }
+            }
+        }
+    }
+
     /// Play `setup` on the generated map with the real game data, the human
     /// side standing still, for at most `minutes`.
     fn play(setup: &MatchStart, seed: u64, minutes: u32) -> Played {
@@ -751,6 +879,22 @@ mod tests {
             "{:?}",
             played.battle.outcome
         );
+    }
+
+    /// Three computers against three: every plateau is used, every army is
+    /// raised, and the battle plays out to a result.
+    #[test]
+    fn six_computers_fight_a_three_against_three() {
+        let ai = Some(Difficulty::Veteran);
+        let setup = lobby(&[ai; 6], &[0, 1, 0, 1, 0, 1]);
+        let played = play(&setup, 0x6772_7562, 10);
+        assert_eq!(played.fielded, vec![army::ARMY_REGIMENTS; 6]);
+        println!(
+            "{:?} after {} s",
+            played.battle.outcome,
+            played.ticks / gc_sim::TICKS_PER_SECOND
+        );
+        assert!(played.battle.outcome.is_some(), "no result in ten minutes");
     }
 
     /// Each faction's Veteran against each faction standing still, four

@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 
 use gc_sim::{PlayerCommand, PlayerId};
 use gc_ui::lobby::{
-    DEFAULT_AI_LEVEL, DiscoveredGame, LobbySettings, LobbyState, MAPS, MAX_ARMY, MAX_PLAYERS,
-    MatchStart, NetError, NetEvent, Network, OnDrop, Profile, Slot, SlotEdit, SlotKind, apply_edit,
-    plays_with,
+    COLORS, DEFAULT_AI_LEVEL, DiscoveredGame, LobbySettings, LobbyState, MAPS, MAX_ARMY,
+    MAX_PLAYERS, MatchStart, NetError, NetEvent, Network, OnDrop, Profile, Slot, SlotEdit,
+    SlotKind, apply_edit, plays_with,
 };
 
 use crate::crypt::{Cipher, KeyPair};
@@ -902,10 +902,10 @@ impl Lan {
                             .filter(|s| s.occupied())
                             .map(|s| s.color)
                             .collect();
-                        let color = if taken.contains(&(color % 4)) {
-                            (0..4u8).find(|c| !taken.contains(c)).unwrap_or(0)
+                        let color = if taken.contains(&(color % COLORS)) {
+                            (0..COLORS).find(|c| !taken.contains(c)).unwrap_or(0)
                         } else {
-                            color % 4
+                            color % COLORS
                         };
                         h.lobby.slots[slot] = Slot {
                             kind: SlotKind::Human,
@@ -1684,12 +1684,12 @@ impl Network for Lan {
         let socket = Lan::open(Lan::bind_host()?)?;
         let port = socket.local_addr().map_or(DEFAULT_PORT, |a| a.port());
         let invite = joincode::invite(port, joincode::tailscale_ip(), joincode::local_ip());
-        let mut slots = [Slot::open(0), Slot::open(1), Slot::open(2), Slot::open(3)];
+        let mut slots: [Slot; MAX_PLAYERS] = std::array::from_fn(Slot::open);
         slots[0] = Slot {
             kind: SlotKind::Human,
             name: short_name(&me.name),
             faction: me.faction,
-            color: me.color % 4,
+            color: me.color % COLORS,
             team: 0,
             ready: true,
             version: self.id.version.clone(),

@@ -2,7 +2,7 @@
 
 Up to six players on the same Wi-Fi network, any mix of Macs and Windows PCs, one player hosting on their own machine. No servers, no accounts.
 
-*Six players (spec change 2026-10-16):* the lobby, the protocol and the start plateaus still hold four players; widening them to six is not built yet.
+*Built (six-player lobbies, 2026-10-16):* the lobby has six slots, the lobby message carries all six, and the protocol is number 8. A test plays six machines in lockstep (`six_machines_play_in_lockstep` in `crates/gc_net/tests/lan_match.rs`).
 
 ## Model: host-sequenced deterministic lockstep
 

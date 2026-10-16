@@ -76,7 +76,7 @@ pub const SIM_VERSION: u32 = 5;
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
 
-/// Player slot index (0..=3 for four players; more reserved for neutrals).
+/// Player slot index (0..=5 for the six lobby slots; more reserved for neutrals).
 pub type PlayerId = u8;
 
 /// Most parties (players, and later other factions) a match may have,

@@ -11,7 +11,8 @@ use gc_replay::{Recorder, Replay};
 use gc_sim::scenario::{DRILL_UNITS, Drill};
 use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, World};
 use gc_ui::lobby::{
-    Faction, LobbySettings, NetError, NetEvent, Network, OnDrop, Profile, SlotEdit, SlotKind,
+    Faction, LobbySettings, MAX_PLAYERS, NetError, NetEvent, Network, OnDrop, Profile, SlotEdit,
+    SlotKind,
 };
 
 /// Hosts listen on a fixed few ports, so these tests take turns.
@@ -181,6 +182,8 @@ impl Match {
             l.loaded(Ok(()));
         }
         let n = lans.len();
+        // The drill fields four players unless the match has more.
+        let players = start.players.len().max(4) as u8;
         let (worlds, recorders) = machines(n);
         let mut m = Match {
             lans,
@@ -190,6 +193,7 @@ impl Match {
                 .map(|_| {
                     let mut d = Drill::new(SEED);
                     d.regiments_per_player = 20;
+                    d.players = players;
                     d
                 })
                 .collect(),
@@ -597,12 +601,36 @@ fn a_player_whose_game_restarts_rejoins_and_catches_up() {
 }
 
 #[test]
+fn six_machines_play_in_lockstep() {
+    let _turn = ports();
+    let joiners = ["Alex", "Sam", "Kai", "Jo", "Ren"];
+    let mut m = Match::start(&joiners, &[], OnDrop::Wait, 10);
+    assert_eq!(m.lans.len(), MAX_PLAYERS);
+    const TURNS: u32 = 200;
+    m.run(&[], TURNS, Duration::from_secs(60));
+    assert_eq!(m.ticks(), [TURNS; MAX_PLAYERS], "match stalled");
+    m.settle();
+    let hash = m.worlds[0].state_hash();
+    assert!(m.worlds.iter().all(|w| w.state_hash() == hash));
+    // Every player's regiments made it into the match.
+    for p in 0..MAX_PLAYERS as u8 {
+        let n = m.worlds[0]
+            .regiments
+            .iter()
+            .filter(|r| r.owner == p)
+            .count();
+        assert_eq!(n, 20, "player {p}");
+    }
+    assert_eq!(m.desyncs(), []);
+}
+
+#[test]
 fn joiners_are_refused_when_full_or_on_different_data() {
     let _turn = ports();
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
-    for slot in 1..4 {
+    for slot in 1..MAX_PLAYERS {
         host.edit_slot(slot, SlotEdit::Kind(SlotKind::Ai));
     }
     let mut late = lan();
@@ -610,7 +638,7 @@ fn joiners_are_refused_when_full_or_on_different_data() {
     assert_eq!(err, NetError::Refused("That lobby is full.".into()));
     assert!(late.lobby().is_none());
 
-    host.edit_slot(3, SlotEdit::Kind(SlotKind::Open));
+    host.edit_slot(MAX_PLAYERS - 1, SlotEdit::Kind(SlotKind::Open));
     let mut odd = Lan::new(Identity {
         data_hash: 1,
         ..id("test")
