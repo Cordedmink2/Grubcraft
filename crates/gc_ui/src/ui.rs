@@ -1,6 +1,8 @@
 //! Immediate-mode widgets: call `button(..)` each frame, get back whether it
 //! was clicked. Widget identity is the order of calls within a frame, so a
-//! screen must lay out its widgets the same way every frame.
+//! screen must lay out its widgets the same way every frame: a list whose
+//! length changes under the player (games found on the network) calls
+//! `reserve_ids` for the rows it does not draw.
 
 use crate::draw::{Color, DrawList, Rect, fit, text_width};
 
@@ -67,6 +69,8 @@ pub struct Ui {
     focus: Option<u32>,
     next_id: u32,
     enter_taken: bool,
+    /// A text field drew this frame with the focus.
+    focus_claimed: bool,
 }
 
 impl Default for Ui {
@@ -85,6 +89,7 @@ impl Ui {
             focus: None,
             next_id: 0,
             enter_taken: false,
+            focus_claimed: false,
         }
     }
 
@@ -94,11 +99,17 @@ impl Ui {
         self.draw.clear();
         self.next_id = 0;
         self.enter_taken = false;
+        self.focus_claimed = false;
     }
 
     pub fn end_frame(&mut self) {
         if self.input.released {
             self.active = None;
+        }
+        // The field that had the focus is gone (the screen changed under
+        // it): don't leave typing and Enter pointed at nothing.
+        if !self.focus_claimed {
+            self.focus = None;
         }
     }
 
@@ -115,6 +126,12 @@ impl Ui {
     fn id(&mut self) -> u32 {
         self.next_id += 1;
         self.next_id
+    }
+
+    /// Skip `n` ids, so widgets after a list that can be shorter than its
+    /// maximum keep the ids they have when it is full.
+    pub fn reserve_ids(&mut self, n: usize) {
+        self.next_id += n as u32;
     }
 
     fn hovered(&self, r: Rect) -> bool {
@@ -329,6 +346,7 @@ impl Ui {
             self.focus = None;
         }
         let focused = self.focus == Some(id);
+        self.focus_claimed |= focused;
         let mut changed = false;
         if focused {
             for ch in self.input.typed.chars() {
