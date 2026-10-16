@@ -27,6 +27,11 @@ use crate::terrain::Terrain;
 pub const COVER_REACH: f32 = 6.0;
 /// Water narrower than this along the way is a puddle, not a river, tiles.
 pub const MIN_WATER: f32 = 2.0;
+/// How far a side must stand above the ground in front of it to fight
+/// downhill, tiles (the simulation's
+/// [`HIGH_GROUND`](gc_sim::terrain::HIGH_GROUND)).
+pub const DOWNHILL: f32 =
+    gc_sim::terrain::HIGH_GROUND as f32 / gc_sim::terrain::HEIGHT_UNITS as f32;
 /// Steps the ground is sampled at, tiles.
 const STEP: f32 = 0.5;
 
@@ -62,28 +67,27 @@ impl Line {
             -self.depth * 0.5 + 0.5,
             -self.depth * 0.5 - behind,
         ];
-        let (mut good, mut all) = (0, 0);
-        for ahead in rows {
-            for across in self.across(2.0) {
-                let p = self.at(across, ahead);
-                all += 1;
-                good += usize::from(terrain.walkable(p) && !terrain.wet(p));
-            }
-        }
-        good as f32 / all.max(1) as f32
+        self.share(&rows, 2.0, |p| terrain.walkable(p) && !terrain.wet(p))
     }
 
     /// Share of the places under the line in a wood, where the trees catch
     /// some of the arrows shot at it.
     pub fn wooded(&self, terrain: &Terrain) -> f32 {
-        let (mut wood, mut all) = (0, 0);
-        for ahead in [self.depth * 0.5 - 0.5, 0.0, -self.depth * 0.5 + 0.5] {
-            for across in self.across(1.0) {
+        let rows = [self.depth * 0.5 - 0.5, 0.0, -self.depth * 0.5 + 0.5];
+        self.share(&rows, 1.0, |p| terrain.cover(p) == gc_sim::Cover::Wood)
+    }
+
+    /// Share of the places along `rows` (tiles ahead of the centre), `inset`
+    /// tiles in from each end, where `good` holds.
+    fn share(&self, rows: &[f32], inset: f32, good: impl Fn(Vec2) -> bool) -> f32 {
+        let (mut n, mut all) = (0, 0);
+        for &ahead in rows {
+            for across in self.across(inset) {
                 all += 1;
-                wood += usize::from(terrain.cover(self.at(across, ahead)) == gc_sim::Cover::Wood);
+                n += usize::from(good(self.at(across, ahead)));
             }
         }
-        wood as f32 / all.max(1) as f32
+        n as f32 / all.max(1) as f32
     }
 
     /// For the left and right ends: tiles from the end of the line out to
@@ -207,11 +211,11 @@ pub fn fords(
     let right = right_of(forward);
     let length = water.far + MIN_WATER * 4.0;
     let mut found: Vec<Ford> = Vec::new();
-    // The stretch being walked: where it began across, and its lanes.
-    let mut stretch: Vec<(f32, Ford)> = Vec::new();
-    let mut close = |stretch: &mut Vec<(f32, Ford)>| {
+    // The lanes of the stretch being walked.
+    let mut stretch: Vec<Ford> = Vec::new();
+    let mut close = |stretch: &mut Vec<Ford>| {
         if !stretch.is_empty() {
-            found.push(stretch[stretch.len() / 2].1);
+            found.push(stretch[stretch.len() / 2]);
             stretch.clear();
         }
     };
@@ -219,7 +223,7 @@ pub fn fords(
     while across <= reach {
         let start = from + right * across;
         match crossing_lane(terrain, start, forward, length) {
-            Some(f) => stretch.push((across, f)),
+            Some(f) => stretch.push(f),
             None => close(&mut stretch),
         }
         across += 1.0;

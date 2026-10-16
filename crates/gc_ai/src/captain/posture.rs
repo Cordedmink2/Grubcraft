@@ -42,9 +42,9 @@ impl Captain {
         let well_off = gap > WITHDRAW_GAP && self.closing < 1.0;
         // Waiting for two other sides to fight, with one coming at it
         // first: step out of its way, so it finds the other.
-        let shy = self.shy && gap > SHY_GAP;
-        if (margin < threshold && well_off) || shy {
-            let since = *self.losing_since.get_or_insert(if shy {
+        let shy = self.shy.filter(|_| gap > SHY_GAP);
+        if (margin < threshold && well_off) || shy.is_some() {
+            let since = *self.losing_since.get_or_insert(if shy.is_some() {
                 now.saturating_sub(WITHDRAW_AFTER_TICKS)
             } else {
                 now
@@ -60,10 +60,10 @@ impl Captain {
                 self.withdrawals += 1;
                 // Away from the enemy it faces, or keeping out of a fight,
                 // away from both sides in it.
-                let away = if shy { self.shy_from } else { -self.forward };
+                let away = shy.unwrap_or(-self.forward);
                 let back = ctx.terrain.clamp(self.anchor + away * WITHDRAW_TILES, 8.0);
                 self.anchor = back;
-                let why = if shy {
+                let why = if shy.is_some() {
                     "keeping out of their fight".to_string()
                 } else {
                     format!("expects {}", describe_margin(margin))
@@ -97,7 +97,7 @@ impl Captain {
             let under_fire = theirs.ranged > 0.0 && gap < theirs.range + 2.0;
             // Under the trees their arrows do less: no need to go to them.
             let sheltered = ctx.knobs.read_ground && self.sheltered(ctx);
-            let outshot = theirs.ranged > mine.ranged * 1.15 && under_fire && !sheltered;
+            let outshot = theirs.outshoots(&mine) && under_fire && !sheltered;
             let out_of_range = mine.ranged > 0.0 && gap > our_range;
             let losing = margin < LOSING;
             let patience = 3.0 + 25.0 * p.patience() - 10.0 * p.aggression()
@@ -251,7 +251,7 @@ impl Captain {
                 // patience for it. Otherwise right up to the enemy, and the
                 // charges take it from there.
                 let shoot = mine.ranged > 0.0
-                    && mine.ranged > theirs.ranged * 1.15
+                    && mine.outshoots(&theirs)
                     && !only_archers
                     && waited < 2.0 * patience.max(5.0);
                 let shoot_from = if shoot {

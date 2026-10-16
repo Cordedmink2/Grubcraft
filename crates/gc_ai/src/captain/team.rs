@@ -41,7 +41,7 @@ impl Field {
             .collect();
         parties.sort_unstable();
         parties.dedup();
-        let mut armies: Vec<Army> = parties
+        let armies: Vec<Army> = parties
             .into_iter()
             .map(|party| {
                 let rs: Vec<&Seen> = view
@@ -56,18 +56,25 @@ impl Field {
                 }
             })
             .collect();
-        for i in 0..armies.len() {
-            let a = armies[i];
-            armies[i].faces = armies
-                .iter()
-                .filter(|b| view.hostile(a.party, b.party))
-                .min_by(|x, y| {
-                    let (dx, dy) = (x.centre.distance(a.centre), y.centre.distance(a.centre));
-                    dx.total_cmp(&dy).then(x.party.cmp(&y.party))
-                })
-                .map(|b| b.party);
+        let mut field = Field { armies };
+        for i in 0..field.armies.len() {
+            let a = field.armies[i];
+            field.armies[i].faces = field.nearest(a.centre, |b| view.hostile(a.party, b));
         }
-        Field { armies }
+        field
+    }
+
+    /// The army nearest `from` (by centres; the lower party on a tie) of the
+    /// parties `pick` picks.
+    fn nearest(&self, from: Vec2, pick: impl Fn(PlayerId) -> bool) -> Option<PlayerId> {
+        self.armies
+            .iter()
+            .filter(|a| pick(a.party))
+            .min_by(|x, y| {
+                let (dx, dy) = (x.centre.distance(from), y.centre.distance(from));
+                dx.total_cmp(&dy).then(x.party.cmp(&y.party))
+            })
+            .map(|a| a.party)
     }
 
     /// The party `party`'s army is turned towards.
@@ -112,28 +119,19 @@ impl Field {
         (against, with)
     }
 
-    /// Two other sides who would fight each other: the nearest army hostile
-    /// to `party`, and the nearest one hostile to that one too.
+    /// Two other sides who would fight each other: the army `party` faces
+    /// (its nearest enemy), and the nearest army hostile to both.
     pub fn others_fighting(
         &self,
         view: &Perception,
         party: PlayerId,
     ) -> Option<(PlayerId, PlayerId)> {
         let me = self.armies.iter().find(|a| a.party == party)?;
-        let mut foes: Vec<&Army> = self
-            .armies
-            .iter()
-            .filter(|a| view.hostile(party, a.party))
-            .collect();
-        foes.sort_by(|x, y| {
-            let (dx, dy) = (x.centre.distance(me.centre), y.centre.distance(me.centre));
-            dx.total_cmp(&dy).then(x.party.cmp(&y.party))
-        });
-        let first = foes.first()?;
-        let second = foes[1..]
-            .iter()
-            .find(|b| view.hostile(first.party, b.party))?;
-        Some((first.party, second.party))
+        let first = me.faces?;
+        let second = self.nearest(me.centre, |b| {
+            view.hostile(party, b) && view.hostile(first, b)
+        })?;
+        Some((first, second))
     }
 }
 
@@ -179,19 +177,31 @@ pub(super) fn locked(view: &Perception, party: PlayerId, with: impl Fn(PlayerId)
 }
 
 impl Captain {
+    /// Whether `owner`'s regiments count against it: in a three-sided
+    /// fight, only those of the enemies it is really fighting.
+    pub(super) fn counts_against(&self, owner: PlayerId) -> bool {
+        self.against.is_empty() || self.against.contains(&owner)
+    }
+
+    /// Whether `owner`'s regiments fight beside it: in a three-sided
+    /// fight, only friends turned on the same enemies.
+    pub(super) fn counts_with(&self, owner: PlayerId) -> bool {
+        self.with.is_empty() || self.with.contains(&owner)
+    }
+
     /// In a team game, read who faces whom: whom it is really fighting,
     /// and whether two other sides are about to fight each other.
     pub(super) fn read_sides(&mut self, ctx: &mut Ctx) {
         self.against.clear();
         self.with.clear();
+        let before = self.onlooking.take();
+        self.shy = None;
         if !ctx.knobs.team_play {
             return;
         }
         let view = ctx.view;
         let field = Field::of(view);
         if !field.three_sided(view, ctx.party) {
-            self.onlooking = None;
-            self.shy = false;
             return;
         }
         (self.against, self.with) = field.sides(view, ctx.party);
@@ -201,13 +211,9 @@ impl Captain {
                 .is_some_and(|t| view.tick > t + ONLOOK_TICKS)
         {
             // Once it has gone in, or waited long enough, it fights on.
-            self.onlooking = None;
-            self.shy = false;
             return;
         }
-        let before = self.onlooking;
         self.onlooking = field.others_fighting(view, ctx.party);
-        self.shy = false;
         let Some((a, b)) = self.onlooking else {
             return;
         };
@@ -219,28 +225,30 @@ impl Captain {
             return;
         };
         let nearer = us.distance(ca) < cb.distance(ca) + ONLOOK_SPARE;
-        // Away from both; standing between them, away from the middle of
-        // the map (towards our own edge).
-        let away = (us - ca).normalize_or_zero() + (us - cb).normalize_or_zero();
-        let middle = Vec2::splat(ctx.terrain.map_tiles() as f32 * 0.5);
-        self.shy_from = if away.length() > 0.5 {
-            away.normalize()
-        } else {
-            (us - middle).normalize_or(-self.forward)
-        };
-        self.shy = nearer
+        if nearer
             || [a, b]
                 .iter()
-                .any(|&p| within(view, ctx.party, p, ONLOOK_NEAR));
+                .any(|&p| within(view, ctx.party, p, ONLOOK_NEAR))
+        {
+            // Away from both; standing between them, away from the middle
+            // of the map (towards our own edge).
+            let away = (us - ca).normalize_or_zero() + (us - cb).normalize_or_zero();
+            let middle = Vec2::splat(ctx.terrain.map_tiles() as f32 * 0.5);
+            self.shy = Some(if away.length() > 0.5 {
+                away.normalize()
+            } else {
+                (us - middle).normalize_or(-self.forward)
+            });
+        }
         self.onlook_since.get_or_insert(view.tick);
-        // Either locked in melee (with each other, or anyone else but us):
-        // fall on the nearer one now, while it can't turn to meet us.
-        // Fighting anyone but our side.
+        // Either locked in melee with anyone but our side (each other, or
+        // someone else): fall on the nearer one now, while it can't turn to
+        // meet us.
         let others = |o: PlayerId| view.hostile(ctx.party, o);
         if locked(view, a, others) || locked(view, b, others) {
             self.pouncing = true;
             self.onlooking = None;
-            self.shy = false;
+            self.shy = None;
             ctx.journal.note(
                 view.tick,
                 format!("Falling on player {} while it fights", a + 1),

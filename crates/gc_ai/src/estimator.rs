@@ -160,6 +160,11 @@ impl Force {
         self
     }
 
+    /// Whether its archers clearly shoot better than `other`'s.
+    pub fn outshoots(&self, other: &Force) -> bool {
+        self.ranged > other.ranged * 1.15
+    }
+
     /// Hit points a second this force deals in melee against `defence`,
     /// at full strength and before flanking.
     fn melee_against(&self, defence: f32) -> f32 {

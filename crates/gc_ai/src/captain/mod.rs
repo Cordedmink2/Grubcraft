@@ -46,6 +46,7 @@ pub use helpers::{describe_margin, fits, gap_between};
 use gc_fixed::Pcg32;
 use gc_sim::{MoraleState, PlayerId, RegimentHandle};
 use glam::Vec2;
+use std::cmp::Ordering;
 
 use crate::difficulty::Knobs;
 use crate::estimator::{self, Approach, Estimate, Force};
@@ -494,7 +495,7 @@ pub struct Captain {
     with: Vec<PlayerId>,
     /// Two other sides about to fight each other, while it waits for them
     /// to come to blows (see [`team::Field::others_fighting`]).
-    pub onlooking: Option<(PlayerId, PlayerId)>,
+    onlooking: Option<(PlayerId, PlayerId)>,
     /// When it began waiting on them.
     onlook_since: Option<u32>,
     /// They came to blows and it has gone in.
@@ -502,8 +503,7 @@ pub struct Captain {
     /// One of them is coming at it before they have fought each other, or
     /// it stands nearer than the other: it keeps out of their way, falling
     /// back this way.
-    shy: bool,
-    shy_from: Vec2,
+    shy: Option<Vec2>,
 }
 
 /// A friend's ground in the fight: its own block while it fights, or where
@@ -574,8 +574,7 @@ impl Captain {
             onlooking: None,
             onlook_since: None,
             pouncing: false,
-            shy: false,
-            shy_from: Vec2::ZERO,
+            shy: None,
         }
     }
 
@@ -845,12 +844,11 @@ impl Captain {
         // expects to lose to both enemies at once, and waits.
         // In a team game, only the enemies turned on its side count, and the
         // friends turned on them (see [`team`]).
-        let (against, with) = (&self.against, &self.with);
         let allies = view.regiments.iter().filter(|r| {
             r.owner != ctx.party
                 && !r.broken()
                 && !view.hostile(ctx.party, r.owner)
-                && (with.is_empty() || with.contains(&r.owner))
+                && self.counts_with(r.owner)
         });
         let mine = Force::of(view, ours.iter().copied().chain(allies));
         let theirs = Force::of(
@@ -858,13 +856,13 @@ impl Captain {
             fighting
                 .iter()
                 .copied()
-                .filter(|f| against.is_empty() || against.contains(&f.owner)),
+                .filter(|f| self.counts_against(f.owner)),
         );
         // Whoever stands higher where the lines will meet fights downhill.
         let (mine, theirs) = match self.slope(ctx, fighting) {
-            s if s > 0.0 => (mine.downhill(), theirs),
-            s if s < 0.0 => (mine, theirs.downhill()),
-            _ => (mine, theirs),
+            Ordering::Greater => (mine.downhill(), theirs),
+            Ordering::Less => (mine, theirs.downhill()),
+            Ordering::Equal => (mine, theirs),
         };
         let gap = self.front_gap(fighting);
         let closing = (mine.speed + theirs.speed) * 0.5;
@@ -885,7 +883,7 @@ impl Captain {
     fn front_gap_from(&self, from: Vec2, fighting: &[&Seen]) -> f32 {
         let gap = fighting
             .iter()
-            .filter(|f| self.against.is_empty() || self.against.contains(&f.owner))
+            .filter(|f| self.counts_against(f.owner))
             .map(|f| {
                 let ahead = (f.pos - from).dot(self.forward);
                 if ahead < 0.0 && !self.against.is_empty() {

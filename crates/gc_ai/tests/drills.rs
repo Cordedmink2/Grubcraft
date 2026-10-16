@@ -790,12 +790,15 @@ fn it_waits_for_the_enemy_to_cross_the_ford() {
         // The enemy stands on the far bank; its archers would shoot anyone
         // wading across.
         let mut crossed: Option<f32> = None;
-        let mut line: Option<Line> = None;
+        let (mut waiting, mut line): (Option<Line>, Option<Line>) = (None, None);
         run(ford_drill(personality), 90, |f| {
             if crossed.is_none() && f.of(AI).any(|r| r.pos.y < 123.0 || f.terrain.wet(r.pos)) {
                 crossed = Some(f.seconds());
             }
             line = Some(ai_line(f));
+            if f.seconds() <= 40.0 {
+                waiting = line;
+            }
         });
         assert_eq!(
             crossed, None,
@@ -803,10 +806,18 @@ fn it_waits_for_the_enemy_to_cross_the_ford() {
         );
         // Waiting where they would come out: facing the ford, a few tiles
         // back from the bank.
-        let at = line.unwrap().centre;
+        let at = waiting.unwrap().centre;
         assert!(
             (at.x - 128.0).abs() <= 8.0 && (128.0..=142.0).contains(&at.y),
             "personality {personality} waits at {at}"
+        );
+        // With the ford watched and nobody coming, a General draws back
+        // from the water after a while to tempt them across (docs/18-ai.md,
+        // "Reading the ground"), still facing the ford.
+        let at = line.unwrap().centre;
+        assert!(
+            (at.x - 128.0).abs() <= 8.0 && (128.0..=170.0).contains(&at.y),
+            "personality {personality} ends at {at}"
         );
     }
 }

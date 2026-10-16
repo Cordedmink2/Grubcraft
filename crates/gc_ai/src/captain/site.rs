@@ -61,8 +61,7 @@ impl Captain {
             .and_then(|r| ground::ford(t, anchor, forward, r, FORD_REACH))
             .map(|exit| exit - forward * (bank_back + depth * 0.5));
         let read = ctx.knobs.read_ground;
-        let outshot = theirs.ranged > mine.ranged * 1.15;
-        let high = gc_sim::terrain::HIGH_GROUND as f32 / gc_sim::terrain::HEIGHT_UNITS as f32;
+        let outshot = theirs.outshoots(&mine);
         let hill_worth = HILL * (1.0 + (-margin).max(0.0));
         let our_c = centroid(ours);
         let enemy_front = fighting
@@ -100,7 +99,7 @@ impl Captain {
             // Reading the ground: high enough to fight downhill is worth a
             // great deal more than a gentle rise; and against better
             // archers, trees to catch their arrows.
-            if read && line.rise(t, SLOPE_AHEAD) >= high {
+            if read && line.rise(t, SLOPE_AHEAD) >= ground::DOWNHILL {
                 s += hill_worth;
             }
             if read && outshot {
@@ -252,15 +251,15 @@ impl Captain {
             .into_iter()
             // Unwatched, and not much further from us than from them: we
             // get there before they can.
-            .filter(|f| {
+            .filter_map(|f| {
                 let theirs = watched(f.exit);
-                theirs >= UNWATCHED && theirs + LEAD >= f.exit.distance(our_c)
-            })
-            .map(|f| {
+                if theirs < UNWATCHED || theirs + LEAD < f.exit.distance(our_c) {
+                    return None;
+                }
                 let beyond = f.exit + self.forward * (self.line_depth * 0.5 + 3.0);
                 let at = t.nearest_walkable(beyond, 6.0).unwrap_or(beyond);
-                let score = watched(f.exit).min(60.0) - f.entry.distance(our_c) / 3.0;
-                (score, (at, f.exit))
+                let score = theirs.min(60.0) - f.entry.distance(our_c) / 3.0;
+                Some((score, (at, f.exit)))
             })
             .filter(|(_, (at, _))| !t.wet(*at))
             .max_by(|a, b| a.0.total_cmp(&b.0))
@@ -327,31 +326,40 @@ const FIRST_BY: f32 = 15.0;
 const WOODS: f32 = 0.8;
 
 impl Captain {
+    /// The line standing at `centre`.
+    fn line_at(&self, centre: Vec2) -> Line {
+        Line {
+            centre,
+            forward: self.forward,
+            width: self.line_width,
+            depth: self.line_depth,
+        }
+    }
+
     /// Who will fight downhill where the lines meet (Captains that read the
-    /// ground only): +1 us, -1 them, 0 neither. They meet at our line when
+    /// ground only): Greater us, Less them, Equal neither. They meet at our line when
     /// the enemy is coming on, and at theirs otherwise (we would have to go
-    /// to them). The side standing at least the simulation's
-    /// [`HIGH_GROUND`](gc_sim::terrain::HIGH_GROUND) above the ground in
+    /// to them). The side standing [`ground::DOWNHILL`] above the ground in
     /// front of it fights downhill.
-    pub(super) fn slope(&self, ctx: &Ctx, fighting: &[&Seen]) -> f32 {
+    pub(super) fn slope(&self, ctx: &Ctx, fighting: &[&Seen]) -> Ordering {
         if !ctx.knobs.read_ground || fighting.is_empty() {
-            return 0.0;
+            return Ordering::Equal;
         }
         let t = ctx.terrain;
-        let high = gc_sim::terrain::HIGH_GROUND as f32 / gc_sim::terrain::HEIGHT_UNITS as f32;
-        let (line, ahead, sign) = if self.closing > 1.0 {
-            (self.anchor, self.forward, 1.0)
+        let (line, ahead, ours) = if self.closing > 1.0 {
+            (self.anchor, self.forward, true)
         } else {
-            (centroid(fighting), -self.forward, -1.0)
+            (centroid(fighting), -self.forward, false)
         };
         let rise = t.height(line) - t.height(line + ahead * SLOPE_AHEAD);
-        if rise >= high {
-            sign
-        } else if rise <= -high {
-            -sign
+        let higher = if rise >= ground::DOWNHILL {
+            Ordering::Greater
+        } else if rise <= -ground::DOWNHILL {
+            Ordering::Less
         } else {
-            0.0
-        }
+            Ordering::Equal
+        };
+        if ours { higher } else { higher.reverse() }
     }
 }
 
@@ -362,12 +370,6 @@ impl Captain {
     /// Whether the line stands mostly in a wood, where better archers
     /// can't shoot it to pieces.
     pub(super) fn sheltered(&self, ctx: &Ctx) -> bool {
-        let line = Line {
-            centre: self.anchor,
-            forward: self.forward,
-            width: self.line_width,
-            depth: self.line_depth,
-        };
-        line.wooded(ctx.terrain) >= SHELTER
+        self.line_at(self.anchor).wooded(ctx.terrain) >= SHELTER
     }
 }
