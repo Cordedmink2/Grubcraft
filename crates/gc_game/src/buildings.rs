@@ -52,6 +52,11 @@ const NODE_GLOW: u8 = 90;
 /// thick (tiles).
 const PLATE: f32 = 0.08;
 const RIM_COLOR: [u8; 4] = [240, 240, 240, 120];
+/// The selected building's rally point: a pole this tall with a flag in
+/// its owner's colour (tiles).
+const POLE: [f32; 3] = [0.12, 2.4, 0.12];
+const FLAG: [f32; 3] = [0.9, 0.55, 0.06];
+const POLE_COLOR: [u8; 4] = [70, 55, 40, 0];
 
 /// A building's stats as the simulation reads them.
 pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
@@ -142,6 +147,22 @@ impl Table {
         self.names.get(usize::from(id)).map_or("", String::as_str)
     }
 
+    /// What a worker of `faction` lays from the build menu: every building
+    /// of theirs but the main building and its upgrades.
+    pub fn buildable(&self, faction: Faction) -> impl Iterator<Item = BuildingId> + '_ {
+        (self.stats.iter().zip(&self.factions).enumerate())
+            .filter(move |(_, (s, f))| **f == faction && s.role != Role::Main)
+            .map(|(i, _)| i as BuildingId)
+    }
+
+    /// The main building a worker of `faction` lays to expand: its first
+    /// tier, not an upgrade.
+    pub fn expansion(&self, faction: Faction) -> Option<BuildingId> {
+        (self.stats.iter().zip(&self.factions))
+            .position(|(s, &f)| f == faction && s.role == Role::Main && s.upgrades_from.is_none())
+            .map(|i| i as BuildingId)
+    }
+
     /// The panel's description of a type: name, faction and size.
     pub fn describe(&self, id: BuildingId) -> String {
         let i = usize::from(id);
@@ -187,10 +208,12 @@ fn ground_range(ground: &impl Fn(f32, f32) -> f32, s: &StructureView) -> (f32, f
 }
 
 /// The middle of a footprint, in tiles.
-fn centre_of(s: &StructureView) -> Vec2 {
+/// The middle of a `width` by `depth` footprint whose north-west tile is
+/// `tile`: the inverse of [`tile_for`].
+pub fn centre_of(tile: (i32, i32), width: u8, depth: u8) -> Vec2 {
     Vec2::new(
-        s.tile.0 as f32 + f32::from(s.width) / 2.0,
-        s.tile.1 as f32 + f32::from(s.depth) / 2.0,
+        tile.0 as f32 + f32::from(width) / 2.0,
+        tile.1 as f32 + f32::from(depth) / 2.0,
     )
 }
 
@@ -205,7 +228,7 @@ fn block(
     // The box drapes over the terrain, each corner on the ground below it:
     // sunk by the slope under it, so its top follows the ground at `height`.
     BoxInstance {
-        pos: centre_of(s).to_array(),
+        pos: centre_of(s.tile, s.width, s.depth).to_array(),
         facing: [0.0, 1.0],
         size: [f32::from(s.width), height + (hi - lo), f32::from(s.depth)],
         color,
@@ -246,7 +269,7 @@ pub fn push(
         let frac = s.hp as f32 / s.max_hp.max(1) as f32;
         let fill = len * frac;
         let lift = height + (hi - lo) + BAR_LIFT;
-        let centre = centre_of(&s);
+        let centre = centre_of(s.tile, s.width, s.depth);
         out.push(BoxInstance {
             pos: centre.to_array(),
             facing: across.to_array(),
@@ -286,6 +309,32 @@ pub fn push_nodes(world: &World, out: &mut Vec<BoxInstance>) {
             lift: 0.0,
         });
     }
+}
+
+/// A flag where building `h` sends what it trains, if it has a rally point.
+pub fn push_rally(world: &World, h: StructureHandle, colour: [u8; 3], out: &mut Vec<BoxInstance>) {
+    let Some(at) = world.production().and_then(|p| p.rally_of(h)) else {
+        return;
+    };
+    if out.len() + 2 > MAX_BOX_INSTANCES {
+        return;
+    }
+    let at = crate::from_fx_vec(at);
+    let [r, g, b] = colour;
+    out.push(BoxInstance {
+        pos: at.to_array(),
+        facing: [0.0, 1.0],
+        size: POLE,
+        color: POLE_COLOR,
+        lift: 0.0,
+    });
+    out.push(BoxInstance {
+        pos: (at + Vec2::new(FLAG[0] / 2.0, 0.0)).to_array(),
+        facing: [0.0, 1.0],
+        size: FLAG,
+        color: [r, g, b, 40],
+        lift: POLE[1] - FLAG[1],
+    });
 }
 
 /// A white rim round building `h`'s footprint, to show it is selected.
@@ -402,11 +451,11 @@ pub fn tile_for(at: Vec2, width: u8, depth: u8) -> (i32, i32) {
     )
 }
 
-/// Why building `id` can't stand with its north-west tile at `tile`, if it
-/// can't: the simulation's own check, in the panel's words.
-pub fn refusal(world: &World, id: BuildingId, tile: (i32, i32)) -> Option<&'static str> {
-    world.can_build(id, tile).err().map(|why| match why {
-        Refusal::NoBuildings | Refusal::Unknown => "There are no buildings here.",
+/// A refusal in the panel's words.
+pub fn why(refusal: Refusal) -> &'static str {
+    match refusal {
+        Refusal::NoBuildings => "There are no buildings here.",
+        Refusal::Unknown => "That can't be done here.",
         Refusal::OffMap => "That would hang over the edge of the map.",
         Refusal::Rough => "The ground there is too rough to build on.",
         Refusal::Built => "Another building is in the way.",
@@ -414,7 +463,8 @@ pub fn refusal(world: &World, id: BuildingId, tile: (i32, i32)) -> Option<&'stat
         Refusal::Node => "Workers need room at a seep or vein.",
         Refusal::Tier => "Your tier is too low for that.",
         Refusal::Price => "You can't afford that.",
-    })
+        Refusal::Busy => "That building is busy.",
+    }
 }
 
 #[cfg(test)]
@@ -518,11 +568,11 @@ mod tests {
             .position(|s| s.role == Role::Housing)
             .unwrap();
         let farm = farm as BuildingId;
-        assert_eq!(refusal(&world, farm, (8, 8)), None);
-        assert!(refusal(&world, farm, (-1, 8)).is_some());
-        assert!(refusal(&world, farm, (tiles as i32 - 1, 8)).is_some());
+        assert_eq!(world.can_build(farm, (8, 8)), Ok(()));
+        assert!(world.can_build(farm, (-1, 8)).is_err());
+        assert!(world.can_build(farm, (tiles as i32 - 1, 8)).is_err());
         // Cell (20, 6) is tile (10, 3).
-        assert!(refusal(&world, farm, (9, 2)).is_some());
+        assert!(world.can_build(farm, (9, 2)).is_err());
         // What the check allows, the simulation accepts, and then the
         // spot is taken.
         let place = |world: &mut World, tile: (i32, i32)| {
@@ -537,9 +587,51 @@ mod tests {
         };
         assert!(place(&mut world, (8, 8)));
         assert_eq!(world.structures().unwrap().len(), 1);
-        assert!(refusal(&world, farm, (9, 9)).is_some());
+        assert!(world.can_build(farm, (9, 9)).is_err());
         assert!(!place(&mut world, (9, 9)));
         let standing = world.structures().unwrap().iter().next().unwrap();
         assert_eq!(standing.tile, (8, 8));
+    }
+
+    /// Conquest's command card has 12 slots: a worker's build menu and a
+    /// building's units (the last slot is its upgrade) must fit.
+    #[test]
+    fn every_build_menu_and_training_card_fits_the_grid() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let id = |name: &str| {
+            (0..table.len() as BuildingId)
+                .find(|&b| table.name(b) == name)
+                .unwrap()
+        };
+        for f in Faction::ALL {
+            let menu: Vec<BuildingId> = table.buildable(f).collect();
+            assert!(
+                !menu.is_empty() && menu.len() <= 12,
+                "{f:?}: {}",
+                menu.len()
+            );
+            assert!(
+                menu.iter()
+                    .all(|&b| table.stats[usize::from(b)].role != Role::Main)
+            );
+            assert!(table.expansion(f).is_some(), "{f:?} can't expand");
+        }
+        assert!(
+            table
+                .buildable(Faction::EmberClans)
+                .any(|b| b == id("Farmstead"))
+        );
+        // A building trains what its whole upgrade chain does.
+        for b in 0..table.len() as BuildingId {
+            let mut chain = vec![b];
+            while let Some(from) = table.stats[usize::from(*chain.last().unwrap())].upgrades_from {
+                chain.push(from);
+            }
+            let trains = (data.conquest_units.iter())
+                .filter(|u| chain.contains(&u.trained_at))
+                .count();
+            assert!(trains <= 11, "{} trains {trains}", table.name(b));
+        }
     }
 }

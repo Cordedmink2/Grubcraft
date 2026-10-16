@@ -754,6 +754,36 @@ impl World {
         )
     }
 
+    /// Whether `player` could have a worker lay a building of type
+    /// `building` somewhere now: [`World::can_lay`] without the ground.
+    pub fn may_lay(&self, player: PlayerId, building: BuildingId) -> Result<(), Refusal> {
+        self.conquest
+            .as_ref()
+            .ok_or(Refusal::NoBuildings)?
+            .may_lay(player, building)
+    }
+
+    /// Whether `player`'s building `h` could queue a regiment of type `unit`
+    /// now, and if not, why: the check [`Command::Train`] makes.
+    pub fn can_train(
+        &self,
+        player: PlayerId,
+        h: StructureHandle,
+        unit: UnitId,
+    ) -> Result<(), Refusal> {
+        self.conquest
+            .as_ref()
+            .ok_or(Refusal::NoBuildings)?
+            .can_train(player, h, unit)
+    }
+
+    /// What `player`'s building `h` would upgrade into now, or why it
+    /// can't: the check [`Command::Upgrade`] makes.
+    pub fn can_upgrade(&self, player: PlayerId, h: StructureHandle) -> Result<BuildingId, Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        c.can_upgrade(player, h).map(|(_, to)| to)
+    }
+
     /// Whether a building of type `building` could go up now with its
     /// north-west tile at `tile`, and if not, why: the check
     /// [`Command::SpawnStructure`] makes.

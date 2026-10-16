@@ -106,6 +106,7 @@ mod battle_tables;
 mod buildings;
 mod camera;
 mod conquest;
+mod conquest_card;
 #[cfg(test)]
 mod conquest_golden;
 mod credits;
@@ -193,6 +194,21 @@ const COMMANDER_FLAG: [f32; 3] = [2.6, 1.8, 0.25];
 const SHOOTING_TICKS: u32 = 24;
 /// Thickness of the ground plate drawn under a selected regiment.
 const PLATE_HEIGHT: f32 = 0.05;
+/// The command grid's keys, slot by slot (`gc_ui::hud::GRID_KEYS`).
+const GRID_CODES: [KeyCode; gc_ui::hud::GRID_SLOTS] = [
+    KeyCode::KeyQ,
+    KeyCode::KeyW,
+    KeyCode::KeyE,
+    KeyCode::KeyR,
+    KeyCode::KeyA,
+    KeyCode::KeyS,
+    KeyCode::KeyD,
+    KeyCode::KeyF,
+    KeyCode::KeyZ,
+    KeyCode::KeyX,
+    KeyCode::KeyC,
+    KeyCode::KeyV,
+];
 /// Dashes of the ragged outline round a regiment out of order: length
 /// and spacing, in tiles.
 const DISORDER_DASH: f32 = 0.55;
@@ -1384,15 +1400,16 @@ impl ApplicationHandler for App {
                             | KeyCode::NumpadAdd
                             | KeyCode::Tab
                     );
+                    // In Conquest B opens the workers' build menu instead.
                     let edit_tool = matches!(
                         code,
                         KeyCode::KeyI
-                            | KeyCode::KeyB
                             | KeyCode::KeyK
                             | KeyCode::Delete
                             | KeyCode::Backspace
                             | KeyCode::KeyT
-                    ) || reload_key;
+                    ) || (code == KeyCode::KeyB && !r.conquest_units)
+                        || reload_key;
                     // P carries on without a player the match is paused for.
                     if code == KeyCode::KeyP
                         && down
@@ -1407,6 +1424,8 @@ impl ApplicationHandler for App {
                         Some("That sandbox tool is off in a network battle.")
                     } else if r.watching.is_some() && (edit_tool || code == KeyCode::KeyF) {
                         Some("That is off while you watch a replay.")
+                    } else if r.conquest_units && edit_tool {
+                        Some("That sandbox tool is off in Conquest.")
                     } else {
                         None
                     };
@@ -1414,6 +1433,14 @@ impl ApplicationHandler for App {
                         if down && !event.repeat {
                             r.say(why.into());
                         }
+                        return;
+                    }
+                    // A building's card or the build menu owns the grid's keys;
+                    // what it leaves goes to the battle grid below.
+                    if grid_key
+                        && let Some(slot) = GRID_CODES.iter().position(|&c| c == code)
+                        && r.card_press(slot)
+                    {
                         return;
                     }
                     match code {
@@ -1444,6 +1471,9 @@ impl ApplicationHandler for App {
                         }
                         KeyCode::Tab if down && !event.repeat => r.switch_side(),
                         KeyCode::KeyI if down && !event.repeat => r.cycle_mind(),
+                        KeyCode::KeyB if down && !event.repeat && r.conquest_units => {
+                            r.set_build_menu(!r.hud.build_menu);
+                        }
                         KeyCode::KeyB if down && !event.repeat => {
                             r.sandbox.placing = !r.sandbox.placing;
                             r.sandbox.building_tool = false;
@@ -1464,13 +1494,13 @@ impl ApplicationHandler for App {
                         // Shift+R: the dev tool; plain R is the grid's Formation.
                         KeyCode::KeyR if down && !event.repeat && reload_key => r.reload_data(),
                         // The grid's keys leave Cmd/Ctrl/Alt chords to the system.
-                        KeyCode::KeyQ if grid_key => r.grid_press(hud::SLOT_MOVE),
-                        KeyCode::KeyW if grid_key => r.grid_press(hud::SLOT_ATTACK),
+                        KeyCode::KeyQ if grid_key => r.battle_press(hud::SLOT_MOVE),
+                        KeyCode::KeyW if grid_key => r.battle_press(hud::SLOT_ATTACK),
                         // The hero's fourth ability owns F while a hero is shown.
                         KeyCode::KeyF if grid_key && r.hud.hero_shown() => {}
                         // Otherwise F stays as R's twin until the Ultimate slot has an ability.
                         KeyCode::KeyR | KeyCode::KeyF if grid_key => {
-                            r.grid_press(hud::SLOT_FORMATION);
+                            r.battle_press(hud::SLOT_FORMATION);
                         }
                         KeyCode::KeyZ if grid_key => r.grid_press(hud::SLOT_BRACE),
                         KeyCode::KeyV if grid_key => r.grid_press(hud::SLOT_FALL_BACK),
@@ -1519,6 +1549,7 @@ impl ApplicationHandler for App {
                             }
                         }
                         KeyCode::Escape if down && r.hud.armed.take().is_some() => {}
+                        KeyCode::Escape if down && r.hud.build_menu => r.set_build_menu(false),
                         KeyCode::Escape
                             if down
                                 && (r.sandbox.placing
@@ -1667,12 +1698,12 @@ impl Running {
                 // A right-click order takes the place of an armed one.
                 self.hud.armed = None;
                 let drag = self.drag_order();
-                let enemy = drag
-                    .is_none()
-                    .then(|| self.ground_under_cursor())
-                    .flatten()
-                    .and_then(|p| self.enemy_at(p));
-                if let Some(target) = enemy {
+                let plain = drag.is_none().then(|| self.ground_under_cursor()).flatten();
+                if plain.is_some_and(|p| self.conquest_right_click(p)) {
+                    self.input.right_down = None;
+                    return;
+                }
+                if let Some(target) = plain.and_then(|p| self.enemy_at(p)) {
                     self.issue_attack(target);
                 } else if let Some(building) = drag
                     .is_none()
@@ -1680,9 +1711,7 @@ impl Running {
                     .flatten()
                 {
                     self.issue_siege(building);
-                } else if let Some(order) =
-                    drag.or_else(|| self.ground_under_cursor().map(hud::move_order))
-                {
+                } else if let Some(order) = drag.or_else(|| plain.map(hud::move_order)) {
                     self.issue_group_order(order);
                 }
                 self.input.right_down = None;
@@ -3930,21 +3959,29 @@ impl Running {
         self.sandbox.dirty = true;
     }
 
-    /// Where the chosen building would stand with the footprint centred on
-    /// the cursor, and why it couldn't.
-    fn building_placement(&self) -> Option<(BuildingStats, (i32, i32), Option<&'static str>)> {
+    /// Where building `id` would stand with the footprint centred on the
+    /// cursor, and why it couldn't: the sandbox's check, or in Conquest
+    /// whether a worker of yours could lay it.
+    fn building_placement(
+        &self,
+        id: BuildingId,
+    ) -> Option<(BuildingStats, (i32, i32), Option<&'static str>)> {
         let at = self.ground_under_cursor()?;
-        let stats = *self
-            .buildings
-            .stats
-            .get(usize::from(self.sandbox.building))?;
+        let stats = *self.buildings.stats.get(usize::from(id))?;
         let tile = buildings::tile_for(at, stats.width, stats.depth);
-        let why = buildings::refusal(&self.world, self.sandbox.building, tile);
+        // Conquest asks what a worker may lay; the sandbox only the ground.
+        let why = if self.conquest_units {
+            self.world.can_lay(self.sandbox.side, id, tile)
+        } else {
+            self.world.can_build(id, tile)
+        }
+        .err()
+        .map(buildings::why);
         Some((stats, tile, why))
     }
 
     fn place_building(&mut self) {
-        let Some((_, tile, why)) = self.building_placement() else {
+        let Some((_, tile, why)) = self.building_placement(self.sandbox.building) else {
             return;
         };
         if let Some(why) = why {
@@ -3961,12 +3998,14 @@ impl Running {
         self.ui_sound(sounds::UiSound::Move);
     }
 
-    /// The building K would place, ghosted under the cursor.
+    /// The building K would place, or a worker lay, ghosted under the cursor.
     fn push_building_ghost(&mut self) {
-        if !self.sandbox.building_tool {
-            return;
-        }
-        let Some((stats, tile, why)) = self.building_placement() else {
+        let id = match self.hud.armed {
+            Some(hud::Armed::Lay(id)) => id,
+            _ if self.sandbox.building_tool => self.sandbox.building,
+            _ => return,
+        };
+        let Some((stats, tile, why)) = self.building_placement(id) else {
             return;
         };
         let colour = color_of(&self.parties, self.sandbox.side);
@@ -3998,6 +4037,8 @@ impl Running {
         );
         if let Some(h) = self.picked_structure() {
             buildings::push_rim(&self.world, h, ground, &mut self.instances);
+            let colour = color_of(parties, self.sandbox.side);
+            buildings::push_rally(&self.world, h, colour, &mut self.instances);
         }
         buildings::push_nodes(&self.world, &mut self.instances);
     }
@@ -4739,6 +4780,13 @@ mod lod_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grid_codes_are_the_grids_keys() {
+        for (code, key) in GRID_CODES.iter().zip(gc_ui::hud::GRID_KEYS) {
+            assert_eq!(format!("{code:?}"), format!("Key{key}"));
+        }
+    }
 
     const HANDLE: RegimentHandle = RegimentHandle {
         index: 3,
