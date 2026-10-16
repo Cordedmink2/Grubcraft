@@ -20,9 +20,9 @@ The consolidated, testable list of what Grubcraft must do. Each requirement has 
 
 | ID | Requirement | Pri | Milestone |
 |---|---|---|---|
-| PRF-1 | Peak memory ≤ 4 GB in a 4-player 60-minute match on the largest map | M | M3 |
+| PRF-1 | Peak memory ≤ 6 GB in a 6-player 60-minute match on the largest map | M | M3 |
 | PRF-2 | 60 fps at 1080p on the low-tier reference machines during a large battle | M | M1 |
-| PRF-3 | Sim tick p99 ≤ 2 ms on low-tier hardware in a 4-player late game | M | M3 |
+| PRF-3 | Sim tick p99 ≤ 2 ms on low-tier hardware in a 6-player late game | M | M3 |
 | PRF-4 | Launch to main menu ≤ 1 s; lobby start to first match frame ≤ 3 s | M | M3 |
 | PRF-5 | Zero heap allocations inside a simulation tick, enforced by test | M | M1 |
 | PRF-6 | Per-subsystem memory accounting visible in a dev overlay and enforced by CI benchmarks | M | M0 |
@@ -33,7 +33,7 @@ The consolidated, testable list of what Grubcraft must do. Each requirement has 
 
 | ID | Requirement | Pri | Milestone |
 |---|---|---|---|
-| NET-1 | 2 to 4 players over a local network, one player hosting on their own machine | M | M2 |
+| NET-1 | 2 to 6 players over a local network, one player hosting on their own machine | M | M2 |
 | NET-2 | Hosts on the same network appear automatically in the Join list | M | M2 |
 | NET-3 | Join by IP address or join code | M | M2 |
 | NET-4 | Deterministic lockstep simulation, identical on all platforms | M | M2 |
@@ -50,7 +50,7 @@ The consolidated, testable list of what Grubcraft must do. Each requirement has 
 
 | ID | Requirement | Pri | Milestone |
 |---|---|---|---|
-| MOD-1 | Conquest mode: base building, economy, tech, armies; 1v1, 2v2, FFA up to 4, uneven teams | M | M3 |
+| MOD-1 | Conquest mode: base building, economy, tech, armies; 1v1, 2v2, 3v3, FFA up to 6, uneven teams | M | M3 |
 | MOD-2 | Conquest victory: Annihilation and Titan's Heart, configurable in the lobby | M | M3 |
 | MOD-3 | Conquest options: Tempo (Swift, Standard, Epic), Titan Events on/off | M | M4 |
 | MOD-4 | Field Battle mode: points-based army builder, deployment phase, rout and victory-point wins | M | M2 |
@@ -83,7 +83,7 @@ The consolidated, testable list of what Grubcraft must do. Each requirement has 
 |---|---|---|---|
 | EXP-1 | Conquest maps have 4 to 8 frontier site slots, filled from the match seed, that reward whoever scouts them first | S | M4 |
 | EXP-2 | First sight of a site, hamlet or company is a ledger event (first contact) | S | M4 |
-| CMP-1 | Campaign mode: a world map of the Reach from a body template and a seed, played over several sessions by 1 to 4 players and AI players, saved after every season on every player's machine | C | C-1 / M7 |
+| CMP-1 | Campaign mode: a world map of the Reach from a body template and a seed, played over several sessions by 1 to 6 players and AI players, saved after every season on every player's machine | C | C-1 / M7 |
 | CMP-2 | Simultaneous seasons: everyone plans at once with an optional timer, then every party's moves resolve together | C | C-1 |
 | CMP-3 | Campaign battles are Field Battles with the hosts' exact regiments on a map generated from the region; or the battle AI fights every side in the real simulation at full speed, leaving a replay | C | C-1 |
 | CMP-4 | One relations ledger for the whole campaign, memories fading by season; battles start from it and hand their memories back | C | C-1 |

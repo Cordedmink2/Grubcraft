@@ -1,6 +1,6 @@
 # 01 · Vision
 
-> **Grubcraft** is a four-player LAN real-time strategy game where Warcraft III's base-building meets Shogun: Total War's regiment battles, built on an engine so lean it runs a full 4-player war in less memory than a browser tab.
+> **Grubcraft** is a six-player LAN real-time strategy game where Warcraft III's base-building meets Shogun: Total War's regiment battles, built on an engine so lean it runs a full 6-player war within a 6 GB memory budget.
 
 ## The pitch in one paragraph
 
@@ -25,7 +25,7 @@ Every faction harvests the same two resources (Grub and Marrow), but *how* they 
 | **The Choir** | Crystal pylons form triangles; income scales with enclosed area | Territory geometry; one dead pylon breaks a chord |
 | **Carrion Concord** | Caravans trade with neutral towns; deaths pay tithes | Logistics and profiting from *everyone's* wars |
 
-Each one changes what "raiding" and "defending" mean, so a 4-player free-for-all has four genuinely different threats on the map.
+Each one changes what "raiding" and "defending" mean, so a free-for-all has four genuinely different threats on the map.
 
 ### 3. Pick up in five minutes, still learning in fifty hours
 The iPad-game test: someone who has played a few games should be doing something meaningful within **five minutes** and be fluent within **fifteen**. Depth comes from interactions between simple, visible rules, not from hidden stats or menus. Concrete rules we hold ourselves to:
@@ -40,11 +40,11 @@ The iPad-game test: someone who has played a few games should be doing something
 The map is not a static board. Grub seeps run dry and fall to "dregs", the Titan's corpse shudders and splits open new seeps mid-match, neutral hamlets will trade with you or remember that you burned them, mercenaries serve whoever pays, and corpses on the battlefield are a resource for two factions. The world pushes players into each other, and there is always something out in the fog worth finding ([19 · Campaign and Exploration](19-campaign.md)).
 
 ### 5. Lightweight, without looking cheap
-The engine is built from scratch to be lean at every layer: a full 4-player, 60-minute match with thousands of soldiers on screen within a **4 GB memory budget**, 60 fps on a base MacBook Air, and replay files measured in kilobytes. See [12 · Performance](12-performance.md). The art direction (stylized, low-poly, painted lighting) is chosen so that lean and beautiful are the same decision, not a trade-off.
+The engine is built from scratch to be lean at every layer: a full 6-player, 60-minute match with thousands of soldiers on screen within a **6 GB memory budget**, 60 fps on a base MacBook Air, and replay files measured in kilobytes. See [12 · Performance](12-performance.md). The art direction (stylized, low-poly, painted lighting) is chosen so that lean and beautiful are the same decision, not a trade-off.
 
 ## Who it's for
 
-Mario and friends: 2 to 4 players on the same Wi-Fi network (with internet play via a virtual LAN as a later option), on a mix of Macs and Windows PCs. Non-commercial, personal use, built to production quality. There is no store, no monetization, no live service, which frees us to make choices purely for fun and craft.
+Mario and friends: 2 to 6 players on the same Wi-Fi network (with internet play via a virtual LAN as a later option), on a mix of Macs and Windows PCs. Non-commercial, personal use, built to production quality. There is no store, no monetization, no live service, which frees us to make choices purely for fun and craft.
 
 ## The experience we're aiming for
 
@@ -70,5 +70,5 @@ Mario and friends: 2 to 4 players on the same Wi-Fi network (with internet play 
 
 1. Four friends finish a 45-minute Conquest match on Wi-Fi, two on Mac and two on Windows, with zero desyncs and no one waiting on a loading screen longer than 3 seconds.
 2. A friend who has never seen the game wins a skirmish fight against another newcomer after a 10-minute tutorial.
-3. Peak memory on the largest map stays under 4 GB, measured automatically on every change.
+3. Peak memory on the largest map stays under 6 GB, measured automatically on every change.
 4. People ask to play it again next week.

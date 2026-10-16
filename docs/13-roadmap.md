@@ -16,7 +16,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Asset pack format and baker skeleton; data files compiled from RON.
 - Tagged allocator, dev overlay, Tracy hook.
 - CI: build and test on macOS (arm64) and Windows (x64); universal Mac app bundle.
-- **Exit:** the app opens to a rendered map on Mario's Mac and a Windows PC within the 4 GB memory budget; the cross-platform hash test passes on an empty sim.
+- **Exit:** the app opens to a rendered map on Mario's Mac and a Windows PC within the memory budget (6 GB since 2026-10-16); the cross-platform hash test passes on an empty sim.
 - **Progress (2026-10-12):** first slice landed: workspace, `gc_fixed`, `gc_sim` skeleton with golden determinism, zero-allocation and no-float tests, tagged allocator and OS memory stats, wgpu terrain and regiment-block renderer, RTS camera with trackpad gestures, select-and-move on a scripted 4-player drill, `gc_bench` budget gates, CI on macOS/Windows/Linux, universal Mac app script. Measured on Mario's M4: about 190 MB, well inside the 4 GB budget Mario set on 2026-10-12. Second slice: asset pack format (`gc_assets`), baker (`gc_bake`) compiling `data/units.ron` into embedded data tables with a BLAKE3 data hash, data-driven regiment types in the sim, the dev overlay (`` ` `` or `F11`), and the Tracy hook (`--features profile`). Remaining for the M0 exit: a run on a Windows PC.
 
 ### M1 · Regiments on a field (solo sandbox)
@@ -61,7 +61,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - One Duel map (Ribcage Pass) and one Warfield map (The Four Teeth).
   - **Progress (2026-10-15):** both maps and the map validator `gc_mapcheck` are built (`data/maps/`, [07 · Map format and tooling](07-world-and-maps.md#map-format-and-tooling)): first versions with plain terrain, checked for fairness, and not yet loaded by the game.
 - AI track: Conquest AI for the Ember Clans and the Brood; AI allies answer pings; the AI arena (AI-3).
-- **Exit:** a full 4-player Conquest game finishes inside the 4 GB memory budget.
+- **Exit:** a full 6-player Conquest game finishes inside the 6 GB memory budget.
 
 ### M4 · The Reach Lives
 *Goal: the world feels alive and the game is learnable.*

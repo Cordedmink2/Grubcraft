@@ -5,7 +5,7 @@ Two modes at launch, and a third, the **Campaign**, planned to follow. All of th
 | | **Conquest** (primary) | **Field Battle** (secondary) |
 |---|---|---|
 | What it is | Warcraft-style base building, economy, tech, army, war | Total War-style pitched battle with pre-built armies |
-| Players | 2 to 4: 1v1, 2v2, 1v1v1, 4-player FFA, 2v1 | 2 to 4: 1v1, 2v2, 4-player FFA |
+| Players | 2 to 6: 1v1, 2v2, 3v3, 1v1v1, FFA up to 6, 2v1 | 2 to 6: 1v1, 2v2, 3v3, FFA up to 6 |
 | Length | 20 to 60 min (Tempo setting) | 5 to 20 min |
 | Economy | Full | None (points budget) |
 | Fog of war | Yes | Optional (default: light fog, enemies visible once spotted) |
@@ -66,7 +66,7 @@ After a Conquest match, the post-game screen lists its biggest battles (by model
 
 ## Campaign (planned)
 
-A world map of the whole Reach, played over several game nights by 1 to 4 players (and AI players). Each season everyone plans at once: march your hosts, send your Pathfinder into the fog, raise regiments, deal with the peoples you meet. When hostile armies meet, the battle is fought as a Field Battle with the armies exactly as they are, on a map made from that region, or handed to the battle AI on both sides, which plays it out in the real simulation in seconds. One relations ledger runs the whole campaign, so the Reach remembers what you did on the first night. Full design in [19 · Campaign and Exploration](19-campaign.md); it is built as its own track starting after M4.
+A world map of the whole Reach, played over several game nights by 1 to 6 players (and AI players). Each season everyone plans at once: march your hosts, send your Pathfinder into the fog, raise regiments, deal with the peoples you meet. When hostile armies meet, the battle is fought as a Field Battle with the armies exactly as they are, on a map made from that region, or handed to the battle AI on both sides, which plays it out in the real simulation in seconds. One relations ledger runs the whole campaign, so the Reach remembers what you did on the first night. Full design in [19 · Campaign and Exploration](19-campaign.md); it is built as its own track starting after M4.
 
 ## Practice and learning
 
@@ -81,6 +81,6 @@ AI players are no longer a later mode: they arrive in stages with Field Battle (
 
 | Mode | Idea | Needs |
 |---|---|---|
-| **Co-op Siege** | Up to 4 players defend a hamlet against Titan-spawn waves | Wave scripting |
+| **Co-op Siege** | Up to 6 players defend a hamlet against Titan-spawn waves | Wave scripting |
 | **Naval maps** | Water lanes, ships, coastal raids | Naval units, water pathing |
 | **King of the Corpse** | Short 4-player FFA where the Heart moves | A variant map script |

@@ -7,7 +7,7 @@
 
 Grubcraft needs to:
 - Run on macOS (Apple Silicon and Intel) and Windows, with Mac and Windows players in the same match.
-- Be **lightweight**: originally a 160 MB peak-memory target; revised on 2026-10-12 to a 4 GB budget for the whole game ([12 · Performance](../12-performance.md)).
+- Be **lightweight**: originally a 160 MB peak-memory target; revised on 2026-10-12 to a 4 GB budget for the whole game, and on 2026-10-16 to 6 GB ([12 · Performance](../12-performance.md)).
 - Support deterministic lockstep networking, which requires bit-identical simulation across CPU architectures.
 - Be built mostly by Claude sessions working in this repo, reviewed by Mario. Code that is easy to read, test and reason about matters more than visual editors.
 

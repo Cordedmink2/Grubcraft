@@ -121,7 +121,7 @@ The sim's shape is settled after M2, so work splits into four parallel threads, 
 | **C · Conquest UI** | Sonnet | `gc_ui`, UI parts of `gc_render`, `gc_game` | Minimap, army tray, command grid, edge notifications, fog rendering, hero panel. Reads sim state through the presentation layer only |
 | **D · Maps and tools** | Sonnet | `tools/gc_mapcheck`, `data/maps/` | `gc_mapcheck` validator, Ribcage Pass (Duel), The Four Teeth (Warfield); Haiku runs fairness checks. **Built (2026-10-15):** the validator and both maps, as one PR |
 | **E · Conquest AI** | Opus | `gc_ai`, `tools/gc_arena`, `data/ai/` | Strategy, economy and scouting layers, Clans and Brood economy modules, armies, AI allies answering pings (AI-3). Builds on A's and B's APIs as they merge; Sonnet writes openings and personalities as data; Haiku `arena-runner` runs the ladders |
-| Exit: full 4-player Conquest within 4 GB | Opus (thread A) | Haiku `bench-runner` across a 60-minute soak | |
+| Exit: full 6-player Conquest within 6 GB | Opus (thread A) | Haiku `bench-runner` across a 60-minute soak | |
 
 A and B both touch `gc_sim`, so they split by module and B starts once A's interfaces are merged. If they collide, B pauses rather than both editing the same file.
 

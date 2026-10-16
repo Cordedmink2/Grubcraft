@@ -6,7 +6,7 @@
 Starts the game straight into a battle against the computer, draws FRAMES
 frames (default 300) on whatever software GPU the machine has, and quits. It
 fails if the game panics, exits with an error, logs a lost GPU, takes longer
-than five minutes, or ends using more than the 4 GB memory budget. The game's
+than five minutes, or ends using more than the 6 GB memory budget. The game's
 settings, log and crash reports go in a temporary folder.
 """
 import os
@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 
-MEMORY_BUDGET_MB = 4096
+MEMORY_BUDGET_MB = 6144
 TIME_LIMIT_S = 300
 
 

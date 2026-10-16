@@ -14,7 +14,7 @@ The calls only Mario can make. Each has a recommendation; work proceeds on the r
 | 6 | **Who makes art and audio** | Start with CC0 kits (Quaternius, Kenney) and royalty-free audio; add custom models for key units later; consider friends recording voice lines | No art means no game; this unblocks M1 |
 | 7 | **Field Battle first** in the build order | Yes (M1–M2), Conquest in M3 | De-risks determinism, combat and netcode with the smallest scope |
 | 8 | **Internet play** | LAN plus a virtual-LAN tool (Tailscale/ZeroTier) at first; built-in hole punching later | Avoids running any servers |
-| 9 | **Default match length** | Standard tempo, aiming at 25 to 40 min for 1v1 and 40 to 60 min for 4 players | Drives economy numbers and map sizes |
+| 9 | **Default match length** | Standard tempo, aiming at 25 to 40 min for 1v1 and 40 to 60 min for 4 to 6 players | Drives economy numbers and map sizes |
 | 10 | **Titan's Heart victory on by default** | Yes, unlocking at minute 20 | Guarantees games end; can be turned off |
 | 11 | **Mac code signing** | Ad-hoc signing; friends approve first launch once | Notarisation needs a paid Apple developer account |
 | 12 | **Who tests on Windows** | Mario's or a friend's Windows PC for each milestone's game night, plus CI runners | CI has no real GPU; frame budgets need real hardware |

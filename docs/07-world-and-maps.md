@@ -28,7 +28,7 @@ Every Conquest map is built from the same parts, so players learn to read any ne
 One tile is about the width of a two-storey building (structures occupy 2×2 to 5×5 tiles and walls are one tile thick, see [21 · Buildings](21-buildings.md); an infantry regiment in line is about 6 tiles wide).
 
 ### Design rules for maps
-- **Symmetry or fairness by construction.** 2-player maps are rotationally symmetric; 4-player maps are 4-way symmetric or validated by the map tool (equal travel times from each start to resources and to the Heart).
+- **Symmetry or fairness by construction.** 2-player maps are rotationally symmetric; 4-player maps are 4-way symmetric, 6-player maps are 6-way (or 3-way for 3v3) symmetric, or validated by the map tool (equal travel times from each start to resources and to the Heart).
 - **Every rush route has a counter-route.** No base with a single entrance that can be walled off completely.
 - **Readable from the minimap.** Ridges and rivers are visible and distinctive; seeps glow on the minimap.
 - **Elevation creates battlefields.** Each map has at least two "set-piece" spots where a defensive line on high ground or at a ford makes a great Field Battle.
@@ -111,7 +111,7 @@ Path costs count ten per open tile, 14 for steep ground and 20 for fords. `gc_ma
 *The two maps.* **Ribcage Pass** (Duel): bases in opposite corners behind cliff walls with a south gate and an east gate; across the middle a wall of cliffs with three ways through, the ford (the Heart on an island in it) and a narrow pass either side, and the open flanks past the ends of the wall as the wide way round; 33 objects, a hill and the ford as set pieces. **The Four Teeth** (Warfield): four fang plateaus with cliff edges and two ramps each, rivers to wade, rock spines that split the ground into lanes, villages, towns and contested seeps and veins guarded by creeps, and the tongue bowl in the middle with the Heart, the Old Mouth and the Bazaar; 87 objects, two hills and a ford as set pieces. Both are first versions with plain terrain (smooth stamps, no road or rib models yet) and no game code loads them yet (the M2 netcode generates battle maps from a seed instead, so Conquest loading comes with M3 thread A/C).
 
 
-- **Seeded generator (stretch):** procedural 2- and 4-player maps from a seed, guaranteed fair by the validator. Good for variety among a small friend group who will learn fixed maps quickly. The campaign needs a smaller version early: a battle map generated from a campaign region's ground, route and feature ([19](19-campaign.md#battles-on-the-campaign)).
+- **Seeded generator (stretch):** procedural 2-, 4- and 6-player maps from a seed, guaranteed fair by the validator. Good for variety among a small friend group who will learn fixed maps quickly. The campaign needs a smaller version early: a battle map generated from a campaign region's ground, route and feature ([19](19-campaign.md#battles-on-the-campaign)).
 
 ## Water (later)
 

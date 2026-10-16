@@ -1,6 +1,8 @@
 # 11 · Networking
 
-Up to four players on the same Wi-Fi network, any mix of Macs and Windows PCs, one player hosting on their own machine. No servers, no accounts.
+Up to six players on the same Wi-Fi network, any mix of Macs and Windows PCs, one player hosting on their own machine. No servers, no accounts.
+
+*Six players (spec change 2026-10-16):* the lobby, the protocol and the start plateaus still hold four players; widening them to six is not built yet.
 
 ## Model: host-sequenced deterministic lockstep
 

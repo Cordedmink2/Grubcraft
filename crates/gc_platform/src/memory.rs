@@ -1,5 +1,5 @@
 //! Process memory as the OS reports it: what Activity Monitor (macOS) or
-//! Task Manager (Windows) shows. This is the number the 4 GB budget applies to.
+//! Task Manager (Windows) shows. This is the number the 6 GB budget applies to.
 
 /// Process memory figures in bytes. `None` where the OS can't tell us.
 #[derive(Clone, Copy, Debug, Default)]

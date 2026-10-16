@@ -15,10 +15,10 @@ If a friend's machine is older than the low tier, the Battery preset is the safe
 
 | Metric | Target | Hard ceiling | Stretch |
 |---|---|---|---|
-| Peak memory, 4-player Warfield, 60 min | **≤ 4 GB** | 4 GB | |
+| Peak memory, 6-player Warfield, 60 min | **≤ 6 GB** | 6 GB | |
 | Frame rate, low tier, 1080p, big battle | 60 fps | 45 fps | 60 fps at High preset |
 | Frame rate, mid tier, 1440p | 144 fps | 90 fps | |
-| Sim tick, 4-player late game, low tier (p99) | **≤ 2 ms** of the 50 ms tick | 5 ms | 1 ms |
+| Sim tick, 6-player late game, low tier (p99) | **≤ 2 ms** of the 50 ms tick | 5 ms | 1 ms |
 | App launch to main menu | ≤ 1 s | 2 s | |
 | Lobby start to first frame of match | ≤ 3 s | 5 s | ≤ 1.5 s |
 | Executable size | ≤ 15 MB | 25 MB | |
@@ -26,13 +26,13 @@ If a friend's machine is older than the low tier, the Battery preset is the safe
 | Network per client (busy) | ≤ 3 KB/s | 10 KB/s | |
 | Replay size per hour | ≤ 150 KB | 500 KB | |
 
-**Memory budget decided 2026-10-12:** the original target was 160 MB. Measuring M0 on Mario's MacBook (Apple M4) gave about 190 MB, of which about 120 MB is what macOS and the GPU driver charge any Metal window at Retina resolution (measured with a bare Metal program that only clears its window) and about 50 MB is wgpu's own overhead. Mario was happy with that usage and set a 4 GB ceiling for the whole game instead.
+**Memory budget decided 2026-10-12:** the original target was 160 MB. Measuring M0 on Mario's MacBook (Apple M4) gave about 190 MB, of which about 120 MB is what macOS and the GPU driver charge any Metal window at Retina resolution (measured with a bare Metal program that only clears its window) and about 50 MB is wgpu's own overhead. Mario was happy with that usage and set a 4 GB ceiling for the whole game instead. **Raised 2026-10-16:** Mario raised the ceiling to **6 GB** and the largest match to six players.
 
 "Memory" means the process's physical footprint as the OS reports it (Activity Monitor on Mac, working set on Windows), **including GPU allocations** on Apple Silicon's unified memory. GPU driver overhead that we cannot control is measured and reported separately so it doesn't hide our own regressions.
 
 ## Memory budget
 
-The whole game stays under **4 GB** on the largest map with four players at maximum supply. There are no per-subsystem limits inside that ceiling; instead each subsystem is tracked so growth is visible:
+The whole game stays under **6 GB** on the largest map with six players at maximum supply. There are no per-subsystem limits inside that ceiling; instead each subsystem is tracked so growth is visible:
 
 | Subsystem (tag) | Main contents |
 |---|---|
@@ -63,7 +63,7 @@ Each tag is tracked live by the tagged allocator and the renderer's GPU allocati
 | GPU: UI and post | 1.0 ms |
 | Slack | 4.1 ms |
 
-### Simulation tick (low tier, 4 players, late game)
+### Simulation tick (low tier, 6 players, late game)
 | System | Budget |
 |---|---|
 | Commands, economy, production | 0.2 ms |
@@ -119,7 +119,7 @@ Scenarios replayed headless (sim) and rendered with a scripted camera (frame):
 
 | Scenario | What it stresses |
 |---|---|
-| `warfield-4p-60min` | Recorded 4-player match: peak memory, p99 tick, replay size |
+| `warfield-6p-60min` | Recorded 6-player match: peak memory, p99 tick, replay size |
 | `field-8000pt-2v2` | Grand Battle with ~6,000 soldiers in contact: frame time, puppets, combat |
 | `pathing-storm` | 120 regiments ordered across the map at once: pathfinding budget |
 | `siege-and-fire` | Many structures, artillery, particles: GPU effects |
@@ -132,7 +132,7 @@ Scenarios replayed headless (sim) and rendered with a scripted camera (frame):
 
 - `field-8000pt-2v2` (headless half): the recorded battle `replays/field-8000pt-2v2.gcr` played back. Four armies of about 1,500 soldiers (276 regiments, 6,052 soldiers; points arrive with the army builder, so "8,000 points" means 1,500 soldiers for now) on a generated 384-tile map with hills and rivers, every regiment ordered to attack the nearest enemy each second. Up to about 2,000 soldiers are in melee at once and half the field falls in the first minute. It measures about 0.05 ms p50, 0.3 ms p99 and 0.7 ms at worst a tick, 5.2 MB of sim heap and 0 allocations, in the cloud build container. The frame half (puppets and rendering of the same battle) needs a real GPU and the game to show a 384-tile map (it plays replays since M2 step 6a, on its own 256-tile map), so it is measured on Mario's machines later.
 
-The other scenarios need features that don't exist yet (a recorded hour-long 4-player match, rendering benchmarks).
+The other scenarios need features that don't exist yet (a recorded hour-long 6-player match, rendering benchmarks).
 
 ### Gates in CI
 - Every pull request runs the headless benchmarks on CI machines and compares them against a stored baseline: **> 5% regression in any tracked metric fails**, unless the PR updates the baseline with a written reason (PRF-7). The tracked metric is the number of instructions each scenario executes under valgrind's callgrind (`scripts/bench-gate.py`, on the Linux runner, against `tools/gc_bench/baseline.json`). Instruction counts do not move with how busy a shared machine is: repeat runs agree to better than 0.001%, where wall-clock times on a CI runner vary far more than 5%. The fixed budgets above (p99 tick, heap, allocations) stay as an outer net. The scenarios are smaller than the timing runs so each takes about half a minute under callgrind: `drill` with 150 regiments a player for 1,200 ticks, `pathing-storm`, and the whole `field-8000pt-2v2` replay. A PR that changes how much work the simulation does on purpose runs `scripts/bench-gate.py bless` in the same PR and says why; the gate prints a note when a PR is more than 5% faster, so the gain can be locked in the same way. The counts also go up as the `bench-instructions` artifact of each run. *(Not covered yet: the computer players' cost. `gc_bench` does not depend on `gc_ai`, and the Warlord's rehearsals are known to run over their budget, see [18 · AI](18-ai.md).)*

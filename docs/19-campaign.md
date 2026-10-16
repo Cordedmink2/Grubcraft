@@ -81,7 +81,7 @@ That is the whole of in-match exploration: small, readable, and the same rules t
 
 | | |
 |---|---|
-| **Players** | 1 to 4, each one faction; any seat can be an AI player |
+| **Players** | 1 to 6, each one faction; any seat can be an AI player |
 | **Modes** | **Rivals** (default): everyone for themselves, with diplomacy, or fixed teams. **Fellowship**: everyone together against the Reach's hostile powers and the Waking (Titan-spawn that grow each season) |
 | **Length** | **Short**: about 30 seasons, two or three game nights. **Long**: about 60 seasons, five or six. A season takes 2 to 3 minutes plus any battle, so a night is 10 to 15 seasons and 3 to 6 battles |
 | **Rivals victory** | **Crown of the Reach**: hold the Heart and two of the four Great Places for 3 seasons in a row. Or be the last faction with a Seat. If the season limit comes first, the most Renown wins (held places, battles won, promises kept) |
@@ -277,7 +277,7 @@ While two friends fight a battle, the others don't have to wait. Any side in the
 - **Handing a battle to `gc_sim`.** The campaign builds a `MatchSetup` with the parties in the battle (mapped onto the match's 32 party slots), their stances and ledger rows, every regiment with its state (hook 6, *spawn with state*), and the generated map's seed. When the battle ends, a `BattleResult` (survivors per regiment, veterancy, experience, relics, memories raised) comes back as a campaign command. Both steps are deterministic, so they happen identically on every machine.
 - **One ledger implementation.** The ledger, memories, contracts and the offer rule are written once (planned in `gc_sim` for M4, hook 7) with the fading clock as a parameter, so a match ticks it per second and the campaign per season.
 - **Saves:** the campaign state plus the Chronicle, a few kilobytes; each battle's replay is kept beside it (about 100 KB each) for the Chronicle links.
-- **Memory:** the campaign screen and a battle are never loaded together; switching unloads one before loading the other. Both sit far inside the 4 GB budget.
+- **Memory:** the campaign screen and a battle are never loaded together; switching unloads one before loading the other. Both sit far inside the 6 GB budget.
 - **Tests:** golden campaign seasons in CI, like golden replays: a fixed seed and command list must give the same hash on Mac, Windows and Linux.
 
 ### Engine hooks this needs
