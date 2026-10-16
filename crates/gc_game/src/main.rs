@@ -42,7 +42,10 @@
 //! melee): Line, Tight (stronger to hold, cramped for swinging blades),
 //! Loose (gaps for blades to swing and arrows to miss) and, for regiments
 //! with shields, Shield wall (turns arrows from the front, marches at half
-//! pace, never charges). Banners show morale: blinking amber is wavering,
+//! pace, never charges). Z braces spears and pikes against a charge (they
+//! stand until given another order; Z again lifts them) and V pulls the
+//! selection out of its fights in good order: it backs away 8 tiles facing
+//! the enemy, who gets one parting blow and doesn't follow. Banners show morale: blinking amber is wavering,
 //! white is routing (no orders until it rallies), grey is shattered.
 //! Regiments find their own way around cliffs and deep water; a selected
 //! regiment's route shows as a dotted line, and G shows the ground no
@@ -50,7 +53,7 @@
 //! Woods and tall grass hide regiments (docs/20-ambushes.md): enemies your
 //! side can't see aren't drawn, yours that the enemy can't see carry a
 //! moss-green flag, and a sprung ambush shows an "AMBUSH!" message with a
-//! drum and horn. V in the sandbox shows every regiment, hidden or not.
+//! drum and horn. Shift+V in the sandbox shows every regiment, hidden or not.
 //! Ctrl (or Cmd) + a number key saves the selection as a control group; the
 //! number recalls it (Shift adds it), and pressing it twice quickly centres
 //! the camera on it.
@@ -105,6 +108,7 @@ mod battle_tables;
 mod buildings;
 mod camera;
 mod conquest;
+mod conquest_card;
 #[cfg(test)]
 mod conquest_golden;
 mod credits;
@@ -193,6 +197,21 @@ const COMMANDER_FLAG: [f32; 3] = [2.6, 1.8, 0.25];
 const SHOOTING_TICKS: u32 = 24;
 /// Thickness of the ground plate drawn under a selected regiment.
 const PLATE_HEIGHT: f32 = 0.05;
+/// The command grid's keys, slot by slot (`gc_ui::hud::GRID_KEYS`).
+const GRID_CODES: [KeyCode; gc_ui::hud::GRID_SLOTS] = [
+    KeyCode::KeyQ,
+    KeyCode::KeyW,
+    KeyCode::KeyE,
+    KeyCode::KeyR,
+    KeyCode::KeyA,
+    KeyCode::KeyS,
+    KeyCode::KeyD,
+    KeyCode::KeyF,
+    KeyCode::KeyZ,
+    KeyCode::KeyX,
+    KeyCode::KeyC,
+    KeyCode::KeyV,
+];
 /// Dashes of the ragged outline round a regiment out of order: length
 /// and spacing, in tiles.
 const DISORDER_DASH: f32 = 0.55;
@@ -598,7 +617,7 @@ struct Running {
     viewer: Option<viewer::Viewer>,
     /// Wheel movement over the viewer's panels not yet worth a whole row.
     viewer_scroll: f32,
-    /// Sandbox: draw regiments hidden from the side you command too (V).
+    /// Sandbox: draw regiments hidden from the side you command too (Shift+V).
     reveal_all: bool,
     /// Data hash and size, for the overlay.
     data_label: String,
@@ -1418,15 +1437,16 @@ impl ApplicationHandler for App {
                             | KeyCode::NumpadAdd
                             | KeyCode::Tab
                     );
+                    // In Conquest B opens the workers' build menu instead.
                     let edit_tool = matches!(
                         code,
                         KeyCode::KeyI
-                            | KeyCode::KeyB
                             | KeyCode::KeyK
                             | KeyCode::Delete
                             | KeyCode::Backspace
                             | KeyCode::KeyT
-                    ) || reload_key;
+                    ) || (code == KeyCode::KeyB && !r.conquest_units)
+                        || reload_key;
                     // P carries on without a player the match is paused for.
                     if code == KeyCode::KeyP
                         && down
@@ -1441,6 +1461,8 @@ impl ApplicationHandler for App {
                         Some("That sandbox tool is off in a network battle.")
                     } else if r.watching.is_some() && (edit_tool || code == KeyCode::KeyF) {
                         Some("That is off while you watch a replay.")
+                    } else if r.conquest_units && edit_tool {
+                        Some("That sandbox tool is off in Conquest.")
                     } else {
                         None
                     };
@@ -1448,6 +1470,14 @@ impl ApplicationHandler for App {
                         if down && !event.repeat {
                             r.say(why.into());
                         }
+                        return;
+                    }
+                    // A building's card or the build menu owns the grid's keys;
+                    // what it leaves goes to the battle grid below.
+                    if grid_key
+                        && let Some(slot) = GRID_CODES.iter().position(|&c| c == code)
+                        && r.card_press(slot)
+                    {
                         return;
                     }
                     match code {
@@ -1478,6 +1508,9 @@ impl ApplicationHandler for App {
                         }
                         KeyCode::Tab if down && !event.repeat => r.switch_side(),
                         KeyCode::KeyI if down && !event.repeat => r.cycle_mind(),
+                        KeyCode::KeyB if down && !event.repeat && r.conquest_units => {
+                            r.set_build_menu(!r.hud.build_menu);
+                        }
                         KeyCode::KeyB if down && !event.repeat => {
                             r.sandbox.placing = !r.sandbox.placing;
                             r.sandbox.building_tool = false;
@@ -1498,14 +1531,16 @@ impl ApplicationHandler for App {
                         // Shift+R: the dev tool; plain R is the grid's Formation.
                         KeyCode::KeyR if down && !event.repeat && reload_key => r.reload_data(),
                         // The grid's keys leave Cmd/Ctrl/Alt chords to the system.
-                        KeyCode::KeyQ if grid_key => r.grid_press(hud::SLOT_MOVE),
-                        KeyCode::KeyW if grid_key => r.grid_press(hud::SLOT_ATTACK),
+                        KeyCode::KeyQ if grid_key => r.battle_press(hud::SLOT_MOVE),
+                        KeyCode::KeyW if grid_key => r.battle_press(hud::SLOT_ATTACK),
                         // The hero's fourth ability owns F while a hero is shown.
                         KeyCode::KeyF if grid_key && r.hud.hero_shown() => {}
                         // Otherwise F stays as R's twin until the Ultimate slot has an ability.
                         KeyCode::KeyR | KeyCode::KeyF if grid_key => {
-                            r.grid_press(hud::SLOT_FORMATION);
+                            r.battle_press(hud::SLOT_FORMATION);
                         }
+                        KeyCode::KeyZ if grid_key => r.grid_press(hud::SLOT_BRACE),
+                        KeyCode::KeyV if grid_key => r.grid_press(hud::SLOT_FALL_BACK),
                         KeyCode::Space if grid_key => r.jump_to_alert(),
                         KeyCode::F1 if down && !event.repeat => r.next_idle_worker(),
                         KeyCode::KeyC if down && !event.repeat => {
@@ -1524,10 +1559,12 @@ impl ApplicationHandler for App {
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
                         }
-                        // Seeing through the woods is for the sandbox only.
+                        // Seeing through the woods is for the sandbox only
+                        // (Shift+V: V is Fall back).
                         KeyCode::KeyV
                             if down
                                 && !event.repeat
+                                && r.input.shift
                                 && (r.battle.is_none() || r.watching.is_some())
                                 && r.online.is_none() =>
                         {
@@ -1549,6 +1586,7 @@ impl ApplicationHandler for App {
                             }
                         }
                         KeyCode::Escape if down && r.hud.armed.take().is_some() => {}
+                        KeyCode::Escape if down && r.hud.build_menu => r.set_build_menu(false),
                         KeyCode::Escape
                             if down
                                 && (r.sandbox.placing
@@ -1697,12 +1735,12 @@ impl Running {
                 // A right-click order takes the place of an armed one.
                 self.hud.armed = None;
                 let drag = self.drag_order();
-                let enemy = drag
-                    .is_none()
-                    .then(|| self.ground_under_cursor())
-                    .flatten()
-                    .and_then(|p| self.enemy_at(p));
-                if let Some(target) = enemy {
+                let plain = drag.is_none().then(|| self.ground_under_cursor()).flatten();
+                if plain.is_some_and(|p| self.conquest_right_click(p)) {
+                    self.input.right_down = None;
+                    return;
+                }
+                if let Some(target) = plain.and_then(|p| self.enemy_at(p)) {
                     self.issue_attack(target);
                 } else if let Some(building) = drag
                     .is_none()
@@ -1710,9 +1748,7 @@ impl Running {
                     .flatten()
                 {
                     self.issue_siege(building);
-                } else if let Some(order) =
-                    drag.or_else(|| self.ground_under_cursor().map(hud::move_order))
-                {
+                } else if let Some(order) = drag.or_else(|| plain.map(hud::move_order)) {
                     self.issue_group_order(order);
                 }
                 self.input.right_down = None;
@@ -2066,6 +2102,70 @@ impl Running {
             ""
         };
         self.say(format!("{}{note}: {}", next.name(), formation_hint(next)));
+    }
+
+    /// Z: set the selection's spears and pikes against a charge, or, if
+    /// they all stand braced already, lift them. Only regiments with long
+    /// weapons out of the fight can brace.
+    fn toggle_brace(&mut self) {
+        let units = self.world.units();
+        let spears: Vec<_> = self
+            .selected
+            .iter()
+            .filter_map(|&h| self.world.regiments.get(h))
+            .filter(|r| units[r.unit as usize].reach && !r.morale.broken())
+            .collect();
+        if spears.is_empty() {
+            self.say("Only spears and pikes can brace".into());
+            return;
+        }
+        // Set any that can be set; once none can, lift those that are.
+        let settable = |r: &&gc_sim::RegimentView| !r.braced && !r.engaged && !r.falling_back;
+        let on = spears.iter().any(|r| settable(&r));
+        let ready: Vec<_> = spears
+            .iter()
+            .filter(|r| if on { settable(r) } else { r.braced })
+            .map(|r| r.handle)
+            .collect();
+        if ready.is_empty() {
+            self.say("Locked in melee: no time to set spears".into());
+            return;
+        }
+        for regiment in ready {
+            self.human_orders.push(PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::Brace { regiment, on },
+            });
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        self.say(if on {
+            "Braced: a charge into their front runs onto the points; they stand until ordered"
+                .into()
+        } else {
+            "Spears lifted".into()
+        });
+    }
+
+    /// V: the selection pulls back out of its fights in good order.
+    fn fall_back(&mut self) {
+        let ready: Vec<_> = self
+            .selected
+            .iter()
+            .filter_map(|&h| self.world.regiments.get(h))
+            .filter(|r| !r.morale.broken() && !r.falling_back)
+            .map(|r| r.handle)
+            .collect();
+        if ready.is_empty() {
+            return;
+        }
+        for regiment in ready {
+            self.human_orders.push(PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::FallBack { regiment },
+            });
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        self.say("Falling back: they back away facing the enemy, who gets one parting blow".into());
     }
 
     fn nearest_own(&self, p: Vec2, radius: f32) -> Option<RegimentHandle> {
@@ -4046,21 +4146,29 @@ impl Running {
         self.sandbox.dirty = true;
     }
 
-    /// Where the chosen building would stand with the footprint centred on
-    /// the cursor, and why it couldn't.
-    fn building_placement(&self) -> Option<(BuildingStats, (i32, i32), Option<&'static str>)> {
+    /// Where building `id` would stand with the footprint centred on the
+    /// cursor, and why it couldn't: the sandbox's check, or in Conquest
+    /// whether a worker of yours could lay it.
+    fn building_placement(
+        &self,
+        id: BuildingId,
+    ) -> Option<(BuildingStats, (i32, i32), Option<&'static str>)> {
         let at = self.ground_under_cursor()?;
-        let stats = *self
-            .buildings
-            .stats
-            .get(usize::from(self.sandbox.building))?;
+        let stats = *self.buildings.stats.get(usize::from(id))?;
         let tile = buildings::tile_for(at, stats.width, stats.depth);
-        let why = buildings::refusal(&self.world, self.sandbox.building, tile);
+        // Conquest asks what a worker may lay; the sandbox only the ground.
+        let why = if self.conquest_units {
+            self.world.can_lay(self.sandbox.side, id, tile)
+        } else {
+            self.world.can_build(id, tile)
+        }
+        .err()
+        .map(buildings::why);
         Some((stats, tile, why))
     }
 
     fn place_building(&mut self) {
-        let Some((_, tile, why)) = self.building_placement() else {
+        let Some((_, tile, why)) = self.building_placement(self.sandbox.building) else {
             return;
         };
         if let Some(why) = why {
@@ -4077,12 +4185,14 @@ impl Running {
         self.ui_sound(sounds::UiSound::Move);
     }
 
-    /// The building K would place, ghosted under the cursor.
+    /// The building K would place, or a worker lay, ghosted under the cursor.
     fn push_building_ghost(&mut self) {
-        if !self.sandbox.building_tool {
-            return;
-        }
-        let Some((stats, tile, why)) = self.building_placement() else {
+        let id = match self.hud.armed {
+            Some(hud::Armed::Lay(id)) => id,
+            _ if self.sandbox.building_tool => self.sandbox.building,
+            _ => return,
+        };
+        let Some((stats, tile, why)) = self.building_placement(id) else {
             return;
         };
         let colour = color_of(&self.parties, self.sandbox.side);
@@ -4114,6 +4224,8 @@ impl Running {
         );
         if let Some(h) = self.picked_structure() {
             buildings::push_rim(&self.world, h, ground, &mut self.instances);
+            let colour = color_of(parties, self.sandbox.side);
+            buildings::push_rally(&self.world, h, colour, &mut self.instances);
         }
         buildings::push_nodes(&self.world, &mut self.instances);
     }
@@ -4855,6 +4967,13 @@ mod lod_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grid_codes_are_the_grids_keys() {
+        for (code, key) in GRID_CODES.iter().zip(gc_ui::hud::GRID_KEYS) {
+            assert_eq!(format!("{code:?}"), format!("Key{key}"));
+        }
+    }
 
     const HANDLE: RegimentHandle = RegimentHandle {
         index: 3,

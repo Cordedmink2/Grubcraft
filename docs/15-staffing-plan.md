@@ -9,6 +9,7 @@ This is a plan, not a switch. Nothing here changes which model a running thread 
 - **Opus owns anything that can silently break a multiplayer game.** That is the deterministic sim (`gc_sim`, `gc_fixed`), netcode (`gc_net`), combat and economy math, save/replay formats, architecture, and review of every PR that touches them.
 - **Sonnet owns well-scoped features behind a stable interface.** UI screens, renderer features, audio, the asset pipeline, tools, maps, packaging and platform fixes.
 - **Haiku does mechanical work to a clear spec, always under a lead.** CI log triage, tests written from a spec, RON data entry, docs sync, benchmark runs, screenshots, licence checks.
+- **3D models go to Opus at medium effort.** Blender builds, rigs, clips and bakes for units, heroes and anything else modelled in-house. Mario's call (2026-10-16) after comparing the Ember Clans (Opus) and Carrion Concord (Sonnet) rosters built side by side under the same rules.
 - **One Opus engine thread through M1 and M2**, because almost every step changes the sim and two threads editing it would fight. **Parallel threads from M3**, once the sim's interfaces settle and the work splits along crate lines.
 
 ## The roster
@@ -56,6 +57,8 @@ Subagents that write code in parallel run with **worktree isolation**, so two of
 ### Effort level
 
 Effort is set per thread, separately from the model. Default to the model's normal effort; ask for high or max effort only for desync hunts, the lockstep protocol, combat-formula tuning and performance investigations where the first answer is rarely right.
+
+3D modelling is the exception the other way: Opus at medium effort, not high (Mario, 2026-10-16).
 
 The AI is the other place where effort pays: its design ran at extra-high effort (2026-10-12), and the battle tactics and estimator should too. Keep max effort for the diplomacy logic (the relations ledger and the rule that answers offers), where a subtle mistake makes every faction behave strangely.
 
@@ -157,7 +160,7 @@ A and B both live in `gc_sim` but in separate faction modules; shared hooks they
 | Disconnect handling, rejoin, multiplayer save and load | **Opus** | Haiku chaos and soak runs | Rejoin and save both serialise hashed state |
 | Settings completeness, key rebinding, accessibility | **Sonnet** | Haiku enumerates every action and setting from the docs | |
 | Performance pass against every budget; stretch targets | **Opus**, high effort | Haiku `bench-runner` sweeps | Hill-climbing per [12 · Performance](12-performance.md#hill-climbing-process) |
-| Art pass: custom models for key units and heroes | **Human artist** (see decision 6) | Sonnet keeps the pipeline healthy; Haiku checks every model against the memory and triangle budgets | |
+| Art pass: custom models for key units and heroes | **Human artist** (see decision 6) | Sonnet keeps the pipeline healthy; Haiku checks every model against the memory and triangle budgets | Models built in-house instead go to Opus at medium effort |
 | Self-update check | Sonnet | | Small, non-sim |
 | Release: tag 1.0, notes, packages | Sonnet | Haiku drafts release notes from merged PRs | |
 | Exit: a month of game nights, no crash or desync | Opus on any desync report | **Mario and friends** | |
@@ -186,6 +189,7 @@ A and B both live in `gc_sim` but in separate faction modules; shared hooks they
 | Docs progress notes, roadmap updates | Haiku `docs-sync` | After each merge |
 | Dependency and licence audit (`cargo deny`, `cargo bloat`, asset licences) | Haiku | Weekly, and before each milestone exit |
 | Architecture decisions (ADRs) | Opus | When a choice is hard to reverse |
+| 3D models (Blender build, rig, clips, bake) | Opus, medium effort | Whenever a unit, hero or prop needs a model |
 | Coordination: starting threads, checking crate ownership, relaying to Mario | Coordinator | Ongoing |
 
 ## What only Mario (and friends) can do

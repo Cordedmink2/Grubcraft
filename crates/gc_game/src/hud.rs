@@ -34,18 +34,24 @@ pub fn move_order(p: Vec2) -> GroupOrder {
 pub enum Armed {
     Move,
     Attack,
+    /// Conquest: where a worker lays this building.
+    Lay(gc_sim::BuildingId),
 }
 
 /// Slots of the command grid, row by row (docs/08-ui-ux.md#screen-layout-1080p-reference).
 pub const SLOT_MOVE: usize = 0;
 pub const SLOT_ATTACK: usize = 1;
 pub const SLOT_FORMATION: usize = 3;
+/// Brace (Z), sharing its slot with Skirmish when that order arrives, and
+/// Fall back (V).
+pub const SLOT_BRACE: usize = 8;
+pub const SLOT_FALL_BACK: usize = 11;
 /// The first of the four slots (A, S, D, F) a hero's abilities use.
-// Run (C) and Retire (V) share keys with the sandbox's credits and reveal-all
-// tools; those move when the two orders arrive.
+// Run (C) shares its key with the sandbox's credits tool, which moves when
+// the order arrives.
 const LABELS: [&str; GRID_SLOTS] = [
-    "Move", "Attack", "Hold", "Form", "Skill1", "Skill2", "Skill3", "Ultim", "Skirm", "Charge",
-    "Run", "Retire",
+    "Move", "Attack", "Hold", "Form", "Skill1", "Skill2", "Skill3", "Ultim", "Brace", "Charge",
+    "Run", "Back",
 ];
 
 /// An alert stays this long (in sim ticks, so a paused game keeps it) after
@@ -89,6 +95,11 @@ pub struct HudState {
     /// Q or W was pressed: the next left click says where to go or whom to
     /// attack.
     pub armed: Option<Armed>,
+    /// Conquest: the workers' build menu is open on the grid.
+    pub build_menu: bool,
+    /// The Conquest card's slot names and prices, kept for their room.
+    card_labels: [String; GRID_SLOTS],
+    card_details: [String; GRID_SLOTS],
     /// A button went down on the bar (or the minimap drag), so its release
     /// is the bar's, wherever the mouse is by then.
     left_held: bool,
@@ -365,6 +376,17 @@ impl Running {
             self.hud.notes.clear();
         }
         let picked_structure = self.picked_structure();
+        if self.selected_workers().next().is_none() {
+            self.set_build_menu(false);
+        }
+        let mut card_labels = std::mem::take(&mut self.hud.card_labels);
+        let mut card_details = std::mem::take(&mut self.hud.card_details);
+        let card = (self.conquest_card()).map(|c| {
+            (
+                c,
+                self.describe_card(&c, &mut card_labels, &mut card_details),
+            )
+        });
 
         let hud = &mut self.hud;
         if self.selected.is_empty() {
@@ -471,6 +493,14 @@ impl Running {
         grid[SLOT_MOVE].state = ready(has_orders);
         grid[SLOT_ATTACK].state = ready(has_orders);
         grid[SLOT_FORMATION].state = ready(has_orders);
+        let has_spears = self.selected.iter().any(|&h| {
+            self.world
+                .regiments
+                .get(h)
+                .is_some_and(|r| self.units.stats[r.unit as usize].reach)
+        });
+        grid[SLOT_BRACE].state = ready(has_orders && has_spears);
+        grid[SLOT_FALL_BACK].state = ready(has_orders);
         // A hero's abilities take the A, S, D and F slots.
         if let Some(h) = &hero {
             for (i, a) in h.abilities.iter().enumerate() {
@@ -484,10 +514,24 @@ impl Running {
         match hud.armed {
             Some(Armed::Move) => grid[SLOT_MOVE].state = SlotState::Armed,
             Some(Armed::Attack) => grid[SLOT_ATTACK].state = SlotState::Armed,
-            None => {}
+            Some(Armed::Lay(_)) | None => {}
         }
         if let Some(Some(f)) = self.shown_formation {
             grid[SLOT_FORMATION].detail = f.name();
+        }
+        // Conquest's card goes over the battle grid, or takes all of it.
+        if let Some((card, states)) = card {
+            for (i, slot) in grid.iter_mut().enumerate() {
+                if card.slots[i].is_some() {
+                    *slot = GridSlot {
+                        label: &card_labels[i],
+                        detail: &card_details[i],
+                        state: states[i],
+                    };
+                } else if card.whole {
+                    *slot = GridSlot::default();
+                }
+            }
         }
 
         hud.alerts.clear();
@@ -576,6 +620,8 @@ impl Running {
         };
         hud.hud
             .frame(&mut hud.draw, screen, input, &data, &mut hud.events);
+        self.hud.card_labels = card_labels;
+        self.hud.card_details = card_details;
 
         upload_ui(
             &mut self.renderer,
@@ -621,8 +667,8 @@ impl Running {
                 }
             }
             HudEvent::IdleWorker => self.next_idle_worker(),
-            // Taking a regiment out of a queue is a control of step 4c.
-            HudEvent::Unqueue(_) => {}
+            // The queue gives back its last regiment, whichever is clicked.
+            HudEvent::Unqueue(_) => self.untrain(),
             HudEvent::Ready => {
                 self.human_orders.push(gc_sim::PlayerCommand {
                     player: self.sandbox.side,
@@ -641,7 +687,15 @@ impl Running {
     /// A grid button clicked or its key pressed. Slots whose orders the
     /// simulation doesn't have yet do nothing.
     pub fn grid_press(&mut self, slot: usize) {
-        if self.selected.is_empty() || self.watching.is_some() || self.sandbox.placing {
+        if self.watching.is_some() || self.sandbox.placing || self.card_press(slot) {
+            return;
+        }
+        self.battle_press(slot);
+    }
+
+    /// A battle grid slot: Move, Attack or Formation.
+    pub fn battle_press(&mut self, slot: usize) {
+        if self.watching.is_some() || self.sandbox.placing || self.selected.is_empty() {
             return;
         }
         match slot {
@@ -655,6 +709,8 @@ impl Running {
                 self.hud.armed = (self.hud.armed != Some(want)).then_some(want);
             }
             SLOT_FORMATION => self.cycle_formation(),
+            SLOT_BRACE => self.toggle_brace(),
+            SLOT_FALL_BACK => self.fall_back(),
             _ => {}
         }
     }
@@ -666,6 +722,7 @@ impl Running {
         };
         // A click that finds nothing to attack keeps the order armed.
         match armed {
+            Armed::Lay(b) => return self.finish_laying(b),
             Armed::Move => self.issue_group_order(move_order(p)),
             Armed::Attack => match self.enemy_at(p) {
                 Some(target) => self.issue_attack(target),

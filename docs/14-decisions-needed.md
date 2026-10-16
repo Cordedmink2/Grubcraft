@@ -48,7 +48,7 @@ Decision 17 (exploration content after 1.0) is refined by 21: factions met while
 
 ## Battle feel from Mount & Blade (decided 2026-10-15)
 
-From the Mount & Blade study (MB-1 to MB-11, in the project's research notes). Mario picked the first four on 2026-10-15; the rest wait for his picks.
+From the Mount & Blade study (MB-1 to MB-11, in the project's research notes). Mario picked the first four on 2026-10-15; the rest wait for his picks. A second batch was proposed on 2026-10-16 (brace and fall back, the field remembers the fight, ride with the banner, battle cries); Mario said yes to all four on 2026-10-17; brace and fall back is decision 28.
 
 | # | Decision | What was decided | Where it lands |
 |---|---|---|---|
@@ -56,6 +56,7 @@ From the Mount & Blade study (MB-1 to MB-11, in the project's research notes). M
 | 25 | **Duels that read the numbers** (MB-2) | Yes: soldier duels show blocks, parries, staggers, crush-throughs and knockdowns in proportions taken from the regiments' real stats; the kill comes from the partner. **Built 2026-10-15** | Presentation, [09](09-art-and-audio.md#animation) |
 | 26 | **Weapon room** (MB-3) | Yes: reach, swing room and shields as unit flags, and Tight, Loose and Shield wall formations. **Built 2026-10-15** | [05 · Weapons and formations](05-combat.md#weapons-and-formations), [17](17-unit-rosters.md#weapon-flags-and-mass) |
 | 27 | **Champions before battle** (MB-4) | Yes, as a chance event in battles with computer players, switched on or off in the lobby (on by default): two champions duel between the lines, the result decided by their stats, and the winner's army gains morale while the loser's loses some. Regiment champions stand in until heroes reach the simulation (M3). **Built 2026-10-15** | [05 · Champions before battle](05-combat.md#champions-before-battle), [06](06-game-modes.md#field-battle-extras) |
+| 28 | **Brace and Fall back** (next Mount & Blade batch) | Yes (Mario, 2026-10-17): spears braced against a charge turn it back on the charger, and a regiment can pull out of a melee in good order. **Built 2026-10-16** | [05 · Brace and Fall back](05-combat.md#brace-and-fall-back) |
 
 ## Smaller questions for later
 - Should allied players share supply or resources by default in team games?

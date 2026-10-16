@@ -74,8 +74,10 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Untrain { .. } => "Untrain",
         Command::Upgrade { .. } => "Upgrade",
         Command::Rally { .. } => "Rally",
+        Command::FallBack { .. } => "FallBack",
+        Command::Brace { .. } => "Brace",
     };
-    const KINDS: [&str; 19] = [
+    const KINDS: [&str; 21] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -95,6 +97,8 @@ fn the_goldens_cover_every_kind_of_command() {
         "Untrain",
         "Upgrade",
         "Rally",
+        "FallBack",
+        "Brace",
     ];
     let seen: BTreeSet<&str> = goldens()
         .iter()
@@ -120,16 +124,17 @@ fn fingerprint(replay: &Replay) -> u64 {
 /// that other builds and old replays know: this table then fails, and is
 /// updated from the test's output.
 const PINNED: (u32, &[(&str, u64)]) = (
-    6,
+    7,
     &[
-        ("conquest-ribcage-1v1", 0x6b50bb2f765e3562),
-        ("field-1v1", 0x3e2854185069b943),
-        ("field-2v2", 0xd36fe17d508faa63),
-        ("field-8000pt-2v2", 0x1ca79287bbacab6b),
-        ("field-champions-1v1", 0x1c71675f7b266ee7),
-        ("field-deploy-1v1", 0x0b3f4d7e6bed006d),
-        ("field-woods-1v1", 0xcf5fa74f808f8453),
-        ("sandbox-tuning", 0xee8ea4c4add414fd),
+        ("conquest-ribcage-1v1", 0x48f73fefb66013ed),
+        ("field-1v1", 0x60324e301c563c19),
+        ("field-2v2", 0xd32883cde62e4bc1),
+        ("field-8000pt-2v2", 0x27072407e98c4e25),
+        ("field-brace-1v1", 0xb91eade37c1180f2),
+        ("field-champions-1v1", 0xd25100faed64b68a),
+        ("field-deploy-1v1", 0x312465730b9e6aee),
+        ("field-woods-1v1", 0x8f35ade4906889a6),
+        ("sandbox-tuning", 0x3272fcb2e8fd9d2e),
     ],
 );
 

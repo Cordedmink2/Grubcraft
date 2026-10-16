@@ -652,6 +652,59 @@ fn a_hall_upgrades_to_a_keep_and_its_owner_to_tier_two() {
 }
 
 #[test]
+fn what_may_be_trained_or_upgraded_says_why() {
+    let mut w = conquest(100);
+    let hall = put_up(&mut w, 0, HALL, 20, 20);
+    let barracks = put_up(&mut w, 0, BARRACKS, 30, 20);
+    assert_eq!(w.can_train(0, hall, WORKER), Ok(()));
+    assert_eq!(w.can_train(0, barracks, SPEARS), Ok(()));
+    assert_eq!(
+        w.can_train(0, hall, SPEARS),
+        Err(Refusal::Unknown),
+        "not here"
+    );
+    assert_eq!(
+        w.can_train(1, hall, WORKER),
+        Err(Refusal::Unknown),
+        "not theirs"
+    );
+    assert_eq!(w.can_train(0, barracks, KNIGHTS), Err(Refusal::Tier));
+    assert_eq!(w.can_upgrade(0, hall), Ok(KEEP));
+    assert_eq!(w.can_upgrade(0, barracks), Err(Refusal::Unknown));
+    assert!(order(&mut w, 0, Command::Upgrade { structure: hall }));
+    assert_eq!(w.can_upgrade(0, hall), Err(Refusal::Busy), "already");
+    for _ in 0..5 {
+        assert!(order(
+            &mut w,
+            0,
+            Command::Train {
+                structure: hall,
+                unit: WORKER
+            }
+        ));
+    }
+    assert_eq!(w.can_train(0, hall, WORKER), Err(Refusal::Busy), "full");
+
+    // Player 1 has 100 Grub: two workers, then nothing.
+    let theirs = put_up(&mut w, 1, HALL, 20, 40);
+    assert_eq!(w.may_lay(1, TOWER), Err(Refusal::Tier));
+    assert_eq!(w.may_lay(1, HOUSE), Ok(()));
+    for _ in 0..2 {
+        assert_eq!(w.can_train(1, theirs, WORKER), Ok(()));
+        assert!(order(
+            &mut w,
+            1,
+            Command::Train {
+                structure: theirs,
+                unit: WORKER
+            }
+        ));
+    }
+    assert_eq!(w.can_train(1, theirs, WORKER), Err(Refusal::Price));
+    assert_eq!(w.may_lay(1, HOUSE), Err(Refusal::Price));
+}
+
+#[test]
 fn calling_off_an_upgrade_gives_back_three_quarters() {
     let mut w = conquest(100);
     let hall = put_up(&mut w, 0, HALL, 20, 20);

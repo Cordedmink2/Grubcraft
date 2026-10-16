@@ -127,7 +127,8 @@ impl Breaker {
     }
 }
 
-/// Why a building can't go up where it was asked to.
+/// Why a building can't go up where it was asked to, or a building can't
+/// train or upgrade.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
     /// Not a Conquest match.
@@ -148,6 +149,8 @@ pub enum Refusal {
     Price,
     /// A Grub seep or Marrow vein is there.
     Node,
+    /// The building is going up, already upgrading, or its queue is full.
+    Busy,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -568,7 +571,7 @@ impl Structures {
 
     /// Whether building type `building` is `of` or one of its tier
     /// upgrades.
-    pub(crate) fn grew_from(&self, mut building: BuildingId, of: BuildingId) -> bool {
+    pub fn grew_from(&self, mut building: BuildingId, of: BuildingId) -> bool {
         // Upgrades chain at most a few deep; the bound keeps a bad table
         // from looping.
         for _ in 0..self.buildings.len() {
@@ -588,7 +591,7 @@ impl Structures {
     }
 
     /// The building type that upgrades building type `building`, if any.
-    pub(crate) fn upgrade_of(&self, building: BuildingId) -> Option<BuildingId> {
+    pub fn upgrade_of(&self, building: BuildingId) -> Option<BuildingId> {
         self.buildings
             .iter()
             .position(|b| b.upgrades_from == Some(building))

@@ -183,7 +183,17 @@ impl Conquest {
         regs: &Regiments,
     ) -> Result<(), Refusal> {
         self.check(building, tile, nav, regs)?;
-        let b = self.structures.buildings()[usize::from(building)];
+        self.may_lay(player, building)
+    }
+
+    /// Whether `player` could lay a building of type `building` somewhere
+    /// now: its tier and price, without the ground.
+    pub(crate) fn may_lay(&self, player: PlayerId, building: BuildingId) -> Result<(), Refusal> {
+        let b = *self
+            .structures
+            .buildings()
+            .get(usize::from(building))
+            .ok_or(Refusal::Unknown)?;
         if b.upgrades_from.is_some() {
             // Tier upgrades go up on the building they upgrade.
             return Err(Refusal::Unknown);
@@ -269,25 +279,46 @@ impl Conquest {
         true
     }
 
+    /// Whether `player`'s building `h` could queue a regiment of type `unit`
+    /// now, and if not, why.
+    pub(crate) fn can_train(
+        &self,
+        player: PlayerId,
+        h: StructureHandle,
+        unit: UnitId,
+    ) -> Result<(), Refusal> {
+        let i = self.structures.owned(h, player).ok_or(Refusal::Unknown)?;
+        let u = self.units.get(usize::from(unit)).ok_or(Refusal::Unknown)?;
+        let building = self.structures.kind_of(i);
+        if !u
+            .trained_at
+            .is_some_and(|at| self.structures.grew_from(building, at))
+        {
+            return Err(Refusal::Unknown);
+        }
+        if !self.structures.finished(i) || !self.production.has_room(h) {
+            return Err(Refusal::Busy);
+        }
+        if self.structures.tier_of(player) < u.tier {
+            return Err(Refusal::Tier);
+        }
+        if !self
+            .economy
+            .can_afford(player, u32::from(u.cost_grub), u32::from(u.cost_marrow))
+        {
+            return Err(Refusal::Price);
+        }
+        Ok(())
+    }
+
     /// `player`'s building `h` queues a regiment of type `unit`.
     pub(crate) fn train(&mut self, player: PlayerId, h: StructureHandle, unit: UnitId) -> bool {
-        let Some(i) = self.ready(player, h) else {
-            return false;
-        };
-        let u = self.unit(unit);
-        let building = self.structures.kind_of(i);
-        let trains = u
-            .trained_at
-            .is_some_and(|at| self.structures.grew_from(building, at));
-        if !trains
-            || self.structures.tier_of(player) < u.tier
-            || !self.production.has_room(h)
-            || !self
-                .economy
-                .spend(player, u32::from(u.cost_grub), u32::from(u.cost_marrow))
-        {
+        if self.can_train(player, h, unit).is_err() {
             return false;
         }
+        let u = self.unit(unit);
+        self.economy
+            .spend(player, u32::from(u.cost_grub), u32::from(u.cost_marrow));
         self.production.enqueue(h, unit);
         true
     }
@@ -307,23 +338,39 @@ impl Conquest {
         true
     }
 
+    /// `player`'s building `h`'s slot and what it would upgrade into now,
+    /// or why it can't.
+    pub(crate) fn can_upgrade(
+        &self,
+        player: PlayerId,
+        h: StructureHandle,
+    ) -> Result<(usize, BuildingId), Refusal> {
+        let i = self.structures.owned(h, player).ok_or(Refusal::Unknown)?;
+        let to = self
+            .structures
+            .upgrade_of(self.structures.kind_of(i))
+            .ok_or(Refusal::Unknown)?;
+        if !self.structures.finished(i) || self.structures.upgrading(i) {
+            return Err(Refusal::Busy);
+        }
+        let b = self.structures.buildings()[usize::from(to)];
+        if !self
+            .economy
+            .can_afford(player, u32::from(b.cost_grub), u32::from(b.cost_marrow))
+        {
+            return Err(Refusal::Price);
+        }
+        Ok((i, to))
+    }
+
     /// `player`'s main building `h` starts its tier upgrade.
     pub(crate) fn upgrade(&mut self, player: PlayerId, h: StructureHandle) -> bool {
-        let Some(i) = self.ready(player, h) else {
-            return false;
-        };
-        let building = self.structures.kind_of(i);
-        let Some(to) = self.structures.upgrade_of(building) else {
+        let Ok((i, to)) = self.can_upgrade(player, h) else {
             return false;
         };
         let b = self.structures.buildings()[usize::from(to)];
-        if self.structures.upgrading(i)
-            || !self
-                .economy
-                .spend(player, u32::from(b.cost_grub), u32::from(b.cost_marrow))
-        {
-            return false;
-        }
+        self.economy
+            .spend(player, u32::from(b.cost_grub), u32::from(b.cost_marrow));
         self.structures.start_upgrade(i, to);
         true
     }

@@ -50,6 +50,12 @@ pub const CHARGE_TICKS: u16 = 3 * TICKS_PER_SECOND as u16;
 /// or fought for hitting home to count as a charge: lines that brush apart
 /// and close again, or a block that starts next to its foe, don't charge.
 pub const RUN_UP_TICKS: u8 = TICKS_PER_SECOND as u8;
+/// Falling back (docs/05-combat.md): a regiment pulls out of its fight to
+/// this many tiles straight back from its foe, ...
+pub const FALL_BACK_TILES: Fx = Fx::from_int(8);
+/// ... and stops wherever it has got to after this long (8 s; at half pace
+/// infantry covers the distance in about 5).
+pub const FALL_BACK_TICKS: u16 = 8 * TICKS_PER_SECOND as u16;
 /// Arrow flight speed, tiles per tick (20 tiles per second).
 pub const MISSILE_SPEED: Fx = Fx::ONE;
 /// Volleys in flight at once, across all players.
@@ -154,6 +160,18 @@ fn ground_ends(
     let off_map = map_tiles > 0
         && (behind.x < Fx::ZERO || behind.y < Fx::ZERO || behind.x > edge || behind.y > edge);
     off_map || nav.blocked(behind) || (terrain.wet(behind) && !terrain.wet(centre))
+}
+
+/// Whether regiments `i` and `j` can't lock in melee because one is falling
+/// back from the other, which is in front of it, where it backs away in
+/// good order (an enemy at its flank or rear catches it). `j`, the one `i`
+/// would lock onto, only gets away after the tick it was ordered to fall
+/// back: on that tick its foes still hold it, for their parting blow.
+fn parted(regs: &Regiments, blocks: &[Block], i: usize, j: usize) -> bool {
+    let backs_away =
+        |k: usize, from: usize| blocks[k].side_facing(blocks[from].centre) == Side::Front;
+    (regs.falling_back[i] > 0 && backs_away(i, j))
+        || ((1..FALL_BACK_TICKS).contains(&regs.falling_back[j]) && backs_away(j, i))
 }
 
 /// Which side of a regiment something is on.
@@ -836,14 +854,20 @@ impl Combat {
                 continue;
             }
             if regs.morale_state[i].broken() {
-                // Running for their lives: nobody here is fighting back.
+                // Running for their lives: nobody here is fighting back, or
+                // backing away in order, or standing braced.
                 regs.engaged[i] = None;
+                regs.falling_back[i] = 0;
+                regs.braced[i] = false;
                 continue;
             }
             let me = self.blocks[i];
-            // Locked in: a regiment keeps fighting the foe it is touching.
+            // Locked in: a regiment keeps fighting the foe it is touching,
+            // unless one of them is backing away from the other.
             let foe = regs.foe(i).filter(|&j| {
-                stances.hostile(regs.owner[i], regs.owner[j]) && !regs.morale_state[j].broken()
+                stances.hostile(regs.owner[i], regs.owner[j])
+                    && !regs.morale_state[j].broken()
+                    && !parted(regs, &self.blocks, i, j)
             });
             let mut best = foe.filter(|&j| me.touches(&self.blocks[j], REACH));
             if best.is_none() {
@@ -858,7 +882,7 @@ impl Combat {
                     // Cheap circle test before the rectangle one.
                     let d = (them.centre - me.centre).length_sq_raw();
                     let reach = (radius[i] + radius[j] + REACH).raw() as u64;
-                    if d > reach * reach || !me.touches(them, REACH) {
+                    if d > reach * reach || !me.touches(them, REACH) || parted(regs, blocks, i, j) {
                         return;
                     }
                     if nearest.is_none_or(|(bd, bj)| (d, j) < (bd, bj)) {
@@ -877,11 +901,15 @@ impl Combat {
             let previous = regs.engaged[i];
             let was_engaged = previous.is_some();
             // Pushed or turned out of reach mid-fight: press back in, unless
-            // given another order.
+            // given another order, standing braced, or the foe is falling
+            // back (it is let go).
             if best.is_none()
                 && regs.target[i].is_none()
                 && regs.attack_target[i].is_none()
-                && previous.is_some_and(|h| regs.resolve(h).is_some())
+                && !regs.braced[i]
+                && previous
+                    .and_then(|h| regs.resolve(h))
+                    .is_some_and(|j| regs.falling_back[j] == 0)
             {
                 regs.attack_target[i] = previous;
             }
@@ -908,9 +936,30 @@ impl Combat {
                         && !terrain.wet(regs.position[i])
                         && regs.formation[i].can_charge()
                         && regs.crowd[i] <= CROWDING;
-                    if charging {
+                    if charging
+                        && regs.braced[j]
+                        && self.blocks[j].side_facing(me.centre) == Side::Front
+                    {
+                        // Onto braced points: the charge is spent on them,
+                        // its weight turned back on the charger, and the
+                        // charger, stopped dead, loses its next blow and
+                        // its ranks are thrown into disorder. (The spears
+                        // strike at once, as long weapons do when a foe
+                        // comes at their points.)
+                        let (mine, theirs) = (
+                            units[regs.unit[i] as usize].charge_bonus,
+                            units[regs.unit[j] as usize].charge_bonus,
+                        );
+                        regs.charge[j] = CHARGE_TICKS;
+                        regs.charge_bonus[j] = mine.max(theirs);
+                        regs.disorder(i);
+                        regs.strike[i] = Strike::Rest;
+                    } else if charging {
                         regs.charge[i] = CHARGE_TICKS;
+                        regs.charge_bonus[i] = units[regs.unit[i] as usize].charge_bonus;
                     }
+                    // Caught from the flank or rear while falling back.
+                    regs.falling_back[i] = 0;
                     regs.target[i] = None;
                     // Long weapons hit first when lines meet, if the foe
                     // comes at their points.
@@ -943,7 +992,11 @@ impl Combat {
                 regs.position[j],
             );
             let to = regs.position[j] - regs.position[i];
-            if range.raw() > 0 && to.length() <= range {
+            // At the front of a block falling back, it can't lock it, so it
+            // waits there rather than walking into the block.
+            let waits =
+                parted(regs, &self.blocks, i, j) && self.blocks[i].touches(&self.blocks[j], REACH);
+            if waits || (range.raw() > 0 && to.length() <= range) {
                 regs.target[i] = None;
                 regs.target_facing[i] = Some(Angle::of_vec(to));
             } else {
@@ -1229,7 +1282,14 @@ impl Combat {
             let defender = &units[regs.unit[j] as usize];
             let me = Block::of(regs, units, i);
             let them = Block::of(regs, units, j);
-            if !me.touches(&them, REACH) {
+            // A parting blow lands on a foe pulling out of a lock however
+            // far apart the locked lines had drifted.
+            let reach = if rhythm == Strike::Early && regs.falling_back[j] > 0 {
+                LET_GO
+            } else {
+                REACH
+            };
+            if !me.touches(&them, reach) {
                 // Locked but drifted apart: closing up, out of reach.
                 continue;
             }
@@ -1244,7 +1304,7 @@ impl Combat {
             let defence = defender.melee_defence_in(regs.formation[j], side == Side::Front);
             let hit = hit_percent(i32::from(attacker.melee_attack), defence) as u128;
             let charge = 100
-                + u128::from(attacker.charge_bonus) * u128::from(regs.charge[i])
+                + u128::from(regs.charge_bonus[i]) * u128::from(regs.charge[i])
                     / u128::from(CHARGE_TICKS);
             let heart = u128::from(heart_percent(regs.morale_state[i]));
             let room = u128::from(attacker.weapon_room_percent(regs.formation[i]));

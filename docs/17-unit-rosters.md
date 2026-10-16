@@ -97,7 +97,7 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
   - **Gather** · passive — Carries 10 Grub or 5 Marrow per trip to a Clan Hall or Granary. [Gather]
   - **Build** · order — Builds and repairs Clan structures (repair 8 hit points a second). [Construct]
 - **Yari Ashigaru** (existing in `units.ron`)
-  - **Brace** · toggle — Holds position: cannot move, charges into its front get no charge bonus, +10 melee defence to the front. [ModifyStat]
+  - **Brace** · toggle — Holds position: cannot move, charges into its front get no charge bonus, +10 melee defence to the front. [ModifyStat] *Built so far (2026-10-16): the Brace order (Z) for every regiment with long weapons, as in [05 · Brace and Fall back](05-combat.md#brace-and-fall-back): a charge into its front is turned back on the charger; the +10 front defence is not built.*
   - **Formation Discipline** · passive — +15% melee defence while standing still in tight formation. [ModifyStat]
 - **Yumi Ashigaru** (existing)
   - **Fire Arrows** · toggle — Volleys set structures burning (3 damage a second for 5 s) and deal +50% to structures; reload is 25% slower while on. [ModifyStat, ApplyStatus]

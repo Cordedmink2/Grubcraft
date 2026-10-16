@@ -88,7 +88,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 6;
+pub const SIM_VERSION: u32 = 7;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -514,6 +514,17 @@ pub enum Command {
         regiment: RegimentHandle,
         formation: Formation,
     },
+    /// Pull a regiment out of its fight in good order: it backs away
+    /// [`combat::FALL_BACK_TILES`] straight back from its foe (or from where
+    /// it faces, if it isn't fighting) at half pace, still facing the
+    /// enemy. Its foes get one parting blow and don't follow; an enemy that
+    /// reaches its flank or rear catches it (docs/05-combat.md).
+    FallBack { regiment: RegimentHandle },
+    /// Set spears or pikes against a charge, or lift them (`on` false): a
+    /// braced regiment stands, and a charge into its front runs onto the
+    /// points (docs/05-combat.md). Only regiments with long weapons, out of
+    /// melee, can brace; any move or attack order lifts it.
+    Brace { regiment: RegimentHandle, on: bool },
     /// Field Battle: give the issuing player a deployment zone. The first
     /// one starts the deployment phase (see [`deploy`]); more are accepted
     /// until the battle begins, one per player.
@@ -586,6 +597,8 @@ impl Command {
             | Command::Attack { .. }
             | Command::SetFormation { .. }
             | Command::Ready
+            | Command::FallBack { .. }
+            | Command::Brace { .. }
             | Command::AttackStructure { .. }
             | Command::Gather { .. }
             | Command::Build { .. }
@@ -739,6 +752,36 @@ impl World {
             &self.nav,
             &self.regiments,
         )
+    }
+
+    /// Whether `player` could have a worker lay a building of type
+    /// `building` somewhere now: [`World::can_lay`] without the ground.
+    pub fn may_lay(&self, player: PlayerId, building: BuildingId) -> Result<(), Refusal> {
+        self.conquest
+            .as_ref()
+            .ok_or(Refusal::NoBuildings)?
+            .may_lay(player, building)
+    }
+
+    /// Whether `player`'s building `h` could queue a regiment of type `unit`
+    /// now, and if not, why: the check [`Command::Train`] makes.
+    pub fn can_train(
+        &self,
+        player: PlayerId,
+        h: StructureHandle,
+        unit: UnitId,
+    ) -> Result<(), Refusal> {
+        self.conquest
+            .as_ref()
+            .ok_or(Refusal::NoBuildings)?
+            .can_train(player, h, unit)
+    }
+
+    /// What `player`'s building `h` would upgrade into now, or why it
+    /// can't: the check [`Command::Upgrade`] makes.
+    pub fn can_upgrade(&self, player: PlayerId, h: StructureHandle) -> Result<BuildingId, Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        c.can_upgrade(player, h).map(|(_, to)| to)
     }
 
     /// Whether a building of type `building` could go up now with its
@@ -917,7 +960,7 @@ impl World {
 
     fn apply(&mut self, pc: &PlayerCommand) -> bool {
         // While the armies deploy, only setting out and placing armies,
-        // formations and readiness are accepted.
+        // formations, bracing and readiness are accepted.
         if self.deploying()
             && !matches!(
                 pc.command,
@@ -926,6 +969,7 @@ impl World {
                     | Command::SpawnStructure { .. }
                     | Command::MoveTo { .. }
                     | Command::SetFormation { .. }
+                    | Command::Brace { .. }
                     | Command::Ready
             )
         {
@@ -1026,6 +1070,19 @@ impl World {
                 Some(owner) if owner == pc.player => {
                     self.regiments
                         .set_formation(regiment, formation, &self.units)
+                }
+                _ => false,
+            },
+            Command::FallBack { regiment } => match self.regiments.resolve(regiment) {
+                Some(i) if self.regiments.owner[i] == pc.player => {
+                    let to = self.fall_back_point(i);
+                    self.regiments.fall_back(regiment, to)
+                }
+                _ => false,
+            },
+            Command::Brace { regiment, on } => match self.regiments.owner(regiment) {
+                Some(owner) if owner == pc.player => {
+                    self.regiments.brace(regiment, on, &self.units)
                 }
                 _ => false,
             },
@@ -1203,6 +1260,26 @@ impl World {
         if let (Some(conquest), Some(i)) = (&mut self.conquest, self.regiments.resolve(h)) {
             conquest.stop_work(i);
         }
+    }
+
+    /// Where regiment slot `i` falls back to: [`combat::FALL_BACK_TILES`]
+    /// straight back from the foe it is fighting, or behind it if it isn't
+    /// fighting, kept on the map.
+    fn fall_back_point(&self, i: usize) -> FxVec2 {
+        let regs = &self.regiments;
+        let here = regs.position[i];
+        let behind = regs.facing[i].to_vec() * -Fx::ONE;
+        let away = regs
+            .foe(i)
+            .map(|j| here - regs.position[j])
+            .filter(|d| *d != FxVec2::ZERO)
+            .map_or(behind, FxVec2::normalized);
+        let to = here + away * combat::FALL_BACK_TILES;
+        if self.map_tiles == 0 {
+            return to;
+        }
+        let edge = Fx::from_int(self.map_tiles as i32);
+        FxVec2::new(to.x.clamp(Fx::ZERO, edge), to.y.clamp(Fx::ZERO, edge))
     }
 
     /// Deployment: put `player`'s `regiment` straight down at `position`,
