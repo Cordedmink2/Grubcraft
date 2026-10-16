@@ -35,6 +35,10 @@ pub const STRIKE_INTERVAL: u32 = TICKS_PER_SECOND;
 pub const REACH: Fx = Fx::from_ratio(1, 2);
 /// How long a charge bonus lasts after contact, fading to nothing.
 pub const CHARGE_TICKS: u16 = 3 * TICKS_PER_SECOND as u16;
+/// How many ticks a regiment must have stepped forward since it last halted
+/// or fought for hitting home to count as a charge: lines that brush apart
+/// and close again, or a block that starts next to its foe, don't charge.
+pub const RUN_UP_TICKS: u8 = TICKS_PER_SECOND as u8;
 /// Arrow flight speed, tiles per tick (20 tiles per second).
 pub const MISSILE_SPEED: Fx = Fx::ONE;
 /// Volleys in flight at once, across all players.
@@ -826,10 +830,12 @@ impl Combat {
             regs.engaged[i] = engaged;
             if let Some((_, j)) = best {
                 if !was_engaged {
-                    // Hitting home at speed is a charge, but nobody charges
-                    // out of a river, from behind a shield wall, or while
-                    // pushing through friends. A fight ends any march.
+                    // Hitting home at speed after a run-up is a charge, but
+                    // nobody charges out of a river, from behind a shield
+                    // wall, or while pushing through friends. A fight ends
+                    // any march.
                     let charging = regs.target[i].is_some()
+                        && regs.run_up[i] >= RUN_UP_TICKS
                         && regs.pace[i].raw() * 4 >= regs.speed[i].raw() * 3
                         && !terrain.wet(regs.position[i])
                         && regs.formation[i].can_charge()

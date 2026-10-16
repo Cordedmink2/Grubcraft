@@ -1,6 +1,7 @@
 //! Melee, charges, flanks and volleys.
 
 use gc_fixed::{Angle, Fx, FxVec2};
+use gc_sim::combat::{CHARGE_TICKS, RUN_UP_TICKS};
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, RegimentHandle, UnitStats, World};
 
@@ -18,10 +19,14 @@ fn fearless() -> [UnitStats; 4] {
 }
 
 fn world() -> World {
+    world_with(&fearless())
+}
+
+fn world_with(units: &[UnitStats]) -> World {
     World::new(&MatchSetup {
         seed: 11,
         capacities: Capacities::default(),
-        units: &fearless(),
+        units,
         map_tiles: 256,
         nav: &[],
         teams: &[],
@@ -56,6 +61,16 @@ fn run(w: &mut World, ticks: u32) {
     for _ in 0..ticks {
         w.tick(&[]);
     }
+}
+
+fn until_engaged(w: &mut World, h: RegimentHandle) {
+    for _ in 0..400 {
+        if w.regiments.get(h).unwrap().engaged {
+            return;
+        }
+        w.tick(&[]);
+    }
+    panic!("never made contact");
 }
 
 #[test]
@@ -102,10 +117,16 @@ fn engaged_regiments_ignore_move_orders() {
 }
 
 /// Casualties a defender takes from one spear block in `ticks`, when the
-/// attacker stands against the given side of it.
+/// attacker stands against the given side of it. The defenders are spearmen
+/// who can't turn, so a flank or rear stays one for the whole fight.
 fn losses_from(side_offset: (i32, i32), defender_facing: Angle, ticks: u32) -> u16 {
-    let mut w = world();
-    let d = spawn(&mut w, 1, SPEARS, 50, 50, defender_facing);
+    let mut units = fearless().to_vec();
+    units.push(UnitStats {
+        turn_rate: 0,
+        ..units[SPEARS as usize]
+    });
+    let mut w = world_with(&units);
+    let d = spawn(&mut w, 1, units.len() as u16 - 1, 50, 50, defender_facing);
     let facing = Angle::of_vec(FxVec2::from_ints(-side_offset.0, -side_offset.1));
     let _a = spawn(
         &mut w,
@@ -122,10 +143,9 @@ fn losses_from(side_offset: (i32, i32), defender_facing: Angle, ticks: u32) -> u
 #[test]
 fn flank_and_rear_hits_hurt_more() {
     // The defender faces north. Attackers stand in front, to its east, and behind.
-    // Short fights: a flanked block turns to face its attacker within seconds.
-    let front = losses_from((0, -3), NORTH, 20 * 4);
-    let flank = losses_from((4, 0), NORTH, 20 * 4);
-    let rear = losses_from((0, 3), NORTH, 20 * 4);
+    let front = losses_from((0, -3), NORTH, 20 * 6);
+    let flank = losses_from((4, 0), NORTH, 20 * 6);
+    let rear = losses_from((0, 3), NORTH, 20 * 6);
     assert!(
         front < flank && flank <= rear,
         "front {front}, flank {flank}, rear {rear}"
@@ -137,18 +157,7 @@ fn charges_hit_harder_than_standing_fights() {
     // Spearmen with a big charge bonus, so the effect stands out from the dice.
     let mut units = fearless();
     units[0].charge_bonus = 200;
-    let world = || {
-        World::new(&MatchSetup {
-            seed: 11,
-            capacities: Capacities::default(),
-            units: &units,
-            map_tiles: 256,
-            nav: &[],
-            teams: &[],
-            ground: gc_sim::Ground::FLAT,
-            champions: false,
-        })
-    };
+    let world = || world_with(&units);
     // Charge in from 14 tiles away, then fight for 3 s.
     let charge = {
         let mut w = world();
@@ -161,12 +170,7 @@ fn charges_hit_harder_than_standing_fights() {
                 target: d,
             },
         }]);
-        let mut ticks = 0;
-        while !w.regiments.get(a).unwrap().engaged {
-            w.tick(&[]);
-            ticks += 1;
-            assert!(ticks < 400, "never made contact");
-        }
+        until_engaged(&mut w, a);
         run(&mut w, 60);
         24 - models(&w, d)
     };
@@ -179,6 +183,52 @@ fn charges_hit_harder_than_standing_fights() {
         24 - models(&w, d)
     };
     assert!(charge > standing, "charge {charge}, standing {standing}");
+}
+
+/// Charge bonus the attacker carries when it hits a fresh block `gap` tiles
+/// beyond where its first foe stood, sent in `wait` ticks after that foe
+/// was taken off the field mid-fight.
+fn charge_on_second_contact(wait: u32, gap: i32) -> u16 {
+    let mut w = world();
+    let first = spawn(&mut w, 1, SPEARS, 50, 50, SOUTH);
+    let a = spawn(&mut w, 0, SPEARS, 50, 64, NORTH);
+    let attack = |w: &mut World, target| {
+        w.tick(&[PlayerCommand {
+            player: 0,
+            command: Command::Attack {
+                regiment: a,
+                target,
+            },
+        }]);
+    };
+    attack(&mut w, first);
+    until_engaged(&mut w, a);
+    assert!(
+        w.regiments.get(a).unwrap().charge > 0,
+        "the first contact was no charge"
+    );
+    // Fight until the charge has spent itself, then lose the foe.
+    run(&mut w, u32::from(CHARGE_TICKS));
+    w.tick(&[PlayerCommand {
+        player: 1,
+        command: Command::RemoveRegiment { regiment: first },
+    }]);
+    assert!(!w.regiments.get(a).unwrap().engaged);
+    run(&mut w, wait);
+    let second = spawn(&mut w, 1, SPEARS, 50, 50 - gap, SOUTH);
+    attack(&mut w, second);
+    until_engaged(&mut w, a);
+    w.regiments.get(a).unwrap().charge
+}
+
+#[test]
+fn only_a_run_up_makes_a_charge() {
+    // Closing a two-tile gap at once, or after standing a while, is no
+    // charge: 2 tiles is under a second's march.
+    assert_eq!(charge_on_second_contact(0, 2), 0);
+    assert_eq!(charge_on_second_contact(3 * u32::from(RUN_UP_TICKS), 2), 0);
+    // A 6-tile run-up is.
+    assert!(charge_on_second_contact(0, 6) > 0);
 }
 
 #[test]
