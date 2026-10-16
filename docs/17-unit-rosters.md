@@ -74,8 +74,8 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Hands | 1 | Worker | 50 / 0 | 1 | 12 | Clan Hall | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 20 | |
-| Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 28 × 8 | 8 | 3.0 | 60 | 0.75 / 0.85 | 26 / 45 / 2 | 20 | 60 | |
-| Yumi Ashigaru | 1 | Ranged | 130 / 0 | 3 | 22 | Dojo | 17 × 8 | 8 | 3.0 | 70 | 0.8 / 1.0 | 15 / 20 / 2 | 5 | 50 | 30, 4, 4.0 s, 30% |
+| Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 28 × 8 | 8 | 3.0 | 60 | 0.75 / 0.85 | 25 / 45 / 2 | 20 | 60 | |
+| Yumi Ashigaru | 1 | Ranged | 130 / 0 | 3 | 22 | Dojo | 16 × 8 | 8 | 3.0 | 70 | 0.8 / 1.0 | 15 / 20 / 2 | 5 | 50 | 30, 4, 4.0 s, 31% |
 | Battering Ram | 1 | Siege | 100 / 0 | 4 | 25 | Ember Workshop | 1 × 300 | 1 | 2.0 | 45 | 1.5 / 3.0 | 20 / 10 / 40 | 0 | 50 | |
 | Katana Samurai | 2 | Heavy | 160 / 40 | 5 | 30 | Dojo | 16 × 14 | 8 | 3.0 | 75 | 0.8 / 0.9 | 55 / 45 / 5 | 30 | 80 | |
 | Mounted Samurai | 2 | Cavalry | 180 / 40 | 5 | 32 | Stables | 8 × 30 | 4 | 6.5 | 140 | 1.4 / 2.0 | 45 / 30 / 6 | 80 | 70 | |
@@ -176,7 +176,7 @@ A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Gnawer | 1 | Worker | 50 / 0 | 1 | 12 | Hive | 1 × 18 | 1 | 3.25 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 15 | |
-| Skitterlings | 1 | Light | 100 / 0 | 3 | 18 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 50 / 25 / 3 | 40 | 63 | |
+| Skitterlings | 1 | Light | 100 / 0 | 3 | 18 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 50 / 26 / 3 | 40 | 64 | |
 | Chitin Guard | 1 | Heavy | 130 / 0 | 4 | 22 | Hive | 12 × 16 | 6 | 2.75 | 70 | 0.9 / 1.0 | 30 / 55 / 4 | 15 | 60 | |
 | Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hive | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
 | Spitters | 2 | Ranged | 60 / 20 | 3 | 15 | Skitterlings | 16 × 7 | 8 | 3.5 | 100 | 0.8 / 0.9 | 20 / 15 / 2 | 5 | 45 | 22, 3, 3.0 s, 35% |
@@ -275,7 +275,7 @@ Few, costly crystal soldiers who blink across the map and bend light through eac
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Tuner | 1 | Worker | 60 / 0 | 1 | 14 | Spire | 1 × 30 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 10 / 2 | 0 | 30 | |
-| Shardlings | 1 | Light | 110 / 0 | 3 | 20 | Forge of Facets | 14 × 12 | 6 | 3.25 | 80 | 0.55 / 0.9 | 40 / 40 / 4 | 30 | 57 | |
+| Shardlings | 1 | Light | 110 / 0 | 3 | 20 | Forge of Facets | 14 × 12 | 6 | 3.25 | 80 | 0.55 / 0.9 | 40 / 40 / 4 | 30 | 56 | |
 | Prism Lancers | 1 | Ranged | 140 / 0 | 4 | 24 | Forge of Facets | 10 × 8 | 5 | 3.0 | 70 | 0.9 / 1.0 | 15 / 25 / 2 | 0 | 55 | 26, 6, 4.5 s, 45% |
 | Harmonic Walkers | 2 | Heavy | 170 / 50 | 5 | 32 | Forge of Facets | 6 × 32 | 3 | 2.75 | 50 | 1.6 / 1.8 | 40 / 50 / 7 | 20 | 70 | |
 | Glass Striders (new) | 2 | Cavalry | 175 / 45 | 5 | 32 | Forge of Facets | 6 × 26 | 3 | 7.0 | 150 | 1.4 / 2.0 | 45 / 30 / 6 | 70 | 60 | |
@@ -354,7 +354,7 @@ Merchant-necromancers: cheap undead that never break, beside living specialists 
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Ledger Clerk | 1 | Worker | 50 / 0 | 1 | 12 | Counting House | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 25 | |
 | Caravan | 1 | Support | 75 / 0 | 2 | 20 | Counting House | 1 × 220 | 1 | 2.25 | 45 | 2.5 / 3.5 | 0 / 10 / 1 | 0 | 30 | |
-| Bone Pikes | 1 | Spear | 90 / 0 | 3 | 18 | Ossuary | 19 × 7 | 10 | 2.75 | 45 | 0.7 / 0.9 | 28 / 51 / 2 | 10 | — | |
+| Bone Pikes | 1 | Spear | 90 / 0 | 3 | 18 | Ossuary | 19 × 7 | 10 | 2.75 | 45 | 0.7 / 0.9 | 28 / 52 / 2 | 14 | — | |
 | Crossbow Auditors | 1 | Ranged | 140 / 0 | 4 | 24 | Guildhall | 12 × 9 | 6 | 3.0 | 70 | 0.8 / 1.0 | 20 / 25 / 2 | 0 | 55 | 26, 7, 6.0 s, 40% |
 | Gravewardens (new) | 2 | Heavy | 170 / 40 | 5 | 30 | Ossuary | 12 × 18 | 6 | 2.5 | 55 | 0.9 / 1.0 | 45 / 50 / 6 | 15 | — | |
 | Debt Collectors | 2 | Cavalry | 190 / 50 | 5 | 34 | Guildhall | 6 × 34 | 3 | 6.0 | 120 | 1.5 / 2.1 | 45 / 40 / 7 | 70 | 65 | |
@@ -487,9 +487,9 @@ Two Veteran AIs, one per faction, on the generated map with every rule in play (
 
 | | Brood | Choir | Carrion Concord |
 |---|---|---|---|
-| **Ember Clans** | 49% | 50% | 46% |
-| **Brood** | | 45.5% | 51.5% |
-| **Choir** | | | 48% |
+| **Ember Clans** | 50% | 52% | 46% |
+| **Brood** | | 44% | 52% |
+| **Choir** | | | 54.5% |
 
 **Weapon room retune (2026-10-15).** Reach gave the spear regiments half their second rank as extra blows, so the Yari Ashigaru went from 30 / 45 / 3 to 27 / 45 / 2 and the Bone Pikes from 25 / 55 / 3 to 28 / 54 / 2. Before the retune the table read 50%, 47%, 61% / 45%, 53% / 53%, and after it 59%, 42%, 53% / 45%, 54% / 56%. On seeds 1 to 96 it now reads 60%, 51%, 52% / 36%, 52% / 54% (the Brood against the Choir was 36% there before the retune too). These knobs are steep too: a Bone Pikes defence of 53 or 55 instead of 54 moved the Concord's matchups by 10 to 20 points.
 
@@ -500,6 +500,8 @@ Seeds 1 to 96 gave every pair between 48% and 57% except the Brood against the C
 <a id="lines-that-push-retune"></a>**Lines that push retune (2026-10-15).** [Lines that push](05-combat.md#lines-that-push) widened the gap at first (Ember Clans against the Brood 62%, the Choir 46%, the Concord 23%; the Brood against the Choir 29%, the Concord 20%; the Choir against the Concord 31%, on 96 battles a pair): the shove goes to whoever already wins the exchange, which the hard-to-hit Bone Pikes usually do, and being pinned costs the living heart while the dead never rout. So the Bone Pikes went from defence 54 to 52 and the Skitterlings from morale 57 to 63 (the swarm holds a little longer before it breaks). Before the deployment phase and the army builder arrived on main that gave every pair 46% to 54%; the table above is the same run on today's main (armies deploy first): every pair between 42% and 57% without champions, and with them Ember Clans against the Brood 47%, the Choir 50%, the Concord 51%; the Brood against the Choir 42%, the Concord 54%; the Choir against the Concord 56%. The Choir is now a little ahead (the Brood wins 42% against it) and is the one to watch. Both knobs are steep: a Bone Pikes defence of 51 gave the Concord's opponents 52% to 64% and 53 gave them 39% to 55%, and Skitterlings morale 65 left the Clans 40% against the Brood while 62 gave them 62%.
 
 <a id="concord-retune"></a>**Concord retune (2026-10-16).** After charges needed a run-up ([05 · Combat](05-combat.md), PR #82) the Concord won 55% to 60% against everyone (the table read Clans 52.5% / 53% / 42.5%, Brood 45.5% / 45%, Choir 39.5%, averaging both seed sets). Three small moves gave the table above: Bone Pikes defence 52 to 51, Yari Ashigaru attack 27 to 26 and one more Yumi Ashigaru model (16 to 17); every pair now sits between 45.5% and 51.5% (champions allowed, 384 battles a pair, each set of 192 between 39% and 61%). Tried and dropped: Skitterlings defence 26 (Brood v Concord 56.5%), Bone Pikes attack 29 (Choir v Concord 40%), Shardlings morale 56 (Clans v Choir 54%, Choir v Concord 42.5%) and Skitterlings morale 64 (no better than 63). Units and map are stored inside replays, so the goldens did not move. The Brood against the Choir (45.5%) and the Clans against the Concord (46%) are the two to watch.
+
+<a id="second-concord-retune"></a>**Second retune (2026-10-16).** Sticky melee contact ([#98](05-combat.md)) left the Brood at 34% to 45% against everyone, and the stronger General AI of stage 3 (#112) then put the Clans and the Choir ahead: on main the table read Clans 56.5 / 53 / 58, Brood v Choir 32.5, Brood v Concord 51, Choir v Concord 61.5. The pass moved Skitterlings defence 25 to 26 and morale 63 to 64, Shardlings morale 57 to 56, Bone Pikes defence 51 to 52 and charge bonus 10 to 14, Yari Ashigaru attack 26 to 25, Yumi Ashigaru models 17 to 16 and accuracy 30 to 31 (champions allowed, 384 battles a pair, every pair between 44% and 54.5%; each set of 192 between 42% and 56%). Steep knobs this time: Bone Pikes attack 27 instead of 28 gave the Concord 60% to 66% against the Brood and the Choir, Yumi accuracy 33 put the Clans 58% against the Choir, and Yumi models 17 moved the Clans against the Concord from 43% to 42.5% (noise). The Brood against the Choir (44%) and the Clans against the Concord (46%) are the two to watch.
 
 <a id="choir-retune"></a>**Choir retune (2026-10-15).** On 384 battles a pair (seeds 1 to 192 and 2001 to 2192, champions allowed) the Choir won all three of its pairs after the lines that push retune: the Clans won 45% against it, the Brood 42%, and it beat the Concord 55%. So the Shardlings went from morale 60 to 57 (they break a little sooner), which gives the table above: every pair 49% to 54%, and each set of 192 between 44% and 56%. Without champions (seeds 2001 to 2192) it reads 51%, 54%, 49% / 49%, 57% / 52%. A Shardling attack of 39 instead left the Clans 42% against the Choir on seeds 1 to 192, and a defence of 39 left the Choir 43% against the Concord there. Every generated map has woods (5% to 23% of the ground on these 384 maps, 10% to 30% counting tall grass). On bare maps (`AI_COVER=off`, seeds 2001 to 2192) the table reads 54%, 22%, 48% / 43%, 44% / 57%: in the open the Choir beats the Clans' archers easily, so hand-made maps with little cover will want their own look.
 
