@@ -31,6 +31,23 @@ jobs:
       - name: Data reload build (dev feature)
         run: cargo clippy -p gc_game --all-targets --features dev
 
+  packs:
+    # The committed art and sound packs are binaries, so this fails when one
+    # no longer matches the manifest beside it. The sound bank is re-made
+    # from its recipes and compared byte for byte. The model pack cannot be
+    # re-baked here (most sources live outside the repository), so its
+    # manifest is compared with models.ron, the pack and the sources the repo
+    # holds; the check says how many shared sources it could not look at.
+    name: Packs match their manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          alsa: 'true'
+      - run: cargo run --release -p gc_artbake -- --check
+      - run: cargo run --release -p gc_sfx -- --check
+
   test:
     # The determinism tests must produce identical hashes on every platform:
     # this is what lets Mac and Windows players share a lockstep match.

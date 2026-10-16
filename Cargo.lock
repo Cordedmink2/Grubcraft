@@ -867,6 +867,7 @@ dependencies = [
 name = "gc_sfx"
 version = "0.1.0"
 dependencies = [
+ "gc_assets",
  "gc_audio",
 ]
 

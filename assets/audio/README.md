@@ -13,7 +13,7 @@ cargo run -p gc_sfx                 # rewrites assets/audio/sounds.gcsnd
 cargo run -p gc_sfx -- --wav out/   # also writes each sound as a WAV file to listen to
 ```
 
-Commit the rewritten `sounds.gcsnd` with the change.
+Commit the rewritten `sounds.gcsnd` and its `sounds.manifest` (baker version, bank hash and size) with the change. CI runs `cargo run -p gc_sfx -- --check`, which re-synthesises the bank and fails if it differs from the committed bank or manifest, so a recipe edit without a rewrite is caught. If a change to the `gc_sfx` tool itself (not a recipe) changes the bytes, bump `BAKER_VERSION` in `tools/gc_sfx/src/main.rs`.
 
 ## Catalogue
 
