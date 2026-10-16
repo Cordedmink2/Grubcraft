@@ -3,17 +3,21 @@
 //! The simulation knows nothing about audio. After each tick this module
 //! reads what the simulation says the tick did (`World::events`) and plays a
 //! sound for each: volleys leaving and landing, blows in melee, a regiment
-//! wavering, breaking, shattering or rallying. Sounds are placed relative to the
-//! listener (the bird's-eye camera's ground point, or the eye when riding with a regiment):
-//! quieter with distance (less so when zoomed out)
-//! and panned left or right.
+//! wavering, breaking, shattering or rallying. Regiments also shout in their
+//! faction's voice (the Ember Clans' war cries, the Brood's shrieks, the Shard
+//! Choir's sung chords, the Carrion Concord's moans) as they charge, break
+//! and rally, and when their champion wins the duel between the lines.
+//! Sounds are placed relative to the listener (the bird's-eye camera's
+//! ground point, or the eye when riding with a regiment): quieter with
+//! distance (less so when zoomed out) and panned left or right.
 
 use crate::camera::Listener;
 use crate::from_fx_vec;
-use gc_audio::{Audio, Bank, SoundId};
+use gc_audio::{Audio, Bank, Cry, SoundId};
 use gc_platform::logln;
+use gc_sim::champions::Outcome;
 use gc_sim::events::{Event, VolleyId};
-use gc_sim::{MoraleState, RegimentHandle, World};
+use gc_sim::{MoraleState, RegimentHandle, TICKS_PER_SECOND, UnitId, World};
 use glam::Vec2;
 use std::time::{Duration, Instant};
 
@@ -31,10 +35,34 @@ const BLOW_COOLDOWN: u32 = 3;
 /// Every this many ticks an engaged regiment is heard even without a death.
 const AMBIENT_EVERY: u32 = 10;
 
+/// Battle cries: how long one is counted as sounding (they run 1 to 1.6
+/// s), and how many may sound at once, so a big battle is a roar and not a
+/// wall of noise.
+const CRY_TICKS: u32 = 28;
+const MAX_CRIES: usize = 4;
+/// Ticks before the same regiment is heard to cry the same cry again, for
+/// a charge, a rout and a rally.
+const CRY_COOLDOWN: [u32; 3] = [
+    10 * TICKS_PER_SECOND,
+    8 * TICKS_PER_SECOND,
+    8 * TICKS_PER_SECOND,
+];
+/// A cry carries this much further than the hearing range's one.
+const CRY_REACH: f32 = 1.3;
+/// A regiment on the march starts its charge cry when it is this close
+/// (tiles, centre to centre) to an enemy it is heading for: about a
+/// second before the blocks meet.
+const CHARGE_LEAD: f32 = 7.0;
+/// How far off its heading (cosine) an enemy may be to count as headed for.
+const CHARGE_AHEAD: f32 = 0.77;
+/// Regiments are checked for a charge every this many ticks.
+const CHARGE_SCAN_EVERY: u32 = 2;
+
 // Who is cut off first when all 32 voices are busy.
 const PRI_ARROWS: u8 = 70;
 const PRI_BLOWS: u8 = 100;
 const PRI_CHARGE: u8 = 170;
+const PRI_CRY: u8 = 200;
 const PRI_MORALE: u8 = 220;
 const PRI_UI: u8 = 255;
 
@@ -52,11 +80,53 @@ pub enum UiSound {
     Attack,
 }
 
+/// What a regiment type sounds like: its faction (0 Ember Clans, 1 Brood, 2
+/// Shard Choir, 3 Carrion Concord) and whether it charges (rather than
+/// only shooting).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Voice {
+    pub faction: u8,
+    pub charges: bool,
+}
+
+/// The battle cries still sounding, by the tick each started on: at most
+/// [`MAX_CRIES`] at once.
+#[derive(Default)]
+struct CryCap {
+    starts: Vec<u32>,
+}
+
+impl CryCap {
+    /// Room for one more cry at `tick`? If so, it is counted.
+    fn admit(&mut self, tick: u32) -> bool {
+        self.starts.retain(|&start| tick < start + CRY_TICKS);
+        if self.starts.len() >= MAX_CRIES {
+            return false;
+        }
+        self.starts.push(tick);
+        true
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Seen {
     handle: RegimentHandle,
     /// Tick before which no further blow is played for it.
     quiet_until: u32,
+    /// Ticks before which it is not heard to cry a charge, a rout, a rally.
+    cry_quiet: [u32; 3],
+}
+
+impl Seen {
+    /// Whether the cry on cooldown `slot` may be heard from this regiment
+    /// at `tick`.
+    fn may_cry(&self, slot: usize, tick: u32) -> bool {
+        tick >= self.cry_quiet[slot]
+    }
+
+    fn cried(&mut self, slot: usize, tick: u32) {
+        self.cry_quiet[slot] = tick + CRY_COOLDOWN[slot];
+    }
 }
 
 /// How many arrows a volley in the air carries (`Landed` doesn't say), so
@@ -76,6 +146,10 @@ pub struct Sounds {
     /// The Master and Music sliders from Settings, 0..=100.
     master: u8,
     music: u8,
+    /// The battle cries still sounding.
+    cries: CryCap,
+    /// The duel (by the tick it was called) whose winner has been cheered.
+    duel_cried: Option<u32>,
     /// True while `observe` only records what it sees: no sound plays.
     hushed: bool,
     /// When the output may next be reopened, and how long to wait after
@@ -84,9 +158,35 @@ pub struct Sounds {
     reopen: Option<(Instant, Duration)>,
 }
 
-fn forget_match(seen: &mut [Option<Seen>], flights: &mut Vec<Shots>) {
+fn forget_match(
+    seen: &mut [Option<Seen>],
+    flights: &mut Vec<Shots>,
+    cries: &mut CryCap,
+    duel_cried: &mut Option<u32>,
+) {
     seen.fill(None);
     flights.clear();
+    cries.starts.clear();
+    *duel_cried = None;
+}
+
+/// Which of a regiment's cooldowns a cry is on (the champion's victory cry
+/// is no regiment's).
+fn cooldown_slot(kind: Cry) -> Option<usize> {
+    match kind {
+        Cry::Charge => Some(0),
+        Cry::Rout => Some(1),
+        Cry::Rally => Some(2),
+        Cry::Victory => None,
+    }
+}
+
+/// Whether a regiment at `at` marching along `heading` (a unit vector) is
+/// close enough on a foe at `foe`, and facing it, to start its charge cry.
+fn closing_on(at: Vec2, heading: Vec2, foe: Vec2) -> bool {
+    let offset = foe - at;
+    let distance = offset.length();
+    distance > 0.01 && distance < CHARGE_LEAD && offset.dot(heading) >= CHARGE_AHEAD * distance
 }
 
 /// A Settings slider (0..=100) as a volume, 0.0..=1.0.
@@ -134,6 +234,8 @@ impl Sounds {
                     music_on: true,
                     master,
                     music,
+                    cries: CryCap::default(),
+                    duel_cried: None,
                     hushed: false,
                     reopen: None,
                 };
@@ -151,7 +253,12 @@ impl Sounds {
     /// the same regiment handles, so a leftover cool-down would mute the new
     /// match's blows, and volleys still in the air will never land.
     pub fn new_match(&mut self) {
-        forget_match(&mut self.seen, &mut self.flights);
+        forget_match(
+            &mut self.seen,
+            &mut self.flights,
+            &mut self.cries,
+            &mut self.duel_cried,
+        );
     }
 
     /// Tell a freshly opened output what the player has set: mute, music
@@ -203,12 +310,15 @@ impl Sounds {
     /// bursts out when play catches up, but it makes no noise. `shown` says
     /// whether the player can see a regiment: one they can't gives nothing
     /// away, though its state is still remembered for when it is revealed.
+    /// `voice` says what a regiment type sounds like (None for a type it
+    /// doesn't know: it makes no cries).
     pub fn observe(
         &mut self,
         world: &World,
         listener: Listener,
         heard: bool,
         shown: impl Fn(RegimentHandle) -> bool,
+        voice: impl Fn(UnitId) -> Option<Voice>,
     ) {
         self.focus = listener.position;
         self.right = listener.right;
@@ -216,7 +326,9 @@ impl Sounds {
         let tick = world.tick_count();
 
         self.volleys(world, heard, &shown);
-        self.regiments_told(world, heard, &shown);
+        self.regiments_told(world, heard, &shown, &voice);
+        self.charges(world, heard, &shown, &voice);
+        self.duel(world, heard, &shown, &voice);
 
         let mut fighting = 0.0f32;
         for r in world.regiments.iter() {
@@ -256,6 +368,7 @@ impl Sounds {
             *slot = Some(Seen {
                 handle,
                 quiet_until: 0,
+                cry_quiet: [0; 3],
             });
         }
         slot.as_mut().expect("just filled")
@@ -270,6 +383,7 @@ impl Sounds {
         world: &World,
         heard: bool,
         shown: &impl Fn(RegimentHandle) -> bool,
+        voice: &impl Fn(UnitId) -> Option<Voice>,
     ) {
         let tick = world.tick_count();
         for e in world.events() {
@@ -277,19 +391,33 @@ impl Sounds {
                 Event::Contact { regiment, .. } => {
                     if let Some(r) = world.regiments.get(regiment) {
                         self.hushed = !heard || !shown(regiment);
-                        self.play_at(
-                            SoundId::Charge,
-                            from_fx_vec(r.position),
-                            1.0,
-                            1.4,
-                            PRI_CHARGE,
-                        );
+                        let at = from_fx_vec(r.position);
+                        self.play_at(SoundId::Charge, at, 1.0, 1.4, PRI_CHARGE);
+                        // Hitting home at speed: a charge, whose cry usually
+                        // began as the blocks closed (see `charges`).
+                        if r.charge > 0
+                            && let Some(v) = voice(r.unit)
+                        {
+                            self.cry(tick, Some(regiment), v, Cry::Charge, at);
+                        }
                     }
                 }
                 Event::Morale { regiment, from, to } => {
                     if let Some(r) = world.regiments.get(regiment) {
                         self.hushed = !heard || !shown(regiment);
-                        self.morale_change(from, to, from_fx_vec(r.position));
+                        let at = from_fx_vec(r.position);
+                        self.morale_change(from, to, at);
+                        if let Some(v) = voice(r.unit) {
+                            match (from, to) {
+                                (_, MoraleState::Routing) => {
+                                    self.cry(tick, Some(regiment), v, Cry::Rout, at);
+                                }
+                                (MoraleState::Routing, to) if !to.broken() => {
+                                    self.cry(tick, Some(regiment), v, Cry::Rally, at);
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
                 Event::Losses { regiment, lost } => {
@@ -315,6 +443,119 @@ impl Sounds {
             }
         }
         self.hushed = false;
+    }
+
+    /// A regiment's shout: its faction's cry for `kind`, placed at `at`,
+    /// unless it is out of earshot or unseen, the same regiment was heard
+    /// to cry the same thing not long ago (`regiment`: none for a cry that
+    /// is no one regiment's, such as a champion's), or [`MAX_CRIES`] are
+    /// already sounding. Returns whether it was played. `hushed` must say
+    /// whether the shouter is unheard.
+    fn cry(
+        &mut self,
+        tick: u32,
+        regiment: Option<RegimentHandle>,
+        voice: Voice,
+        kind: Cry,
+        at: Vec2,
+    ) -> bool {
+        if self.hushed || (at - self.focus).length() >= self.hearing * CRY_REACH {
+            return false;
+        }
+        let slot = regiment.zip(cooldown_slot(kind));
+        if let Some((h, slot)) = slot
+            && !self.seen_mut(h).may_cry(slot, tick)
+        {
+            return false;
+        }
+        if !self.cries.admit(tick) {
+            return false;
+        }
+        if let Some((h, slot)) = slot {
+            self.seen_mut(h).cried(slot, tick);
+        }
+        let gain = match kind {
+            Cry::Charge => 0.9,
+            Cry::Rout | Cry::Rally => 0.8,
+            Cry::Victory => 1.0,
+        };
+        self.play_at(
+            SoundId::cry(voice.faction, kind),
+            at,
+            gain,
+            CRY_REACH,
+            PRI_CRY,
+        );
+        true
+    }
+
+    /// A regiment on the march that is closing on an enemy it is facing
+    /// starts its charge cry a moment before the blocks meet (the events
+    /// only tell of the contact itself). A regiment that shouts then is not
+    /// heard again at contact: see [`CRY_COOLDOWN`].
+    fn charges(
+        &mut self,
+        world: &World,
+        heard: bool,
+        shown: &impl Fn(RegimentHandle) -> bool,
+        voice: &impl Fn(UnitId) -> Option<Voice>,
+    ) {
+        let tick = world.tick_count();
+        if !tick.is_multiple_of(CHARGE_SCAN_EVERY) {
+            return;
+        }
+        for r in world.regiments.iter() {
+            if !r.moving || r.engaged || r.morale.broken() || !r.formation.can_charge() {
+                continue;
+            }
+            let Some(v) = voice(r.unit).filter(|v| v.charges) else {
+                continue;
+            };
+            let at = from_fx_vec(r.position);
+            // Only a regiment near the camera is worth the search.
+            if (at - self.focus).length() >= self.hearing * CRY_REACH {
+                continue;
+            }
+            let heading = from_fx_vec(r.facing.to_vec());
+            let closing = world.regiments.iter().any(|q| {
+                closing_on(at, heading, from_fx_vec(q.position))
+                    && !q.morale.broken()
+                    && world.hostile(r.owner, q.owner)
+            });
+            if closing {
+                self.hushed = !heard || !shown(r.handle);
+                self.cry(tick, Some(r.handle), v, Cry::Charge, at);
+            }
+        }
+        self.hushed = false;
+    }
+
+    /// The winner of the champions' duel has his regiment's side roar, once,
+    /// where the duel was fought.
+    fn duel(
+        &mut self,
+        world: &World,
+        heard: bool,
+        shown: &impl Fn(RegimentHandle) -> bool,
+        voice: &impl Fn(UnitId) -> Option<Voice>,
+    ) {
+        let tick = world.tick_count();
+        let Some(c) = world.challenge() else {
+            return;
+        };
+        let Outcome::Killed { winner } = c.outcome(tick) else {
+            return;
+        };
+        if self.duel_cried == Some(c.called) {
+            return;
+        }
+        self.duel_cried = Some(c.called);
+        let champion = c.champions[usize::from(winner)];
+        if let Some(v) = world.regiments.get(champion).and_then(|r| voice(r.unit)) {
+            self.hushed = !heard || !shown(champion);
+            self.cry(tick, None, v, Cry::Victory, from_fx_vec(c.spot));
+            self.hushed = false;
+        }
     }
 
     /// A volley loosed this tick sounds a twang, if its shooter can be seen
@@ -458,6 +699,7 @@ mod tests {
             Some(Seen {
                 handle,
                 quiet_until: 900,
+                cry_quiet: [900; 3],
             });
             4
         ];
@@ -468,10 +710,58 @@ mod tests {
             },
             8,
         )];
-        forget_match(&mut seen, &mut flights);
+        let mut cries = CryCap::default();
+        assert!(cries.admit(5));
+        let mut duel = Some(40);
+        forget_match(&mut seen, &mut flights, &mut cries, &mut duel);
         assert!(seen.iter().all(Option::is_none));
+        assert!(cries.starts.is_empty() && duel.is_none());
         assert_eq!(seen.len(), 4, "one slot per regiment stays");
         assert!(flights.is_empty());
+    }
+
+    #[test]
+    fn only_so_many_cries_sound_at_once() {
+        let mut cap = CryCap::default();
+        for _ in 0..MAX_CRIES {
+            assert!(cap.admit(100));
+        }
+        assert!(!cap.admit(100), "a fifth at once is left out");
+        assert!(!cap.admit(100 + CRY_TICKS - 1), "they are still sounding");
+        assert!(cap.admit(100 + CRY_TICKS), "room again once they are over");
+    }
+
+    #[test]
+    fn a_regiment_is_not_heard_to_cry_the_same_cry_again_at_once() {
+        let handle = RegimentHandle {
+            index: 3,
+            generation: 1,
+        };
+        let mut seen = Seen {
+            handle,
+            quiet_until: 0,
+            cry_quiet: [0; 3],
+        };
+        assert!(seen.may_cry(0, 50));
+        seen.cried(0, 50);
+        assert!(!seen.may_cry(0, 50 + CRY_COOLDOWN[0] - 1));
+        assert!(seen.may_cry(0, 50 + CRY_COOLDOWN[0]));
+        assert!(seen.may_cry(1, 51), "a rout is another cry");
+        assert_eq!(cooldown_slot(Cry::Victory), None);
+    }
+
+    #[test]
+    fn a_charge_cry_starts_on_the_foe_ahead_and_close() {
+        let (at, east) = (Vec2::new(10.0, 10.0), Vec2::X);
+        assert!(closing_on(at, east, Vec2::new(15.0, 10.0)), "dead ahead");
+        assert!(closing_on(at, east, Vec2::new(15.0, 12.0)), "a little off");
+        assert!(!closing_on(at, east, Vec2::new(25.0, 10.0)), "too far");
+        assert!(!closing_on(at, east, Vec2::new(5.0, 10.0)), "behind");
+        assert!(
+            !closing_on(at, east, Vec2::new(10.0, 15.0)),
+            "off to the side"
+        );
+        assert!(!closing_on(at, east, at), "on top of itself");
     }
 
     #[test]

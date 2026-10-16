@@ -12,6 +12,7 @@ Licence evidence, file lists and SHA-256 hashes are in [`assets-src/MANIFEST.md`
 |---|---|---|
 | Kenney Castle Kit, Fantasy Town Kit (GLB + textures) | Downloaded, CC0 confirmed by the pack's `License.txt` | In the repo, `assets-src/kenney/` |
 | Kenney Impact Sounds, RPG Audio, Interface Sounds | Downloaded, CC0 confirmed | In the repo, `assets-src/kenney/` |
+| Battle-cry voices (OpenGameArt.org, 2026-10-16): Male Adventurer RPG voices, Zombie / Skeleton / Monster Voice Effects, Ghost Moans, Undead Moans, 80 CC0 creature SFX, Insect or alien scream, Chant, Bell dings (all CC0) and Battlecry by spookymodem (**CC-BY 3.0, credit required**) | Downloaded, licence lines read on each page | In the repo, `assets-src/voices/` (only the files the cries use) |
 | Kenney Nature Kit | Downloaded, CC0 confirmed | Shared project folder only (10 MB, not needed yet) |
 | Samurai (null-painter-error), Spider (PantherOne) | Downloaded, **CC-BY, credit required** | In the repo, `assets-src/cc-by/` |
 | Ant (mujtaba-io), Alien Bug (CDmir) | Downloaded, CC0 | In the repo, `assets-src/cc0/` |
@@ -77,6 +78,7 @@ Free CC0 art gets us **placeholder-grade fantasy soldiers, monsters, castles, te
 | Sky lighting | Poly Haven HDRIs | CC0 | |
 | Trees, rocks, foliage | Kenney Nature Kit (330) | CC0 | Quaternius Stylized Nature MegaKit as alternative |
 | Impact, weapon, footstep sounds | Kenney Impact Sounds (130), RPG Audio (50) | CC0 | Pages show `.ogg` only; WAV unconfirmed |
+| Battle cries (voices) | OpenGameArt.org: Voice Clip Pack - Male Adventurer RPG, Battlecry, Zombie / Skeleton / Monster Voice Effects, Ghost Moans, Undead Moans, 80 CC0 creature SFX, Insect or alien scream, Chant, Bell dings | CC0; Battlecry CC-BY 3.0 | In the game since 2026-10-17, layered by `tools/gc_sfx`; sources in [`assets/audio/README.md`](../assets/audio/README.md) |
 | UI sounds | Kenney Interface Sounds (100) | CC0 | |
 | Music | Not found | | Needs a separate pass (see [09](09-art-and-audio.md#audio-sourcing)) |
 

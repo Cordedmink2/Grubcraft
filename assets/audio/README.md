@@ -1,10 +1,12 @@
 # Audio assets
 
-`sounds.gcsnd` is the game's whole sound bank: 11 sound effects and 2 music loops, compressed as IMA ADPCM (about 400 KB). The game embeds it with `include_bytes!` (`crates/gc_game/src/sounds.rs`).
+`sounds.gcsnd` is the game's whole sound bank: 27 sound effects (11 synthesised, 16 battle cries layered from recordings) and 2 music loops, compressed as IMA ADPCM (about 620 KB). The game embeds it with `include_bytes!` (`crates/gc_game/src/sounds.rs`).
 
 ## Where the sounds come from
 
-Every sound is **synthesised by `tools/gc_sfx`** (`tools/gc_sfx/src/synth.rs`). There are no recordings and no third-party samples, so there is no licence to track: the sounds are original work, released with the rest of the game.
+The music, the battle sounds and the UI clicks are **synthesised by `tools/gc_sfx`** (`tools/gc_sfx/src/synth.rs`): original work, released with the rest of the game, with no licence to track.
+
+The 16 **battle cries** are the exception. They are layered by `tools/gc_sfx/src/cries.rs` from real recorded voices kept under `assets-src/voices/` (CC0, plus one CC-BY clip whose author the credits screen credits). See the sources table below, and `assets-src/MANIFEST.md` for each source's page, author, licence evidence and file hashes.
 
 To change a sound, edit its recipe and rewrite the bank from the repository root:
 
@@ -13,7 +15,7 @@ cargo run -p gc_sfx                 # rewrites assets/audio/sounds.gcsnd
 cargo run -p gc_sfx -- --wav out/   # also writes each sound as a WAV file to listen to
 ```
 
-Commit the rewritten `sounds.gcsnd` and its `sounds.manifest` (baker version, bank hash and size) with the change. CI runs `cargo run -p gc_sfx -- --check`, which re-synthesises the bank and fails if it differs from the committed bank or manifest, so a recipe edit without a rewrite is caught. If a change to the `gc_sfx` tool itself (not a recipe) changes the bytes, bump `BAKER_VERSION` in `tools/gc_sfx/src/main.rs`.
+Commit the rewritten `sounds.gcsnd` and its `sounds.manifest` (baker version, bank hash and size) with the change. The tool reads the recordings from `assets-src/voices/` wherever it is run from. CI runs `cargo run -p gc_sfx -- --check`, which re-synthesises the bank and fails if it differs from the committed bank or manifest, so a recipe edit without a rewrite is caught. If a change to the `gc_sfx` tool itself (not a recipe) changes the bytes, bump `BAKER_VERSION` in `tools/gc_sfx/src/main.rs`.
 
 ## Catalogue
 
@@ -27,9 +29,44 @@ Commit the rewritten `sounds.gcsnd` and its `sounds.manifest` (baker version, ba
 | `RoutHorn` | 1.25 s | A regiment breaks and runs (short-long horn signal) |
 | `Shatter` | 1.60 s | A regiment shatters for good (crash, falling metal, boom) |
 | `Rally` | 1.15 s | A routed regiment rallies (two rising horn notes) |
+| `EmberCharge` / `EmberRout` / `EmberRally` / `EmberVictory` | 1.5 / 1.2 / 1.2 / 1.6 s | Ember Clans' voice: a deep warcry with a roaring line of men and kiai (charge); men crying out in fear (rout); a ragged rising shout (rally); a roar of triumph (champion wins) |
+| `BroodCharge` / `BroodRout` / `BroodRally` / `BroodVictory` | 1.4 / 1.1 / 1.1 / 1.6 s | Brood's voice: a swarm squealing over clicking mandibles and a hiss (charge); a falling shriek (rout); climbing chitter (rally); a shriek over a buzzing roar (champion wins) |
+| `ChoirCharge` / `ChoirRout` / `ChoirRally` / `ChoirVictory` | 1.3 / 1.0 / 1.2 / 1.6 s | Shard Choir's voice: a sung open-fifth chord struck like a shout, glass and bells ringing (charge); a chord that sours and falls (rout); a rising A major chord and a climb of glass notes (rally); a wide bright chord with bells ringing out (champion wins) |
+| `CarrionCharge` / `CarrionRout` / `CarrionRally` / `CarrionVictory` | 1.5 / 1.2 / 1.3 / 1.6 s | Carrion Concord's voice: hollow moans, zombie shouts and a rattle of bone (charge); dying wails and clatter (rout); a long climbing moan (rally); a deep chorus of the grave with bones beating time (champion wins) |
 | `UiSelect` / `UiMove` / `UiAttack` | 0.1-0.24 s | Selecting a regiment; a move order; an attack order |
 | `MusicCalm` | 19.2 s loop | Shakuhachi-style flute over a drone, sparse taiko, plucked string (D hirajoshi, 100 bpm) |
 | `MusicBattle` | 19.2 s loop | Taiko on every beat with fills, plucked ostinato, brass pad. Same length as the calm loop; the two play in step and crossfade with battle intensity |
+
+## Battle cries
+
+Regiments shout in their faction's voice (`crates/gc_game/src/sounds.rs`, from what the simulation reports in `World::events` and `World::challenge`). The sounds are presentation only: nothing here touches the simulation.
+
+| Event | Cry | Notes |
+|---|---|---|
+| A regiment charges | `*Charge` | Starts a moment before contact: a regiment on the march that is facing an enemy within 7 tiles (centre to centre) and can charge (not a shield wall, not a missile-only regiment). Hitting home at speed (`Contact` with a charge bonus) cries too, if it hasn't just done so |
+| A regiment breaks (`Morale`: any state to Routing) | `*Rout` | |
+| A regiment rallies (`Morale`: Routing to a state that isn't broken) | `*Rally` | |
+| A champion wins the duel between the lines (`World::challenge`, outcome `Killed`) | `*Victory` | Once per duel, heard where it was fought, in the winning champion's regiment's faction voice |
+
+A regiment's faction comes from its unit type. Cries are placed at the regiment and follow the same rules as the other battle sounds: quieter with distance, panned, and silent for a regiment the player cannot see or while a rejoining player catches up. A cry carries 1.3 times as far as the hearing range. The same regiment is not heard to cry the same cry again for 10 s (charge) or 8 s (rout, rally), and at most 4 cries sound at once; a cry that is left out does not use up the regiment's cool-down. Units with no morale (the Concord's undead) never rout, so the Concord's rout and rally cries only sound for a unit that has morale.
+
+## Recorded sources (the battle cries)
+
+All downloaded from OpenGameArt.org on 2026-10-16. The files are in `assets-src/voices/<directory>/`, each download in its own directory with the originals unmodified (and a `wav/` folder of the mono 16-bit WAV that `gc_sfx` reads for each `.ogg` or `.flac`). Licence evidence and SHA-256 hashes are in `assets-src/MANIFEST.md`; authors are on the credits screen (`C`) through `CREDITS.md`.
+
+| Directory | Source (OpenGameArt page) | Author | Licence | Used for |
+|---|---|---|---|---|
+| `rpg-male-adventurer-wolfwoot/` | Voice Clip Pack - Male Adventurer RPG | wolfwoot / 2DPIXX | CC0 | Ember Clans: shouts, kiai, victory and fear cries |
+| `battlecry-spookymodem/` | Battlecry | spookymodem | **CC-BY 3.0** (credit required) | Ember Clans: the deep warcry in the charge and victory cries |
+| `zombie-skeleton-monster-voices-arcadeparty/` | Zombie / Skeleton / Monster Voice Effects | ArcadeParty / Snabisch | CC0 | Carrion Concord: zombie yells and death cries; a few human yells for the Ember Clans |
+| `ghost-moans-qubodup/` | Ghost Monster Voice Moaning & Growling | qubodup | CC0 | Carrion Concord: hollow moans |
+| `undead-moans-antumdeluge/` | Undead Moans | AntumDeluge | CC0 | Carrion Concord: the moans under every cry |
+| `creature-sfx-80-rubberduck/` | 80 CC0 creature SFX | rubberduck / Chasersgaming | CC0 | Brood: alien, bug, scream, roar and monster clips |
+| `insect-or-alien-scream-qubodup/` | Insect or alien scream | qubodup | CC0 | Brood: the long squeal |
+| `gregorian-chant-christislord/` | Chant | christislord | CC0 (public domain) | Shard Choir: two steady stretches of a men's chant, pitched into a sung chord |
+| `bell-dings-pwl/` | Bell dings/chimes | PWL | CC0 (public domain) | Shard Choir: bells under the chord |
+
+How a cry is made (`tools/gc_sfx/src/voices.rs` and `cries.rs`): each take is cut, pitched (the speed changes with it, like a tape) and sometimes bent over its length, then several copies of each shout are layered with small differences in start (up to 0.25-0.7 s), pitch (up to 1.5-2 semitones) and loudness, so a regiment sounds like many soldiers and not one. The layer is filtered, thickened with quick echoes and squashed gently. The Brood's takes are pitched up and chopped at 19-28 Hz like mandibles over a hiss; the Shard Choir's chant is pitched up to A4 and above in an open or major chord with a few voices a hair apart, over real bell recordings and a synthesised glass ring; the Carrion Concord's are pitched down, band-limited and laid over bone knocks (synthesised).
 
 ## CC0 recordings on hand
 
@@ -37,4 +74,4 @@ The Kenney sound packs (Impact Sounds 130, RPG Audio 50, Interface Sounds 100, a
 
 ## Swapping in recorded sounds later
 
-The bank only holds mono 16-bit clips with a sample rate and a loop flag. To use a recording (a CC0 pack, a friend's voice), decode it to samples in `gc_sfx`, put it in place of the synthesised clip, and record its source and licence in a table here. Music loops must stay the same length as each other so the layers remain in step.
+The bank only holds mono 16-bit clips with a sample rate and a loop flag. `gc_sfx` reads 16-bit PCM WAV (convert `.ogg`, `.flac` and `.mp3` once with `ffmpeg -i X -ac 1 -ar 44100 -c:a pcm_s16le X.wav` and commit the WAV beside the original; `voices.rs` has the reader, the pitching and layering). To use a recording (a CC0 pack, a friend's voice), decode it to samples in `gc_sfx`, put it in place of the synthesised clip, and record its source and licence in a table here. Music loops must stay the same length as each other so the layers remain in step.

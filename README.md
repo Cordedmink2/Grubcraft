@@ -50,7 +50,7 @@ To measure memory on your machine: `cargo run --release -p gc_game -- --frames 6
 | `crates/gc_ai` | Computer players: battle tactics, difficulty levels and personalities; they read the sim and send ordinary commands |
 | `crates/gc_game` | The game application |
 | `tools/gc_bake` | Baker: compiles `data/*.ron` (and later art and audio) into the asset pack |
-| `tools/gc_sfx` | Sound generator: synthesises every effect and music loop into `assets/audio/sounds.gcsnd` |
+| `tools/gc_sfx` | Sound generator: synthesises the effects and music loops, and layers the battle cries from recorded voices, into `assets/audio/sounds.gcsnd` |
 | `tools/gc_bench` | Headless benchmarks with budget gates |
 | `tools/gc_mapcheck` | Map validator: `cargo run -p gc_mapcheck -- check` checks every map in `data/maps/` for validity and fairness; `png FILE OUT.png` draws one; `gen RECIPE SIZE SEED OUT.ron` writes a Field Battle or Conquest recipe map from a seed |
 | `assets/audio/` | The sound bank and its catalogue |

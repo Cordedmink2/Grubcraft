@@ -2883,10 +2883,22 @@ impl Running {
         let listener = self.active_camera().listener();
         if let Some(sounds) = &mut self.sounds {
             let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
+            let units = &self.units;
             tagged_alloc::scope(Tag::Audio, || {
-                sounds.observe(world, listener, !catching_up, |h| {
-                    reveal || world.sees(viewer, h)
-                });
+                sounds.observe(
+                    world,
+                    listener,
+                    !catching_up,
+                    |h| reveal || world.sees(viewer, h),
+                    |unit| {
+                        let i = usize::from(unit);
+                        Some(sounds::Voice {
+                            faction: units.factions.get(i)?.index(),
+                            // Regiments that only shoot don't charge.
+                            charges: units.stats.get(i)?.range.raw() == 0,
+                        })
+                    },
+                );
             });
         }
         if !catching_up {
