@@ -678,10 +678,10 @@ impl MemoryTimeline {
     }
 }
 
-#[derive(Default)]
 /// Radians per second the view turns while `,` or `.` is held.
 const KEY_TURN_RATE: f32 = 1.0;
 
+#[derive(Default)]
 struct Input {
     cursor: Option<PhysicalPosition<f64>>,
     focused: bool,
