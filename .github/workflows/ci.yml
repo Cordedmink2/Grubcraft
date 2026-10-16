@@ -60,6 +60,38 @@ jobs:
         run: cargo test --release -p gc_ai --test versus warlord
       - name: Simulation benchmark and budgets
         run: cargo run --release -p gc_bench
+      # Counts instructions under valgrind, which a busy runner cannot skew,
+      # and compares them with tools/gc_bench/baseline.json.
+      - name: Benchmark instruction counts
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y valgrind
+          python3 scripts/bench-gate.py
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && !cancelled()
+        with:
+          name: bench-instructions
+          path: target/bench/instructions.json
+          retention-days: 14
+
+  smoke-linux:
+    # The real game, started on a software GPU (Mesa's lavapipe) under a
+    # virtual screen, drawing a battle; nothing else in CI ever creates a
+    # GPU device. See scripts/smoke-run.py for what fails it.
+    name: Smoke run (Linux, software GPU)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          alsa: 'true'
+      - name: Virtual screen and software Vulkan
+        run: sudo apt-get install -y xvfb mesa-vulkan-drivers libvulkan1 libxkbcommon-x11-0
+      - run: cargo build --release -p gc_game
+      - name: Play a battle for 300 frames
+        run: xvfb-run -a -s "-screen 0 1280x720x24" python3 scripts/smoke-run.py target/release/grubcraft
+        env:
+          WGPU_BACKEND: vulkan
 
   msrv:
     # `rust-version` in Cargo.toml is a promise that the game still builds
@@ -102,3 +134,10 @@ jobs:
           name: Grubcraft-Windows
           path: target/Grubcraft-Windows.zip
           retention-days: 14
+      # After the upload, so a failing smoke run still leaves the zip to download.
+      # The zip as friends get it, on Windows' software adapter (WARP).
+      - name: Smoke run of the zip
+        shell: pwsh
+        run: |
+          Expand-Archive target/Grubcraft-Windows.zip -DestinationPath target/smoke
+          python scripts/smoke-run.py target/smoke/Grubcraft/grubcraft.exe
