@@ -9,10 +9,6 @@ use std::collections::{BinaryHeap, VecDeque};
 pub const TOLERANCE_PERCENT: u32 = 3;
 /// Walkable land with no start that is bigger than this is dead ground.
 const DEAD_LAND_TILES: usize = 150;
-/// Tiles of path from a start within which its own seeps and vein must lie
-/// (the natural base area) and beyond which its natural expansion lies.
-const BASE_AREA: i32 = 24;
-const EXPANSION_AREA: i32 = 60;
 /// A hamlet must be this many tiles of walking from every start.
 const HAMLET_REACH: u32 = 80;
 /// The base gate (see [`gate_width`]) must be at least this many tiles wide.
@@ -235,11 +231,17 @@ fn counts(map: &Map, r: &mut Report) -> bool {
         ));
     }
     let slots = count(map, Kind::FrontierSlot);
-    if !(4..=8).contains(&slots) {
-        r.err(format!("{slots} frontier site slots; a map has 4 to 8"));
+    if !FRONTIER_SLOTS.contains(&slots) {
+        r.err(format!(
+            "{slots} frontier site slots; a map has {} to {}",
+            FRONTIER_SLOTS.start(),
+            FRONTIER_SLOTS.end()
+        ));
     }
-    if count(map, Kind::Bloodseep) < 3 {
-        r.err("a map needs at least 3 Bloodseep sites (Tremors at minutes 12, 24 and 36)");
+    if count(map, Kind::Bloodseep) < MIN_BLOODSEEPS {
+        r.err(format!(
+            "a map needs at least {MIN_BLOODSEEPS} Bloodseep sites (Tremors at minutes 12, 24 and 36)"
+        ));
     }
     r.errors.len() == before
 }

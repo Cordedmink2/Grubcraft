@@ -111,7 +111,7 @@ Path costs count ten per open tile, 14 for steep ground and 20 for fords. `gc_ma
 *The two maps.* **Ribcage Pass** (Duel): bases in opposite corners behind cliff walls with a south gate and an east gate; across the middle a wall of cliffs with three ways through, the ford (the Heart on an island in it) and a narrow pass either side, and the open flanks past the ends of the wall as the wide way round; 33 objects, a hill and the ford as set pieces. **The Four Teeth** (Warfield): four fang plateaus with cliff edges and two ramps each, rivers to wade, rock spines that split the ground into lanes, villages, towns and contested seeps and veins guarded by creeps, and the tongue bowl in the middle with the Heart, the Old Mouth and the Bazaar; 87 objects, two hills and a ford as set pieces. Both are first versions with plain terrain (smooth stamps, no road or rib models yet) and the game opens them only with `--map` in the sandbox (the M2 netcode generates battle maps from a seed instead, so Conquest loading comes with M3 thread A/C).
 
 
-- **Seeded generator (stretch):** procedural 2-, 4- and 6-player maps from a seed, guaranteed fair by the validator. Good for variety among a small friend group who will learn fixed maps quickly. The Field Battle recipes below are a first step. The campaign needs a smaller version early: a battle map generated from a campaign region's ground, route and feature ([19](19-campaign.md#battles-on-the-campaign)).
+- **Seeded generator (stretch):** procedural 2-, 4- and 6-player maps from a seed, guaranteed fair by the validator. Good for variety among a small friend group who will learn fixed maps quickly. The Field Battle recipes below are a first step, and the Conquest recipes are built too (two and four players, no six-player map yet, see [Conquest maps and recipes](#conquest-maps-and-recipes)). The campaign needs a smaller version early: a battle map generated from a campaign region's ground, route and feature ([19](19-campaign.md#battles-on-the-campaign)).
 
 ## Field Battle maps and recipes
 
@@ -132,6 +132,19 @@ Every recipe also scatters clumps of woods and tall grass over the north half, k
 **Tools and tests.** `cargo run -p gc_mapcheck -- gen RECIPE TILES SEED OUT.ron` writes the map a recipe makes from a seed, so a good one can become a hand-tuned map. `tools/gc_mapcheck/tests/recipes.rs` runs every recipe at both sizes through the validator for a dozen seeds. The `gc_map` tests check that a seed always writes the same description, and pin the fingerprints of the random maps.
 
 **Where the map is used.** A lobby battle is set out on the lobby's map, and its world is seeded with the map seed. The lobby settings carry the choice and the seed to every player ([11 · Networking](11-networking.md)). A replay stores the choice (its seed is the map seed), so it is drawn on the map it was played on ([11](11-networking.md#save-load-and-replays)).
+
+## Conquest maps and recipes
+
+*Built (random maps step 2, 2026-10-16).* Three recipes, **Teeth**, **Bowl** and **Fen**, write a whole Conquest map from a seed, at **Duel** (128 tiles, two players), **Skirmish** (192 tiles, two players) and **Warfield** (256 tiles, four players). Grand and Field sizes are not made. The lobby does not offer these maps yet, and Conquest is not playable yet; the Conquest mode thread wires them in later.
+
+**Making a Conquest map.** A recipe writes the first player's share from the seed: the start, two seeps and a Marrow vein in the base, a natural expansion of two seeps, a Village, a contested seep and a contested vein each with a creep camp, a Shrine, Bloodseep sites and frontier slots. The loader turns that share round for the other players (`Rot2` for two, `Rot4` for four), so every start gets the same ground and the same economy. The Heart is placed once in the middle, and on a Warfield the Old Mouth and the Bazaar with it. Whether a map is fair is the checker's call: `gc_mapcheck` tries the seed, then the next, up to 16 seeds, and keeps the first map the checker passes.
+
+**The recipes.** Each one adds its own shape to rolling ground:
+- **Teeth:** each start sits on a high fang with cliff sides and two ramps down. Rock spines split the open ground into lanes, and the players meet at a wading place: a pool round the Heart's island on two-player maps, a stream between neighbours on a Warfield. A hill stands in the lanes.
+- **Bowl:** a wide, shallow bowl in the middle, with the Heart on a raised tongue in it. The starts sit on the rim, with a hill on the rim either side of each.
+- **Fen:** low wet ground, with wadeable pools, channels between them, and a deep mere or two that no one wades. The starts sit on dry islands, with a mound and plenty of reeds (tall grass) to hide in.
+
+**Tools and tests.** `cargo run -p gc_mapcheck -- gen RECIPE SIZE SEED OUT.ron` writes a Conquest map (Teeth, Bowl or Fen, at Duel, Skirmish or Warfield), and says so if it rerolled the seed. `tools/gc_mapcheck/tests/recipes.rs` checks 50 seeds of each recipe at Duel, 25 at Skirmish and 12 at Warfield, and needs 80% of them to pass at each size. The `gc_map` tests check that a seed always writes the same description.
 
 ## Water (later)
 

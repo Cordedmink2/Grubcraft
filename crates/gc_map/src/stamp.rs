@@ -43,6 +43,15 @@ fn turn_tile(mut p: Pos, tiles: i32, n: u32) -> Pos {
     p
 }
 
+/// A tile and its turned copies under the symmetry, in the order the
+/// loader places them (a tile that turns onto itself appears again).
+pub(crate) fn tile_copies(p: Pos, sym: Symmetry, tiles: i32) -> Vec<Pos> {
+    let turns = step_turns(sym);
+    (0..sym.copies() as u32)
+        .map(|k| turn_tile(p, tiles, k * turns))
+        .collect()
+}
+
 fn turn_shape(s: Shape, tiles: i32, n: u32) -> Shape {
     match s {
         Shape::Disc { at, r } => Shape::Disc {
@@ -251,16 +260,14 @@ fn roll(field: &mut [i32], noise: Noise, symmetry: Symmetry, side: i64) {
 
 fn place_objects(def: &MapDef, tiles: i32) -> Vec<Placed> {
     let mut out: Vec<Placed> = Vec::new();
-    let turns = step_turns(def.symmetry);
     for o in &def.objects {
         let copies = if o.once {
-            1
+            vec![o.at]
         } else {
-            def.symmetry.copies() as u32
+            tile_copies(o.at, def.symmetry, tiles)
         };
         let mut spots: Vec<Pos> = Vec::new();
-        for k in 0..copies {
-            let at = turn_tile(o.at, tiles, k * turns);
+        for (k, at) in (0u32..).zip(copies) {
             // A tile that turns onto itself (or a copy of it) is kept once.
             if spots.contains(&at) {
                 continue;

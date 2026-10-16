@@ -28,6 +28,16 @@ pub enum SizeClass {
     Field(i32),
 }
 
+/// Rules a Conquest map's economy must meet, which the checker enforces
+/// and the recipes write to: a start's own seeps and vein lie within
+/// `BASE_AREA` tiles of it and its natural expansion beyond that, out to
+/// `EXPANSION_AREA`; a map has at least `MIN_BLOODSEEPS` Bloodseep sites
+/// and `FRONTIER_SLOTS` frontier slots.
+pub const BASE_AREA: i32 = 24;
+pub const EXPANSION_AREA: i32 = 60;
+pub const MIN_BLOODSEEPS: usize = 3;
+pub const FRONTIER_SLOTS: std::ops::RangeInclusive<usize> = 4..=8;
+
 /// The sides a Field map may have, in tiles.
 pub const FIELD_TILES: std::ops::RangeInclusive<i32> = 64..=512;
 
