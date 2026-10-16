@@ -7,11 +7,12 @@ Recorded battles that the simulation must keep playing exactly as recorded. Each
 | `field-1v1.gcr` | Ember Clans (Veteran AI) against Brood (General AI), ten regiments each, on a generated 256-tile map |
 | `field-2v2.gcr` | Ember Clans and Carrion Concord against Brood and Choir, all computer players, ten regiments each |
 | `field-woods-1v1.gcr` | Brood against Choir (both General AI) on a generated map with woods and tall grass: regiments hide and are spotted, and six ambushes are sprung ([20 · Ambushes](../docs/20-ambushes.md)) |
-| `sandbox-tuning.gcr` | Ember Clans against Carrion Concord, with a stat change at 1:00 and a regiment removed at 1:30, so every kind of command is covered |
+| `sandbox-tuning.gcr` | Ember Clans against Carrion Concord, with a stat change at 1:00 and a regiment removed at 1:30 (the sandbox's commands) |
+| `field-deploy-1v1.gcr` | Ember Clans against Carrion Concord, both Veteran AI, opening with the deployment phase people play: both sides get a zone, Ember places by hand (a regiment moved and turned inside the zone; a move outside it, an order to an enemy regiment, a shield wall without shields, an attack, a second zone and a regiment raised outside the zone all refused; a change to close order taken), Concord is ready at once, Ember never readies so the 90 seconds run out, then a paced advance |
 | `field-champions-1v1.gcr` | Ember Clans against Choir, both Veteran AI, with champions allowed: two champions duel between the lines and one kills the other before the armies close (replay format 4) |
 | `field-8000pt-2v2.gcr` | The `gc_bench` grand battle: four armies of about 1,500 soldiers on a 384-tile map, every regiment charging the nearest enemy |
 
-`cargo run --release -p gc_replay -- info replays` describes each one.
+`cargo run --release -p gc_replay -- info replays` describes each one. Between them they give every kind of command; `the_goldens_cover_every_kind_of_command` in `gc_replay/tests/goldens.rs` checks it, so a new kind of command needs a golden that gives it.
 
 ## When a check fails
 

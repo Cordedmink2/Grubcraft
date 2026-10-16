@@ -184,3 +184,68 @@ impl World {
         w
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use gc_fixed::{Fx, FxVec2};
+
+    use crate::hash::StateHasher;
+    use crate::scenario::{DRILL_UNITS, Drill, ribs_map};
+    use crate::{Capacities, Ground, MatchSetup, World};
+
+    /// Each live regiment's whole state, hashed (pool capacity and free
+    /// slots aside, which a copy sizes to what it holds).
+    fn slots(w: &World) -> Vec<(usize, u64)> {
+        let r = &w.regiments;
+        (0..r.alive.len())
+            .filter(|&i| r.alive[i])
+            .map(|i| {
+                let mut h = StateHasher::new();
+                r.hash_slot(i, &mut h);
+                (i, h.finish())
+            })
+            .collect()
+    }
+
+    /// A copy taken mid-melee carries each regiment's hashed state, unseen
+    /// parts too (such as how hard each block is pushing), and plays on
+    /// with it.
+    #[test]
+    fn a_copy_mid_melee_keeps_every_regiments_state() {
+        let nav = ribs_map(256);
+        let mut world = World::new(&MatchSetup {
+            seed: 31,
+            capacities: Capacities::default(),
+            units: &DRILL_UNITS,
+            map_tiles: 256,
+            nav: &nav,
+            teams: &[],
+            ground: Ground::FLAT,
+            champions: false,
+        });
+        let mut drill = Drill::new(7);
+        drill.regiments_per_player = 20;
+        drill.unit_of = |p, _, _| [0, 1, 3, 0][p as usize % 4];
+        let mut commands = Vec::new();
+        let mut pushing = false;
+        for _ in 0..900 {
+            drill.commands_for(&world, &mut commands);
+            world.tick(&commands);
+            pushing = world.regiments.pressing.iter().any(|&p| p != 0);
+            if pushing {
+                break;
+            }
+        }
+        assert!(pushing, "no block ever pushed, so the test shows little");
+        let mut copy = world.fork_region(FxVec2::from_ints(128, 128), Fx::from_int(1000));
+        assert_eq!(slots(&copy), slots(&world));
+        for t in 0..100 {
+            drill.commands_for(&world, &mut commands);
+            world.tick(&commands);
+            copy.tick(&commands);
+            assert_eq!(slots(&copy), slots(&world), "after {t} ticks");
+        }
+    }
+}

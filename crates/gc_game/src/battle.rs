@@ -137,13 +137,7 @@ pub fn set_out(
         if deploy {
             let placed = army::deploy(units, &raised, starts[i], forward, minds.terrain());
             if deployment {
-                out.push(PlayerCommand {
-                    player: party,
-                    command: Command::DeployZone {
-                        center: to_fx_vec(starts[i]),
-                        radius: Fx::from_int(zone_radius(&placed, starts[i])),
-                    },
-                });
+                out.push(zone_order(party, &placed, starts[i]));
             }
             army::spawn_commands(party, &placed, &mut spawns);
             // The computer keeps the standard deployment.
@@ -193,6 +187,22 @@ pub fn shift_into_zone(world: &World, player: PlayerId, commands: &mut [Command]
         if let Command::MoveTo { target, .. } = c {
             *target = to_fx_vec(v2(*target) + shift);
         }
+    }
+}
+
+/// `party`'s deployment zone round `start`, holding its standard
+/// deployment `placed`.
+pub(crate) fn zone_order(
+    party: PlayerId,
+    placed: &[army::Placement],
+    start: Vec2,
+) -> PlayerCommand {
+    PlayerCommand {
+        player: party,
+        command: Command::DeployZone {
+            center: to_fx_vec(start),
+            radius: Fx::from_int(zone_radius(placed, start)),
+        },
     }
 }
 

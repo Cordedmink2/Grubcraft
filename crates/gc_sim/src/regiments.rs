@@ -369,6 +369,9 @@ impl Regiments {
         self.clear[i] = from.clear[i];
         self.crowd[i] = from.crowd[i];
         self.disorder[i] = from.disorder[i];
+        self.pressing[i] = from.pressing[i];
+        self.pressed[i] = from.pressed[i];
+        self.giving[i] = from.giving[i];
         true
     }
 
@@ -658,77 +661,81 @@ impl Regiments {
         for i in 0..self.alive.len() {
             h.u8(u8::from(self.alive[i]));
             h.u16(self.generation[i]);
-            if !self.alive[i] {
-                continue;
+            if self.alive[i] {
+                self.hash_slot(i, h);
             }
-            h.u8(self.owner[i]);
-            h.u16(self.unit[i]);
-            h.i32(self.position[i].x.raw());
-            h.i32(self.position[i].y.raw());
-            h.u16(self.facing[i].0);
-            h.u16(self.files[i]);
-            // Only when not the plain line, so worlds where nobody changes
-            // formation hash as they did before formations existed.
-            if self.formation[i] != Formation::Line {
-                h.u8(self.formation[i] as u8);
-            }
-            h.u16(self.models[i]);
-            for &hp in &self.hp[i * MAX_MODELS as usize..][..self.models[i] as usize] {
-                h.u16(hp);
-            }
-            h.i32(self.speed[i].raw());
-            h.u16(self.turn[i]);
-            h.i32(self.pace[i].raw());
-            hash_handle(h, self.attack_target[i]);
-            hash_handle(h, self.engaged[i]);
-            h.u16(self.charge[i]);
-            // Only when set, as for the formation above.
-            if self.strike[i] == Strike::Rest {
+        }
+    }
+
+    /// Everything about the live regiment in slot `i`, for [`Self::hash_into`].
+    pub(crate) fn hash_slot(&self, i: usize, h: &mut StateHasher) {
+        h.u8(self.owner[i]);
+        h.u16(self.unit[i]);
+        h.i32(self.position[i].x.raw());
+        h.i32(self.position[i].y.raw());
+        h.u16(self.facing[i].0);
+        h.u16(self.files[i]);
+        // Only when not the plain line, so worlds where nobody changes
+        // formation hash as they did before formations existed.
+        if self.formation[i] != Formation::Line {
+            h.u8(self.formation[i] as u8);
+        }
+        h.u16(self.models[i]);
+        for &hp in &self.hp[i * MAX_MODELS as usize..][..self.models[i] as usize] {
+            h.u16(hp);
+        }
+        h.i32(self.speed[i].raw());
+        h.u16(self.turn[i]);
+        h.i32(self.pace[i].raw());
+        hash_handle(h, self.attack_target[i]);
+        hash_handle(h, self.engaged[i]);
+        h.u16(self.charge[i]);
+        // Only when set, as for the formation above.
+        if self.strike[i] == Strike::Rest {
+            h.u8(1);
+        }
+        h.u16(self.reload[i]);
+        h.u16(self.damage_carry[i]);
+        h.u16(self.full_models[i]);
+        h.u16(self.morale[i] as u16);
+        h.u8(self.morale_state[i] as u8);
+        h.u16(self.losses[i]);
+        h.u8(self.shock[i]);
+        h.u16(self.rout_clock[i]);
+        h.u32(self.last_rout[i]);
+        // Only while overlapping or re-forming, so worlds where no
+        // friends ever overlap hash as they did before.
+        if self.crowd[i] != Fx::ZERO || self.disorder[i] != 0 {
+            h.i32(self.crowd[i].raw());
+            h.u8(self.disorder[i]);
+        }
+        // Only once it has fought, so worlds without melee hash as
+        // they did before lines pushed.
+        if self.pressing[i] != 0 || self.pressed[i] != 0 {
+            h.u32(self.pressing[i]);
+            h.u32(self.pressed[i]);
+            h.u8(self.giving[i]);
+        }
+        // Only while waiting, so worlds where nobody ever queues hash
+        // as they did before queuing existed.
+        if self.held[i] != 0 || self.clear[i] != 0 {
+            h.u16(self.held[i]);
+            h.u8(self.clear[i]);
+        }
+        match self.target[i] {
+            Some(t) => {
                 h.u8(1);
+                h.i32(t.x.raw());
+                h.i32(t.y.raw());
             }
-            h.u16(self.reload[i]);
-            h.u16(self.damage_carry[i]);
-            h.u16(self.full_models[i]);
-            h.u16(self.morale[i] as u16);
-            h.u8(self.morale_state[i] as u8);
-            h.u16(self.losses[i]);
-            h.u8(self.shock[i]);
-            h.u16(self.rout_clock[i]);
-            h.u32(self.last_rout[i]);
-            // Only while overlapping or re-forming, so worlds where no
-            // friends ever overlap hash as they did before.
-            if self.crowd[i] != Fx::ZERO || self.disorder[i] != 0 {
-                h.i32(self.crowd[i].raw());
-                h.u8(self.disorder[i]);
+            None => h.u8(0),
+        }
+        match self.target_facing[i] {
+            Some(a) => {
+                h.u8(1);
+                h.u16(a.0);
             }
-            // Only once it has fought, so worlds without melee hash as
-            // they did before lines pushed.
-            if self.pressing[i] != 0 || self.pressed[i] != 0 {
-                h.u32(self.pressing[i]);
-                h.u32(self.pressed[i]);
-                h.u8(self.giving[i]);
-            }
-            // Only while waiting, so worlds where nobody ever queues hash
-            // as they did before queuing existed.
-            if self.held[i] != 0 || self.clear[i] != 0 {
-                h.u16(self.held[i]);
-                h.u8(self.clear[i]);
-            }
-            match self.target[i] {
-                Some(t) => {
-                    h.u8(1);
-                    h.i32(t.x.raw());
-                    h.i32(t.y.raw());
-                }
-                None => h.u8(0),
-            }
-            match self.target_facing[i] {
-                Some(a) => {
-                    h.u8(1);
-                    h.u16(a.0);
-                }
-                None => h.u8(0),
-            }
+            None => h.u8(0),
         }
     }
 }
