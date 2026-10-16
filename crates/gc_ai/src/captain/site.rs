@@ -30,6 +30,9 @@ impl Captain {
             ctx.journal.note(now, note.to_string());
         }
         self.river = river;
+        if river.is_none() {
+            self.baiting = false;
+        }
         if !matches!(self.posture, Posture::Form | Posture::Hold)
             || self.front_gap(fighting) < GROUND_GAP
         {
@@ -221,6 +224,8 @@ const LEAD: f32 = 20.0;
 /// Drawing back to tempt the enemy across, the line stands this far back
 /// from the water, tiles: far enough that the ford is no longer watched.
 const BAIT_BACK: f32 = 36.0;
+/// How often it looks along the bank for a ford to cross at, ticks.
+pub(super) const FORD_LOOK_TICKS: u32 = 20;
 /// How far along the river it looks for fords, tiles to either side.
 const FORD_SCAN: f32 = 90.0;
 /// Share of the army across before the bridgehead is held and the line
@@ -349,7 +354,15 @@ impl Captain {
         let (line, ahead, ours) = if self.closing > 1.0 {
             (self.anchor, self.forward, true)
         } else {
-            (centroid(fighting), -self.forward, false)
+            let theirs: Vec<&Seen> = fighting
+                .iter()
+                .copied()
+                .filter(|f| self.counts_against(f.owner))
+                .collect();
+            if theirs.is_empty() {
+                return Ordering::Equal;
+            }
+            (centroid(&theirs), -self.forward, false)
         };
         let rise = t.height(line) - t.height(line + ahead * SLOPE_AHEAD);
         let higher = if rise >= ground::DOWNHILL {

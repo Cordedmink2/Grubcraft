@@ -57,7 +57,11 @@ impl Captain {
             {
                 self.posture = Posture::Withdraw;
                 self.withdrawn_at = Some(now);
-                self.withdrawals += 1;
+                // Stepping out of others' way doesn't use up its falling
+                // back from a losing fight.
+                if shy.is_none() {
+                    self.withdrawals += 1;
+                }
                 // Away from the enemy it faces, or keeping out of a fight,
                 // away from both sides in it.
                 let away = shy.unwrap_or(-self.forward);
@@ -130,6 +134,7 @@ impl Captain {
                 && waited > 2.0 * patience.max(5.0)
             {
                 self.crossing = true;
+                self.baiting = false;
                 if ctx.knobs.read_ground {
                     self.bridgehead = self.bridgehead_at(ctx, ours, fighting);
                 }
@@ -139,25 +144,29 @@ impl Captain {
                 );
             }
             // Both sides waiting for the other to cross: go over where they
-            // aren't watching, if anywhere.
+            // aren't watching, if anywhere, unless the water is all that
+            // keeps them off. Once a second: it walks the whole bank.
             let quiet = self.closing <= 1.0 && !engaged;
             if ctx.knobs.read_ground
                 && self.river.is_some()
                 && !self.crossing
                 && quiet
                 && waited > site::RIVER_WAIT
+                && margin > BAIT_MARGIN
+                && now >= self.next_ford_look
             {
+                self.next_ford_look = now + site::FORD_LOOK_TICKS;
                 match self.bridgehead_at(ctx, ours, fighting) {
                     Some(b) => {
                         self.crossing = true;
+                        self.baiting = false;
                         self.bridgehead = Some(b);
                         ctx.journal
                             .note(now, "Crossing at a ford they aren't watching".to_string());
                     }
                     // They watch every ford: draw back from the water, to
-                    // tempt them across, unless the ford is all that keeps
-                    // them off.
-                    None if !self.baiting && margin > BAIT_MARGIN => {
+                    // tempt them across.
+                    None if !self.baiting => {
                         self.baiting = true;
                         ctx.journal.note(
                             now,
@@ -173,7 +182,9 @@ impl Captain {
             let halted = behind_water || watching;
             let advance = if halted {
                 false
-            } else if only_archers || self.pouncing {
+            } else if only_archers || self.pouncing || self.bridgehead.is_some() {
+                // Falling on two sides at grips, or going over to the far
+                // bank: whatever the odds.
                 true
             } else if self.onlooking.is_some() {
                 // Two other sides are about to fight: let them.
@@ -196,7 +207,7 @@ impl Captain {
                 outshot || (out_of_range && !self.lying_in_wait()) || waited > patience.max(0.0)
             };
             let advance = match self.plan.map(|plan| plan.stance) {
-                Some(Stance::Advance) => !halted,
+                Some(Stance::Advance) => !halted && self.onlooking.is_none(),
                 Some(Stance::Hold) => {
                     // Holding still gives up on an enemy that never comes,
                     // or the battle never ends: once nobody has come on or
@@ -211,7 +222,7 @@ impl Captain {
                             "Tired of waiting",
                         );
                     }
-                    !halted && only_archers
+                    !halted && (only_archers || self.pouncing || self.bridgehead.is_some())
                 }
                 _ => advance,
             };

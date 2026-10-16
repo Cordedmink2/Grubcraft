@@ -326,11 +326,19 @@ impl Captain {
         }
         let to = match gap_slot {
             Some(p) => {
-                // Standing in the gap, it fights like the line.
+                // Standing in the gap, it fights like the line. On its way
+                // there it answers only an enemy close enough to hit it, so
+                // the line's reach doesn't draw it off before it arrives.
+                let there = r.pos.distance(p) < GAP_THERE;
                 let near = fighting.iter().filter(|f| {
-                    gap_between(r, f) <= ctx.knobs.engage_tiles && f.pos.distance(p) < 16.0
+                    let reach = if there { ctx.knobs.engage_tiles } else { 3.0 };
+                    gap_between(r, f) <= reach && f.pos.distance(p) < 16.0
                 });
-                let keep = keep.filter(|&t| view.get(t).is_some_and(|t| t.pos.distance(p) < 16.0));
+                let keep = keep.filter(|&t| {
+                    view.get(t).is_some_and(|t| {
+                        t.pos.distance(p) < 16.0 && (there || gap_between(r, t) <= 3.0)
+                    })
+                });
                 if let Some(t) = self.best_melee_target(ctx, r, near, on, keep) {
                     m.target = Some(t);
                     wants.push(attack(m.handle, t, 3));

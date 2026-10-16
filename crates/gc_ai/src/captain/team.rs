@@ -202,6 +202,9 @@ impl Captain {
         let view = ctx.view;
         let field = Field::of(view);
         if !field.three_sided(view, ctx.party) {
+            // Down to two sides: an ordinary fight from here.
+            self.pouncing = false;
+            self.onlook_since = None;
             return;
         }
         (self.against, self.with) = field.sides(view, ctx.party);

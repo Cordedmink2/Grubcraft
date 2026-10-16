@@ -272,6 +272,9 @@ const LINE_LEASH: f32 = 18.0;
 const HELP_TILES: f32 = 25.0;
 /// The reserve weighs in on a fight a friend is losing this close, tiles.
 const SUPPORT_TILES: f32 = 35.0;
+/// A reserve filling a gap in the line is there within this many tiles of
+/// the gap's place.
+const GAP_THERE: f32 = 4.0;
 /// The simulation counts soldiers within this many tiles when it judges
 /// whether a regiment is outnumbered.
 const LOCAL_TILES: f32 = 12.0;
@@ -477,6 +480,8 @@ pub struct Captain {
     /// The enemy watches every ford: it stands well back from the water,
     /// to tempt them across.
     baiting: bool,
+    /// When it next looks along the bank for a ford to cross at.
+    next_ford_look: u32,
     next_ground: u32,
     /// The journal's last word on the ground.
     ground_note: String,
@@ -564,6 +569,7 @@ impl Captain {
             crossing: false,
             bridgehead: None,
             baiting: false,
+            next_ford_look: 0,
             next_ground: 0,
             ground_note: String::new(),
             focus: None,

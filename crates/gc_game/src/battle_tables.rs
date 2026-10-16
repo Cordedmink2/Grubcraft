@@ -200,11 +200,11 @@ fn battlefield(ground: Ground, seed: u64) -> Heightmap {
     }
     if river {
         // Deep water across the middle, wadeable at one or two fords.
-        let y = 128 + roll(-12, 12);
+        let (y, drift) = (128 + roll(-12, 12), roll(-10, 10));
         terrain.push(TerrainOp {
             shape: Shape::Line {
                 a: (0, y),
-                b: (256, y + roll(-10, 10)),
+                b: (256, y + drift),
                 half_width: roll(3, 5),
             },
             mode: Mode::Set,
@@ -219,7 +219,8 @@ fn battlefield(ground: Ground, seed: u64) -> Heightmap {
         };
         for x in fords {
             terrain.push(TerrainOp {
-                shape: disc((x, y), roll(4, 7)),
+                // On the river where it runs past x.
+                shape: disc((x, y + drift * x / 256), roll(4, 7)),
                 mode: Mode::Set,
                 height: water - 4,
                 edge: 3,
