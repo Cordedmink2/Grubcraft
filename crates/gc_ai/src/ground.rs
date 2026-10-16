@@ -73,6 +73,19 @@ impl Line {
         good as f32 / all.max(1) as f32
     }
 
+    /// Share of the places under the line in a wood, where the trees catch
+    /// some of the arrows shot at it.
+    pub fn wooded(&self, terrain: &Terrain) -> f32 {
+        let (mut wood, mut all) = (0, 0);
+        for ahead in [self.depth * 0.5 - 0.5, 0.0, -self.depth * 0.5 + 0.5] {
+            for across in self.across(1.0) {
+                all += 1;
+                wood += usize::from(terrain.cover(self.at(across, ahead)) == gc_sim::Cover::Wood);
+            }
+        }
+        wood as f32 / all.max(1) as f32
+    }
+
     /// For the left and right ends: tiles from the end of the line out to
     /// ground no regiment crosses, if there is some within [`COVER_REACH`]
     /// level with the line's front, its middle and its back, and a couple of
@@ -184,7 +197,13 @@ pub struct Ford {
 /// `from` along `forward`, within `reach` tiles to either side: one for each
 /// stretch of the bank where lanes straight across can be waded, at the
 /// middle of the stretch, nearest `from` first.
-pub fn fords(terrain: &Terrain, from: Vec2, forward: Vec2, water: Crossing, reach: f32) -> Vec<Ford> {
+pub fn fords(
+    terrain: &Terrain,
+    from: Vec2,
+    forward: Vec2,
+    water: Crossing,
+    reach: f32,
+) -> Vec<Ford> {
     let right = right_of(forward);
     let length = water.far + MIN_WATER * 4.0;
     let mut found: Vec<Ford> = Vec::new();
@@ -372,7 +391,10 @@ mod tests {
         assert_eq!(found.len(), 1, "{found:?}");
         let f = found[0];
         assert!((28.0..36.0).contains(&f.entry.x), "{f:?}");
-        assert!((f.entry.y - 50.0).abs() <= 0.5 && (f.exit.y - 56.0).abs() <= 0.5, "{f:?}");
+        assert!(
+            (f.entry.y - 50.0).abs() <= 0.5 && (f.exit.y - 56.0).abs() <= 0.5,
+            "{f:?}"
+        );
         assert!(fords(&t, from, Vec2::Y, water, 10.0).is_empty());
     }
 

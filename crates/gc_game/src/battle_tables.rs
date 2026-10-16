@@ -16,10 +16,10 @@
 use crate::battle::tests::{MAP, level, lobby, play_on};
 use gc_ai::{Difficulty, Mind};
 use gc_map::Map as Heightmap;
-use gc_sim::PlayerId;
-use gc_ui::lobby::MatchStart;
 use gc_map::def::{CoverKind, CoverOp, Mode, Shape, TerrainOp};
 use gc_map::{MapDef, SizeClass, Symmetry};
+use gc_sim::PlayerId;
+use gc_ui::lobby::MatchStart;
 
 /// The table's settings, from the environment.
 struct Table {

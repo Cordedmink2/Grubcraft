@@ -99,9 +99,7 @@ impl Field {
             .armies
             .iter()
             .filter(|a| view.hostile(party, a.party))
-            .filter(|a| {
-                Some(a.party) == facing || a.faces.is_some_and(|f| !view.hostile(party, f))
-            })
+            .filter(|a| Some(a.party) == facing || a.faces.is_some_and(|f| !view.hostile(party, f)))
             .map(|a| a.party)
             .collect();
         let with: Vec<PlayerId> = self
@@ -132,7 +130,9 @@ impl Field {
             dx.total_cmp(&dy).then(x.party.cmp(&y.party))
         });
         let first = foes.first()?;
-        let second = foes[1..].iter().find(|b| view.hostile(first.party, b.party))?;
+        let second = foes[1..]
+            .iter()
+            .find(|b| view.hostile(first.party, b.party))?;
         Some((first.party, second.party))
     }
 }
@@ -195,7 +195,11 @@ impl Captain {
             return;
         }
         (self.against, self.with) = field.sides(view, ctx.party);
-        if self.pouncing || self.onlook_since.is_some_and(|t| view.tick > t + ONLOOK_TICKS) {
+        if self.pouncing
+            || self
+                .onlook_since
+                .is_some_and(|t| view.tick > t + ONLOOK_TICKS)
+        {
             // Once it has gone in, or waited long enough, it fights on.
             self.onlooking = None;
             self.shy = false;
@@ -224,7 +228,10 @@ impl Captain {
         } else {
             (us - middle).normalize_or(-self.forward)
         };
-        self.shy = nearer || [a, b].iter().any(|&p| within(view, ctx.party, p, ONLOOK_NEAR));
+        self.shy = nearer
+            || [a, b]
+                .iter()
+                .any(|&p| within(view, ctx.party, p, ONLOOK_NEAR));
         self.onlook_since.get_or_insert(view.tick);
         // Either locked in melee (with each other, or anyone else but us):
         // fall on the nearer one now, while it can't turn to meet us.

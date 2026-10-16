@@ -860,6 +860,12 @@ impl Captain {
                 .copied()
                 .filter(|f| against.is_empty() || against.contains(&f.owner)),
         );
+        // Whoever stands higher where the lines will meet fights downhill.
+        let (mine, theirs) = match self.slope(ctx, fighting) {
+            s if s > 0.0 => (mine.downhill(), theirs),
+            s if s < 0.0 => (mine, theirs.downhill()),
+            _ => (mine, theirs),
+        };
         let gap = self.front_gap(fighting);
         let closing = (mine.speed + theirs.speed) * 0.5;
         let est = estimator::estimate(&mine, &theirs, Approach { gap, closing });

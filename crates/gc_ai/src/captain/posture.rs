@@ -61,9 +61,7 @@ impl Captain {
                 // Away from the enemy it faces, or keeping out of a fight,
                 // away from both sides in it.
                 let away = if shy { self.shy_from } else { -self.forward };
-                let back = ctx
-                    .terrain
-                    .clamp(self.anchor + away * WITHDRAW_TILES, 8.0);
+                let back = ctx.terrain.clamp(self.anchor + away * WITHDRAW_TILES, 8.0);
                 self.anchor = back;
                 let why = if shy {
                     "keeping out of their fight".to_string()
@@ -97,7 +95,9 @@ impl Captain {
             let meet = p.aggression() >= 0.7 && gap > 45.0 && !self.lying_in_wait();
             // Outshot only matters once their archers can reach us.
             let under_fire = theirs.ranged > 0.0 && gap < theirs.range + 2.0;
-            let outshot = theirs.ranged > mine.ranged * 1.15 && under_fire;
+            // Under the trees their arrows do less: no need to go to them.
+            let sheltered = ctx.knobs.read_ground && self.sheltered(ctx);
+            let outshot = theirs.ranged > mine.ranged * 1.15 && under_fire && !sheltered;
             let out_of_range = mine.ranged > 0.0 && gap > our_range;
             let losing = margin < LOSING;
             let patience = 3.0 + 25.0 * p.patience() - 10.0 * p.aggression()
@@ -159,8 +159,10 @@ impl Captain {
                     // them off.
                     None if !self.baiting && margin > BAIT_MARGIN => {
                         self.baiting = true;
-                        ctx.journal
-                            .note(now, "Drawing back from the water to tempt them across".to_string());
+                        ctx.journal.note(
+                            now,
+                            "Drawing back from the water to tempt them across".to_string(),
+                        );
                     }
                     None => {}
                 }
@@ -201,11 +203,6 @@ impl Captain {
                     // fought for longer than anyone waits before going to
                     // fetch an enemy, so it never gives up a standoff first.
                     let quiet = self.closing <= 1.0 && !engaged;
-            if std::env::var_os("AI_DEBUG").is_some() && ctx.knobs.read_ground && self.river.is_some() && now % 200 < 4 {
-                let fs = ground::fords(ctx.terrain, self.anchor, self.forward, self.river.unwrap(), 90.0);
-                let d: Vec<f32> = fs.iter().map(|f| fighting.iter().map(|g| g.pos.distance(f.exit)).fold(f32::MAX, f32::min)).collect();
-                ctx.journal.note(now, format!("DEBUG quiet {quiet} closing {:.1} waited {waited:.0} crossing {} fords {d:?}", self.closing, self.crossing));
-            }
                     if !halted && !only_archers && quiet && !self.fetching {
                         self.fetch_after(
                             ctx,

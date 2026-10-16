@@ -60,6 +60,16 @@ impl Captain {
         let wait_at = river
             .and_then(|r| ground::ford(t, anchor, forward, r, FORD_REACH))
             .map(|exit| exit - forward * (bank_back + depth * 0.5));
+        let read = ctx.knobs.read_ground;
+        let outshot = theirs.ranged > mine.ranged * 1.15;
+        let high = gc_sim::terrain::HIGH_GROUND as f32 / gc_sim::terrain::HEIGHT_UNITS as f32;
+        let hill_worth = HILL * (1.0 + (-margin).max(0.0));
+        let our_c = centroid(ours);
+        let enemy_front = fighting
+            .iter()
+            .map(|f| f.pos)
+            .min_by(|a, b| a.distance(our_c).total_cmp(&b.distance(our_c)))
+            .unwrap_or(enemy_at);
         let score = |p: Vec2| -> Option<(f32, f32, f32)> {
             let line = Line {
                 centre: p,
@@ -87,6 +97,15 @@ impl Captain {
             }
             let rise = line.rise(t, 12.0).clamp(0.0, 3.0);
             s += HIGH_GROUND * rise;
+            // Reading the ground: high enough to fight downhill is worth a
+            // great deal more than a gentle rise; and against better
+            // archers, trees to catch their arrows.
+            if read && line.rise(t, SLOPE_AHEAD) >= high {
+                s += hill_worth;
+            }
+            if read && outshot {
+                s += WOODS * line.wooded(t);
+            }
             if river.is_some()
                 && let Some(c) = ground::crossing(t, p, enemy_at)
                 && c.near < bank_back
@@ -95,9 +114,13 @@ impl Captain {
             }
             let moved = p - anchor;
             s -= moved.length() / MOVE_TILES;
+            // Ground we reach well before them is ours to take: going
+            // forward to it costs no more than going anywhere else.
+            let first = read && p.distance(enemy_front) > p.distance(our_c) + FIRST_BY;
             match wait_at {
                 // Up to the ford is safe ground: they must cross to reach it.
                 Some(w) => s -= p.distance(w) / 5.0,
+                None if first => {}
                 None => s -= moved.dot(forward).max(0.0) / FORWARD_TILES,
             }
             Some((s, side, rise))
@@ -133,6 +156,9 @@ impl Captain {
         );
         if let Some(w) = wait_at {
             found = look(w, 8.0, 6.0, 6.0, GROUND_STEP);
+        } else if read {
+            // And further forward, for a hill to take before they do.
+            found = look(anchor, GROUND_ACROSS, HILL_REACH, 0.0, 2.0 * GROUND_STEP);
         }
         let near = GROUND_STEP - 1.0;
         if let Some((_, p, _, _)) = found
@@ -255,7 +281,9 @@ impl Captain {
             .iter()
             .filter(|r| !t.wet(r.pos) && ground::crossing(t, r.pos, b).is_none())
             .count();
-        let watched = fighting.iter().any(|f| f.pos.distance(exit) < UNWATCHED * 0.7);
+        let watched = fighting
+            .iter()
+            .any(|f| f.pos.distance(exit) < UNWATCHED * 0.7);
         if watched && !wading && across == 0 {
             self.bridgehead = None;
             self.crossing = false;
@@ -271,8 +299,10 @@ impl Captain {
         }
         if across as f32 >= ours.len() as f32 * ACROSS_SHARE {
             self.bridgehead = None;
-            ctx.journal
-                .note(ctx.view.tick, "Across the water: forming up on the far bank".to_string());
+            ctx.journal.note(
+                ctx.view.tick,
+                "Across the water: forming up on the far bank".to_string(),
+            );
             return;
         }
         self.anchor = b;
@@ -280,5 +310,64 @@ impl Captain {
             self.posture = Posture::Advance;
             self.posture_since = ctx.view.tick;
         }
+    }
+}
+
+/// Tiles in front of a line whose ground the other side will stand on to
+/// fight it.
+const SLOPE_AHEAD: f32 = 6.0;
+/// What standing high enough to fight downhill is worth, before odds (a
+/// covered end of the line is worth 1).
+const HILL: f32 = 0.8;
+/// How far forward it looks for a hill to take, tiles; and how much nearer
+/// us than the nearest enemy a place must be to be ours to take.
+const HILL_REACH: f32 = 40.0;
+const FIRST_BY: f32 = 15.0;
+/// What a line wholly in a wood is worth against better archers.
+const WOODS: f32 = 0.8;
+
+impl Captain {
+    /// Who will fight downhill where the lines meet (Captains that read the
+    /// ground only): +1 us, -1 them, 0 neither. They meet at our line when
+    /// the enemy is coming on, and at theirs otherwise (we would have to go
+    /// to them). The side standing at least the simulation's
+    /// [`HIGH_GROUND`](gc_sim::terrain::HIGH_GROUND) above the ground in
+    /// front of it fights downhill.
+    pub(super) fn slope(&self, ctx: &Ctx, fighting: &[&Seen]) -> f32 {
+        if !ctx.knobs.read_ground || fighting.is_empty() {
+            return 0.0;
+        }
+        let t = ctx.terrain;
+        let high = gc_sim::terrain::HIGH_GROUND as f32 / gc_sim::terrain::HEIGHT_UNITS as f32;
+        let (line, ahead, sign) = if self.closing > 1.0 {
+            (self.anchor, self.forward, 1.0)
+        } else {
+            (centroid(fighting), -self.forward, -1.0)
+        };
+        let rise = t.height(line) - t.height(line + ahead * SLOPE_AHEAD);
+        if rise >= high {
+            sign
+        } else if rise <= -high {
+            -sign
+        } else {
+            0.0
+        }
+    }
+}
+
+/// Share of the line in a wood from which it counts as sheltered.
+const SHELTER: f32 = 0.5;
+
+impl Captain {
+    /// Whether the line stands mostly in a wood, where better archers
+    /// can't shoot it to pieces.
+    pub(super) fn sheltered(&self, ctx: &Ctx) -> bool {
+        let line = Line {
+            centre: self.anchor,
+            forward: self.forward,
+            width: self.line_width,
+            depth: self.line_depth,
+        };
+        line.wooded(ctx.terrain) >= SHELTER
     }
 }
