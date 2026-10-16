@@ -116,6 +116,7 @@ use gc_render::{
     BoxInstance, FrameParams, Renderer, RendererOptions, SoldierBatch, SoldierInstance, Terrain,
     UiQuad,
 };
+use gc_sim::events::Event;
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
@@ -2271,7 +2272,8 @@ impl Running {
     fn note_losses(&mut self) {
         let side = self.sandbox.side;
         let tick = self.world.tick_count();
-        for a in self.world.ambushes() {
+        for e in self.world.events() {
+            let Event::Ambush(a) = e else { continue };
             if let Some(on) = self
                 .world
                 .regiments
@@ -2285,7 +2287,7 @@ impl Running {
                 );
             }
         }
-        self.hud.watch(&self.world, side);
+        self.hud.watch(&self.world, side, self.world.events());
     }
 
     /// Tell the player about an ambush sprung on or by their side in the
@@ -2294,7 +2296,8 @@ impl Running {
         let side = self.sandbox.side;
         let name = |u: gc_sim::UnitId| self.unit_names[u as usize].as_str();
         let whose = |p: PlayerId| party_name(&self.parties, p) + "'s";
-        let news = self.world.ambushes().iter().rev().find_map(|a| {
+        let news = self.world.events().iter().rev().find_map(|e| {
+            let Event::Ambush(a) = e else { return None };
             let by = self.world.regiments.get(a.ambusher)?;
             let on = self.world.regiments.get(a.victim)?;
             let text = if !self.world.hostile(side, on.owner) {
@@ -2434,20 +2437,8 @@ impl Running {
             if v.launch_tick + SHOOTING_TICKS < now {
                 continue;
             }
-            let from = from_fx_vec(v.from);
-            let shooter = self
-                .world
-                .regiments
-                .iter()
-                .filter(|r| r.owner == v.owner)
-                .min_by(|a, b| {
-                    let da = from_fx_vec(a.position).distance_squared(from);
-                    let db = from_fx_vec(b.position).distance_squared(from);
-                    da.total_cmp(&db)
-                });
-            if let Some(r) = shooter
-                && from_fx_vec(r.position).distance(from) < 2.0
-            {
+            // Gone, or its slot taken by another regiment, is not shooting.
+            if let Some(r) = self.world.regiments.get(v.shooter) {
                 self.shooting[r.handle.index as usize] = true;
             }
         }
