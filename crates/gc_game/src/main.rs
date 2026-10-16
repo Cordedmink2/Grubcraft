@@ -65,7 +65,7 @@
 //! turns the music off or on. Battle music fades in as regiments engage.
 //!
 //! Camera: arrow keys / screen edges / two-finger scroll pan; mouse wheel or
-//! pinch zooms; Alt + middle-drag or two-finger rotate turns the view;
+//! pinch zooms; Alt + middle-drag, two-finger rotate, or `,` and `.` turn the view;
 //! middle-click or Home resets the rotation; ` (backquote) or F11 toggles the
 //! dev overlay and prints memory by subsystem;
 //! Esc leaves placing, the stats panel or the credits, and otherwise opens
@@ -679,6 +679,9 @@ impl MemoryTimeline {
 }
 
 #[derive(Default)]
+/// Radians per second the view turns while `,` or `.` is held.
+const KEY_TURN_RATE: f32 = 1.0;
+
 struct Input {
     cursor: Option<PhysicalPosition<f64>>,
     focused: bool,
@@ -687,6 +690,8 @@ struct Input {
     /// Ctrl, or Cmd on a Mac.
     command: bool,
     arrows: [bool; 4], // up, down, left, right
+    /// `,` turns the view left, `.` right.
+    turn: [bool; 2],
     /// Where a left-drag (box select) started.
     left_down: Option<PhysicalPosition<f64>>,
     /// Where a right-drag (line order) started: the cursor and the ground under it.
@@ -1149,6 +1154,8 @@ impl ApplicationHandler for App {
                         KeyCode::ArrowDown => r.input.arrows[1] = down,
                         KeyCode::ArrowLeft => r.input.arrows[2] = down,
                         KeyCode::ArrowRight => r.input.arrows[3] = down,
+                        KeyCode::Comma => r.input.turn[0] = down,
+                        KeyCode::Period => r.input.turn[1] = down,
                         KeyCode::Home if down => r.camera.reset_rotation(),
                         KeyCode::F11 | KeyCode::Backquote if down && !event.repeat => {
                             r.overlay = !r.overlay;
@@ -2948,6 +2955,11 @@ impl Running {
         if self.menu_open && !self.match_started {
             // A slow sway behind the main menu.
             self.camera.yaw = 0.3 * (self.started.elapsed().as_secs_f32() * 0.12).sin();
+        }
+        if !self.menu_open {
+            let [l, r] = self.input.turn;
+            self.camera
+                .rotate((f32::from(u8::from(r)) - f32::from(u8::from(l))) * KEY_TURN_RATE * dt);
         }
         let mut dx = 0.0;
         let mut dy = 0.0;
