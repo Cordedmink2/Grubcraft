@@ -5,10 +5,11 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use gc_fixed::{Angle, Fx, FxVec2};
 use gc_net::{HASH_EVERY, INPUT_DELAY, Identity, Lan, MIN_DELAY, MatchEvent};
 use gc_replay::{Recorder, Replay};
 use gc_sim::scenario::{DRILL_UNITS, Drill};
-use gc_sim::{Capacities, MatchSetup, PlayerCommand, World};
+use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, World};
 use gc_ui::lobby::{
     Faction, LobbySettings, NetError, NetEvent, Network, OnDrop, Profile, SlotEdit, SlotKind,
 };
@@ -202,10 +203,18 @@ impl Match {
         m
     }
 
+    /// Machine `i`'s orders for its own players. As in the game, the host
+    /// raises every army.
     fn order(&mut self, i: usize) {
         self.drills[i].commands_for(&self.worlds[i], &mut self.cmds);
         let mine = &self.mine[i];
-        self.lans[i].submit(self.cmds.drain(..).filter(|c| mine.contains(&c.player)));
+        self.lans[i].submit(self.cmds.drain(..).filter(|c| {
+            if c.command.is_player_order() {
+                mine.contains(&c.player)
+            } else {
+                i == 0
+            }
+        }));
     }
 
     /// Run every machine except `away` (cut off from the network) for a
@@ -466,6 +475,54 @@ fn carry_on_plays_through_a_drop() {
             .any(|e| matches!(e, MatchEvent::Notice(t) if t == "Alex lost connection.")),
         "{events:?}"
     );
+}
+
+#[test]
+fn a_joiner_cannot_use_the_sandbox_on_everyone() {
+    let _turn = ports();
+    let mut m = Match::start(&["Alex"], &[], OnDrop::Wait, 5);
+    m.run(&[], 20, Duration::from_secs(20));
+    let units = m.worlds[0].units().to_vec();
+    // A tampered client tries every command only the host may send: take
+    // the host's army off the field, retune a unit for everyone, raise more
+    // troops and claim a deployment zone.
+    let mut stats = units[0];
+    stats.melee_damage += 50;
+    let at = FxVec2::from_ints(128, 128);
+    let mut cheats: Vec<Command> = m.worlds[1]
+        .regiments
+        .iter()
+        .filter(|r| r.owner == 0)
+        .map(|r| Command::RemoveRegiment { regiment: r.handle })
+        .collect();
+    cheats.push(Command::TuneUnit { unit: 0, stats });
+    cheats.extend((0..10).map(|_| Command::SpawnRegiment {
+        unit: 0,
+        position: at,
+        facing: Angle(0),
+    }));
+    cheats.push(Command::DeployZone {
+        center: at,
+        radius: Fx::from_int(200),
+    });
+    m.lans[1].submit(
+        cheats
+            .into_iter()
+            .map(|command| PlayerCommand { player: 0, command }),
+    );
+    m.run(&[], 100, Duration::from_secs(20));
+    assert_eq!(m.ticks(), [100, 100]);
+    m.settle();
+    assert_eq!(m.worlds[0].state_hash(), m.worlds[1].state_hash());
+    for w in &m.worlds {
+        for p in 0..2u8 {
+            let n = w.regiments.iter().filter(|r| r.owner == p).count();
+            assert_eq!(n, 20, "player {p}");
+        }
+        assert_eq!(w.units(), units.as_slice());
+        assert!(!w.deploying());
+    }
+    assert_eq!(m.desyncs(), []);
 }
 
 #[test]

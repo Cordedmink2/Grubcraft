@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use gc_sim::{PlayerCommand, PlayerId};
 use gc_ui::lobby::{
-    DEFAULT_AI_LEVEL, DiscoveredGame, LobbySettings, LobbyState, MAPS, MAX_PLAYERS, MatchStart,
-    NetError, NetEvent, Network, OnDrop, Profile, Slot, SlotEdit, SlotKind, apply_edit,
+    DEFAULT_AI_LEVEL, DiscoveredGame, LobbySettings, LobbyState, MAPS, MAX_ARMY, MAX_PLAYERS,
+    MatchStart, NetError, NetEvent, Network, OnDrop, Profile, Slot, SlotEdit, SlotKind, apply_edit,
 };
 
 use crate::crypt::{Cipher, KeyPair};
@@ -75,6 +75,10 @@ const GUESS_WINDOW: Duration = Duration::from_secs(60);
 /// Commands per turn bundle are capped so a bundle fits a packet; the rest
 /// go in the next turn.
 const MAX_BUNDLE_BYTES: usize = 900;
+/// Most commands one joiner may have waiting for a turn; more are dropped.
+/// A group order is one command per regiment, so this holds 16 orders to a
+/// whole army, more than anyone gives while a match is paused for a player.
+const MAX_QUEUED_ORDERS: usize = 16 * MAX_ARMY;
 /// If the host falls this many turns behind its clock (a long hitch), it
 /// stops trying to catch up and carries on from now.
 const MAX_HOST_LAG: u32 = 20;
@@ -919,8 +923,18 @@ impl Lan {
             Msg::Orders { commands } => {
                 let peer = &h.peers[index];
                 if let (Some(g), Some(player)) = (&mut h.game, peer.player) {
-                    g.inbox
-                        .extend(commands.into_iter().map(|c| PlayerCommand { player, ..c }));
+                    // The host raises every army and sets out the
+                    // deployment; a joiner only orders its own regiments.
+                    // Every machine would apply the sandbox's spawning,
+                    // removing and tuning alike, so nothing would flag it.
+                    let queued = g.inbox.iter().filter(|c| c.player == player).count();
+                    g.inbox.extend(
+                        commands
+                            .into_iter()
+                            .filter(|c| c.command.is_player_order())
+                            .take(MAX_QUEUED_ORDERS.saturating_sub(queued))
+                            .map(|c| PlayerCommand { player, ..c }),
+                    );
                 }
             }
             Msg::Hash { tick, hash } => {

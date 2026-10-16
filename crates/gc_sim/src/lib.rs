@@ -463,6 +463,25 @@ pub enum Command {
     Ready,
 }
 
+impl Command {
+    /// Whether this is one of a player's own orders to their regiments (or
+    /// Ready), rather than setup (zones, raising armies) or the sandbox's
+    /// tools (removing, tuning). In a network match only the host may send
+    /// the rest. No `_` arm: a new kind of command must be decided here.
+    pub fn is_player_order(&self) -> bool {
+        match self {
+            Command::MoveTo { .. }
+            | Command::Attack { .. }
+            | Command::SetFormation { .. }
+            | Command::Ready => true,
+            Command::SpawnRegiment { .. }
+            | Command::RemoveRegiment { .. }
+            | Command::TuneUnit { .. }
+            | Command::DeployZone { .. } => false,
+        }
+    }
+}
+
 /// A command tagged with who issued it. Turn bundles carry these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlayerCommand {
