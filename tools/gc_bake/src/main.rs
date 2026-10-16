@@ -29,8 +29,10 @@ fn main() -> ExitCode {
             }
             let hash: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
             println!(
-                "baked {} units into {} ({} bytes), data hash {hash}",
+                "baked {} units, {} buildings and {} Conquest units into {} ({} bytes), data hash {hash}",
                 baked.units,
+                baked.buildings,
+                baked.conquest_units,
                 out.display(),
                 baked.pack.len()
             );

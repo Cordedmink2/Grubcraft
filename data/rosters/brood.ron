@@ -1,6 +1,7 @@
 // Brood roster: every building, unit, summon, hero and Larvae, with
-// first-pass numbers. Design data for Conquest (M3): the game does not read
-// this file yet. Readable copy and rationale: docs/17-unit-rosters.md.
+// first-pass numbers. Design data for Conquest (M3): gc_bake bakes it into the
+// building and Conquest unit tables; the game does not use those in play yet.
+// Readable copy and rationale: docs/17-unit-rosters.md.
 //
 // Each `stats` block uses exactly the fields of a data/units.ron entry (see
 // the comment at the top of that file) so it can move into the game
@@ -14,8 +15,9 @@
 // Living), footprint (tiles across and deep), supply (cap it adds), flags
 // (DropOffGrub, DropOffMarrow, PowersField, AntiAir), attack (towers: range in
 // tiles, damage per shot, seconds between shots, shots per volley) and effect
-// (plain words). starting_buildings are what a player starts Conquest with
-// (docs/04-economy.md). A unit's `from: Building("...")` names one of these
+// (plain words). starting_buildings and starting_units (unit name and count)
+// are what a player starts Conquest with (docs/04-economy.md; Brood larvae are
+// a meter, not units). A unit's `from: Building("...")` names one of these
 // buildings.
 //
 // Unit fields: tier (1 to 3; 0 for summoned units), class, cost (Grub and
@@ -36,6 +38,7 @@
         abilities: [],
     ),
     starting_buildings: ["Hive"],
+    starting_units: [("Gnawer", 4)],
     buildings: [
         (
             name: "Hive",

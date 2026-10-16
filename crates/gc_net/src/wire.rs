@@ -7,7 +7,7 @@
 //! fails to decode is dropped.
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::{Command, Formation, Mass, PlayerCommand, RegimentHandle, UnitStats};
+use gc_sim::{Command, Formation, Mass, PlayerCommand, RegimentHandle, StructureHandle, UnitStats};
 
 #[derive(Default)]
 pub struct Writer {
@@ -62,6 +62,12 @@ impl Writer {
     }
 
     pub fn handle(&mut self, h: RegimentHandle) {
+        self.var(u64::from(h.index));
+        self.var(u64::from(h.generation));
+    }
+
+    /// A building's handle, laid out as a regiment's.
+    pub fn structure(&mut self, h: StructureHandle) {
         self.var(u64::from(h.index));
         self.var(u64::from(h.generation));
     }
@@ -156,6 +162,13 @@ impl<'a> Reader<'a> {
 
     pub fn handle(&mut self) -> Option<RegimentHandle> {
         Some(RegimentHandle {
+            index: self.var_as()?,
+            generation: self.var_as()?,
+        })
+    }
+
+    pub fn structure(&mut self) -> Option<StructureHandle> {
+        Some(StructureHandle {
             index: self.var_as()?,
             generation: self.var_as()?,
         })
@@ -266,6 +279,26 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.fx(radius);
         }
         Command::Ready => w.u8(7),
+        Command::SpawnStructure { building, tile } => {
+            w.u8(8);
+            w.var(u64::from(building));
+            // Two's complement, so tiles off the map's north-west edge
+            // still travel (and are refused by the sim).
+            w.var(u64::from(tile.0 as u16));
+            w.var(u64::from(tile.1 as u16));
+        }
+        Command::AttackStructure {
+            regiment,
+            structure,
+        } => {
+            w.u8(9);
+            w.handle(regiment);
+            w.structure(structure);
+        }
+        Command::RemoveStructure { structure } => {
+            w.u8(10);
+            w.structure(structure);
+        }
     }
 }
 
@@ -306,6 +339,17 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             radius: r.fx()?,
         },
         7 => Command::Ready,
+        8 => Command::SpawnStructure {
+            building: r.var_as()?,
+            tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+        },
+        9 => Command::AttackStructure {
+            regiment: r.handle()?,
+            structure: r.structure()?,
+        },
+        10 => Command::RemoveStructure {
+            structure: r.structure()?,
+        },
         _ => return None,
     })
 }
@@ -425,6 +469,23 @@ mod tests {
                 radius: Fx::from_int(30),
             },
             Command::Ready,
+            Command::SpawnStructure {
+                building: 40,
+                tile: (-1, 4000),
+            },
+            Command::AttackStructure {
+                regiment: h(3, 1),
+                structure: StructureHandle {
+                    index: 1023,
+                    generation: 65_535,
+                },
+            },
+            Command::RemoveStructure {
+                structure: StructureHandle {
+                    index: 0,
+                    generation: 0,
+                },
+            },
         ];
         let pcs: Vec<PlayerCommand> = cmds
             .iter()

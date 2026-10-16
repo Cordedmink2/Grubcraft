@@ -12,6 +12,7 @@ use gc_fixed::FxVec2;
 use crate::combat::Combat;
 use crate::morale::MoraleState;
 use crate::regiments::{RegimentHandle, Regiments};
+use crate::structures::StructureHandle;
 use crate::vision::Ambush;
 
 /// One volley, from when it is loosed until it comes down: the pool slot it
@@ -56,6 +57,8 @@ pub enum Event {
     },
     /// An ambush was sprung.
     Ambush(Ambush),
+    /// A building was brought down (its handle is no longer live).
+    Fallen { structure: StructureHandle },
 }
 
 /// Each regiment slot as it stood before the tick.
@@ -99,6 +102,19 @@ impl Events {
             list: Vec::new(),
             before: Vec::new(),
         }
+    }
+
+    /// Room for one event per building too (Conquest).
+    pub(crate) fn reserve(&mut self, structures: usize) {
+        // `reserve` counts from the length, not the capacity.
+        let room = self.list.capacity() - self.list.len() + structures;
+        self.list.reserve(room);
+    }
+
+    /// Tell of the buildings brought down in the tick just played.
+    pub(crate) fn fallen(&mut self, fallen: &[StructureHandle]) {
+        self.list
+            .extend(fallen.iter().map(|&structure| Event::Fallen { structure }));
     }
 
     pub(crate) fn list(&self) -> &[Event] {

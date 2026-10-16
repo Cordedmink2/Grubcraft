@@ -537,10 +537,15 @@ impl Regiments {
         if files != 0 {
             self.files[i] = files.clamp(1, self.models[i].max(1));
         }
+        self.halt(i);
+        Some(i)
+    }
+
+    /// Slot `i` drops its orders: no move, no facing to turn to, no enemy.
+    pub(crate) fn halt(&mut self, i: usize) {
         self.target[i] = None;
         self.target_facing[i] = None;
         self.attack_target[i] = None;
-        Some(i)
     }
 
     /// Order a regiment to attack an enemy regiment: melee regiments close

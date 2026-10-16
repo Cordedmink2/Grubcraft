@@ -1,12 +1,16 @@
 //! Checks the faction rosters in `data/rosters/` (design data for Conquest;
-//! see docs/17-unit-rosters.md). The game does not read them yet, but every
-//! `stats` block must bake exactly as `data/units.ron` entries do, so the
-//! engine can move them across unchanged.
+//! see docs/17-unit-rosters.md). The baker bakes them into the building and
+//! Conquest unit tables; the checks here are the design rules, and that every
+//! `stats` block bakes exactly as a `data/units.ron` entry does.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use gc_bake::rosters::{
+    Ability, Armour, Building, BuildingFlag, Class, FactionDef, Flag, From, Kind, Role, Roster,
+    Stats, Unit,
+};
+use serde::Deserialize;
 
 const ROSTERS: &[(&str, FactionDef)] = &[
     ("ember_clans.ron", FactionDef::EmberClans),
@@ -14,306 +18,6 @@ const ROSTERS: &[(&str, FactionDef)] = &[
     ("choir.ron", FactionDef::Choir),
     ("carrion_concord.ron", FactionDef::CarrionConcord),
 ];
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Roster {
-    faction: FactionDef,
-    meter: Meter,
-    /// What a player starts Conquest with (docs/04-economy.md).
-    starting_buildings: Vec<String>,
-    buildings: Vec<Building>,
-    units: Vec<Unit>,
-    heroes: Vec<Hero>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Meter {
-    name: String,
-    max: u16,
-    abilities: Vec<Ability>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Building {
-    name: String,
-    role: Role,
-    /// The main-building tier needed to build it.
-    tier: u8,
-    /// Main-building tiers 2 and 3: the building this one upgrades.
-    #[serde(default)]
-    upgrades_from: Option<String>,
-    cost: Cost,
-    /// Seconds at Standard tempo.
-    build_time: f64,
-    hp: u16,
-    armour: Armour,
-    /// Tiles across and deep.
-    footprint: (u8, u8),
-    #[serde(default)]
-    supply: u8,
-    #[serde(default)]
-    flags: Vec<BuildingFlag>,
-    #[serde(default)]
-    attack: Option<Attack>,
-    effect: String,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-enum Role {
-    Main,
-    Outpost,
-    Housing,
-    Economy,
-    Production,
-    Tech,
-    Heroes,
-    Defence,
-    Wall,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-enum Armour {
-    Fortified,
-    Structure,
-    Living,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-enum BuildingFlag {
-    DropOffGrub,
-    DropOffMarrow,
-    /// Choir: powers buildings around it. Every other Choir building needs
-    /// power to work.
-    PowersField,
-    AntiAir,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Attack {
-    range: f64,
-    damage: u16,
-    reload: f64,
-    shots: u8,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Unit {
-    /// 1 to 3; 0 for summoned units.
-    tier: u8,
-    class: Class,
-    cost: Cost,
-    supply: u8,
-    /// Seconds to train, or to cocoon for a Brood evolution.
-    train_time: f64,
-    from: From,
-    #[serde(default)]
-    flags: Vec<Flag>,
-    abilities: Vec<Ability>,
-    stats: Stats,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Hero {
-    role: String,
-    hired_at: String,
-    per_level: Growth,
-    #[serde(default)]
-    flags: Vec<Flag>,
-    abilities: Vec<Ability>,
-    stats: Stats,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Growth {
-    hp: u16,
-    melee_damage: u16,
-    #[serde(default)]
-    missile_damage: u16,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Cost {
-    grub: u16,
-    marrow: u16,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Ability {
-    name: String,
-    kind: Kind,
-    /// Plain-language description, with hero ranks written 1/2/3.
-    effect: String,
-    primitives: Vec<Primitive>,
-    #[serde(default)]
-    cooldown: f64,
-    #[serde(default)]
-    range: f64,
-    #[serde(default)]
-    radius: f64,
-    #[serde(default)]
-    duration: f64,
-    /// Faction-meter abilities only: meter cost and tier.
-    #[serde(default)]
-    cost: u16,
-    #[serde(default)]
-    tier: u8,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-enum Class {
-    Worker,
-    Light,
-    Spear,
-    Heavy,
-    Ranged,
-    Cavalry,
-    Air,
-    Artillery,
-    Siege,
-    Support,
-    Monster,
-}
-
-#[derive(Deserialize)]
-enum From {
-    Building(String),
-    Evolves(String),
-    Summoned(String),
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-enum Flag {
-    Flying,
-    AntiAir,
-    Crystal,
-    Undead,
-    Burrows,
-    SiegeOnly,
-    FriendlyFire,
-    DirectFire,
-    Detector,
-    Terror,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-enum Kind {
-    Passive,
-    Aura,
-    Toggle,
-    Active,
-    Autocast,
-    /// A command with no cooldown, such as a worker building.
-    Order,
-    Ultimate,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-enum Primitive {
-    Damage,
-    Heal,
-    ApplyStatus,
-    ModifyMorale,
-    ModifyStat,
-    Summon,
-    Teleport,
-    AreaPulse,
-    SpawnVolley,
-    Transform,
-    RaiseCorpses,
-    Reveal,
-    Stun,
-    Knockback,
-    Control,
-    Economy,
-    Construct,
-    Gather,
-    Burrow,
-}
-
-/// Exactly the fields of a `data/units.ron` entry.
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Stats {
-    name: String,
-    faction: FactionDef,
-    models: u16,
-    hp_per_model: u16,
-    files: u16,
-    speed: f64,
-    turn_rate: f64,
-    file_spacing: f64,
-    rank_spacing: f64,
-    melee_attack: u8,
-    melee_defence: u8,
-    melee_damage: u16,
-    charge_bonus: u8,
-    #[serde(default)]
-    morale: u8,
-    #[serde(default)]
-    never_routs: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    ranged: Option<Ranged>,
-    #[serde(default, skip_serializing_if = "Mass::is_medium")]
-    mass: Mass,
-    #[serde(default, skip_serializing_if = "is_false")]
-    reach: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    swing_room: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    shield: bool,
-    /// Field Battle points live in `data/units.ron`, not the rosters; any
-    /// value bakes.
-    #[serde(default = "some_points")]
-    points: u16,
-}
-
-fn some_points() -> u16 {
-    400
-}
-
-fn is_false(v: &bool) -> bool {
-    !v
-}
-
-#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
-enum Mass {
-    Light,
-    #[default]
-    Medium,
-    Heavy,
-}
-
-impl Mass {
-    fn is_medium(&self) -> bool {
-        *self == Mass::Medium
-    }
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Ranged {
-    range: f64,
-    damage: u16,
-    reload: f64,
-    accuracy: u8,
-}
-
-#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
-enum FactionDef {
-    EmberClans,
-    Brood,
-    Choir,
-    CarrionConcord,
-}
 
 fn data_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
@@ -470,11 +174,22 @@ fn every_stats_block_bakes() {
         all.extend(r.units.into_iter().map(|u| u.stats));
         all.extend(r.heroes.into_iter().map(|h| h.stats));
     }
+    // The rosters leave Field Battle points out; units.ron needs them.
+    for s in &mut all {
+        s.points = 400;
+    }
     let text = ron::to_string(&all).unwrap();
 
     let dir = std::env::temp_dir().join(format!("gc_rosters_test_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(dir.join("rosters")).unwrap();
     std::fs::write(dir.join("units.ron"), text).unwrap();
+    for &(file, _) in ROSTERS {
+        std::fs::copy(
+            data_dir().join("rosters").join(file),
+            dir.join("rosters").join(file),
+        )
+        .unwrap();
+    }
     let baked = gc_bake::bake(&dir).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(baked.units, all.len());
     let _ = std::fs::remove_dir_all(&dir);
@@ -714,6 +429,19 @@ fn buildings_follow_the_design_rules() {
                 b.flags, base.flags,
                 "{file}: {}: drop-offs differ from the main building",
                 b.name
+            );
+        }
+
+        for (n, count) in &r.starting_units {
+            let u = r
+                .units
+                .iter()
+                .find(|u| u.stats.name == *n)
+                .unwrap_or_else(|| panic!("{file}: no unit {n} to start with"));
+            assert!(*count > 0, "{file}: starts with no {n}");
+            assert!(
+                !matches!(u.from, From::Summoned(_)),
+                "{file}: {n} is summoned, not a starting unit"
             );
         }
 

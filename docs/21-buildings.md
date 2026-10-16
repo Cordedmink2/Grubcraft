@@ -2,7 +2,7 @@
 
 Every faction's buildings with first-pass numbers for Conquest (M3): cost, build time, hit points, armour, size and supply. [03 · World and Factions](03-factions.md) says what each building is for and [04 · Economy](04-economy.md) sets the resources, supply and tier costs these numbers sit on. The canonical values live in the `buildings` list of each `data/rosters/*.ron` file, not in this document. `tools/gc_bake/tests/rosters.rs` checks them against the rules below and against the units that train in each building.
 
-None of this is in the game yet. Construction arrives with M3 thread A ([15 · Staffing Plan](15-staffing-plan.md#m3--first-harvest-the-first-agent-team)), built on these numbers.
+`gc_bake` bakes these buildings into the pack's building table (`data/buildings`, with the starting count of each). **Built (2026-10-16, M3 step 1):** the simulation has buildings: footprints that block walking, hit points, armour and the damage table below, and regiments ordered to attack a building close in and knock it down. The sandbox lets you put buildings down and knock them over (`K`, see [06 · Game Modes](06-game-modes.md)). Construction, training, supply and towers follow in later steps ([15 · Staffing Plan](15-staffing-plan.md#m3--first-harvest-the-first-agent-team)).
 
 ## Shared rules
 

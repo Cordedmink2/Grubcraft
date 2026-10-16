@@ -13,6 +13,10 @@ use bytemuck::{Pod, Zeroable};
 use gc_assets::{Kind, Pack, PackError, TableError, read_table};
 use gc_fixed::Fx;
 
+pub mod conquest;
+
+pub use conquest::{BUILDINGS_PATH, BuildingRecord, CONQUEST_UNITS_PATH, ConquestUnitRecord};
+
 /// Pack path of the unit table.
 pub const UNITS_PATH: &str = "data/units";
 /// Pack path of the data manifest (the data hash).
@@ -118,8 +122,7 @@ pub struct UnitRecord {
 
 impl UnitRecord {
     pub fn name(&self) -> &str {
-        let len = self.name.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
-        core::str::from_utf8(&self.name[..len]).unwrap_or("?")
+        name_of(&self.name)
     }
 
     pub fn speed(&self) -> Fx {
@@ -165,6 +168,10 @@ pub enum DataError {
     BadManifest,
     /// A unit record failed validation; the index is its row.
     BadUnit(usize, &'static str),
+    /// A building record failed validation; the index is its row.
+    BadBuilding(usize, &'static str),
+    /// A Conquest unit record failed validation; the index is its row.
+    BadConquestUnit(usize, &'static str),
 }
 
 impl fmt::Display for DataError {
@@ -176,6 +183,8 @@ impl fmt::Display for DataError {
             DataError::Table(path, e) => write!(f, "{path}: {e}"),
             DataError::BadManifest => write!(f, "game data manifest is malformed"),
             DataError::BadUnit(i, why) => write!(f, "unit {i}: {why}"),
+            DataError::BadBuilding(i, why) => write!(f, "building {i}: {why}"),
+            DataError::BadConquestUnit(i, why) => write!(f, "Conquest unit {i}: {why}"),
         }
     }
 }
@@ -191,23 +200,36 @@ impl From<PackError> for DataError {
 /// All game data, borrowed from a pack.
 #[derive(Clone, Copy, Debug)]
 pub struct GameData<'a> {
+    /// The Field Battle regiment types.
     pub units: &'a [UnitRecord],
+    /// Every faction's buildings, for Conquest (see [`conquest`]).
+    pub buildings: &'a [BuildingRecord],
+    /// Every faction's trainable units, for Conquest (see [`conquest`]).
+    pub conquest_units: &'a [ConquestUnitRecord],
     /// BLAKE3 hash of every data table, as computed by the baker.
     pub hash: [u8; 32],
 }
 
 impl<'a> GameData<'a> {
     pub fn from_pack(pack: &Pack<'a>) -> Result<GameData<'a>, DataError> {
-        let units_entry = pack
-            .get_path(UNITS_PATH)
-            .ok_or(DataError::Missing(UNITS_PATH))?;
-        if units_entry.kind != Kind::Table {
-            return Err(DataError::WrongKind(UNITS_PATH));
-        }
-        let units = read_table::<UnitRecord>(UNIT_SCHEMA, units_entry.bytes)
-            .map_err(|e| DataError::Table(UNITS_PATH, e))?;
+        let units = table::<UnitRecord>(pack, UNITS_PATH, UNIT_SCHEMA)?;
         for (i, u) in units.iter().enumerate() {
             validate_unit(u).map_err(|why| DataError::BadUnit(i, why))?;
+        }
+        let buildings = table::<BuildingRecord>(pack, BUILDINGS_PATH, conquest::BUILDING_SCHEMA)?;
+        for (i, b) in buildings.iter().enumerate() {
+            conquest::validate_building(b, buildings.len())
+                .map_err(|why| DataError::BadBuilding(i, why))?;
+        }
+        for i in 0..buildings.len() {
+            conquest::validate_upgrade(buildings, i)
+                .map_err(|why| DataError::BadBuilding(i, why))?;
+        }
+        let conquest_units =
+            table::<ConquestUnitRecord>(pack, CONQUEST_UNITS_PATH, conquest::CONQUEST_UNIT_SCHEMA)?;
+        for (i, u) in conquest_units.iter().enumerate() {
+            conquest::validate_conquest_unit(u, buildings.len(), conquest_units.len())
+                .map_err(|why| DataError::BadConquestUnit(i, why))?;
         }
 
         let manifest = pack
@@ -217,7 +239,12 @@ impl<'a> GameData<'a> {
             .bytes
             .try_into()
             .map_err(|_| DataError::BadManifest)?;
-        Ok(GameData { units, hash })
+        Ok(GameData {
+            units,
+            buildings,
+            conquest_units,
+            hash,
+        })
     }
 
     pub fn unit_by_name(&self, name: &str) -> Option<(u16, &'a UnitRecord)> {
@@ -234,19 +261,54 @@ impl<'a> GameData<'a> {
     }
 }
 
-/// The rules every unit record must satisfy. Shared by the baker (which
-/// reports them against the RON source) and the loader.
-pub fn validate_unit(u: &UnitRecord) -> Result<(), &'static str> {
-    let len = u.name.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
+/// The table at `path` in `pack`, of records written with `schema`.
+fn table<'a, T: Pod>(
+    pack: &Pack<'a>,
+    path: &'static str,
+    schema: u32,
+) -> Result<&'a [T], DataError> {
+    let entry = pack.get_path(path).ok_or(DataError::Missing(path))?;
+    if entry.kind != Kind::Table {
+        return Err(DataError::WrongKind(path));
+    }
+    read_table::<T>(schema, entry.bytes).map_err(|e| DataError::Table(path, e))
+}
+
+/// A record's name: the bytes before its terminator.
+pub(crate) fn name_of(bytes: &[u8; NAME_BYTES]) -> &str {
+    let len = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
+    core::str::from_utf8(&bytes[..len]).unwrap_or("?")
+}
+
+/// A record's name is UTF-8, not empty, and zero after its terminator.
+pub(crate) fn validate_name(bytes: &[u8; NAME_BYTES]) -> Result<(), &'static str> {
+    let len = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
     if len == 0 {
         return Err("name is empty");
     }
-    if core::str::from_utf8(&u.name[..len]).is_err() {
+    if core::str::from_utf8(&bytes[..len]).is_err() {
         return Err("name is not UTF-8");
     }
-    if u.name[len..].iter().any(|&b| b != 0) {
+    if bytes[len..].iter().any(|&b| b != 0) {
         return Err("name has bytes after its terminator");
     }
+    Ok(())
+}
+
+/// The rules every unit record must satisfy. Shared by the baker (which
+/// reports them against the RON source) and the loader.
+pub fn validate_unit(u: &UnitRecord) -> Result<(), &'static str> {
+    validate_stats(u)?;
+    if u.points == 0 {
+        return Err("points must be above 0");
+    }
+    Ok(())
+}
+
+/// [`validate_unit`] but for the Field Battle points, which a Conquest
+/// unit (`ConquestUnitRecord::stats`) need not have.
+pub fn validate_stats(u: &UnitRecord) -> Result<(), &'static str> {
+    validate_name(&u.name)?;
     if Faction::from_u8(u.faction).is_none() {
         return Err("unknown faction");
     }
@@ -289,9 +351,6 @@ pub fn validate_unit(u: &UnitRecord) -> Result<(), &'static str> {
     }
     if u.weapons & !(WEAPON_REACH | WEAPON_SWING_ROOM | WEAPON_SHIELD) != 0 {
         return Err("unknown weapon flags");
-    }
-    if u.points == 0 {
-        return Err("points must be above 0");
     }
     if u.reserved != 0 {
         return Err("reserved bytes must be zero");

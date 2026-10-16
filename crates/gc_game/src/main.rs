@@ -6,8 +6,11 @@
 //! Sandbox: Tab switches which side you command (all four can be ordered).
 //! B turns placing on and off: left-click puts down a regiment of the chosen
 //! type for that side, facing away from the camera, and [ and ] choose the
-//! type. Delete (or Backspace) takes the selected regiments off the field;
-//! Shift + Delete clears it. P pauses; - and = slow the game down to a tenth
+//! type. K does the same for buildings (the sandbox only): click puts the
+//! chosen building down, centred on the cursor, and [ and ] choose which.
+//! Delete (or Backspace) takes the building under the cursor, else the
+//! selected regiments, off the field; Shift + Delete clears it. Right-click
+//! an enemy building to send the selected regiments against it. P pauses; - and = slow the game down to a tenth
 //! or speed it up to four times. T opens the stats panel for the chosen type:
 //! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
 //! and regiments on the field change at once. Shift+R reloads `data/units.ron`
@@ -93,6 +96,7 @@
 //! idle|walk|attack|shoot|cheer|die` holds one clip instead.
 
 mod battle;
+mod buildings;
 mod camera;
 mod credits;
 mod data;
@@ -129,8 +133,9 @@ use gc_sim::events::Event;
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
-    Capacities, Formation, LOOSE_DEFENCE, MatchSetup, MoraleState, PlayerCommand, PlayerId,
-    RegimentHandle, TIGHT_DEFENCE, UnitId, UnitStats, World,
+    BuildingId, BuildingStats, Capacities, Formation, LOOSE_DEFENCE, MatchSetup, MoraleState,
+    PlayerCommand, PlayerId, RegimentHandle, StructureHandle, TIGHT_DEFENCE, UnitId, UnitStats,
+    World,
 };
 use gc_ui::lobby::MatchStart;
 use gc_ui::{Menu, MenuAction, Network, Screen, Settings, Ui, UiInput};
@@ -502,6 +507,8 @@ struct Running {
     unit_factions: Vec<gc_ai::Faction>,
     /// Each regiment type's cost in a Field Battle army.
     unit_points: Vec<u32>,
+    /// The building types, for the sandbox's Conquest world.
+    buildings: buildings::Table,
     sandbox: Sandbox,
     selected: Vec<RegimentHandle>,
     /// The formation F last ordered, for which selection and on which tick:
@@ -666,6 +673,8 @@ impl Sandbox {
             side: HUMAN,
             placing,
             unit: 0,
+            building_tool: false,
+            building: 0,
             tuning: false,
             row: 0,
             panel: true,
@@ -741,6 +750,10 @@ struct Sandbox {
     placing: bool,
     /// The type placed and tuned ([ and ]).
     unit: UnitId,
+    /// Left-click places buildings of `building` instead of selecting (K);
+    /// [ and ] then choose the building.
+    building_tool: bool,
+    building: BuildingId,
     /// The stats panel is open (T), with this row chosen.
     tuning: bool,
     row: usize,
@@ -979,18 +992,24 @@ impl App {
             };
             scenery::Scenery::new(cover, heightmap.tiles, opts.seed)
         });
+        let building_table = buildings::Table::new(&game_data);
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
+            let mut world = World::new(&MatchSetup {
+                seed: opts.seed,
+                capacities,
+                units: &unit_stats,
+                map_tiles: heightmap.tiles,
+                nav: &nav,
+                teams: &[],
+                ground: heightmap.ground(),
+                champions: false,
+            });
+            // The sandbox is where buildings can be tried so far.
+            if opts.sandbox {
+                building_table.conquer(&mut world);
+            }
             (
-                World::new(&MatchSetup {
-                    seed: opts.seed,
-                    capacities,
-                    units: &unit_stats,
-                    map_tiles: heightmap.tiles,
-                    nav: &nav,
-                    teams: &[],
-                    ground: heightmap.ground(),
-                    champions: false,
-                }),
+                world,
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
             )
@@ -1105,6 +1124,7 @@ impl App {
             unit_names,
             unit_factions,
             unit_points,
+            buildings: building_table,
             // The showroom hides the panel (H shows it).
             sandbox: Sandbox {
                 panel: opts.showroom.is_none(),
@@ -1319,6 +1339,7 @@ impl ApplicationHandler for App {
                         code,
                         KeyCode::KeyI
                             | KeyCode::KeyB
+                            | KeyCode::KeyK
                             | KeyCode::Delete
                             | KeyCode::Backspace
                             | KeyCode::KeyT
@@ -1376,13 +1397,15 @@ impl ApplicationHandler for App {
                         KeyCode::KeyI if down && !event.repeat => r.cycle_mind(),
                         KeyCode::KeyB if down && !event.repeat => {
                             r.sandbox.placing = !r.sandbox.placing;
+                            r.sandbox.building_tool = false;
                             r.hud.armed = None;
                             r.sandbox.dirty = true;
                         }
-                        KeyCode::BracketLeft if down => r.choose_unit(-1),
-                        KeyCode::BracketRight if down => r.choose_unit(1),
+                        KeyCode::KeyK if down && !event.repeat => r.toggle_building_tool(),
+                        KeyCode::BracketLeft if down => r.choose_type(-1),
+                        KeyCode::BracketRight if down => r.choose_type(1),
                         KeyCode::Delete | KeyCode::Backspace if down && !event.repeat => {
-                            r.remove_regiments(r.input.shift);
+                            r.delete_key();
                         }
                         KeyCode::KeyT if down && !event.repeat => {
                             r.sandbox.tuning = !r.sandbox.tuning;
@@ -1444,9 +1467,13 @@ impl ApplicationHandler for App {
                         KeyCode::Escape if down && r.hud.armed.take().is_some() => {}
                         KeyCode::Escape
                             if down
-                                && (r.sandbox.placing || r.sandbox.tuning || r.sandbox.credits) =>
+                                && (r.sandbox.placing
+                                    || r.sandbox.building_tool
+                                    || r.sandbox.tuning
+                                    || r.sandbox.credits) =>
                         {
                             r.sandbox.placing = false;
+                            r.sandbox.building_tool = false;
                             r.sandbox.tuning = false;
                             r.sandbox.credits = false;
                             r.sandbox.dirty = true;
@@ -1538,6 +1565,10 @@ impl Running {
                 self.place_regiment();
                 self.input.left_down = None;
             }
+            (MouseButton::Left, ElementState::Released) if self.sandbox.building_tool => {
+                self.place_building();
+                self.input.left_down = None;
+            }
             (MouseButton::Left, ElementState::Released) => {
                 if !self.input.shift {
                     self.selected.clear();
@@ -1575,6 +1606,12 @@ impl Running {
                     .and_then(|p| self.enemy_at(p));
                 if let Some(target) = enemy {
                     self.issue_attack(target);
+                } else if let Some(building) = drag
+                    .is_none()
+                    .then(|| self.building_under_cursor(true))
+                    .flatten()
+                {
+                    self.issue_siege(building);
                 } else if let Some(order) =
                     drag.or_else(|| self.ground_under_cursor().map(hud::move_order))
                 {
@@ -1592,16 +1629,21 @@ impl Running {
         }
     }
 
-    /// The map point under the mouse, found by marching the camera ray over
-    /// the CPU copy of the heightmap.
-    fn ground_under_cursor(&self) -> Option<Vec2> {
+    /// The ray through the mouse: where it starts and which way it goes.
+    fn cursor_ray(&self) -> Option<(glam::Vec3, glam::Vec3)> {
         let cursor = self.input.cursor?;
         let size = self.window.inner_size();
         let ndc = Vec2::new(
             (cursor.x as f32 / size.width as f32) * 2.0 - 1.0,
             1.0 - (cursor.y as f32 / size.height as f32) * 2.0,
         );
-        let (origin, dir) = self.camera.ray(ndc);
+        Some(self.camera.ray(ndc))
+    }
+
+    /// The map point under the mouse, found by marching the camera ray over
+    /// the CPU copy of the heightmap.
+    fn ground_under_cursor(&self) -> Option<Vec2> {
+        let (origin, dir) = self.cursor_ray()?;
         let mut t = 0.0;
         let step = 0.5;
         let mut prev_t = 0.0;
@@ -1658,6 +1700,36 @@ impl Running {
                 player: self.sandbox.side,
                 command: gc_sim::Command::Attack { regiment, target },
             }));
+    }
+
+    /// Send the selection to attack the building `structure`.
+    fn issue_siege(&mut self, structure: StructureHandle) {
+        if !self.selected.is_empty() {
+            self.ui_sound(sounds::UiSound::Attack);
+        }
+        self.human_orders
+            .extend(self.selected.iter().map(|&regiment| PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::AttackStructure {
+                    regiment,
+                    structure,
+                },
+            }));
+    }
+
+    /// The building the mouse is over: any, or with `enemy` only those the
+    /// side you command is at war with.
+    fn building_under_cursor(&self, enemy: bool) -> Option<StructureHandle> {
+        let ray = self.cursor_ray()?;
+        let (world, side) = (&self.world, self.sandbox.side);
+        let hm = &self.heightmap;
+        buildings::pick(
+            world,
+            &self.buildings,
+            |x, z| hm.height_at(x, z).max(hm.water_level()),
+            ray,
+            |s| !enemy || world.hostile(side, s.owner),
+        )
     }
 
     /// Add `h` to the selection, or take it out if it is already in.
@@ -2012,6 +2084,8 @@ impl Running {
             self.push_order_preview();
         }
         self.push_placement_ghost();
+        self.push_building_ghost();
+        self.push_buildings();
         self.puppets.advance(game_dt.as_secs_f32());
         let world = &self.world;
         self.puppets.pair(|a, b| world.hostile(a, b));
@@ -2779,6 +2853,12 @@ impl Running {
             MatchKind::Replay(r) => r.new_world(),
             _ => World::new(&setup),
         });
+        // Only the sandbox has buildings so far. It is never recorded (only
+        // `Battle` below makes a recorder), which matters: a replay doesn't
+        // carry the Conquest setup, so it would play back without them.
+        if matches!(kind, MatchKind::Sandbox) {
+            self.buildings.conquer(&mut self.world);
+        }
         // Every battle is recorded from its first tick.
         if let MatchKind::Battle(start) = &kind {
             let dir = replays::folder();
@@ -3536,6 +3616,16 @@ impl Running {
         }
     }
 
+    /// [ and ]: the previous or next type of whatever is being placed.
+    fn choose_type(&mut self, step: i32) {
+        if self.sandbox.building_tool {
+            self.sandbox.building = self.buildings.step(self.sandbox.building, step);
+            self.sandbox.dirty = true;
+        } else {
+            self.choose_unit(step);
+        }
+    }
+
     /// [ and ]: the previous or next unit type, for placing and tuning.
     fn choose_unit(&mut self, step: i32) {
         let types = self.unit_stats.len() as i32;
@@ -3572,6 +3662,84 @@ impl Running {
         self.ui_sound(sounds::UiSound::Move);
     }
 
+    /// K: place buildings instead of regiments, or stop.
+    fn toggle_building_tool(&mut self) {
+        if self.world.structures().is_none() {
+            self.say("Buildings can only be placed in the sandbox.".into());
+            return;
+        }
+        self.sandbox.building_tool = !self.sandbox.building_tool;
+        self.sandbox.placing = false;
+        self.hud.armed = None;
+        self.sandbox.dirty = true;
+    }
+
+    /// Where the chosen building would stand with the footprint centred on
+    /// the cursor, and why it couldn't.
+    fn building_placement(&self) -> Option<(BuildingStats, (i32, i32), Option<&'static str>)> {
+        let at = self.ground_under_cursor()?;
+        let stats = *self
+            .buildings
+            .stats
+            .get(usize::from(self.sandbox.building))?;
+        let tile = buildings::tile_for(at, stats.width, stats.depth);
+        let why = buildings::refusal(&self.world, self.sandbox.building, tile);
+        Some((stats, tile, why))
+    }
+
+    fn place_building(&mut self) {
+        let Some((_, tile, why)) = self.building_placement() else {
+            return;
+        };
+        if let Some(why) = why {
+            self.say(why.into());
+            return;
+        }
+        self.human_orders.push(PlayerCommand {
+            player: self.sandbox.side,
+            command: gc_sim::Command::SpawnStructure {
+                building: self.sandbox.building,
+                tile: (tile.0 as i16, tile.1 as i16),
+            },
+        });
+        self.ui_sound(sounds::UiSound::Move);
+    }
+
+    /// The building K would place, ghosted under the cursor.
+    fn push_building_ghost(&mut self) {
+        if !self.sandbox.building_tool {
+            return;
+        }
+        let Some((stats, tile, why)) = self.building_placement() else {
+            return;
+        };
+        let colour = color_of(&self.parties, self.sandbox.side);
+        let hm = &self.heightmap;
+        buildings::push_ghost(
+            &stats,
+            tile,
+            why.is_none(),
+            colour,
+            |x, z| hm.height_at(x, z).max(hm.water_level()),
+            &mut self.instances,
+        );
+    }
+
+    /// Every standing building, as boxes.
+    fn push_buildings(&mut self) {
+        let look = self.camera.forward();
+        let across = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
+        let (hm, parties) = (&self.heightmap, &self.parties);
+        buildings::push(
+            &self.world,
+            &self.buildings,
+            |x, z| hm.height_at(x, z).max(hm.water_level()),
+            |p| color_of(parties, p),
+            across,
+            &mut self.instances,
+        );
+    }
+
     /// A plate under the cursor the size of the regiment B would place.
     fn push_placement_ghost(&mut self) {
         if !self.sandbox.placing {
@@ -3597,7 +3765,33 @@ impl Running {
         });
     }
 
-    /// Delete: take the selected regiments off the field, or with `all`
+    /// Delete: take away the building under the cursor, else the selected
+    /// regiments. Shift+Delete clears the field of both.
+    fn delete_key(&mut self) {
+        let side = self.sandbox.side;
+        if self.input.shift {
+            let all: Vec<StructureHandle> = self
+                .world
+                .structures()
+                .map(|s| s.iter().map(|v| v.handle).collect())
+                .unwrap_or_default();
+            self.human_orders
+                .extend(all.into_iter().map(|structure| PlayerCommand {
+                    player: side,
+                    command: gc_sim::Command::RemoveStructure { structure },
+                }));
+            self.remove_regiments(true);
+        } else if let Some(structure) = self.building_under_cursor(false) {
+            self.human_orders.push(PlayerCommand {
+                player: side,
+                command: gc_sim::Command::RemoveStructure { structure },
+            });
+        } else {
+            self.remove_regiments(false);
+        }
+    }
+
+    /// Take the selected regiments off the field, or with `all`
     /// every regiment of every side.
     fn remove_regiments(&mut self, all: bool) {
         let side = self.sandbox.side;
@@ -3826,14 +4020,25 @@ impl Running {
                 format!("I: {next}   L: AI lens   the computer plays this side{thinking}")
             }
         });
+        lines.push(if sb.building_tool {
+            format!(
+                "placing  {}   [ ]: building   click: place   K: stop",
+                self.buildings.describe(sb.building)
+            )
+        } else if sb.placing {
+            format!("placing  {name}   [ ]: type   click: place   B: stop")
+        } else {
+            format!("B: place regiments   [ ]: type ({name})")
+        });
+        if let (Some(standing), false) = (self.world.structures(), sb.building_tool) {
+            lines.push(format!(
+                "K: place buildings ({} standing)   right-click an enemy one with regiments selected: attack it",
+                standing.len()
+            ));
+        }
         lines.extend([
-            if sb.placing {
-                format!("placing  {name}   [ ]: type   click: place   B: stop")
-            } else {
-                format!("B: place regiments   [ ]: type ({name})")
-            },
             format!("game     {speed}   P: pause   - =: slower, faster"),
-            "Delete: remove selected   Shift+Delete: clear field   T: tune stats   Shift+R: reload data"
+            "Delete: remove the building under the cursor or the selected regiments   Shift+Delete: clear field   T: tune stats   Shift+R: reload data"
                 .to_string(),
             "Shift+H: preview the hero panel (no heroes in the game yet)".to_string(),
             if self.commander {
