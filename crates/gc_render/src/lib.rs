@@ -695,7 +695,11 @@ impl Renderer {
             + self.post_targets.gpu_bytes
             + self.overlay.gpu_bytes
             + self.ui.gpu_bytes
-            + self.soldiers.models.as_ref().map_or(0, |m| m.gpu_bytes)
+            + self
+                .soldiers
+                .models
+                .as_ref()
+                .map_or(0, soldiers::ModelGpu::gpu_bytes)
     }
 
     /// Upload the soldier models and their bone animation texture.
@@ -996,7 +1000,9 @@ impl Renderer {
         }
         // Which soldiers are drawn at which level of detail, and where the
         // skinning pass puts their vertices.
-        dropped += self.soldiers.prepare(&self.queue, soldiers.len(), batches);
+        dropped += self
+            .soldiers
+            .prepare(&self.device, &self.queue, soldiers.len(), batches);
         let (mut soldiers_drawn, mut triangles) = (0, 0);
 
         // The overlay draws in the composite pass, which a bare frame skips.
@@ -1054,7 +1060,9 @@ impl Renderer {
             1
         };
         // Pose the soldiers once for both passes below.
-        self.soldiers.skin(&mut encoder, &terrain.bind_group);
+        if !bare {
+            self.soldiers.skin(&mut encoder, &terrain.bind_group);
+        }
         if shadows && !bare {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sun shadow"),

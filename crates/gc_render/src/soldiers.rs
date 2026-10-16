@@ -22,10 +22,13 @@ const SHADOW_MIN_LOD: usize = 2;
 pub const MAX_SOLDIER_INSTANCES: usize = 65_536;
 
 /// Vertices the skinning pass can pose in a frame, all soldiers together:
-/// 24 bytes each (position, normal and tangent), 96 MB in all. A frame that
-/// needs more draws the surplus at coarser levels of detail, then leaves it
+/// 24 bytes each (position, normal and tangent), 96 MB in all, though the
+/// buffers only grow as far as frames need. A frame that needs more draws the surplus at coarser levels of detail, then leaves it
 /// out (and counts it in `RenderStats::dropped`).
 pub const SKIN_VERTICES: usize = 4 << 20;
+/// Vertices the skinned buffers start with; they grow to the next power of
+/// two when a frame needs more (never shrinking), up to `SKIN_VERTICES`.
+const SKIN_START: usize = 256 << 10;
 /// Threads in a workgroup of `cs_skin`.
 const SKIN_GROUP: u32 = 128;
 /// Runs of soldiers one skinning pass can be told of (`Jobs` in world.wgsl).
@@ -202,13 +205,135 @@ pub(crate) struct ModelGpu {
     pub origins: wgpu::Buffer,
     /// What the skinning pass poses (`Jobs` in world.wgsl).
     pub jobs: wgpu::Buffer,
+    /// Where the skinning pass writes: 12 bytes of position, then 12 of
+    /// normal and tangent, per vertex, `skin_capacity` vertices.
+    skin_pos: wgpu::Buffer,
+    skin_shade: wgpu::Buffer,
+    skin_capacity: usize,
+    /// What the bind groups hold besides buffers.
+    bones: wgpu::TextureView,
+    srgb: wgpu::TextureView,
+    linear: wgpu::TextureView,
+    sampler: wgpu::Sampler,
     /// For the shadow and world passes.
     pub bind_group: wgpu::BindGroup,
     /// For the skinning pass.
     pub skin_group: wgpu::BindGroup,
     /// Per model: its levels, and whether it is drawn textured.
     pub levels: Vec<([Level; LODS], bool)>,
-    pub gpu_bytes: u64,
+    /// Everything but the skinned buffers.
+    fixed_bytes: u64,
+}
+
+impl ModelGpu {
+    pub fn gpu_bytes(&self) -> u64 {
+        self.fixed_bytes + self.skin_pos.size() + self.skin_shade.size()
+    }
+
+    fn parts(&self) -> Parts<'_> {
+        Parts {
+            vertices: &self.vertices,
+            origins: &self.origins,
+            jobs: &self.jobs,
+            skin_pos: &self.skin_pos,
+            skin_shade: &self.skin_shade,
+            bones: &self.bones,
+            srgb: &self.srgb,
+            linear: &self.linear,
+            sampler: &self.sampler,
+        }
+    }
+
+    /// Hold at least `vertices` skinned vertices, rounded up to a power of
+    /// two (`SKIN_VERTICES` at most). The buffers are written afresh every
+    /// frame, so nothing is copied.
+    fn grow(&mut self, device: &wgpu::Device, soldiers: &SoldiersGpu, vertices: usize) {
+        if vertices <= self.skin_capacity {
+            return;
+        }
+        self.skin_capacity = vertices.next_power_of_two().min(SKIN_VERTICES);
+        (self.skin_pos, self.skin_shade) = skin_buffers(device, self.skin_capacity);
+        (self.bind_group, self.skin_group) = bind_groups(device, soldiers, &self.parts());
+    }
+}
+
+/// The two buffers the skinning pass writes, for `capacity` vertices.
+fn skin_buffers(device: &wgpu::Device, capacity: usize) -> (wgpu::Buffer, wgpu::Buffer) {
+    let make = |label| {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: (capacity * 12) as u64,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        })
+    };
+    (make("skinned positions"), make("skinned normals"))
+}
+
+/// A buffer, whole, as the resource of a binding.
+fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+    wgpu::BindGroupEntry {
+        binding,
+        resource: buffer.as_entire_binding(),
+    }
+}
+
+/// What the bind groups bind.
+struct Parts<'a> {
+    vertices: &'a wgpu::Buffer,
+    origins: &'a wgpu::Buffer,
+    jobs: &'a wgpu::Buffer,
+    skin_pos: &'a wgpu::Buffer,
+    skin_shade: &'a wgpu::Buffer,
+    bones: &'a wgpu::TextureView,
+    srgb: &'a wgpu::TextureView,
+    linear: &'a wgpu::TextureView,
+    sampler: &'a wgpu::Sampler,
+}
+
+/// The bind groups of the passes that draw and of the skinning pass.
+fn bind_groups(
+    device: &wgpu::Device,
+    soldiers: &SoldiersGpu,
+    m: &Parts<'_>,
+) -> (wgpu::BindGroup, wgpu::BindGroup) {
+    let draw = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("soldier models"),
+        layout: &soldiers.models_layout,
+        entries: &[
+            entry(0, m.skin_pos),
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(m.srgb),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(m.linear),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(m.sampler),
+            },
+            entry(4, m.skin_shade),
+            entry(5, m.origins),
+        ],
+    });
+    let skin = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("soldier skinning"),
+        layout: &soldiers.skin_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: wgpu::BindingResource::TextureView(m.bones),
+            },
+            entry(9, m.vertices),
+            entry(10, &soldiers.instances),
+            entry(11, m.jobs),
+            entry(12, m.skin_pos),
+            entry(13, m.skin_shade),
+        ],
+    });
+    (draw, skin)
 }
 
 pub(crate) struct SoldiersGpu {
@@ -423,6 +548,7 @@ impl SoldiersGpu {
     /// coarser levels, then fewer soldiers. Returns how many were left out.
     pub fn prepare(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         count: usize,
         batches: &[SoldierBatch],
@@ -482,6 +608,13 @@ impl SoldiersGpu {
         }
         self.threads = slots as u32;
         if slots > 0 {
+            // Room for this frame's vertices (the bind groups change with
+            // the buffers, so the borrow is taken afresh).
+            if let Some(mut models) = self.models.take() {
+                models.grow(device, self, slots);
+                self.models = Some(models);
+            }
+            let models = self.models.as_ref().expect("models were just put back");
             let header = [self.jobs.len() as u32, self.threads, 0, 0];
             queue.write_buffer(&models.jobs, 0, bytemuck::bytes_of(&header));
             queue.write_buffer(&models.jobs, 16, bytemuck::cast_slice(&self.jobs));
@@ -547,14 +680,6 @@ impl SoldiersGpu {
     }
 }
 
-/// A buffer, whole, as the resource of a binding.
-fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: buffer.as_entire_binding(),
-    }
-}
-
 pub(crate) fn upload(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -592,18 +717,6 @@ pub(crate) fn upload(
         "model indices",
         bytemuck::cast_slice(&levels.indices),
         wgpu::BufferUsages::INDEX,
-    );
-    // Written by the skinning pass, read by the passes that draw: 12 bytes
-    // of position, then 12 of normal and tangent, per vertex.
-    let skin_pos = empty(
-        "skinned positions",
-        SKIN_VERTICES * 12,
-        wgpu::BufferUsages::STORAGE,
-    );
-    let skin_shade = empty(
-        "skinned normals",
-        SKIN_VERTICES * 12,
-        wgpu::BufferUsages::STORAGE,
     );
     let origins = empty(
         "skin origins",
@@ -673,42 +786,6 @@ pub(crate) fn upload(
         anisotropy_clamp: 4,
         ..Default::default()
     });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("soldier models"),
-        layout: &soldiers.models_layout,
-        entries: &[
-            entry(0, &skin_pos),
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(&srgb_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&linear_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            entry(4, &skin_shade),
-            entry(5, &origins),
-        ],
-    });
-    let skin_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("soldier skinning"),
-        layout: &soldiers.skin_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 8,
-                resource: wgpu::BindingResource::TextureView(&view),
-            },
-            entry(9, &vertices),
-            entry(10, &soldiers.instances),
-            entry(11, &jobs),
-            entry(12, &skin_pos),
-            entry(13, &skin_shade),
-        ],
-    });
     let levels_of = levels.models.iter().zip(m.models).map(|(levels, r)| {
         let textured = textures
             && m.vertices
@@ -716,11 +793,25 @@ pub(crate) fn upload(
                 .is_some_and(|v| v.material > 0);
         (*levels, textured)
     });
+    let (skin_pos, skin_shade) = skin_buffers(device, SKIN_START);
+    let (bind_group, skin_group) = bind_groups(
+        device,
+        soldiers,
+        &Parts {
+            vertices: &vertices,
+            origins: &origins,
+            jobs: &jobs,
+            skin_pos: &skin_pos,
+            skin_shade: &skin_shade,
+            bones: &view,
+            srgb: &srgb_view,
+            linear: &linear_view,
+            sampler: &sampler,
+        },
+    );
     ModelGpu {
-        gpu_bytes: vertices.size()
+        fixed_bytes: vertices.size()
             + indices.size()
-            + skin_pos.size()
-            + skin_shade.size()
             + origins.size()
             + jobs.size()
             + (texels.len() * 8) as u64
@@ -729,6 +820,13 @@ pub(crate) fn upload(
         indices,
         origins,
         jobs,
+        skin_pos,
+        skin_shade,
+        skin_capacity: SKIN_START,
+        bones: view,
+        srgb: srgb_view,
+        linear: linear_view,
+        sampler,
         bind_group,
         skin_group,
         levels: levels_of.collect(),
