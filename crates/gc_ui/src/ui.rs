@@ -18,6 +18,8 @@ pub mod theme {
     pub const ACCENT: Color = [232, 132, 50, 255];
     pub const GOOD: Color = [110, 200, 120, 255];
     pub const BAD: Color = [240, 96, 84, 255];
+    /// Amber, for a warning that is not yet a disaster.
+    pub const WARN: Color = [236, 190, 60, 255];
     pub const BUTTON: Color = [44, 52, 68, 255];
     pub const BUTTON_HOT: Color = [64, 74, 96, 255];
     pub const BUTTON_DOWN: Color = [34, 40, 54, 255];

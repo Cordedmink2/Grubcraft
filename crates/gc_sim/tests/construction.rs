@@ -445,6 +445,7 @@ fn a_hall_trains_a_worker_that_marches_to_its_rally_point() {
     assert_eq!(p.queue_of(hall), &[WORKER]);
     assert_eq!(p.rally_of(hall), Some(rally));
     assert_eq!(p.front_ticks_left(hall), Some(239));
+    assert_eq!(w.training_percent(hall), Some(1));
     // Paid for now; its supply taken once it starts.
     let b = bank(&w);
     assert_eq!((b.grub, b.supply_used), (1950, 1));
@@ -482,6 +483,7 @@ fn training_waits_for_supply() {
     run(&mut w, 600);
     assert_eq!(count(&w, SPEARS), 0);
     assert_eq!(w.production().unwrap().front_ticks_left(barracks), None);
+    assert_eq!(w.training_percent(barracks), Some(0));
     assert_eq!(bank(&w).supply_used, 9);
     put_up(&mut w, 0, HOUSE, 30, 30);
     assert_eq!(bank(&w).supply_used, 11);

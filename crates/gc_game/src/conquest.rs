@@ -470,6 +470,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn workers_stand_idle_until_they_gather() {
+        let data = data();
+        let map = make_map(0);
+        let factions = [Faction::EmberClans, Faction::CarrionConcord];
+        let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
+        let opening = opening(&data, &table, &map, &world, &factions);
+        world.tick(&opening);
+        let idle: Vec<_> = world.idle_workers(0).collect();
+        let workers = data
+            .conquest_units
+            .iter()
+            .filter(|u| u.faction() == Faction::EmberClans && u.worker())
+            .map(|u| usize::from(u.start_count))
+            .sum();
+        assert_eq!(idle.len(), workers);
+        let node = world
+            .economy()
+            .unwrap()
+            .nodes()
+            .find(|n| n.resource == Resource::Grub)
+            .unwrap()
+            .index;
+        world.tick(&[PlayerCommand {
+            player: 0,
+            command: Command::Gather {
+                regiment: idle[0],
+                node,
+            },
+        }]);
+        let now: Vec<_> = world.idle_workers(0).collect();
+        assert_eq!(now.len(), workers - 1);
+        assert!(!now.contains(&idle[0]));
+    }
+
     /// `--conquest four_teeth` seats four sides, one of each faction, as
     /// a lobby would.
     #[test]

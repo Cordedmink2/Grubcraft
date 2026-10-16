@@ -99,6 +99,23 @@ impl Production {
         self.live(h).map(|i| self.clock[i]).filter(|&t| t > 0)
     }
 
+    /// How far the regiment at the front of building `h`'s queue has
+    /// trained, in percent: 0 while it waits for supply.
+    pub fn front_percent(&self, h: StructureHandle, units: &[ConquestUnit]) -> Option<u8> {
+        let &unit = self.queue_of(h).first()?;
+        let full = self.train_ticks(units, unit);
+        let left = self.front_ticks_left(h).unwrap_or(full).min(full);
+        Some((100 - left * 100 / full) as u8)
+    }
+
+    /// Ticks a regiment of type `unit` takes to train at this tempo.
+    fn train_ticks(&self, units: &[ConquestUnit], unit: UnitId) -> u32 {
+        let ticks = units
+            .get(usize::from(unit))
+            .map_or(1, |u| u32::from(u.train_ticks));
+        (ticks * self.build_percent / 100).max(1)
+    }
+
     /// Building `h`'s rally point.
     pub fn rally_of(&self, h: StructureHandle) -> Option<FxVec2> {
         self.rally[self.live(h)?]
@@ -202,10 +219,7 @@ impl Production {
                     continue;
                 };
                 *left -= need;
-                let ticks = units
-                    .get(usize::from(unit))
-                    .map_or(1, |u| u32::from(u.train_ticks));
-                self.clock[i] = (ticks * self.build_percent / 100).max(1);
+                self.clock[i] = self.train_ticks(units, unit);
             }
             self.clock[i] -= 1;
             if self.clock[i] > 0 {

@@ -530,6 +530,10 @@ struct Running {
     data: gc_data::GameData<'static>,
     sandbox: Sandbox,
     selected: Vec<RegimentHandle>,
+    /// The building selected, when no regiment is (Conquest).
+    selected_structure: Option<StructureHandle>,
+    /// The idle worker F1 last picked, to go on from there.
+    idle_from: Option<u32>,
     /// The formation F last ordered, for which selection and on which tick:
     /// pressing F again soon after cycles on from it, before the orders
     /// have landed.
@@ -1166,6 +1170,8 @@ impl App {
                 ..Sandbox::new(opts.sandbox)
             },
             selected: Vec::with_capacity(64),
+            selected_structure: None,
+            idle_from: None,
             formation_pick: None,
             shown_formation: None,
             group: Vec::with_capacity(64),
@@ -1464,6 +1470,7 @@ impl ApplicationHandler for App {
                             r.grid_press(hud::SLOT_FORMATION);
                         }
                         KeyCode::Space if grid_key => r.jump_to_alert(),
+                        KeyCode::F1 if down && !event.repeat => r.next_idle_worker(),
                         KeyCode::KeyC if down && !event.repeat => {
                             r.sandbox.credits = !r.sandbox.credits;
                             r.sandbox.dirty = true;
@@ -1613,6 +1620,7 @@ impl Running {
                 if !self.input.shift {
                     self.selected.clear();
                 }
+                self.selected_structure = None;
                 if let Some(rect) = self.selection_box() {
                     self.regiments_in_box(rect);
                     for i in 0..self.boxed.len() {
@@ -1621,13 +1629,26 @@ impl Running {
                             self.selected.push(h);
                         }
                     }
-                } else if let Some(h) = self
-                    .ground_under_cursor()
-                    .and_then(|p| self.nearest_own(p, 6.0))
-                {
-                    self.toggle_selected(h);
+                } else {
+                    // A click on one of your buildings picks it, unless one
+                    // of your regiments stands right there (workers crowd
+                    // round their hall); elsewhere the nearest regiment.
+                    let side = self.sandbox.side;
+                    let building = self
+                        .selected
+                        .is_empty()
+                        .then(|| self.building_under_cursor(|o| o == side))
+                        .flatten();
+                    let reach = if building.is_some() { 1.5 } else { 6.0 };
+                    match self
+                        .ground_under_cursor()
+                        .and_then(|p| self.nearest_own(p, reach))
+                    {
+                        Some(h) => self.toggle_selected(h),
+                        None => self.selected_structure = building,
+                    }
                 }
-                if !self.selected.is_empty() {
+                if !self.selected.is_empty() || self.selected_structure.is_some() {
                     self.ui_sound(sounds::UiSound::Select);
                 }
                 self.input.left_down = None;
@@ -1648,7 +1669,7 @@ impl Running {
                     self.issue_attack(target);
                 } else if let Some(building) = drag
                     .is_none()
-                    .then(|| self.building_under_cursor(true))
+                    .then(|| self.enemy_building_under_cursor())
                     .flatten()
                 {
                     self.issue_siege(building);
@@ -1757,19 +1778,23 @@ impl Running {
             }));
     }
 
-    /// The building the mouse is over: any, or with `enemy` only those the
-    /// side you command is at war with.
-    fn building_under_cursor(&self, enemy: bool) -> Option<StructureHandle> {
+    /// The building the mouse is over whose owner `accept` allows.
+    fn building_under_cursor(&self, accept: impl Fn(PlayerId) -> bool) -> Option<StructureHandle> {
         let ray = self.cursor_ray()?;
-        let (world, side) = (&self.world, self.sandbox.side);
         let hm = &self.heightmap;
         buildings::pick(
-            world,
+            &self.world,
             &self.buildings,
             |x, z| hm.height_at(x, z).max(hm.water_level()),
             ray,
-            |s| !enemy || world.hostile(side, s.owner),
+            |s| accept(s.owner),
         )
+    }
+
+    /// An enemy building of the side you command, under the mouse.
+    fn enemy_building_under_cursor(&self) -> Option<StructureHandle> {
+        let side = self.sandbox.side;
+        self.building_under_cursor(|o| self.world.hostile(side, o))
     }
 
     /// Add `h` to the selection, or take it out if it is already in.
@@ -2978,6 +3003,9 @@ impl Running {
         self.pending.clear();
         self.human_orders.clear();
         self.selected.clear();
+        self.selected_structure = None;
+        self.idle_from = None;
+        self.hud.forget_readout();
         self.boxed.clear();
         self.control_groups = Default::default();
         self.last_group_key = None;
@@ -3690,8 +3718,14 @@ impl Running {
             text.push_str(dev);
         }
         let scale = self.window.scale_factor() as f32;
+        // Below Conquest's top bar.
+        let top = if self.top_bar().is_some() {
+            gc_ui::hud::TOP_BAR_HEIGHT as f32 * self.ui_scale()
+        } else {
+            0.0
+        };
         self.renderer
-            .set_overlay((!text.is_empty()).then_some(text.as_str()), scale);
+            .set_overlay((!text.is_empty()).then_some(text.as_str()), scale, top);
         self.sandbox.dirty = false;
     }
 
@@ -3701,6 +3735,7 @@ impl Running {
         let sides = self.parties.len().max(1) as PlayerId;
         self.sandbox.side = (self.sandbox.side + 1) % sides;
         self.selected.clear();
+        self.selected_structure = None;
         if let Some(drill) = &mut self.drill {
             drill.skip_player = Some(self.sandbox.side);
         }
@@ -3875,19 +3910,25 @@ impl Running {
         );
     }
 
-    /// Every standing building, as boxes.
+    /// Every standing building as a box, the selected one with a rim, and
+    /// every gathering spot.
     fn push_buildings(&mut self) {
         let look = self.camera.forward();
         let across = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
         let (hm, parties) = (&self.heightmap, &self.parties);
+        let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
         buildings::push(
             &self.world,
             &self.buildings,
-            |x, z| hm.height_at(x, z).max(hm.water_level()),
+            ground,
             |p| color_of(parties, p),
             across,
             &mut self.instances,
         );
+        if let Some(h) = self.picked_structure() {
+            buildings::push_rim(&self.world, h, ground, &mut self.instances);
+        }
+        buildings::push_nodes(&self.world, &mut self.instances);
     }
 
     /// A plate under the cursor the size of the regiment B would place.
@@ -3931,7 +3972,7 @@ impl Running {
                     command: gc_sim::Command::RemoveStructure { structure },
                 }));
             self.remove_regiments(true);
-        } else if let Some(structure) = self.building_under_cursor(false) {
+        } else if let Some(structure) = self.building_under_cursor(|_| true) {
             self.human_orders.push(PlayerCommand {
                 player: side,
                 command: gc_sim::Command::RemoveStructure { structure },

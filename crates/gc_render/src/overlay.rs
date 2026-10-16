@@ -28,8 +28,9 @@ pub struct UiQuad {
 pub(crate) type GlyphInstance = UiQuad;
 
 /// Lay out `text` (lines separated by `\n`) at the top-left corner over a
-/// panel. Characters outside printable ASCII show as `?`.
-pub(crate) fn layout(text: &str, out: &mut Vec<UiQuad>) {
+/// panel, `top` pixels further down. Characters outside printable ASCII
+/// show as `?`.
+pub(crate) fn layout(text: &str, top: u16, out: &mut Vec<UiQuad>) {
     out.clear();
     let lines = text.lines().count() as u16;
     let columns = text.lines().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
@@ -39,7 +40,7 @@ pub(crate) fn layout(text: &str, out: &mut Vec<UiQuad>) {
     // The panel is one cell larger than the text in each direction, giving
     // half a cell of padding on the sides and top and bottom.
     out.push(GlyphInstance {
-        pos: [MARGIN, MARGIN],
+        pos: [MARGIN, MARGIN + top],
         size: [
             (columns + 2) * GLYPH_WIDTH as u16,
             (lines + 1) * GLYPH_HEIGHT as u16,
@@ -48,7 +49,7 @@ pub(crate) fn layout(text: &str, out: &mut Vec<UiQuad>) {
         color: [10, 12, 16, 190],
     });
     let left = MARGIN + GLYPH_WIDTH as u16;
-    let top = MARGIN + GLYPH_HEIGHT as u16 / 2;
+    let top = MARGIN + top + GLYPH_HEIGHT as u16 / 2;
     for (row, line) in text.lines().enumerate() {
         for (col, ch) in line.chars().enumerate() {
             if out.len() >= MAX_OVERLAY_CHARS {
@@ -102,7 +103,7 @@ mod tests {
     #[test]
     fn layout_places_panel_then_glyphs() {
         let mut out = Vec::new();
-        layout("ab\nc d", &mut out);
+        layout("ab\nc d", 0, &mut out);
         // Panel + 'a' 'b' 'c' 'd' (space skipped).
         assert_eq!(out.len(), 5);
         assert_eq!(out[0].glyph, SOLID);
@@ -110,19 +111,23 @@ mod tests {
         assert_eq!(out[1].glyph, u32::from(b'a' - FIRST_CHAR));
         assert_eq!(out[4].pos[0] - out[3].pos[0], 2 * GLYPH_WIDTH as u16);
         assert_eq!(out[3].pos[1] - out[1].pos[1], GLYPH_HEIGHT as u16);
+        let mut lower = Vec::new();
+        layout("ab\nc d", 30, &mut lower);
+        assert_eq!(lower[0].pos[1], out[0].pos[1] + 30);
+        assert_eq!(lower[1].pos[1], out[1].pos[1] + 30);
     }
 
     #[test]
     fn non_ascii_becomes_question_mark() {
         let mut out = Vec::new();
-        layout("é", &mut out);
+        layout("é", 0, &mut out);
         assert_eq!(out[1].glyph, u32::from(b'?' - FIRST_CHAR));
     }
 
     #[test]
     fn empty_text_draws_nothing() {
         let mut out = Vec::new();
-        layout("", &mut out);
+        layout("", 0, &mut out);
         assert!(out.is_empty());
     }
 

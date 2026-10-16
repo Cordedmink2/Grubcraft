@@ -730,13 +730,15 @@ impl Renderer {
 
     /// Show `text` in the dev overlay (lines separated by `\n`), or hide it
     /// with `None`. `scale` is the pixel size of one font texel, usually the
-    /// display's scale factor. Call when the text changes, not every frame.
-    pub fn set_overlay(&mut self, text: Option<&str>, scale: f32) {
+    /// display's scale factor; the panel starts `top` window pixels down.
+    /// Call when the text changes, not every frame.
+    pub fn set_overlay(&mut self, text: Option<&str>, scale: f32, top: f32) {
         let o = &mut self.overlay;
         o.scale = (scale * self.options.render_scale).round().max(1.0);
         match text {
             Some(text) => {
-                overlay::layout(text, &mut o.glyphs);
+                let top = (top * self.options.render_scale / o.scale).ceil() as u16;
+                overlay::layout(text, top, &mut o.glyphs);
                 o.count = o.glyphs.len() as u32;
                 if o.count > 0 {
                     self.queue

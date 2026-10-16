@@ -716,6 +716,13 @@ impl World {
         Some(&self.conquest.as_ref()?.production)
     }
 
+    /// How far the regiment at the front of building `h`'s queue has
+    /// trained, in percent (Conquest only).
+    pub fn training_percent(&self, h: StructureHandle) -> Option<u8> {
+        let c = self.conquest.as_ref()?;
+        c.production.front_percent(h, &c.units)
+    }
+
     /// Whether `player` could have a worker lay a building of type
     /// `building` at `tile` now, and if not, why: the check
     /// [`Command::Build`] makes.
@@ -750,6 +757,28 @@ impl World {
     pub fn gathers_at(&self, h: RegimentHandle) -> Option<u16> {
         let i = self.regiments.resolve(h)?;
         self.economy()?.work_of(&self.regiments, i)
+    }
+
+    /// `player`'s workers with nothing to do (Conquest only): standing
+    /// still, unbroken, out of melee, and gathering, building or attacking
+    /// nothing.
+    pub fn idle_workers(&self, player: PlayerId) -> impl Iterator<Item = RegimentHandle> + '_ {
+        self.conquest.iter().flat_map(move |c| {
+            self.regiments
+                .iter()
+                .filter(move |r| {
+                    r.owner == player
+                        && !r.moving
+                        && !r.engaged
+                        && !r.morale.broken()
+                        && c.units.get(usize::from(r.unit)).is_some_and(|u| u.worker)
+                        && self.regiments.resolve(r.handle).is_some_and(|i| {
+                            c.economy.work_of(&self.regiments, i).is_none()
+                                && c.structures.job_of(&self.regiments, i).is_none()
+                        })
+                })
+                .map(|r| r.handle)
+        })
     }
 
     /// What regiment `h` carries, if anything (Conquest only).

@@ -7,7 +7,7 @@
 //! Drawn above the bar's left end, over the battlefield.
 
 use crate::draw::{CELL_W, DrawList, Rect, fit, text_width};
-use crate::hud::{GRID_KEYS, HERO_SLOT_FIRST, luma, rgb};
+use crate::hud::{GRID_KEYS, HERO_SLOT_FIRST, draw_portrait, health_color};
 use crate::ui::theme;
 
 const WIDTH: i32 = 268;
@@ -85,22 +85,16 @@ pub fn draw(draw: &mut DrawList, bar_top: i32, hero: &HeroPanel, over: &mut Vec<
     draw.rect(r, [theme::PANEL[0], theme::PANEL[1], theme::PANEL[2], 235]);
     draw.border(r, 1, theme::PANEL_EDGE);
 
-    let dead = hero.revive_secs.is_some();
     let portrait = Rect::new(r.x + 6, r.y + 6, PORTRAIT, PORTRAIT);
-    draw.rect(portrait, if dead { theme::FIELD } else { rgb(hero.color) });
     if let Some(secs) = hero.revive_secs {
+        draw.rect(portrait, theme::FIELD);
         draw.text_centered(portrait, 1, theme::BAD, "DEAD");
         let t = format!("{}:{:02}", secs / 60, secs % 60);
         let below = Rect::new(portrait.x, portrait.bottom() - 18, portrait.w, 16);
         draw.text_centered(below, 1, theme::MUTED, &t);
-    } else if let Some(initial) = hero.name.trim_start_matches("The ").chars().next() {
-        // Dark ink on a light team colour.
-        let ink = if luma(hero.color) > 140 {
-            theme::FIELD
-        } else {
-            theme::TEXT
-        };
-        draw.text_centered(portrait, 3, ink, &initial.to_string());
+    } else {
+        let name = hero.name.trim_start_matches("The ");
+        draw_portrait(draw, portrait, hero.color, name, 3);
     }
     draw.border(portrait, 1, theme::ACCENT);
 
@@ -111,15 +105,10 @@ pub fn draw(draw: &mut DrawList, bar_top: i32, hero: &HeroPanel, over: &mut Vec<
     let sub = format!("Lv {} {}", hero.level, hero.role);
     draw.text(x, r.y + 21, 1, theme::MUTED, &fit(&sub, chars));
     let hp_frac = hero.hp as f32 / hero.max_hp.max(1) as f32;
-    let hp_color = if hp_frac < 0.35 {
-        theme::BAD
-    } else {
-        theme::GOOD
-    };
     draw.meter(
         Rect::new(x, r.y + 38, w, 8),
         hp_frac,
-        hp_color,
+        health_color(hp_frac),
         theme::FIELD,
     );
     let hp = format!("{}/{}", hero.hp, hero.max_hp);

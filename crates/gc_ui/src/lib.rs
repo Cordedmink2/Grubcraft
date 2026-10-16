@@ -11,6 +11,7 @@
 //! one machine that the menu tests run on.
 
 pub mod alerts;
+pub mod conquest;
 pub mod draw;
 pub mod hero;
 pub mod hud;

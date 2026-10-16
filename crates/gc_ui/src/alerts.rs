@@ -1,5 +1,5 @@
-//! Edge alerts and the idle-worker button, drawn over the battlefield above
-//! the bottom bar. Docs: docs/08-ui-ux.md#screen-layout-1080p-reference.
+//! Edge alerts and the idle-worker button, drawn over the battlefield between
+//! the top bar and the bottom bar. Docs: docs/08-ui-ux.md#screen-layout-1080p-reference.
 //!
 //! The game says where on the screen each event is (it may be far outside the
 //! window) and this draws a small badge at the nearest edge, with an arrow
@@ -70,17 +70,17 @@ enum Side {
     Down,
 }
 
-/// Where the badge for an event at `at` sits on a `screen` whose bottom
-/// `bar_height` is the bar, and which edge it is on. `None` while the event
-/// is in view.
-fn badge_for(at: [f32; 2], screen: (i32, i32), bar_height: i32) -> Option<(Rect, Side)> {
-    let (w, h) = (screen.0 as f32, (screen.1 - bar_height) as f32);
+/// Where the badge for an event at `at` sits on the `field`, and which edge
+/// it is on. `None` while the event is in view.
+fn badge_for(at: [f32; 2], field: Rect) -> Option<(Rect, Side)> {
+    let (w, h) = (field.w as f32, field.h as f32);
+    let (mid_x, mid_y) = (field.x as f32 + w / 2.0, field.y as f32 + h / 2.0);
     let reach = (BADGE / 2 + EDGE) as f32;
     let (hw, hh) = (w / 2.0 - reach, h / 2.0 - reach);
     if hw <= 0.0 || hh <= 0.0 {
         return None;
     }
-    let (dx, dy) = (at[0] - w / 2.0, at[1] - h / 2.0);
+    let (dx, dy) = (at[0] - mid_x, at[1] - mid_y);
     if dx.abs() <= hw && dy.abs() <= hh {
         return None;
     }
@@ -93,7 +93,7 @@ fn badge_for(at: [f32; 2], screen: (i32, i32), bar_height: i32) -> Option<(Rect,
         (false, _, true) => Side::Down,
         (false, _, false) => Side::Up,
     };
-    let (cx, cy) = (w / 2.0 + dx * s, h / 2.0 + dy * s);
+    let (cx, cy) = (mid_x + dx * s, mid_y + dy * s);
     let r = Rect::new(cx as i32 - BADGE / 2, cy as i32 - BADGE / 2, BADGE, BADGE);
     Some((r, side))
 }
@@ -122,11 +122,11 @@ pub struct AlertData<'a> {
     pub idle_workers: Option<u32>,
 }
 
-/// Where the idle-worker button sits.
-fn idle_button(screen: (i32, i32), bar_height: i32) -> Rect {
+/// Where the idle-worker button sits: the `field`'s bottom-right corner.
+fn idle_button(field: Rect) -> Rect {
     Rect::new(
-        screen.0 - MARGIN - IDLE_W,
-        screen.1 - bar_height - MARGIN - IDLE_H,
+        field.right() - MARGIN - IDLE_W,
+        (field.bottom() - MARGIN - IDLE_H).max(field.y),
         IDLE_W,
         IDLE_H,
     )
@@ -134,11 +134,11 @@ fn idle_button(screen: (i32, i32), bar_height: i32) -> Rect {
 
 /// Draw the alert badges and the idle-worker button, report clicks, and note
 /// in `over` every rectangle that now takes the mouse from the battlefield.
-#[allow(clippy::too_many_arguments)]
+/// `field` is the screen between the bars (see
+/// [`HudLayout::field`](crate::hud::HudLayout::field)).
 pub fn draw(
     draw: &mut DrawList,
-    screen: (i32, i32),
-    bar_height: i32,
+    field: Rect,
     input: HudInput,
     press: &mut Press,
     data: AlertData,
@@ -148,7 +148,7 @@ pub fn draw(
     // Badges can overlap; the one drawn last is on top and takes the click.
     let mut clicked = None;
     for a in data.alerts {
-        let Some((r, side)) = badge_for(a.at, screen, bar_height) else {
+        let Some((r, side)) = badge_for(a.at, field) else {
             continue;
         };
         let hot = r.contains(input.mouse.0, input.mouse.1);
@@ -173,7 +173,7 @@ pub fn draw(
     }
     events.extend(clicked.map(HudEvent::Alert));
     if let Some(n) = data.idle_workers {
-        let r = idle_button(screen, bar_height);
+        let r = idle_button(field);
         let hot = n > 0 && r.contains(input.mouse.0, input.mouse.1);
         let (hit, _) = press.widget(
             WIDGET_IDLE,
@@ -217,7 +217,21 @@ mod tests {
         }
     }
 
+    /// The field of a screen with a top bar `top` pixels high.
+    fn field(top: i32) -> Rect {
+        Rect::new(0, top, SCREEN.0, SCREEN.1 - BAR - top)
+    }
+
     fn frame(alerts: &[Alert], idle: Option<u32>, input: HudInput) -> (Vec<HudEvent>, Vec<Rect>) {
+        frame_under(0, alerts, idle, input)
+    }
+
+    fn frame_under(
+        top: i32,
+        alerts: &[Alert],
+        idle: Option<u32>,
+        input: HudInput,
+    ) -> (Vec<HudEvent>, Vec<Rect>) {
         let (mut d, mut over, mut events) = (DrawList::default(), Vec::new(), Vec::new());
         let data = AlertData {
             alerts,
@@ -226,8 +240,7 @@ mod tests {
         let mut press = Press::default();
         draw(
             &mut d,
-            SCREEN,
-            BAR,
+            field(top),
             input,
             &mut press,
             data,
@@ -239,8 +252,8 @@ mod tests {
 
     #[test]
     fn events_in_view_get_no_badge() {
-        assert!(badge_for([640.0, 300.0], SCREEN, BAR).is_none());
-        assert!(badge_for([100.0, 100.0], SCREEN, BAR).is_none());
+        assert!(badge_for([640.0, 300.0], field(0)).is_none());
+        assert!(badge_for([100.0, 100.0], field(0)).is_none());
         let (_, over) = frame(&[alert([640.0, 300.0])], None, HudInput::default());
         assert!(over.is_empty());
     }
@@ -255,7 +268,7 @@ mod tests {
             ([600.0, 900.0], Side::Down),
         ];
         for (at, want) in sides {
-            let (r, side) = badge_for(at, SCREEN, BAR).unwrap();
+            let (r, side) = badge_for(at, field(0)).unwrap();
             assert_eq!(side, want, "{at:?}");
             // Whole badge on the playing field, arrow room to spare.
             assert!(r.x >= EDGE - 1 && r.right() <= SCREEN.0 - EDGE + 1, "{r:?}");
@@ -264,16 +277,34 @@ mod tests {
     }
 
     #[test]
+    fn badges_and_the_idle_button_stay_below_the_top_bar() {
+        const TOP: i32 = 26;
+        for at in [[600.0, -400.0], [1100.0, -2000.0]] {
+            let (r, _) = badge_for(at, field(TOP)).unwrap();
+            assert!(r.y >= TOP + EDGE - 1, "{r:?}");
+            let (r, _) = badge_for(at, field(0)).unwrap();
+            assert!(r.y < TOP + EDGE - 1, "nothing in the way without it: {r:?}");
+        }
+        // Still on the field at the bottom.
+        let (r, _) = badge_for([600.0, 900.0], field(TOP)).unwrap();
+        assert!(r.bottom() <= SCREEN.1 - BAR - EDGE + 1, "{r:?}");
+        // A screen too short for both: the button never rides up under it.
+        assert!(idle_button(Rect::new(0, TOP, 1280, 0)).y >= TOP);
+        let (_, over) = frame_under(TOP, &[alert([600.0, -400.0])], Some(1), HudInput::default());
+        assert!(over.iter().all(|r| r.y >= TOP), "{over:?}");
+    }
+
+    #[test]
     fn a_corner_event_picks_the_nearer_wall() {
         // Far to the right and only a little above: right edge, near the top.
-        let (r, side) = badge_for([3000.0, -50.0], SCREEN, BAR).unwrap();
+        let (r, side) = badge_for([3000.0, -50.0], field(0)).unwrap();
         assert_eq!(side, Side::Right);
         assert!(r.bottom() < (SCREEN.1 - BAR) / 2, "above the middle: {r:?}");
     }
 
     #[test]
     fn clicking_a_badge_reports_it_and_keeps_the_click() {
-        let (r, _) = badge_for([-500.0, 250.0], SCREEN, BAR).unwrap();
+        let (r, _) = badge_for([-500.0, 250.0], field(0)).unwrap();
         let click = HudInput {
             mouse: (r.x + 3, r.y + 3),
             left_pressed: true,
@@ -302,7 +333,7 @@ mod tests {
 
     #[test]
     fn a_click_on_stacked_badges_goes_to_the_top_one() {
-        let (r, _) = badge_for([-500.0, 250.0], SCREEN, BAR).unwrap();
+        let (r, _) = badge_for([-500.0, 250.0], field(0)).unwrap();
         let mut under = alert([-500.0, 250.0]);
         under.id = 1;
         let mut over = alert([-500.0, 250.0]);
@@ -321,7 +352,7 @@ mod tests {
 
     #[test]
     fn the_idle_worker_button_needs_an_idle_worker() {
-        let r = idle_button(SCREEN, BAR);
+        let r = idle_button(field(0));
         assert!(r.bottom() <= SCREEN.1 - BAR && r.right() <= SCREEN.0);
         let click = HudInput {
             mouse: (r.x + 5, r.y + 5),

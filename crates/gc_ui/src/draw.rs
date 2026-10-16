@@ -58,6 +58,16 @@ impl Rect {
         self.y + self.h
     }
 
+    /// The part of `self` inside `other`, if any.
+    pub fn intersect(&self, other: Rect) -> Option<Rect> {
+        let (x0, y0) = (self.x.max(other.x), self.y.max(other.y));
+        let (x1, y1) = (
+            self.right().min(other.right()),
+            self.bottom().min(other.bottom()),
+        );
+        (x1 > x0 && y1 > y0).then(|| Rect::new(x0, y0, x1 - x0, y1 - y0))
+    }
+
     /// Split off `w` pixels from the left: `(left, rest)`.
     pub fn split_left(&self, w: i32) -> (Rect, Rect) {
         let w = w.clamp(0, self.w);
@@ -179,6 +189,22 @@ impl DrawList {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn intersecting_keeps_the_overlap_and_nothing_else() {
+        let r = Rect::new(0, 0, 10, 10);
+        assert_eq!(
+            r.intersect(Rect::new(5, 4, 10, 10)),
+            Some(Rect::new(5, 4, 5, 6))
+        );
+        assert_eq!(
+            r.intersect(Rect::new(2, 2, 3, 3)),
+            Some(Rect::new(2, 2, 3, 3))
+        );
+        // Touching edges share no pixels.
+        assert_eq!(r.intersect(Rect::new(10, 0, 5, 5)), None);
+        assert_eq!(r.intersect(Rect::new(-9, -9, 5, 5)), None);
+    }
 
     #[test]
     fn text_makes_one_quad_per_visible_glyph() {
