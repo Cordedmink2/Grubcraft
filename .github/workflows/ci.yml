@@ -4,6 +4,12 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The release workflow runs the whole of CI on the tagged commit and
+  # publishes the zips this run builds.
+  workflow_call:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,13 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: ALSA headers (sound output on Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          alsa: 'true'
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets
       - name: Tracy profiling build
@@ -41,11 +43,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: ALSA headers (sound output on Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust
+        with:
+          alsa: 'true'
       - run: cargo test --workspace
       - name: Determinism in release mode
         run: cargo test --release -p gc_sim --test determinism
@@ -61,15 +61,27 @@ jobs:
       - name: Simulation benchmark and budgets
         run: cargo run --release -p gc_bench
 
+  msrv:
+    # `rust-version` in Cargo.toml is a promise that the game still builds
+    # on that Rust; this keeps it true. Keep the version here in step with it.
+    name: Oldest supported Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          alsa: 'true'
+      - run: rustup toolchain install 1.88.0 --profile minimal --no-self-update
+      - run: cargo +1.88.0 check --workspace --locked
+
   mac-app:
     name: macOS universal app
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust
         with:
-          targets: aarch64-apple-darwin, x86_64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
+          targets: aarch64-apple-darwin x86_64-apple-darwin
       - run: ./scripts/bundle-macos.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -82,8 +94,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust
       - run: ./scripts/bundle-windows.ps1
         shell: pwsh
       - uses: actions/upload-artifact@v4

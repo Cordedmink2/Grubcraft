@@ -1,0 +1,10 @@
+# The Rust version every build uses: CI, release builds and local builds.
+# Pinned so a new Rust release cannot turn CI red (new lints) or change a
+# release binary on its own. To move to a newer Rust, change `channel`,
+# fix what the new clippy says, and merge that as its own change.
+# `rust-version` in Cargo.toml is the oldest Rust that must still compile;
+# the CI `msrv` job checks it.
+[toolchain]
+channel = "1.97.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

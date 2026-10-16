@@ -1,0 +1,33 @@
+name: Dependencies
+
+# Licences, banned or unknown sources, and known security advisories in the
+# dependency tree, checked with cargo-deny (config: deny.toml). Runs when the
+# dependencies change and once a week, because a new advisory can appear
+# against code nobody touched.
+on:
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', 'deny.toml', '**/Cargo.toml', '.github/workflows/deps.yml']
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  deny:
+    name: cargo-deny (${{ matrix.checks }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        checks: [advisories, 'bans licenses sources']
+    # A new advisory must not block an unrelated pull request; the weekly
+    # run still goes red so it gets seen. Licences and sources always block.
+    continue-on-error: ${{ matrix.checks == 'advisories' && github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check ${{ matrix.checks }}

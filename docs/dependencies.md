@@ -1,6 +1,6 @@
 # Dependencies
 
-Every third-party crate the game uses, why, and what it costs. Policy: see [10 · Architecture](10-architecture.md#dependency-policy). Adding a crate means adding a row here in the same pull request.
+Every third-party crate the game uses, why, and what it costs. Policy: see [10 · Architecture](10-architecture.md#dependency-policy). Adding a crate means adding a row here in the same pull request. CI also runs `cargo deny` (`deny.toml`), which rejects licences outside a short permissive list.
 
 ## Shipped in the game
 

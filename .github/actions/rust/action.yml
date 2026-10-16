@@ -1,0 +1,27 @@
+name: Rust toolchain
+description: Install the Rust version pinned in rust-toolchain.toml and restore the build cache. Run it after checkout.
+
+inputs:
+  targets:
+    description: Extra compile targets, space separated (macOS universal builds).
+    default: ''
+  alsa:
+    description: Install the ALSA headers on Linux (sound output).
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: ALSA headers (sound output on Linux)
+      if: runner.os == 'Linux' && inputs.alsa == 'true'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+    - name: Install Rust from rust-toolchain.toml
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+      run: |
+        rustup toolchain install --no-self-update
+        if [ -n "$TARGETS" ]; then rustup target add $TARGETS; fi
+        rustc -Vv
+    - uses: Swatinem/rust-cache@v2
