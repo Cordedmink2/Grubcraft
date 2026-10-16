@@ -39,7 +39,7 @@ The target is that the whole game stays under **6 GB** on the largest map with s
 | Code and static data | Executable, static tables |
 | Simulation (`sim`) | Entity pools, nav grid, route plans, vision (fog of war) state |
 | Map, CPU side (`map`) | Heightmap, tile layers, nav sectors, decals |
-| Renderer, CPU side (`render`) | Renderer setup and scenery. GPU memory is not tagged: terrain material arrays, meshes, bone animation textures (about 0.6 MB for the five M1 models), colour, depth, shadow and post buffers are counted by `Renderer::gpu_bytes` instead |
+| Renderer, CPU side (`render`) | Renderer setup and scenery. GPU memory is not tagged: terrain material arrays, meshes, bone animation textures (about 0.6 MB for the five M1 models), the 96 MB of skinned soldier vertices,, colour, depth, shadow and post buffers are counted by `Renderer::gpu_bytes` instead |
 | Presentation (`present`) | Soldier puppets, instance buffers, interpolation |
 | Audio (`audio`) | Effects, music stream buffers, mixer |
 | UI (`ui`) | Layout scratch, text cache |
