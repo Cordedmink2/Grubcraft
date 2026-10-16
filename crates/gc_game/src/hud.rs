@@ -1,9 +1,10 @@
 //! The battle HUD's glue: describe the match to `gc_ui::hud`, and carry out
 //! what it reports. Docs: docs/08-ui-ux.md#screen-layout-1080p-reference.
 
-use gc_sim::MoraleState;
 use gc_sim::formation::GroupOrder;
+use gc_sim::{MoraleState, PlayerId, RegimentHandle};
 use gc_ui::DrawList;
+use gc_ui::alerts::{Alert, AlertData, AlertKind};
 use gc_ui::hud::{
     Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, Hud, HudData, HudEvent, HudInput,
     MinimapData, MinimapTerrain, SlotState,
@@ -43,6 +44,36 @@ const LABELS: [&str; GRID_SLOTS] = [
     "Run", "Retire",
 ];
 
+/// An alert stays this long (in sim ticks, so a paused game keeps it) after
+/// the last time it happened.
+const NOTE_LIFE: u32 = 12 * gc_sim::TICKS_PER_SECOND;
+/// ... and is drawn filled for this long after it first happened.
+const NOTE_FRESH: u32 = 2 * gc_sim::TICKS_PER_SECOND;
+/// Events of one kind this close (in tiles) are one alert.
+const NOTE_MERGE_TILES: f32 = 20.0;
+const MAX_NOTES: usize = 8;
+
+/// Something that happened to your side, remembered for a few seconds so an
+/// arrow can point at it and Space can jump to it.
+#[derive(Clone, Copy, Debug)]
+struct Note {
+    id: u32,
+    kind: AlertKind,
+    /// Where, in tiles.
+    at: Vec2,
+    /// Sim ticks when it first happened and when it last did.
+    born: u32,
+    last: u32,
+}
+
+/// What a regiment of yours looked like last frame.
+#[derive(Clone, Copy, Debug)]
+struct Seen {
+    handle: RegimentHandle,
+    models: u16,
+    routing: bool,
+}
+
 /// Everything the HUD keeps between frames.
 #[derive(Default)]
 pub struct HudState {
@@ -65,6 +96,15 @@ pub struct HudState {
     cards: Vec<Card>,
     view: Vec<[f32; 2]>,
     events: Vec<HudEvent>,
+    notes: Vec<Note>,
+    next_note: u32,
+    /// By regiment index; your side's regiments as of the last frame.
+    seen: Vec<Option<Seen>>,
+    /// Whose regiments `seen` and `notes` are about.
+    watched_side: Option<PlayerId>,
+    /// The tick the regiments were last compared at.
+    watched_tick: u32,
+    alerts: Vec<Alert>,
 }
 
 impl HudState {
@@ -110,6 +150,83 @@ impl HudState {
 
     pub fn wants(&self, screen: (i32, i32), mouse: (i32, i32)) -> bool {
         self.hud.wants(screen, mouse)
+    }
+
+    /// Remember that `kind` happened at `at` (tiles). A repeat of one that
+    /// is still showing nearby only keeps it alive.
+    pub fn note(&mut self, kind: AlertKind, at: Vec2, tick: u32) {
+        let near = |n: &Note| n.at.distance(at) <= NOTE_MERGE_TILES;
+        // An ambush explains the losses it causes.
+        if kind == AlertKind::Attack
+            && let Some(n) = self
+                .notes
+                .iter_mut()
+                .find(|n| n.kind == AlertKind::Ambush && near(n))
+        {
+            n.last = tick;
+            return;
+        }
+        if kind == AlertKind::Ambush {
+            self.notes
+                .retain(|n| n.kind != AlertKind::Attack || !near(n));
+        }
+        if let Some(n) = self.notes.iter_mut().find(|n| n.kind == kind && near(n)) {
+            n.at = at;
+            n.last = tick;
+            return;
+        }
+        if self.notes.len() >= MAX_NOTES {
+            self.notes.remove(0);
+        }
+        self.next_note += 1;
+        self.notes.push(Note {
+            id: self.next_note,
+            kind,
+            at,
+            born: tick,
+            last: tick,
+        });
+    }
+
+    /// Notice your regiments losing men or breaking since the last frame.
+    /// Called once a sim tick.
+    pub fn watch(&mut self, world: &gc_sim::World, side: PlayerId) {
+        let tick = world.tick_count();
+        // A new side, or a new world (its clock starts over): forget the old.
+        if self.watched_side != Some(side) || tick < self.watched_tick {
+            self.watched_side = Some(side);
+            self.notes.clear();
+            self.seen.clear();
+        }
+        self.watched_tick = tick;
+        self.notes
+            .retain(|n| tick.saturating_sub(n.last) <= NOTE_LIFE);
+        for r in world.regiments.iter().filter(|r| r.owner == side) {
+            let routing = r.morale.broken();
+            let i = r.handle.index as usize;
+            if self.seen.len() <= i {
+                self.seen.resize(i + 1, None);
+            }
+            if let Some(was) = self.seen[i].filter(|w| w.handle == r.handle) {
+                // A regiment already running has its own alert.
+                if r.models < was.models && !routing {
+                    self.note(AlertKind::Attack, from_fx_vec(r.position), tick);
+                }
+                if routing && !was.routing {
+                    self.note(AlertKind::Rout, from_fx_vec(r.position), tick);
+                }
+            }
+            self.seen[i] = Some(Seen {
+                handle: r.handle,
+                models: r.models,
+                routing,
+            });
+        }
+    }
+
+    /// The alert that happened most recently.
+    fn latest_note(&self) -> Option<Note> {
+        self.notes.iter().max_by_key(|n| n.last).copied()
     }
 }
 
@@ -199,6 +316,13 @@ impl Running {
         self.selected
             .retain(|&h| self.world.regiments.get(h).is_some());
 
+        let now_ms = self.now_ms();
+        // A replay shows what happened to nobody in particular.
+        if self.watching.is_some() {
+            self.hud.notes.clear();
+        }
+        let tick = self.world.tick_count();
+
         let hud = &mut self.hud;
         if self.selected.is_empty() {
             hud.armed = None;
@@ -280,10 +404,22 @@ impl Running {
             grid[SLOT_FORMATION].detail = f.name();
         }
 
+        hud.alerts.clear();
+        if !hud.notes.is_empty() {
+            let view_proj = self.camera.view_proj();
+            let plane = self.camera.focus_height;
+            hud.alerts.extend(hud.notes.iter().map(|n| Alert {
+                id: n.id,
+                kind: n.kind,
+                at: project(view_proj, Vec3::new(n.at.x, plane, n.at.y), screen),
+                fresh: tick.saturating_sub(n.born) <= NOTE_FRESH,
+            }));
+        }
+
         let mut input = std::mem::take(&mut hud.input);
         input.mouse = cursor;
         input.shift = self.input.shift;
-        input.now_ms = self.started.elapsed().as_millis() as u64;
+        input.now_ms = now_ms;
         hud.draw.clear();
         hud.events.clear();
         let data = HudData {
@@ -308,6 +444,11 @@ impl Running {
                         .div_ceil(gc_sim::TICKS_PER_SECOND),
                     ready: self.world.deploy_ready(side),
                 }),
+            alerts: AlertData {
+                alerts: &hud.alerts,
+                // Workers arrive with the Conquest economy.
+                idle_workers: None,
+            },
         };
         hud.hud
             .frame(&mut hud.draw, screen, input, &data, &mut hud.events);
@@ -350,6 +491,13 @@ impl Running {
                 self.ui_sound(sounds::UiSound::Select);
             }
             HudEvent::Command(slot) => self.grid_press(slot),
+            HudEvent::Alert(id) => {
+                if let Some(n) = self.hud.notes.iter().find(|n| n.id == id) {
+                    self.look_at(n.at);
+                }
+            }
+            // Nothing sends this until there are workers to find.
+            HudEvent::IdleWorker => {}
             HudEvent::Ready => {
                 self.human_orders.push(gc_sim::PlayerCommand {
                     player: self.sandbox.side,
@@ -410,12 +558,40 @@ impl Running {
             .map(|r| r.handle)
     }
 
+    /// Milliseconds since the game started, on the clock the HUD uses.
+    pub fn now_ms(&self) -> u64 {
+        self.started.elapsed().as_millis() as u64
+    }
+
+    /// Space: look at the latest alert.
+    pub fn jump_to_alert(&mut self) {
+        if let Some(n) = self.hud.latest_note() {
+            self.look_at(n.at);
+        }
+    }
+
     pub fn look_at(&mut self, p: Vec2) {
         self.camera.focus = p.clamp(Vec2::ZERO, Vec2::splat(self.camera.map_size));
         self.camera.focus_height = self
             .heightmap
             .height_at(self.camera.focus.x, self.camera.focus.y);
     }
+}
+
+/// Where the ground point `p` appears on a screen of `screen` UI pixels, which
+/// may be far outside it. A point behind the camera lands on the opposite
+/// side of where it projects, so the arrow still points the right way.
+fn project(view_proj: glam::Mat4, p: Vec3, screen: (i32, i32)) -> [f32; 2] {
+    let clip = view_proj * p.extend(1.0);
+    let ndc = if clip.w > 1e-4 {
+        Vec2::new(clip.x, clip.y) / clip.w
+    } else {
+        -Vec2::new(clip.x, clip.y).normalize_or(Vec2::Y) * 1000.0
+    };
+    [
+        (ndc.x * 0.5 + 0.5) * screen.0 as f32,
+        (0.5 - ndc.y * 0.5) * screen.1 as f32,
+    ]
 }
 
 /// Where the screen corner `ndc` looks at the ground, in tiles, clamped to
@@ -430,4 +606,72 @@ fn view_corner(camera: &crate::camera::RtsCamera, ndc: (f32, f32), map: f32) -> 
         origin + dir * 1000.0
     };
     [hit.x.clamp(0.0, map), hit.z.clamp(0.0, map)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::camera::RtsCamera;
+
+    #[test]
+    fn the_focus_is_the_middle_of_the_screen_and_far_ground_is_off_it() {
+        let cam = RtsCamera::new(512.0, Vec2::new(100.0, 100.0));
+        let screen = (1280, 760);
+        let at = |x: f32, z: f32| project(cam.view_proj(), Vec3::new(x, 0.0, z), screen);
+        let mid = at(100.0, 100.0);
+        assert!(
+            (mid[0] - 640.0).abs() < 1.0 && (mid[1] - 380.0).abs() < 1.0,
+            "{mid:?}"
+        );
+        // Along +x the view is to the right of the middle, along -x to the left.
+        assert!(at(300.0, 100.0)[0] > 1280.0);
+        assert!(at(-100.0, 100.0)[0] < 0.0);
+        // Far behind the camera still lands on a definite side, not NaN.
+        let behind = at(100.0, 100.0 + 5000.0);
+        assert!(behind.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn repeats_nearby_are_one_alert_and_an_ambush_explains_its_losses() {
+        let mut h = HudState::default();
+        let a = Vec2::new(50.0, 50.0);
+        h.note(AlertKind::Attack, a, 0);
+        h.note(AlertKind::Attack, a + Vec2::splat(5.0), 500);
+        assert_eq!(h.notes.len(), 1, "same fight");
+        assert_eq!(h.notes[0].last, 500);
+        assert_eq!(h.notes[0].born, 0, "still the old alert");
+        h.note(AlertKind::Attack, Vec2::new(300.0, 300.0), 600);
+        assert_eq!(h.notes.len(), 2, "another fight");
+        h.note(AlertKind::Ambush, a, 700);
+        assert!(
+            !h.notes
+                .iter()
+                .any(|n| n.kind == AlertKind::Attack && n.at.distance(a) < 20.0),
+            "the ambush replaces the losses it caused"
+        );
+        h.note(AlertKind::Attack, a, 800);
+        assert_eq!(
+            h.notes.iter().filter(|n| n.at.distance(a) < 20.0).count(),
+            1
+        );
+        assert_eq!(h.latest_note().unwrap().kind, AlertKind::Ambush);
+        assert_eq!(
+            h.latest_note().unwrap().last,
+            800,
+            "the fight keeps it alive"
+        );
+    }
+
+    #[test]
+    fn only_the_newest_few_alerts_are_kept() {
+        let mut h = HudState::default();
+        for i in 0..MAX_NOTES + 3 {
+            h.note(AlertKind::Rout, Vec2::new(i as f32 * 100.0, 0.0), i as u32);
+        }
+        assert_eq!(h.notes.len(), MAX_NOTES);
+        assert_eq!(
+            h.latest_note().unwrap().at.x,
+            (MAX_NOTES + 2) as f32 * 100.0
+        );
+    }
 }

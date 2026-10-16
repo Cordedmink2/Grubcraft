@@ -25,6 +25,8 @@
 //! to send the selection there) and an army tray of regiment cards (click to
 //! select, Shift-click to toggle, double-click to centre). The command grid
 //! has Q (move) and W (attack), each followed by a left-click, and R (formation).
+//! Badges on the screen edge point at your regiments under attack, ambushes and
+//! routs that are out of view; click one or press Space to look there.
 //! Orders: left-click one of your regiments to select it, or left-drag a box around
 //! several; Shift adds or removes. Right-click the ground to march the
 //! selection there side by side, facing the way they travel; right-drag to
@@ -1175,6 +1177,7 @@ impl ApplicationHandler for App {
                         KeyCode::KeyR | KeyCode::KeyF if grid_key => {
                             r.grid_press(hud::SLOT_FORMATION);
                         }
+                        KeyCode::Space if grid_key => r.jump_to_alert(),
                         KeyCode::KeyC if down && !event.repeat => {
                             r.sandbox.credits = !r.sandbox.credits;
                             r.sandbox.dirty = true;
@@ -2113,10 +2116,35 @@ impl Running {
             tagged_alloc::scope(Tag::Audio, || sounds.observe(&self.world, &self.camera));
         }
         self.alert_ambushes();
+        if self.watching.is_none() {
+            self.note_losses();
+        }
         let took = t0.elapsed();
         self.stats.tick_time += took;
         self.stats.tick_max = self.stats.tick_max.max(took);
         self.stats.ticks += 1;
+    }
+
+    /// Point out, at the screen edge, ambushes sprung on this side and its
+    /// regiments losing men or breaking in the last tick.
+    fn note_losses(&mut self) {
+        let side = self.sandbox.side;
+        let tick = self.world.tick_count();
+        for a in self.world.ambushes() {
+            if let Some(on) = self
+                .world
+                .regiments
+                .get(a.victim)
+                .filter(|r| r.owner == side)
+            {
+                self.hud.note(
+                    gc_ui::alerts::AlertKind::Ambush,
+                    from_fx_vec(on.position),
+                    tick,
+                );
+            }
+        }
+        self.hud.watch(&self.world, side);
     }
 
     /// Tell the player about an ambush sprung on or by their side in the

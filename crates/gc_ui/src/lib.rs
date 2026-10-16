@@ -10,6 +10,7 @@
 //! `gc_net::Lan` (LAN play); [`lobby::LocalNetwork`] is a practice lobby on
 //! one machine that the menu tests run on.
 
+pub mod alerts;
 pub mod draw;
 pub mod hud;
 pub mod lobby;

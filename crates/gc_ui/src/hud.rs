@@ -1,4 +1,5 @@
-//! The in-battle HUD: the bottom bar with the minimap and the army tray.
+//! The in-battle HUD: the bottom bar with the minimap, the army tray and the
+//! command grid, and the alerts over the battlefield.
 //! Docs: docs/08-ui-ux.md#screen-layout-1080p-reference.
 //!
 //! Like the menus this knows nothing about the GPU or the simulation. Each
@@ -8,6 +9,7 @@
 //! camera moves, selections and orders. Map positions are in tiles, with
 //! north (smaller z) at the top of the minimap.
 
+use crate::alerts::{self, AlertData};
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, text_width};
 use crate::ui::theme;
 
@@ -159,6 +161,7 @@ pub struct HudData<'a> {
     pub tray_title: &'a str,
     /// While the armies deploy (docs/06-game-modes.md).
     pub deployment: Option<DeployStatus>,
+    pub alerts: AlertData<'a>,
 }
 
 /// The deployment phase, as this player sees it.
@@ -197,6 +200,10 @@ pub enum HudEvent {
     Command(usize),
     /// Done deploying.
     Ready,
+    /// An alert badge was clicked (the [`Alert::id`](crate::alerts::Alert::id) it carries).
+    Alert(u32),
+    /// The idle-worker button was clicked.
+    IdleWorker,
 }
 
 #[derive(Default)]
@@ -204,6 +211,8 @@ pub struct Hud {
     /// Dragging across the minimap with the left button.
     dragging: bool,
     last_card_click: Option<(u32, u64)>,
+    /// Alert badges and buttons over the battlefield as last drawn.
+    over: Vec<Rect>,
 }
 
 fn rgb(c: [u8; 3]) -> Color {
@@ -213,7 +222,9 @@ fn rgb(c: [u8; 3]) -> Color {
 impl Hud {
     /// Whether a click at `mouse` belongs to the HUD rather than the world.
     pub fn wants(&self, screen: (i32, i32), mouse: (i32, i32)) -> bool {
-        self.dragging || HudLayout::new(screen).bar.contains(mouse.0, mouse.1)
+        self.dragging
+            || HudLayout::new(screen).bar.contains(mouse.0, mouse.1)
+            || self.over.iter().any(|r| r.contains(mouse.0, mouse.1))
     }
 
     /// Lay out and draw the bar, and report what was clicked.
@@ -241,6 +252,16 @@ impl Hud {
         } else {
             self.grid(draw, &layout, input, data.grid, events);
         }
+        self.over.clear();
+        alerts::draw(
+            draw,
+            screen,
+            layout.bar.h,
+            input,
+            data.alerts,
+            &mut self.over,
+            events,
+        );
     }
 
     fn grid(
@@ -645,6 +666,7 @@ mod tests {
             cards,
             tray_title: "Selected",
             deployment: None,
+            alerts: AlertData::default(),
         };
         let mut draw = DrawList::default();
         let mut events = Vec::new();
@@ -673,6 +695,7 @@ mod tests {
                     seconds_left: 87,
                     ready,
                 }),
+                alerts: AlertData::default(),
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             Hud::default().frame(&mut draw, SCREEN, input, &data, &mut events);
