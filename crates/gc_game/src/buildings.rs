@@ -5,10 +5,10 @@
 use gc_data::conquest::{self as record, BuildingRecord};
 use gc_data::{Faction, GameData};
 use gc_render::{BoxInstance, MAX_BOX_INSTANCES};
-use gc_sim::structures::{Armour, Breaker, Role, TowerAttack};
+use gc_sim::structures::{Armour, Role, TowerAttack};
 use gc_sim::{
-    BuildingId, BuildingStats, ConquestSetup, PlayerId, Refusal, StructureHandle, StructureView,
-    World,
+    BuildingId, BuildingStats, ConquestSetup, ConquestUnit, PlayerId, Refusal, StructureHandle,
+    StructureView, World,
 };
 use glam::{Vec2, Vec3};
 
@@ -85,11 +85,11 @@ pub struct Table {
     pub stats: Vec<BuildingStats>,
     names: Vec<String>,
     factions: Vec<Faction>,
-    /// How hard each regiment type hits buildings, by unit type. The units
-    /// in play are the Field Battle ones, which are all plain regiments;
-    /// the siege, artillery and hero classes come with the Conquest unit
-    /// table.
-    breakers: Vec<Breaker>,
+    /// What Conquest knows of each regiment type, by unit type. The units
+    /// in play are the Field Battle ones, which are all plain regiments
+    /// (no workers, no supply); the Conquest unit table comes with M3
+    /// step 4.
+    units: Vec<ConquestUnit>,
 }
 
 impl Table {
@@ -102,7 +102,7 @@ impl Table {
                 .map(|b| b.name().to_string())
                 .collect(),
             factions: data.buildings.iter().map(BuildingRecord::faction).collect(),
-            breakers: vec![Breaker::Regiment; data.units.len()],
+            units: vec![ConquestUnit::default(); data.units.len()],
         }
     }
 
@@ -112,8 +112,8 @@ impl Table {
     pub fn conquer(&self, world: &mut World) {
         let done = world.conquest(&ConquestSetup {
             buildings: &self.stats,
-            breakers: &self.breakers,
-            structures: ConquestSetup::STRUCTURES,
+            units: &self.units,
+            ..ConquestSetup::default()
         });
         debug_assert!(done, "conquest() on a world that has already begun");
     }
@@ -347,6 +347,7 @@ pub fn refusal(world: &World, id: BuildingId, tile: (i32, i32)) -> Option<&'stat
         Refusal::Rough => "The ground there is too rough to build on.",
         Refusal::Built => "Another building is in the way.",
         Refusal::Crowded => "A regiment is standing in the way.",
+        Refusal::Node => "Workers need room at a seep or vein.",
     })
 }
 
@@ -375,7 +376,7 @@ mod tests {
         assert_eq!(role("Clan Hall"), Role::Main);
         assert_eq!(role("Palisade"), Role::Wall);
         assert_eq!(role("Watchtower"), Role::Defence);
-        assert_eq!(table.breakers.len(), data.units.len());
+        assert_eq!(table.units.len(), data.units.len());
         assert!(table.describe(0).contains("Clan Hall"));
     }
 

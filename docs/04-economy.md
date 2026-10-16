@@ -42,6 +42,8 @@ All four economies are tuned so that a **fully developed seep produces about 200
 
 A Marrow vein saturated by 3 workers (or one Siphon) yields about **50 Marrow per minute**.
 
+*Built (2026-10-16, M3 step 2): workers are simulated. A worker regiment ordered to gather walks to a node, fills a load (10 Grub in 9 s, or 5 Marrow in 12 s), carries it to the nearest drop-off that takes that resource and banks it. A seep works five workers at once and a vein three; others wait beside it. A node that runs dry becomes dregs: it still gives whole loads, but each takes four times as long. In tests, five workers on a seep seven tiles from their hall bring in about 200 Grub a minute, and three on a vein about 50 Marrow a minute, so a drop-off near a seep pays. Nothing can be built on a seep or vein, and a worker that three times in a row gets no nearer to its node or drop-off gives up. A worker that routs goes back to work once it rallies. Every faction uses plain workers for now; Brood veins, Choir Resonators and Concord caravans come later.*
+
 ## Starting state (Conquest)
 
 | | Clans | Brood | Choir | Concord |
@@ -63,7 +65,7 @@ Big armies tax your income, which keeps the economy relevant late and rewards fi
 | 61 to 100 | 75% |
 | 101 to 150 | 55% |
 
-The current upkeep band is shown as a colour on the supply counter (white, amber, red), with a tooltip.
+Upkeep is built in the simulation (2026-10-16, M3 step 2), and it never cuts Marrow. The current upkeep band is shown as a colour on the supply counter (white, amber, red), with a tooltip.
 
 ## Tech tiers
 

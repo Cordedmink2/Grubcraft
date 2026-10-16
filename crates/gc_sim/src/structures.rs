@@ -29,6 +29,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
+use crate::conquest::ConquestUnit;
 use crate::nav::{CELLS_PER_TILE, CLEARANCE, Nav};
 use crate::regiments::{Order, Regiments};
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
@@ -104,6 +105,8 @@ pub enum Refusal {
     Built,
     /// A regiment is standing there.
     Crowded,
+    /// A Grub seep or Marrow vein is there.
+    Node,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -231,6 +234,77 @@ fn footprint_centre([x, y, w, d]: [i32; 4]) -> FxVec2 {
     )
 }
 
+/// The point of a footprint nearest `here`.
+fn nearest_point([x, y, w, d]: [i32; 4], here: FxVec2) -> FxVec2 {
+    FxVec2::new(
+        here.x.clamp(Fx::from_int(x), Fx::from_int(x + w)),
+        here.y.clamp(Fx::from_int(y), Fx::from_int(y + d)),
+    )
+}
+
+/// A regiment and a building's footprint: how far apart they are, and
+/// where it would stand against it. Shared by sieges and by workers
+/// bringing in what they gathered ([`crate::economy`]).
+pub(crate) struct Approach {
+    /// The nearest point of the footprint, and its centre.
+    near: FxVec2,
+    centre: FxVec2,
+    /// From the regiment's centre to `near`.
+    pub(crate) gap: Fx,
+    /// Half the regiment's block depth.
+    half: Fx,
+}
+
+impl Approach {
+    pub(crate) fn of(regs: &Regiments, unit: &UnitStats, r: usize, foot: [i32; 4]) -> Approach {
+        let here = regs.position[r];
+        let near = nearest_point(foot, here);
+        let (_, depth) = unit.block_size_in(regs.formation[r], regs.files[r], regs.models[r]);
+        Approach {
+            near,
+            centre: footprint_centre(foot),
+            gap: (near - here).length(),
+            half: Fx::from_raw(depth.raw() / 2),
+        }
+    }
+
+    /// How near its front rank must come to touch the wall.
+    pub(crate) fn reach(&self) -> Fx {
+        self.half + MELEE_REACH
+    }
+
+    /// Order regiment slot `r` to stand just off the nearest point of the
+    /// footprint, facing the building.
+    pub(crate) fn walk(&self, regs: &mut Regiments, r: usize) {
+        let here = regs.position[r];
+        let out = if self.near == here {
+            here - self.centre
+        } else {
+            here - self.near
+        }
+        .normalized();
+        let stand = self.near + out * (self.half + Fx::ONE);
+        let h = regs.handle(r);
+        regs.order(
+            h,
+            Order {
+                target: stand,
+                facing: Some(Angle::of_vec(self.centre - stand)),
+                files: 0,
+                pace: Fx::ZERO,
+            },
+        );
+    }
+
+    /// Regiment slot `r` is there: it stops and faces the building.
+    pub(crate) fn arrive(&self, regs: &mut Regiments, r: usize) {
+        if regs.target[r].is_some() {
+            regs.target[r] = None;
+            regs.target_facing[r] = Some(Angle::of_vec(self.centre - regs.position[r]));
+        }
+    }
+}
+
 /// Hit points are kept in hundredths, so a halved blow of 1 still counts.
 const HP_SCALE: u32 = 100;
 /// How far beyond its block's front a melee regiment reaches a wall, in
@@ -274,14 +348,14 @@ pub struct Structures {
 impl Structures {
     pub(crate) fn new(
         buildings: &[BuildingStats],
-        breakers: &[Breaker],
+        units: &[ConquestUnit],
         capacity: u32,
         regiments: usize,
     ) -> Structures {
         let n = capacity as usize;
         Structures {
             buildings: buildings.iter().map(|b| b.sanitized()).collect(),
-            breakers: breakers.to_vec(),
+            breakers: units.iter().map(|u| u.breaker).collect(),
             generation: vec![0; n],
             owner: vec![0; n],
             building: vec![0; n],
@@ -347,9 +421,16 @@ impl Structures {
 
     /// Live buildings in index order.
     pub fn iter(&self) -> impl Iterator<Item = StructureView> + '_ {
-        (0..self.hp.len())
-            .filter(|&i| self.hp[i] > 0)
-            .map(|i| self.view(i))
+        self.standing().map(|i| self.view(i))
+    }
+
+    /// The slots of the buildings standing, in index order.
+    fn standing(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.hp.len()).filter(|&i| self.hp[i] > 0)
+    }
+
+    fn stats_of(&self, i: usize) -> &BuildingStats {
+        &self.buildings[self.building[i] as usize]
     }
 
     /// The footprint of building slot `i`: x, y, width, depth in tiles.
@@ -359,16 +440,39 @@ impl Structures {
         [x, y, i32::from(b.width), i32::from(b.depth)]
     }
 
+    /// The footprint of the standing building of `owner`'s nearest `here`
+    /// whose flags have `flag` (a drop-off for what a worker carries).
+    pub(crate) fn nearest_drop_off(
+        &self,
+        owner: PlayerId,
+        flag: u8,
+        here: FxVec2,
+    ) -> Option<[i32; 4]> {
+        self.standing()
+            .filter(|&i| self.owner[i] == owner && self.stats_of(i).flags & flag != 0)
+            .map(|i| self.footprint(i))
+            .min_by_key(|&foot| (nearest_point(foot, here) - here).length_sq_raw())
+    }
+
+    /// What `owner`'s standing buildings add to their supply cap.
+    pub(crate) fn supply_of(&self, owner: PlayerId) -> u32 {
+        self.standing()
+            .filter(|&i| self.owner[i] == owner)
+            .map(|i| u32::from(self.stats_of(i).supply))
+            .sum()
+    }
+
     /// Whether a building of type `building` may stand with its north-west
     /// tile at `tile`: on the map, on ground regiments can walk, clear of
     /// other buildings (see `Nav::footing`), and with no regiment standing
-    /// on it.
+    /// on it or node (`nodes`) within it.
     pub(crate) fn check(
         &self,
         building: BuildingId,
         tile: (i32, i32),
         nav: &Nav,
         regs: &Regiments,
+        nodes: &[FxVec2],
     ) -> Result<(), Refusal> {
         let b = self
             .buildings
@@ -383,12 +487,12 @@ impl Structures {
             FxVec2::from_ints(tile.0, tile.1) - FxVec2::new(margin, margin),
             FxVec2::from_ints(tile.0 + w, tile.1 + d) + FxVec2::new(margin, margin),
         );
-        let crowded = (0..regs.alive.len()).any(|i| {
-            let p = regs.position[i];
-            regs.alive[i] && p.x > lo.x && p.y > lo.y && p.x < hi.x && p.y < hi.y
-        });
-        if crowded {
+        let near = |p: FxVec2| p.x > lo.x && p.y > lo.y && p.x < hi.x && p.y < hi.y;
+        if (0..regs.alive.len()).any(|i| regs.alive[i] && near(regs.position[i])) {
             Err(Refusal::Crowded)
+        } else if nodes.iter().any(|&at| near(at)) {
+            // Workers must be able to stand at it.
+            Err(Refusal::Node)
         } else {
             Ok(())
         }
@@ -480,35 +584,20 @@ impl Structures {
             }
             let s = target.index as usize;
             let unit = &units[regs.unit[r] as usize];
-            let foot = self.footprint(s);
-            let [x, y, w, d] = foot;
-            let here = regs.position[r];
-            // The nearest point of the footprint.
-            let near = FxVec2::new(
-                here.x.clamp(Fx::from_int(x), Fx::from_int(x + w)),
-                here.y.clamp(Fx::from_int(y), Fx::from_int(y + d)),
-            );
-            let (_, depth) = unit.block_size_in(regs.formation[r], regs.files[r], regs.models[r]);
-            let half = Fx::from_raw(depth.raw() / 2);
+            let way = Approach::of(regs, unit, r, self.footprint(s));
             let reach = if unit.range > Fx::ZERO {
                 unit.range
             } else {
-                half + MELEE_REACH
+                way.reach()
             };
-            let centre = footprint_centre(foot);
-            let gap = (near - here).length();
-            if gap > reach {
+            if way.gap > reach {
                 // Close in, unless already on the way.
                 if regs.target[r].is_none() {
-                    self.close_in(regs, r, near, centre, half, gap);
+                    self.close_in(regs, r, &way);
                 }
                 continue;
             }
-            // In reach: stop and face it.
-            if regs.target[r].is_some() {
-                regs.target[r] = None;
-                regs.target_facing[r] = Some(Angle::of_vec(centre - here));
-            }
+            way.arrive(regs, r);
             if self.siege_clock[r] > 0 {
                 continue;
             }
@@ -521,19 +610,11 @@ impl Structures {
         }
     }
 
-    /// Send regiment slot `r`, `gap` from the footprint, to stand just off
-    /// its point `near`, facing the building's `centre`; `half` is half its
-    /// block's depth. After [`STALLS`] tries in a row that brought it no
-    /// nearer (no way there), it gives up.
-    fn close_in(
-        &mut self,
-        regs: &mut Regiments,
-        r: usize,
-        near: FxVec2,
-        centre: FxVec2,
-        half: Fx,
-        gap: Fx,
-    ) {
+    /// Send regiment slot `r` up to its building (see [`Approach::walk`]).
+    /// After [`STALLS`] tries in a row that brought it no nearer (no way
+    /// there), it gives up.
+    fn close_in(&mut self, regs: &mut Regiments, r: usize, way: &Approach) {
+        let gap = way.gap;
         if gap >= self.siege_gap[r] {
             self.siege_stalls[r] += 1;
             if self.siege_stalls[r] >= STALLS {
@@ -544,24 +625,7 @@ impl Structures {
             self.siege_stalls[r] = 0;
         }
         self.siege_gap[r] = gap;
-        let here = regs.position[r];
-        let out = if near == here {
-            here - centre
-        } else {
-            here - near
-        }
-        .normalized();
-        let stand = near + out * (half + Fx::ONE);
-        let h = regs.handle(r);
-        regs.order(
-            h,
-            Order {
-                target: stand,
-                facing: Some(Angle::of_vec(centre - stand)),
-                files: 0,
-                pace: Fx::ZERO,
-            },
-        );
+        way.walk(regs, r);
         self.siege_clock[r] = RETRY_TICKS;
     }
 
@@ -628,21 +692,4 @@ impl Structures {
             }
         }
     }
-}
-
-/// What a Conquest match adds to [`crate::MatchSetup`] (see
-/// [`crate::World::conquest`]).
-#[derive(Clone, Copy, Debug)]
-pub struct ConquestSetup<'a> {
-    pub buildings: &'a [BuildingStats],
-    /// Each regiment type's class against buildings, by [`crate::UnitId`]; a type
-    /// past the end is a plain [`Breaker::Regiment`].
-    pub breakers: &'a [Breaker],
-    /// Room for this many buildings.
-    pub structures: u32,
-}
-
-impl ConquestSetup<'_> {
-    /// Warfield sizing from docs/10-architecture.md.
-    pub const STRUCTURES: u32 = 1024;
 }

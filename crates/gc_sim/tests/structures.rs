@@ -7,8 +7,8 @@ use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::structures::{Armour, Breaker, Role};
 use gc_sim::{
-    BuildingStats, Capacities, Command, ConquestSetup, MatchSetup, PlayerCommand, RegimentHandle,
-    StructureHandle, TICKS_PER_SECOND, World,
+    BuildingStats, Capacities, Command, ConquestSetup, ConquestUnit, MatchSetup, PlayerCommand,
+    RegimentHandle, StructureHandle, TICKS_PER_SECOND, World,
 };
 
 const SPEARS: u16 = 0;
@@ -64,10 +64,18 @@ fn conquest(tiles: u32, breakers: &[Breaker]) -> World {
         ground: gc_sim::Ground::FLAT,
         champions: false,
     });
+    let units: Vec<ConquestUnit> = breakers
+        .iter()
+        .map(|&breaker| ConquestUnit {
+            breaker,
+            ..ConquestUnit::default()
+        })
+        .collect();
     assert!(w.conquest(&ConquestSetup {
         buildings: &buildings(),
-        breakers,
+        units: &units,
         structures: 32,
+        ..ConquestSetup::default()
     }));
     w
 }
@@ -399,7 +407,6 @@ fn only_conquest_has_buildings() {
     // Too late to make it a Conquest match.
     assert!(!w.conquest(&ConquestSetup {
         buildings: &buildings(),
-        breakers: &[],
-        structures: 4,
+        ..ConquestSetup::default()
     }));
 }

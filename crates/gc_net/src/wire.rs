@@ -299,6 +299,11 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(10);
             w.structure(structure);
         }
+        Command::Gather { regiment, node } => {
+            w.u8(11);
+            w.handle(regiment);
+            w.var(u64::from(node));
+        }
     }
 }
 
@@ -349,6 +354,10 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         },
         10 => Command::RemoveStructure {
             structure: r.structure()?,
+        },
+        11 => Command::Gather {
+            regiment: r.handle()?,
+            node: r.var_as()?,
         },
         _ => return None,
     })
@@ -485,6 +494,10 @@ mod tests {
                     index: 0,
                     generation: 0,
                 },
+            },
+            Command::Gather {
+                regiment: h(2, 9),
+                node: 300,
             },
         ];
         let pcs: Vec<PlayerCommand> = cmds

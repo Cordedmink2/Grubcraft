@@ -19,7 +19,9 @@ use alloc::vec::Vec;
 
 pub mod champions;
 pub mod combat;
+pub mod conquest;
 pub mod deploy;
+pub mod economy;
 pub mod events;
 pub mod fork;
 pub mod formation;
@@ -36,13 +38,16 @@ pub mod verdict;
 pub mod vision;
 
 pub use champions::Challenge;
+use conquest::Conquest;
+pub use conquest::{ConquestSetup, ConquestUnit};
+pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource};
 pub use fork::Standing;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
 pub use structures::{
-    BuildingId, BuildingStats, ConquestSetup, Refusal, StructureHandle, StructureView, Structures,
+    BuildingId, BuildingStats, Refusal, StructureHandle, StructureView, Structures,
 };
 pub use terrain::{Cover, Ground, Terrain};
 pub use verdict::{HOLD_TICKS, Verdict};
@@ -59,7 +64,7 @@ use vision::Vision;
 
 /// The parts of the simulation's state, in the order [`World::state_hash`]
 /// hashes them and [`World::system_hashes`] lists them.
-pub const SYSTEMS: [&str; 11] = [
+pub const SYSTEMS: [&str; 12] = [
     "clock",
     "random streams",
     "unit stats",
@@ -71,6 +76,7 @@ pub const SYSTEMS: [&str; 11] = [
     "verdict",
     "champions",
     "structures",
+    "economy",
 ];
 
 /// The simulation's rules version. Two builds with the same version play
@@ -523,6 +529,10 @@ pub enum Command {
         regiment: RegimentHandle,
         structure: StructureHandle,
     },
+    /// Conquest: a worker regiment gathers at node `node` (a Grub seep or
+    /// Marrow vein, see [`economy`]) and carries each load home, until
+    /// given another order.
+    Gather { regiment: RegimentHandle, node: u16 },
     /// Sandbox: take a building off the field (any player's).
     RemoveStructure { structure: StructureHandle },
 }
@@ -538,7 +548,8 @@ impl Command {
             | Command::Attack { .. }
             | Command::SetFormation { .. }
             | Command::Ready
-            | Command::AttackStructure { .. } => true,
+            | Command::AttackStructure { .. }
+            | Command::Gather { .. } => true,
             Command::SpawnRegiment { .. }
             | Command::RemoveRegiment { .. }
             | Command::TuneUnit { .. }
@@ -586,8 +597,9 @@ pub struct World {
     /// What happened in the last tick (see [`events`]); not part of the
     /// match's state.
     events: Events,
-    /// Conquest only: the buildings (see [`World::conquest`]).
-    structures: Option<Structures>,
+    /// Conquest only: the buildings and the economy (see
+    /// [`World::conquest`]).
+    conquest: Option<Conquest>,
     pub regiments: Regiments,
 }
 
@@ -622,38 +634,44 @@ impl World {
             judge: verdict::Judge::default(),
             events: Events::new(setup.capacities.regiments as usize),
             scratch: false,
-            structures: None,
+            conquest: None,
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
 
-    /// Make this a Conquest match: buildings, and later the economy. Only
+    /// Make this a Conquest match: buildings and the economy. Only
     /// on a match's own world with a map, before its first tick, once;
     /// returns whether it was done.
     pub fn conquest(&mut self, setup: &ConquestSetup) -> bool {
-        if self.tick != 0 || self.scratch || self.structures.is_some() || !self.nav.has_map() {
+        if self.tick != 0 || self.scratch || self.conquest.is_some() || !self.nav.has_map() {
             return false;
         }
-        self.structures = Some(Structures::new(
-            setup.buildings,
-            setup.breakers,
-            setup.structures,
-            self.regiments.capacity(),
-        ));
+        self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
         self.events.reserve(setup.structures as usize);
         true
     }
 
     /// The buildings on the field (Conquest only).
     pub fn structures(&self) -> Option<&Structures> {
-        self.structures.as_ref()
+        Some(&self.conquest.as_ref()?.structures)
+    }
+
+    /// Grub, Marrow and the nodes (Conquest only).
+    pub fn economy(&self) -> Option<&Economy> {
+        Some(&self.conquest.as_ref()?.economy)
+    }
+
+    /// Player `p`'s store and supply (Conquest only).
+    pub fn bank(&self, p: PlayerId) -> Option<Bank> {
+        let c = self.conquest.as_ref()?;
+        Some(c.economy.bank(&self.regiments, &c.structures, p))
     }
 
     /// Whether a building of type `building` could go up now with its
     /// north-west tile at `tile`, and if not, why: the check
     /// [`Command::SpawnStructure`] makes.
     pub fn can_build(&self, building: BuildingId, tile: (i32, i32)) -> Result<(), Refusal> {
-        self.structures.as_ref().ok_or(Refusal::NoBuildings)?.check(
+        self.conquest.as_ref().ok_or(Refusal::NoBuildings)?.check(
             building,
             tile,
             &self.nav,
@@ -661,10 +679,22 @@ impl World {
         )
     }
 
+    /// The node regiment `h` is gathering at, if any (Conquest only).
+    pub fn gathers_at(&self, h: RegimentHandle) -> Option<u16> {
+        let i = self.regiments.resolve(h)?;
+        self.economy()?.work_of(&self.regiments, i)
+    }
+
+    /// What regiment `h` carries, if anything (Conquest only).
+    pub fn carries(&self, h: RegimentHandle) -> Option<(Resource, u32)> {
+        let i = self.regiments.resolve(h)?;
+        self.economy()?.carried(&self.regiments, i)
+    }
+
     /// The building regiment `h` is attacking, if any.
     pub fn siege_target(&self, h: RegimentHandle) -> Option<StructureHandle> {
         let i = self.regiments.resolve(h)?;
-        self.structures.as_ref()?.siege_of(&self.regiments, i)
+        self.structures()?.siege_of(&self.regiments, i)
     }
 
     /// The match's regiment types, indexed by [`UnitId`].
@@ -735,8 +765,13 @@ impl World {
             self.tick,
             &mut self.combat_rng,
         );
-        if let Some(structures) = &mut self.structures {
+        if let Some(Conquest {
+            structures,
+            economy,
+        }) = &mut self.conquest
+        {
             structures.update(&mut self.regiments, &self.units, &mut self.nav);
+            economy.update(&mut self.regiments, &self.units, structures);
         }
         morale::update(
             &mut self.regiments,
@@ -766,8 +801,8 @@ impl World {
         if !self.scratch {
             self.events
                 .after(&self.regiments, &self.combat, self.vision.ambushes());
-            if let Some(structures) = &self.structures {
-                self.events.fallen(&structures.fallen);
+            if let Some(conquest) = &self.conquest {
+                self.events.fallen(&conquest.structures.fallen);
             }
         }
         self.tick += 1;
@@ -848,7 +883,7 @@ impl World {
                             },
                         );
                         if done {
-                            self.leave_off_siege(regiment);
+                            self.leave_off(regiment);
                         }
                         done
                     }
@@ -864,7 +899,7 @@ impl World {
                     {
                         let done = self.regiments.attack(regiment, target);
                         if done {
-                            self.leave_off_siege(regiment);
+                            self.leave_off(regiment);
                         }
                         done
                     }
@@ -896,15 +931,16 @@ impl World {
             }
             Command::Ready => self.deploy.set_ready(pc.player, self.tick),
             Command::SpawnStructure { building, tile } => {
-                let Some(structures) = &mut self.structures else {
+                let Some(conquest) = &mut self.conquest else {
                     return false;
                 };
                 let tile = (i32::from(tile.0), i32::from(tile.1));
                 usize::from(pc.player) < MAX_PARTIES
-                    && structures
+                    && conquest
                         .check(building, tile, &self.nav, &self.regiments)
                         .is_ok()
-                    && structures
+                    && conquest
+                        .structures
                         .spawn(pc.player, building, tile, &mut self.nav, &self.regiments)
                         .is_some()
             }
@@ -912,36 +948,59 @@ impl World {
                 regiment,
                 structure,
             } => {
-                let Some(structures) = &mut self.structures else {
+                let Some(conquest) = &mut self.conquest else {
                     return false;
                 };
                 match (
                     self.regiments.resolve(regiment),
-                    structures.owner(structure),
+                    conquest.structures.owner(structure),
                 ) {
                     (Some(r), Some(enemy))
                         if self.regiments.owner[r] == pc.player
                             && self.stances.hostile(pc.player, enemy)
                             && !self.regiments.morale_state[r].broken() =>
                     {
-                        structures.besiege(&mut self.regiments, r, structure);
+                        conquest.stop_work(r);
+                        conquest
+                            .structures
+                            .besiege(&mut self.regiments, r, structure);
                         true
                     }
                     _ => false,
                 }
             }
-            Command::RemoveStructure { structure } => self
-                .structures
-                .as_mut()
-                .is_some_and(|s| s.despawn(structure, &mut self.nav, &self.regiments)),
+            Command::Gather { regiment, node } => {
+                let Some(conquest) = &mut self.conquest else {
+                    return false;
+                };
+                match self.regiments.resolve(regiment) {
+                    Some(r)
+                        if self.regiments.owner[r] == pc.player
+                            && !self.regiments.morale_state[r].broken()
+                            && conquest.economy.can_gather(&self.regiments, r, node) =>
+                    {
+                        // Sent again to the node it works: it keeps on.
+                        if conquest.economy.work_of(&self.regiments, r) != Some(node) {
+                            conquest.stop_work(r);
+                            conquest.economy.gather(&mut self.regiments, r, node);
+                        }
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            Command::RemoveStructure { structure } => self.conquest.as_mut().is_some_and(|c| {
+                c.structures
+                    .despawn(structure, &mut self.nav, &self.regiments)
+            }),
         }
     }
 
     /// Regiment `h` was given another order: it stops attacking any
-    /// building.
-    fn leave_off_siege(&mut self, h: RegimentHandle) {
-        if let (Some(structures), Some(i)) = (&mut self.structures, self.regiments.resolve(h)) {
-            structures.stop(i);
+    /// building and stops gathering.
+    fn leave_off(&mut self, h: RegimentHandle) {
+        if let (Some(conquest), Some(i)) = (&mut self.conquest, self.regiments.resolve(h)) {
+            conquest.stop_work(i);
         }
     }
 
@@ -1151,8 +1210,13 @@ impl World {
             }
             // Only in Conquest, so Field Battles hash as before buildings.
             "structures" => {
-                if let Some(structures) = &self.structures {
+                if let Some(structures) = self.structures() {
                     structures.hash_into(&self.regiments, h);
+                }
+            }
+            "economy" => {
+                if let Some(economy) = self.economy() {
+                    economy.hash_into(&self.regiments, h);
                 }
             }
             other => unreachable!("no hash for system {other}"),

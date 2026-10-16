@@ -161,6 +161,11 @@ impl Writer {
                 self.u8(10);
                 self.structure(structure);
             }
+            Command::Gather { regiment, node } => {
+                self.u8(11);
+                self.handle(regiment);
+                self.var(u64::from(node));
+            }
         }
     }
 }
@@ -329,6 +334,10 @@ impl<'a> Reader<'a> {
             10 => Command::RemoveStructure {
                 structure: self.structure()?,
             },
+            11 => Command::Gather {
+                regiment: self.handle()?,
+                node: self.var_as()?,
+            },
             _ => return None,
         };
         Some(PlayerCommand { player, command })
@@ -366,6 +375,13 @@ mod tests {
                     index: 1,
                     generation: 0,
                 },
+            },
+            Command::Gather {
+                regiment: RegimentHandle {
+                    index: 7,
+                    generation: 3,
+                },
+                node: 65_535,
             },
         ];
         let mut w = Writer::default();
