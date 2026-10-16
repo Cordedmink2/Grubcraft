@@ -1,5 +1,5 @@
 //! Byte encoding of a replay's contents: varints, and the simulation's
-//! commands and unit stats.
+//! commands, unit stats and Conquest tables.
 //!
 //! This is deliberately the replay file's own encoding, not the network's
 //! (`gc_net::wire`): the wire format changes whenever the protocol does,
@@ -7,7 +7,11 @@
 //! bumping [`crate::FORMAT`].
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::{Command, Formation, Mass, PlayerCommand, RegimentHandle, StructureHandle, UnitStats};
+use gc_sim::structures::{Armour, Breaker, Role, TowerAttack};
+use gc_sim::{
+    BuildingStats, Command, ConquestUnit, Formation, Mass, NodeSetup, PlayerCommand,
+    RegimentHandle, Resource, StructureHandle, UnitStats,
+};
 
 #[derive(Default)]
 pub struct Writer {
@@ -85,6 +89,48 @@ impl Writer {
         self.u8(s.morale);
         self.u8(s.mass as u8);
         self.u8(s.weapons());
+    }
+
+    pub fn building(&mut self, b: &BuildingStats) {
+        self.u8(b.role as u8);
+        self.u8(b.tier);
+        self.var(b.upgrades_from.map_or(0, |f| u64::from(f) + 1));
+        self.var(u64::from(b.cost_grub));
+        self.var(u64::from(b.cost_marrow));
+        self.var(u64::from(b.build_ticks));
+        self.var(u64::from(b.hp));
+        self.u8(b.armour as u8);
+        self.u8(b.width);
+        self.u8(b.depth);
+        self.u8(b.supply);
+        self.u8(b.flags);
+        match b.attack {
+            Some(a) => {
+                self.bool(true);
+                self.fx(a.range);
+                self.var(u64::from(a.damage));
+                self.var(u64::from(a.reload_ticks));
+                self.u8(a.shots);
+            }
+            None => self.bool(false),
+        }
+    }
+
+    pub fn conquest_unit(&mut self, u: &ConquestUnit) {
+        self.u8(u.breaker as u8);
+        self.bool(u.worker);
+        self.u8(u.supply);
+        self.var(u64::from(u.cost_grub));
+        self.var(u64::from(u.cost_marrow));
+        self.var(u64::from(u.train_ticks));
+        self.var(u.trained_at.map_or(0, |b| u64::from(b) + 1));
+        self.u8(u.tier);
+    }
+
+    pub fn node(&mut self, n: &NodeSetup) {
+        self.u8(n.resource as u8);
+        self.vec(n.at);
+        self.var(u64::from(n.amount));
     }
 
     pub fn command(&mut self, pc: &PlayerCommand) {
@@ -324,6 +370,60 @@ impl<'a> Reader<'a> {
             shield: false,
         }
         .with_weapons(self.u8()?)
+    }
+
+    /// 0 for none, else the id plus one.
+    fn maybe_id(&mut self) -> Option<Option<u16>> {
+        let v: u16 = self.var_as()?;
+        Some(v.checked_sub(1))
+    }
+
+    pub fn building(&mut self) -> Option<BuildingStats> {
+        Some(BuildingStats {
+            role: Role::from_u8(self.u8()?)?,
+            tier: self.u8()?,
+            upgrades_from: self.maybe_id()?,
+            cost_grub: self.var_as()?,
+            cost_marrow: self.var_as()?,
+            build_ticks: self.var_as()?,
+            hp: self.var_as()?,
+            armour: Armour::from_u8(self.u8()?)?,
+            width: self.u8()?,
+            depth: self.u8()?,
+            supply: self.u8()?,
+            flags: self.u8()?,
+            attack: if self.bool()? {
+                Some(TowerAttack {
+                    range: self.fx()?,
+                    damage: self.var_as()?,
+                    reload_ticks: self.var_as()?,
+                    shots: self.u8()?,
+                })
+            } else {
+                None
+            },
+        })
+    }
+
+    pub fn conquest_unit(&mut self) -> Option<ConquestUnit> {
+        Some(ConquestUnit {
+            breaker: Breaker::from_u8(self.u8()?)?,
+            worker: self.bool()?,
+            supply: self.u8()?,
+            cost_grub: self.var_as()?,
+            cost_marrow: self.var_as()?,
+            train_ticks: self.var_as()?,
+            trained_at: self.maybe_id()?,
+            tier: self.u8()?,
+        })
+    }
+
+    pub fn node(&mut self) -> Option<NodeSetup> {
+        Some(NodeSetup {
+            resource: Resource::from_u8(self.u8()?)?,
+            at: self.vec()?,
+            amount: self.var_as()?,
+        })
     }
 
     pub fn command(&mut self) -> Option<PlayerCommand> {

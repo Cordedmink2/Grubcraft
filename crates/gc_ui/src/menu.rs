@@ -6,9 +6,9 @@ use std::path::PathBuf;
 use crate::draw::{Rect, fit, text_width};
 use crate::hud::{MinimapTerrain, draw_terrain};
 use crate::lobby::{
-    AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MAX_ARMY,
+    AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAX_ARMY,
     MAX_PLAYERS, MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile, RosterUnit,
-    SlotEdit, SlotKind, Tempo, army_points, field_map_tiles, fresh_map_seed, map_code,
+    SlotEdit, SlotKind, Tempo, army_points, field_map_tiles, fresh_map_seed, map_code, maps_for,
     parse_map_code, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
@@ -62,10 +62,34 @@ pub enum MenuAction {
     Quit,
 }
 
-/// Which map picture a screen wants: the map choice (an index into
-/// [`MAPS`]), its size in tiles ([`field_map_tiles`]) and the map seed. See
-/// [`Menu::wanted_map_preview`].
-pub type MapPreviewKey = (usize, u32, u64);
+/// Which map picture a screen wants (see [`Menu::wanted_map_preview`]):
+/// the map a lobby's settings pick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MapPreviewKey {
+    /// A Field Battle map: the choice (an index into
+    /// [`MAPS`](crate::lobby::MAPS)), its size in tiles
+    /// ([`field_map_tiles`]) and the map seed.
+    Field {
+        choice: usize,
+        tiles: u32,
+        seed: u64,
+    },
+    /// A shipped Conquest map, an index into
+    /// [`CONQUEST_MAPS`](crate::lobby::CONQUEST_MAPS).
+    Conquest(usize),
+}
+
+/// The map `settings` pick for `players` players.
+pub fn preview_key(settings: &LobbySettings, players: usize) -> MapPreviewKey {
+    match settings.mode {
+        GameMode::FieldBattle => MapPreviewKey::Field {
+            choice: settings.map,
+            tiles: field_map_tiles(players),
+            seed: settings.map_seed,
+        },
+        GameMode::Conquest => MapPreviewKey::Conquest(settings.map),
+    }
+}
 
 /// A picture of a map the game made for the lobby.
 struct MapPreview {
@@ -502,7 +526,7 @@ impl<N: Network> Menu<N> {
         let new_w = 96;
         let mut map = self.host.map;
         let map_r = Rect::new(map_row.x, map_row.y, map_row.w - new_w - 8, map_row.h);
-        if ui.stepper(map_r, "Map", &mut map, &MAPS) {
+        if ui.stepper(map_r, "Map", &mut map, maps_for(self.host.mode)) {
             self.host.map = map;
         }
         let new_r = Rect::new(map_row.right() - new_w, map_row.y, new_w, map_row.h);
@@ -525,23 +549,13 @@ impl<N: Network> Menu<N> {
         let pv = 3 * sp(36) + 2 * sp(12);
         let preview_r = Rect::new(s.x + card_w - pv, s.y, pv, pv);
         s.w = card_w - pv - 12;
-        let mode_names: Vec<String> = GameMode::ALL
-            .iter()
-            .map(|m| {
-                if m.playable() {
-                    m.name().to_string()
-                } else {
-                    format!("{} (soon)", m.name())
-                }
-            })
-            .collect();
-        let mode_refs: Vec<&str> = mode_names.iter().map(String::as_str).collect();
+        let mode_names = GameMode::ALL.map(GameMode::name);
         let mut mode = GameMode::ALL
             .iter()
             .position(|&m| m == self.host.mode)
             .unwrap_or(0);
-        if ui.stepper(s.next(sp(36)), "Mode", &mut mode, &mode_refs) {
-            self.host.mode = GameMode::ALL[mode];
+        if ui.stepper(s.next(sp(36)), "Mode", &mut mode, &mode_names) {
+            self.host.set_mode(GameMode::ALL[mode]);
         }
         let tempo_names: Vec<&str> = Tempo::ALL.iter().map(|t| t.name()).collect();
         let mut tempo = Tempo::ALL
@@ -556,12 +570,11 @@ impl<N: Network> Menu<N> {
         self.host_password = password;
         // A Field Battle map is made for the players in it; the card can't
         // know yet, so it shows the size two players get.
-        let key = (self.host.map, field_map_tiles(2), self.host.map_seed);
+        let key = preview_key(&self.host, 2);
         self.draw_map_preview(ui, preview_r, key);
         s.skip(sp(8));
         let host_btn = Rect::new(s.x, panel.bottom() - sp(64) - 60, card_w, 52);
-        let playable = self.host.mode.playable();
-        if ui.button(host_btn, "Host", ButtonStyle::Primary, playable) {
+        if ui.button(host_btn, "Host", ButtonStyle::Primary, true) {
             let me = self.profile();
             match self.net.host(&me, self.host.clone(), &self.host_password) {
                 Ok(()) => self.go(ui, Screen::Lobby),
@@ -736,27 +749,17 @@ impl<N: Network> Menu<N> {
         let mut changed = false;
         if lobby.is_host {
             let mut map = settings.map;
-            if ui.stepper(slot_rect(0), "Map", &mut map, &MAPS) {
+            if ui.stepper(slot_rect(0), "Map", &mut map, maps_for(settings.mode)) {
                 settings.map = map;
                 changed = true;
             }
-            let mode_names: Vec<String> = GameMode::ALL
-                .iter()
-                .map(|m| {
-                    if m.playable() {
-                        m.name().to_string()
-                    } else {
-                        format!("{} (soon)", m.name())
-                    }
-                })
-                .collect();
-            let mode_refs: Vec<&str> = mode_names.iter().map(String::as_str).collect();
+            let mode_names = GameMode::ALL.map(GameMode::name);
             let mut mode = GameMode::ALL
                 .iter()
                 .position(|&m| m == settings.mode)
                 .unwrap_or(0);
-            if ui.stepper(slot_rect(1), "Mode", &mut mode, &mode_refs) {
-                settings.mode = GameMode::ALL[mode];
+            if ui.stepper(slot_rect(1), "Mode", &mut mode, &mode_names) {
+                settings.set_mode(GameMode::ALL[mode]);
                 changed = true;
             }
             // Tempo is for Conquest; a Field Battle has a points budget.
@@ -793,9 +796,8 @@ impl<N: Network> Menu<N> {
             }
             changed |= ui.toggle(champions_r, CHAMPIONS, &mut settings.champions);
         } else {
-            let map = MAPS.get(settings.map).copied().unwrap_or("?");
             for (i, text) in [
-                format!("Map: {map}"),
+                format!("Map: {}", settings.map_name()),
                 format!("Mode: {}", settings.mode.name()),
                 if settings.mode == GameMode::FieldBattle {
                     format!("Points: {}", thousands(settings.budget.points()))
@@ -821,10 +823,10 @@ impl<N: Network> Menu<N> {
         if preview_side > 0 {
             let occupied = lobby.slots.iter().filter(|s| s.occupied()).count();
             let picture = Rect::new(strip.x, strip.y, preview_side, preview_side);
-            let key = (settings.map, field_map_tiles(occupied), settings.map_seed);
+            let key = preview_key(&settings, occupied);
             self.draw_map_preview(ui, picture, key);
             (x, w) = (strip.x + preview_side + 16, strip.w - preview_side - 16);
-            let name = MAPS.get(settings.map).copied().unwrap_or("?");
+            let name = settings.map_name();
             ui.label(x, strip.y, 2, theme::TEXT, &fit(name, (w / 16) as usize));
             // The orange dots on the picture, said once, if there is room.
             if preview_side >= sp(88) {
@@ -1486,9 +1488,24 @@ fn army_summary(army_len: usize, spent: u32, budget: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn field(choice: usize, tiles: u32, seed: u64) -> MapPreviewKey {
+        MapPreviewKey::Field {
+            choice,
+            tiles,
+            seed,
+        }
+    }
+
+    fn seed_of(key: MapPreviewKey) -> u64 {
+        match key {
+            MapPreviewKey::Field { seed, .. } => seed,
+            MapPreviewKey::Conquest(_) => panic!("a Conquest map has no seed"),
+        }
+    }
     use crate::draw::{DrawList, SOLID};
     use crate::lobby::{
-        DiscoveredGame, LobbyState, MatchStart, NetError, NetEvent, Profile, SlotEdit,
+        DiscoveredGame, LobbyState, MAPS, MatchStart, NetError, NetEvent, Profile, SlotEdit,
     };
     use crate::ui::UiInput;
 
@@ -1862,18 +1879,23 @@ mod tests {
     }
 
     #[test]
-    fn conquest_is_shown_but_cannot_be_hosted() {
+    fn conquest_can_be_hosted_on_its_own_maps() {
         let mut h = Harness::new();
         h.click("Play");
-        // Step the mode forward to Conquest (soon).
         h.click("Mode: Field Battle");
-        assert!(h.has("Conquest (soon)"));
+        assert!(h.has("Mode: Conquest"));
+        assert!(h.has("Map: Ribcage Pass"));
+        h.click("Map: Ribcage Pass");
+        assert!(h.has("Map: The Four Teeth"));
+        // Back to Field Battle: the map stays in range.
+        h.click("Mode: Conquest");
+        assert!(h.has("Map: Random: Pass"));
+        h.click("Mode: Field Battle");
         h.click_last("Host");
-        assert_eq!(
-            h.menu.screen(),
-            Screen::Play,
-            "Host is disabled for Conquest"
-        );
+        assert_eq!(h.menu.screen(), Screen::Lobby);
+        let lobby = h.menu.net.lobby().unwrap();
+        assert_eq!(lobby.settings.mode, GameMode::Conquest);
+        assert_eq!(lobby.settings.map_name(), "The Four Teeth");
     }
 
     #[test]
@@ -2105,20 +2127,20 @@ mod tests {
         assert!(h.has("New map") && h.has("Map code") && h.has("0000-0000-6772-7562"));
         // The lobby asks for the map it is on, sized for the players in it.
         let seed = crate::lobby::DEFAULT_MAP_SEED;
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
+        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 256, seed)));
         // Up to four players share a map, so a new one changes nothing.
         h.click("Add AI");
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
+        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 256, seed)));
         // Until the game answers there is a grey box, not a picture.
         assert_eq!(picture_quads(&h.ui.draw), 0);
         assert_eq!(h.menu.shown_map_preview(), None);
         send_picture(&mut h.menu);
         h.frame(UiInput::default());
-        assert_eq!(h.menu.shown_map_preview(), Some((0, 256, seed)));
+        assert_eq!(h.menu.shown_map_preview(), Some(field(0, 256, seed)));
         assert!(picture_quads(&h.ui.draw) > 0);
         // A picture of some other map is not shown.
         h.menu
-            .set_map_preview((1, 256, seed), MinimapTerrain::default(), Vec::new());
+            .set_map_preview(field(1, 256, seed), MinimapTerrain::default(), Vec::new());
         h.frame(UiInput::default());
         assert_eq!(h.menu.shown_map_preview(), None);
         assert_eq!(picture_quads(&h.ui.draw), 0);
@@ -2130,12 +2152,19 @@ mod tests {
         h.click("Play");
         h.click_last("Host");
         h.click("Map: Pro");
+        let seed = |h: &Harness| match h.menu.wanted_map_preview() {
+            Some(MapPreviewKey::Field { seed, .. }) => seed,
+            other => panic!("{other:?}"),
+        };
         let wanted = h.menu.wanted_map_preview().unwrap();
-        assert_eq!(wanted.0, 1);
-        assert_eq!(MAPS[wanted.0], "Random: Pass");
+        let MapPreviewKey::Field { choice, .. } = wanted else {
+            panic!("{wanted:?}")
+        };
+        assert_eq!(MAPS[choice], "Random: Pass");
+        let before = seed(&h);
         h.click("New map");
-        assert_ne!(h.menu.wanted_map_preview().unwrap().2, wanted.2);
-        assert_eq!(h.menu.wanted_map_preview().unwrap().2, lobby_seed(&h));
+        assert_ne!(seed(&h), before);
+        assert_eq!(seed(&h), lobby_seed(&h));
         // Out of the lobby, nothing is wanted.
         h.click("Leave");
         h.click("Back");
@@ -2261,7 +2290,7 @@ mod tests {
         assert!(find_text(&ui.draw, "Use").is_none());
         assert_eq!(
             menu.wanted_map_preview(),
-            Some((2, 256, 0xABCD_EF01_2345_6789))
+            Some(field(2, 256, 0xABCD_EF01_2345_6789))
         );
     }
 
@@ -2271,12 +2300,12 @@ mod tests {
         h.click("Play");
         let seed = crate::lobby::DEFAULT_MAP_SEED;
         assert!(h.has("New map") && h.has(&map_code(seed)));
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
+        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 256, seed)));
         send_picture(&mut h.menu);
         h.frame(UiInput::default());
         assert!(picture_quads(&h.ui.draw) > 0);
         h.click("New map");
-        let fresh = h.menu.wanted_map_preview().unwrap().2;
+        let fresh = h.menu.wanted_map_preview().map(seed_of).unwrap();
         assert_ne!(fresh, seed);
         assert!(h.has(&map_code(fresh)));
         // The new map's picture isn't here yet.
@@ -2292,7 +2321,7 @@ mod tests {
         type_text(&mut h, "0123456789abcdef");
         h.click("Use");
         assert_eq!(
-            h.menu.wanted_map_preview().unwrap().2,
+            h.menu.wanted_map_preview().map(seed_of).unwrap(),
             0x0123_4567_89AB_CDEF
         );
         h.click("0123-4567-89AB-CDEF");
@@ -2303,7 +2332,7 @@ mod tests {
         h.click("Use");
         assert!(h.has("Not a map code"));
         assert_eq!(
-            h.menu.wanted_map_preview().unwrap().2,
+            h.menu.wanted_map_preview().map(seed_of).unwrap(),
             0x0123_4567_89AB_CDEF
         );
         // The hosted lobby is on the chosen map.
@@ -2316,7 +2345,7 @@ mod tests {
         let mut h = Harness::new();
         h.menu.set_host_map_seed(12345);
         h.click("Play");
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, 12345)));
+        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 256, 12345)));
         assert!(h.has(&map_code(12345)));
         h.click_last("Host");
         assert_eq!(lobby_seed(&h), 12345);
@@ -2344,7 +2373,10 @@ mod tests {
                 let wanted = h.menu.wanted_map_preview();
                 if round == 0 {
                     // Six players: a bigger map.
-                    assert!(wanted.is_none_or(|w| w.1 == 320), "{size:?}");
+                    assert!(
+                        wanted.is_none_or(|w| matches!(w, MapPreviewKey::Field { tiles: 320, .. })),
+                        "{size:?}"
+                    );
                     if wanted.is_some() {
                         send_picture(&mut h.menu);
                     }

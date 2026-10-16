@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 
 use gc_sim::{PlayerCommand, PlayerId};
 use gc_ui::lobby::{
-    COLORS, DEFAULT_AI_LEVEL, DiscoveredGame, LobbySettings, LobbyState, MAPS, MAX_ARMY,
-    MAX_PLAYERS, MatchStart, NetError, NetEvent, Network, OnDrop, Profile, Slot, SlotEdit,
-    SlotKind, apply_edit, plays_with,
+    COLORS, DEFAULT_AI_LEVEL, DiscoveredGame, LobbySettings, LobbyState, MAX_ARMY, MAX_PLAYERS,
+    MatchStart, NetError, NetEvent, Network, OnDrop, Profile, Slot, SlotEdit, SlotKind, apply_edit,
+    plays_with,
 };
 
 use crate::crypt::{Cipher, KeyPair};
@@ -702,11 +702,7 @@ impl Lan {
         let host = h.lobby.slots[0].name.clone();
         Some(Beacon {
             host,
-            map: MAPS
-                .get(h.lobby.settings.map)
-                .copied()
-                .unwrap_or("?")
-                .to_string(),
+            map: h.lobby.settings.map_name().to_string(),
             players: h.lobby.slots.iter().filter(|s| s.occupied()).count() as u8,
             max_players: MAX_PLAYERS as u8,
             version: self.id.version.clone(),

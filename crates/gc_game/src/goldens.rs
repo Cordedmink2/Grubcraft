@@ -371,16 +371,23 @@ const GOLDENS: &[Golden] = &[
 #[ignore = "records the golden replays; run by hand (see the module docs)"]
 fn record_golden_replays() {
     let only = std::env::var("GOLDEN").ok();
+    let wanted = |name: &str| only.as_deref().is_none_or(|o| o == name);
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../replays");
-    for golden in GOLDENS {
-        if only.as_deref().is_some_and(|o| o != golden.name) {
-            continue;
-        }
-        let replay = record(golden);
-        let path = folder.join(format!("{}.{}", golden.name, gc_replay::EXTENSION));
+    let write = |name: &str, replay: gc_replay::Replay| {
+        let path = folder.join(format!("{name}.{}", gc_replay::EXTENSION));
         replay.save(&path).unwrap();
         replay.verify().expect("the recording plays back");
         println!("wrote {}", path.display());
+    };
+    for golden in GOLDENS {
+        if wanted(golden.name) {
+            write(golden.name, record(golden));
+        }
+    }
+    if wanted(crate::conquest_golden::NAME) {
+        let replay = crate::conquest_golden::record();
+        println!("{}", replay.note);
+        write(crate::conquest_golden::NAME, replay);
     }
 }
 

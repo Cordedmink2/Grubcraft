@@ -244,6 +244,15 @@ fn info(file: &Path) -> bool {
             ""
         }
     );
+    if let Some(c) = &replay.conquest {
+        println!(
+            "  Conquest: {} building types, {} resource nodes, gather {}%, build {}%",
+            c.buildings.len(),
+            c.nodes.len(),
+            c.gather_percent,
+            c.build_percent
+        );
+    }
     for (p, (regiments, soldiers)) in spawned.iter().enumerate() {
         let team = replay
             .teams

@@ -7,15 +7,15 @@
 
 use gc_sim::PlayerCommand;
 use gc_ui::lobby::{
-    Budget, Faction, GameMode, LobbySettings, MAPS, MAX_ARMY, MAX_PLAYERS, OnDrop, Slot, SlotEdit,
-    SlotKind, Tempo,
+    Budget, Faction, GameMode, LobbySettings, MAX_ARMY, MAX_PLAYERS, OnDrop, Slot, SlotEdit,
+    SlotKind, Tempo, maps_for,
 };
 
 use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 10;
+pub const PROTOCOL: u8 = 11;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -437,9 +437,9 @@ impl Msg {
                 let map_hash = r.u64()?;
                 // A lobby may list a map another build lacks (the version
                 // line stops it starting); a match must be on one we have.
-                let settings = read_settings(&mut r).filter(|s| s.map < MAPS.len())?;
+                let settings = read_settings(&mut r).filter(|s| s.map < maps_for(s.mode).len())?;
                 let n = r.var_as::<usize>()?;
-                if n > MAX_PLAYERS {
+                if n > settings.max_players() {
                     return None;
                 }
                 let mut players = Vec::with_capacity(n);
@@ -496,6 +496,7 @@ mod tests {
     use super::*;
     use gc_fixed::{Angle, Fx, FxVec2};
     use gc_sim::{Command, RegimentHandle};
+    use gc_ui::lobby::{CONQUEST_MAPS, MAPS};
 
     fn round_trip(m: Msg) {
         let bytes = m.encode();
@@ -608,10 +609,45 @@ mod tests {
                 you: 1,
                 input_delay: 2,
             },
+            Msg::Start {
+                map_hash: 0,
+                settings: LobbySettings {
+                    mode: GameMode::Conquest,
+                    map: CONQUEST_MAPS.len(),
+                    ..grand.clone()
+                },
+                players: slots.to_vec(),
+                you: 1,
+                input_delay: 2,
+            },
+            // More players than Ribcage Pass has starts.
+            Msg::Start {
+                map_hash: 0,
+                settings: LobbySettings {
+                    mode: GameMode::Conquest,
+                    map: 0,
+                    ..grand.clone()
+                },
+                players: slots[..3].to_vec(),
+                you: 1,
+                input_delay: 2,
+            },
         ];
         for m in refused {
             assert_eq!(Msg::decode(&m.encode()), None, "{m:?}");
         }
+        round_trip(Msg::Start {
+            map_hash: u64::MAX,
+            settings: LobbySettings {
+                mode: GameMode::Conquest,
+                map: 1,
+                tempo: Tempo::Epic,
+                ..grand.clone()
+            },
+            players: slots[..4].to_vec(),
+            you: 1,
+            input_delay: 2,
+        });
         round_trip(Msg::Start {
             map_hash: u64::MAX,
             settings: grand,

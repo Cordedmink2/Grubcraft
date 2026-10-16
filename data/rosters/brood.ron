@@ -50,6 +50,8 @@
             armour: Living,
             footprint: (5, 5),
             supply: 12,
+            // Plain workers bring both here until the Brood economy (veins, larvae) is built.
+            flags: [DropOffGrub, DropOffMarrow],
             effect: "Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 10 tiles around it.",
         ),
         (
@@ -63,6 +65,8 @@
             armour: Living,
             footprint: (5, 5),
             supply: 22,
+            // Plain workers bring both here until the Brood economy (veins, larvae) is built.
+            flags: [DropOffGrub, DropOffMarrow],
             effect: "Tier 2: evolutions, Drone-Moths, the Broodmother Bulk and a second hero.",
         ),
         (
@@ -76,6 +80,8 @@
             armour: Living,
             footprint: (5, 5),
             supply: 32,
+            // Plain workers bring both here until the Brood economy (veins, larvae) is built.
+            flags: [DropOffGrub, DropOffMarrow],
             effect: "Tier 3: monsters, top upgrades and a third hero.",
         ),
         (

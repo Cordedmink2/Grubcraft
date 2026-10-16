@@ -81,7 +81,8 @@
             armour: Fortified,
             footprint: (4, 4),
             supply: 4,
-            flags: [PowersField],
+            // Plain workers bring both here until Resonators are built.
+            flags: [PowersField, DropOffGrub, DropOffMarrow],
             effect: "Main building. Builds Tuners and Conductors and powers buildings within 8 tiles.",
         ),
         (
@@ -95,7 +96,8 @@
             armour: Fortified,
             footprint: (4, 4),
             supply: 14,
-            flags: [PowersField],
+            // Plain workers bring both here until Resonators are built.
+            flags: [PowersField, DropOffGrub, DropOffMarrow],
             effect: "Tier 2: Harmonic Walkers, Glass Striders, Skyglass, the Conductor and a second hero.",
         ),
         (
@@ -109,7 +111,8 @@
             armour: Fortified,
             footprint: (4, 4),
             supply: 24,
-            flags: [PowersField],
+            // Plain workers bring both here until Resonators are built.
+            flags: [PowersField, DropOffGrub, DropOffMarrow],
             effect: "Tier 3: monsters, top upgrades and a third hero.",
         ),
         (

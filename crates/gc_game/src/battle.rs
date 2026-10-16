@@ -9,7 +9,9 @@ use gc_fixed::Fx;
 use gc_sim::champions::{HEART, Outcome};
 use gc_sim::{Challenge, Command, PlayerCommand, PlayerId, UnitStats, World};
 use gc_ui::Settings;
-use gc_ui::lobby::{COLORS, LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind};
+use gc_ui::lobby::{
+    COLORS, GameMode, LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind,
+};
 use glam::Vec2;
 
 use gc_map::START_PLATEAUS;
@@ -17,11 +19,13 @@ use gc_map::START_PLATEAUS;
 // A start plateau for every lobby slot.
 const _: () = assert!(START_PLATEAUS == gc_ui::lobby::MAX_PLAYERS);
 
-/// Whether champions may duel before this battle: the lobby allows it and
-/// a computer player takes part (docs/05-combat.md, "Champions before
-/// battle").
+/// Whether champions may duel before this battle: a Field Battle the lobby
+/// allows it in, with a computer player taking part (docs/05-combat.md,
+/// "Champions before battle").
 pub fn champions_allowed(setup: &MatchStart) -> bool {
-    setup.settings.champions && setup.players.iter().any(|s| s.kind == SlotKind::Ai)
+    setup.settings.mode == GameMode::FieldBattle
+        && setup.settings.champions
+        && setup.players.iter().any(|s| s.kind == SlotKind::Ai)
 }
 
 /// The champions' result stays on screen this long after the duel ends.
@@ -41,6 +45,16 @@ pub fn party_name(parties: &[Party], side: PlayerId) -> String {
     parties
         .get(side as usize)
         .map_or_else(|| format!("player {}", side + 1), |p| p.name.clone())
+}
+
+/// Who plays lobby slot `slot`: "Red (Mario)", in red, as their faction.
+pub fn party_of(slot: &Slot) -> Party {
+    let (colour, color) = PLAYER_COLORS[usize::from(slot.color % COLORS)];
+    Party {
+        name: format!("{colour} ({})", slot.name),
+        color,
+        faction: Some(Faction::from_index(slot.faction.index() as u8)),
+    }
 }
 
 /// A battle set out: who plays each side, and where this machine's player
@@ -100,12 +114,7 @@ pub fn set_out(
     for (i, slot) in players.iter().enumerate() {
         let party = i as PlayerId;
         let faction = Faction::from_index(slot.faction.index() as u8);
-        let (colour, color) = PLAYER_COLORS[usize::from(slot.color % COLORS)];
-        set.parties.push(Party {
-            name: format!("{colour} ({})", slot.name),
-            color,
-            faction: Some(faction),
-        });
+        set.parties.push(party_of(slot));
         let mind = (deploy && slot.kind == SlotKind::Ai).then(|| {
             let pick = gc_fixed::Pcg32::new(roll, i as u64).next_u32();
             Mind::new(MindConfig {

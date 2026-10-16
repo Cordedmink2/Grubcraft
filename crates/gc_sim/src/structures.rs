@@ -55,6 +55,24 @@ pub enum Role {
     Wall = 8,
 }
 
+impl Role {
+    pub const ALL: [Role; 9] = [
+        Role::Main,
+        Role::Outpost,
+        Role::Housing,
+        Role::Economy,
+        Role::Production,
+        Role::Tech,
+        Role::Heroes,
+        Role::Defence,
+        Role::Wall,
+    ];
+
+    pub fn from_u8(v: u8) -> Option<Role> {
+        Role::ALL.get(usize::from(v)).copied()
+    }
+}
+
 /// A building's armour type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -77,7 +95,26 @@ pub enum Breaker {
     Artillery = 3,
 }
 
+impl Armour {
+    pub fn from_u8(v: u8) -> Option<Armour> {
+        [Armour::Structure, Armour::Fortified, Armour::Living]
+            .get(usize::from(v))
+            .copied()
+    }
+}
+
 impl Breaker {
+    pub fn from_u8(v: u8) -> Option<Breaker> {
+        [
+            Breaker::Regiment,
+            Breaker::Hero,
+            Breaker::Siege,
+            Breaker::Artillery,
+        ]
+        .get(usize::from(v))
+        .copied()
+    }
+
     /// Percent of its damage a blow of this class does to `armour`.
     pub fn percent(self, armour: Armour) -> u32 {
         match (self, armour) {

@@ -79,16 +79,15 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
     }
 }
 
-/// Every building type in the game data, as the sandbox's Conquest world
-/// reads them.
+/// Every building type in the game data, as Conquest worlds read them.
 pub struct Table {
     pub stats: Vec<BuildingStats>,
     names: Vec<String>,
     factions: Vec<Faction>,
-    /// What Conquest knows of each regiment type, by unit type. The units
-    /// in play are the Field Battle ones, which are all plain regiments
-    /// (no workers, no supply); the Conquest unit table comes with M3
-    /// step 4.
+    /// What the sandbox's Conquest world knows of each regiment type. The
+    /// sandbox plays with the Field Battle units, which are all plain
+    /// regiments (no workers, no supply); Conquest matches use their own
+    /// unit table (`conquest::plan`).
     units: Vec<ConquestUnit>,
 }
 
@@ -106,9 +105,8 @@ impl Table {
         }
     }
 
-    /// Make `world`, fresh from `World::new`, a Conquest world with these
-    /// buildings. Only the sandbox does this: replays don't record the
-    /// setup yet, and the sandbox is never recorded.
+    /// Make `world`, fresh from `World::new`, the sandbox's Conquest world
+    /// with these buildings (the sandbox is never recorded).
     pub fn conquer(&self, world: &mut World) {
         let done = world.conquest(&ConquestSetup {
             buildings: &self.stats,

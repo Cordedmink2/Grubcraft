@@ -80,26 +80,43 @@ impl GameMode {
             GameMode::Conquest => "Conquest",
         }
     }
-
-    /// Conquest arrives with M3.
-    pub fn playable(self) -> bool {
-        self == GameMode::FieldBattle
-    }
 }
 
+/// How fast a Conquest match runs (docs/04-economy.md, "Tempo").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Tempo {
-    Normal,
-    Fast,
+    Standard,
+    Swift,
+    Epic,
 }
 
 impl Tempo {
-    pub const ALL: [Tempo; 2] = [Tempo::Normal, Tempo::Fast];
+    pub const ALL: [Tempo; 3] = [Tempo::Standard, Tempo::Swift, Tempo::Epic];
 
     pub fn name(self) -> &'static str {
         match self {
-            Tempo::Normal => "Normal",
-            Tempo::Fast => "Fast",
+            Tempo::Standard => "Standard",
+            Tempo::Swift => "Swift",
+            Tempo::Epic => "Epic",
+        }
+    }
+
+    /// Gathering at this percent of the Standard rate.
+    pub fn gather_percent(self) -> u32 {
+        match self {
+            Tempo::Standard => 100,
+            Tempo::Swift => 150,
+            Tempo::Epic => 80,
+        }
+    }
+
+    /// Building, upgrading and training take this percent of their
+    /// Standard time.
+    pub fn build_percent(self) -> u32 {
+        match self {
+            Tempo::Standard => 100,
+            Tempo::Swift => 75,
+            Tempo::Epic => 120,
         }
     }
 }
@@ -128,6 +145,20 @@ pub const MAPS: [&str; 6] = [
     "Random: Open",
     "Random: Any",
 ];
+
+/// The Conquest maps the lobby offers, and how many players each is for.
+/// The game makes them from the shipped maps of the same names.
+pub const CONQUEST_MAPS: [&str; 2] = ["Ribcage Pass", "The Four Teeth"];
+pub const CONQUEST_MAP_PLAYERS: [usize; 2] = [2, 4];
+
+/// The maps a match of `mode` can be played on: [`MAPS`] or
+/// [`CONQUEST_MAPS`]. [`LobbySettings::map`] indexes this.
+pub fn maps_for(mode: GameMode) -> &'static [&'static str] {
+    match mode {
+        GameMode::FieldBattle => &MAPS,
+        GameMode::Conquest => &CONQUEST_MAPS,
+    }
+}
 
 /// The map seed a new lobby starts on (the Proving Ground every battle was
 /// played on before maps could be picked).
@@ -241,7 +272,7 @@ impl OnDrop {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LobbySettings {
-    /// An index into [`MAPS`].
+    /// An index into the mode's maps ([`maps_for`]).
     pub map: usize,
     /// The seed the map is made from; the host rerolls it for a new map.
     pub map_seed: u64,
@@ -262,10 +293,31 @@ impl Default for LobbySettings {
             map: 0,
             map_seed: DEFAULT_MAP_SEED,
             mode: GameMode::FieldBattle,
-            tempo: Tempo::Normal,
+            tempo: Tempo::Standard,
             on_drop: OnDrop::Wait,
             budget: Budget::Battle,
             champions: true,
+        }
+    }
+}
+
+impl LobbySettings {
+    /// The name of the map these settings pick.
+    pub fn map_name(&self) -> &'static str {
+        maps_for(self.mode).get(self.map).copied().unwrap_or("?")
+    }
+
+    /// Change the mode, keeping the map choice in its range.
+    pub fn set_mode(&mut self, mode: GameMode) {
+        self.mode = mode;
+        self.map = self.map.min(maps_for(mode).len() - 1);
+    }
+
+    /// The most players the picked map has room for.
+    pub fn max_players(&self) -> usize {
+        match self.mode {
+            GameMode::FieldBattle => MAX_PLAYERS,
+            GameMode::Conquest => CONQUEST_MAP_PLAYERS.get(self.map).copied().unwrap_or(0),
         }
     }
 }
@@ -367,11 +419,16 @@ impl LobbyState {
 
     /// Why the match can't start yet, or `None` if it can.
     pub fn start_blocker(&self) -> Option<String> {
-        if !self.settings.mode.playable() {
-            return Some(format!("{} is not playable yet", self.settings.mode.name()));
-        }
-        if self.slots.iter().filter(|s| s.occupied()).count() < 2 {
+        let players = self.slots.iter().filter(|s| s.occupied()).count();
+        if players < 2 {
             return Some("Add at least one more player".into());
+        }
+        let most = self.settings.max_players();
+        if players > most {
+            return Some(format!(
+                "{} is for at most {most} players",
+                self.settings.map_name()
+            ));
         }
         if let Some((name, version)) = self.version_mismatches().first() {
             return Some(format!(
@@ -815,15 +872,34 @@ mod tests {
     }
 
     #[test]
-    fn conquest_cannot_start_yet() {
+    fn a_conquest_map_holds_only_its_players() {
         let mut n = hosted();
         n.edit_slot(1, SlotEdit::Kind(SlotKind::Ai));
-        n.edit_settings(LobbySettings {
-            mode: GameMode::Conquest,
-            ..Default::default()
-        });
+        n.edit_slot(2, SlotEdit::Kind(SlotKind::Ai));
+        let mut settings = LobbySettings::default();
+        settings.set_mode(GameMode::Conquest);
+        n.edit_settings(settings.clone());
         let why = n.lobby().unwrap().start_blocker().unwrap();
-        assert!(why.contains("Conquest"));
+        assert_eq!(why, "Ribcage Pass is for at most 2 players");
+        settings.map = 1;
+        n.edit_settings(settings);
+        assert_eq!(n.lobby().unwrap().start_blocker(), None);
+    }
+
+    #[test]
+    fn a_mode_change_keeps_the_map_in_range() {
+        let mut s = LobbySettings {
+            map: MAPS.len() - 1,
+            ..Default::default()
+        };
+        s.set_mode(GameMode::Conquest);
+        assert_eq!(s.map_name(), "The Four Teeth");
+        s.set_mode(GameMode::FieldBattle);
+        assert_eq!(s.map_name(), "Random: Pass");
+        assert_eq!(
+            (Tempo::Swift.gather_percent(), Tempo::Swift.build_percent()),
+            (150, 75)
+        );
     }
 
     #[test]

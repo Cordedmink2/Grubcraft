@@ -75,10 +75,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Upgrade { .. } => "Upgrade",
         Command::Rally { .. } => "Rally",
     };
-    // Not yet in KINDS: the Conquest commands, which join it with a
-    // Conquest golden once replays record Conquest matches (M3 step 4,
-    // when the game plays them).
-    const KINDS: [&str; 8] = [
+    const KINDS: [&str; 19] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -87,6 +84,17 @@ fn the_goldens_cover_every_kind_of_command() {
         "SetFormation",
         "DeployZone",
         "Ready",
+        "SpawnStructure",
+        "AttackStructure",
+        "RemoveStructure",
+        "Gather",
+        "Build",
+        "Construct",
+        "CallOff",
+        "Train",
+        "Untrain",
+        "Upgrade",
+        "Rally",
     ];
     let seen: BTreeSet<&str> = goldens()
         .iter()
@@ -114,6 +122,7 @@ fn fingerprint(replay: &Replay) -> u64 {
 const PINNED: (u32, &[(&str, u64)]) = (
     6,
     &[
+        ("conquest-ribcage-1v1", 0x6b50bb2f765e3562),
         ("field-1v1", 0x3e2854185069b943),
         ("field-2v2", 0xd36fe17d508faa63),
         ("field-8000pt-2v2", 0x1ca79287bbacab6b),

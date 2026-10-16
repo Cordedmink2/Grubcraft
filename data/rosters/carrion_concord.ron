@@ -90,7 +90,8 @@
             armour: Fortified,
             footprint: (5, 5),
             supply: 12,
-            flags: [DropOffMarrow],
+            // Grub too until caravans are built; then Grub comes by trade only.
+            flags: [DropOffGrub, DropOffMarrow],
             effect: "Main building. Trains Clerks and Caravans. Caravan routes start here, and Clerks bring Marrow here.",
         ),
         (
@@ -104,7 +105,8 @@
             armour: Fortified,
             footprint: (5, 5),
             supply: 22,
-            flags: [DropOffMarrow],
+            // Grub too until caravans are built; then Grub comes by trade only.
+            flags: [DropOffGrub, DropOffMarrow],
             effect: "Tier 2: Gravewardens, Debt Collectors, Lantern Wraiths and a second hero.",
         ),
         (
@@ -118,7 +120,8 @@
             armour: Fortified,
             footprint: (5, 5),
             supply: 32,
-            flags: [DropOffMarrow],
+            // Grub too until caravans are built; then Grub comes by trade only.
+            flags: [DropOffGrub, DropOffMarrow],
             effect: "Tier 3: monsters, top upgrades and a third hero.",
         ),
         (
@@ -130,7 +133,8 @@
             hp: 1200,
             armour: Structure,
             footprint: (4, 4),
-            flags: [DropOffMarrow],
+            // Grub too until caravans are built, like the Counting House.
+            flags: [DropOffGrub, DropOffMarrow],
             effect: "Your own trade post for caravan routes (half rate), and a Marrow drop-off for expansions.",
         ),
         (

@@ -33,8 +33,8 @@ use std::fmt;
 use std::path::Path;
 
 use gc_sim::{
-    Capacities, Ground, MatchSetup, PlayerCommand, TICKS_PER_SECOND, TickStats, UnitStats, Verdict,
-    World,
+    BuildingStats, Capacities, ConquestSetup, ConquestUnit, Ground, MAX_PARTIES, MatchSetup,
+    NodeSetup, PlayerCommand, TICKS_PER_SECOND, TickStats, UnitStats, Verdict, World,
 };
 
 use codec::{Reader, Writer};
@@ -42,6 +42,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 12: the Conquest setup (read as a Field Battle);
 /// - 11: the header's map choice (read as the Proving Ground);
 /// - 10: the separate info block (read from the one compressed body);
 /// - 8: the per-system hashes of a desync report (read as none);
@@ -53,7 +54,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 11;
+pub const FORMAT: u16 = 12;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -68,6 +69,11 @@ pub const SYSTEM_TRAIL: usize = 256;
 const MAX_BODY: usize = 256 << 20;
 /// An info block longer than this is refused rather than allocated.
 const MAX_INFO: usize = 1 << 20;
+/// More buildings than a Conquest record may make room for.
+const MAX_STRUCTURES: u32 = 1 << 16;
+/// The most resource nodes a recorded Conquest match may have: orders
+/// name a node by a `u16`.
+const MAX_NODES: usize = 1 << 16;
 
 /// One side of a recorded match, as the game showed it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -103,11 +109,12 @@ pub struct Header {
     /// How the battle was decided, if it was by the end of the recording
     /// ([`World::verdict`]); `None` too for files from before format 8.
     pub result: Option<Verdict>,
-    /// The Field Battle map it was played on, as the lobby's choice (an
-    /// index into `gc_map::FIELD_MAPS`), made from the match's seed;
-    /// `None` for the Proving Ground, as every replay before format 11
-    /// was. The replay plays on the map it stores either way; this is for
-    /// drawing that map.
+    /// The map it was played on, as the lobby's choice: in a Field Battle
+    /// an index into `gc_map::FIELD_MAPS`, made from the match's seed, and
+    /// in Conquest an index into the lobby's Conquest maps; `None` for the
+    /// Proving Ground, as every replay before format 11 was. The replay
+    /// plays on the map it stores either way; this is for drawing that
+    /// map.
     pub map: Option<u8>,
 }
 
@@ -126,6 +133,102 @@ pub struct Info {
     pub teams: Vec<u8>,
     /// Ticks recorded.
     pub ticks: u32,
+    /// Whether it is a Conquest match ([`Replay::conquest`]).
+    pub conquest: bool,
+}
+
+/// What made a recorded match a Conquest one: the [`ConquestSetup`] its
+/// world was given.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConquestRecord {
+    pub buildings: Vec<BuildingStats>,
+    pub units: Vec<ConquestUnit>,
+    pub structures: u32,
+    pub nodes: Vec<NodeSetup>,
+    pub start: [(u32, u32); MAX_PARTIES],
+    pub gather_percent: u32,
+    pub build_percent: u32,
+}
+
+impl ConquestRecord {
+    pub fn of(setup: &ConquestSetup) -> ConquestRecord {
+        ConquestRecord {
+            buildings: setup.buildings.to_vec(),
+            units: setup.units.to_vec(),
+            structures: setup.structures,
+            nodes: setup.nodes.to_vec(),
+            start: setup.start,
+            gather_percent: setup.gather_percent,
+            build_percent: setup.build_percent,
+        }
+    }
+
+    pub fn setup(&self) -> ConquestSetup<'_> {
+        ConquestSetup {
+            buildings: &self.buildings,
+            units: &self.units,
+            structures: self.structures,
+            nodes: &self.nodes,
+            start: self.start,
+            gather_percent: self.gather_percent,
+            build_percent: self.build_percent,
+        }
+    }
+
+    fn write(&self, w: &mut Writer) {
+        w.var(self.buildings.len() as u64);
+        for b in &self.buildings {
+            w.building(b);
+        }
+        w.var(self.units.len() as u64);
+        for u in &self.units {
+            w.conquest_unit(u);
+        }
+        w.var(u64::from(self.structures));
+        w.var(self.nodes.len() as u64);
+        for n in &self.nodes {
+            w.node(n);
+        }
+        for &(grub, marrow) in &self.start {
+            w.var(u64::from(grub));
+            w.var(u64::from(marrow));
+        }
+        w.var(u64::from(self.gather_percent));
+        w.var(u64::from(self.build_percent));
+    }
+
+    fn read(r: &mut Reader) -> Option<ConquestRecord> {
+        // Counts are checked against the bytes left before allocating.
+        let n: usize = r.var_as()?;
+        let buildings = (0..n.min(r.remaining()))
+            .map(|_| r.building().map(BuildingStats::sanitized))
+            .collect::<Option<Vec<_>>>()
+            .filter(|b| b.len() == n)?;
+        let n: usize = r.var_as()?;
+        let units = (0..n.min(r.remaining()))
+            .map(|_| r.conquest_unit())
+            .collect::<Option<Vec<_>>>()
+            .filter(|u| u.len() == n)?;
+        let structures = r.var_as().filter(|&s| s <= MAX_STRUCTURES)?;
+        let n: usize = r.var_as().filter(|&n| n <= MAX_NODES)?;
+        let nodes = (0..n.min(r.remaining()))
+            .map(|_| r.node())
+            .collect::<Option<Vec<_>>>()
+            .filter(|v| v.len() == n)?;
+        let mut start = [(0, 0); MAX_PARTIES];
+        for s in &mut start {
+            *s = (r.var_as()?, r.var_as()?);
+        }
+        Some(ConquestRecord {
+            buildings,
+            units,
+            structures,
+            nodes,
+            start,
+            gather_percent: r.var_as()?,
+            build_percent: r.var_as()?,
+        })
+    }
 }
 
 /// A recorded match.
@@ -149,6 +252,8 @@ pub struct Replay {
     pub cover: Vec<u8>,
     /// Whether champions may duel before battle, as [`MatchSetup::champions`].
     pub champions: bool,
+    /// What made it a Conquest match; `None` for a Field Battle.
+    pub conquest: Option<ConquestRecord>,
     /// Ticks recorded.
     pub ticks: u32,
     /// The commands of each tick that had any, in tick order.
@@ -253,7 +358,11 @@ impl Replay {
 
     /// A fresh world at tick 0 of the recorded match.
     pub fn new_world(&self) -> World {
-        World::new(&self.setup())
+        let mut world = World::new(&self.setup());
+        if let Some(c) = &self.conquest {
+            world.conquest(&c.setup());
+        }
+        world
     }
 
     /// The commands recorded for `tick` (empty if none).
@@ -412,6 +521,14 @@ impl Replay {
         w.bool(self.champions);
     }
 
+    /// The Conquest record, if any; the info block says whether there is
+    /// one.
+    fn write_conquest(&self, w: &mut Writer) {
+        if let Some(c) = &self.conquest {
+            c.write(w);
+        }
+    }
+
     fn write_tail(&self, w: &mut Writer) {
         w.var(self.turns.len() as u64);
         let mut prev = 0;
@@ -451,6 +568,7 @@ impl Replay {
             units: self.units.len(),
             teams: self.teams.clone(),
             ticks: self.ticks,
+            conquest: self.conquest.is_some(),
         }
     }
 
@@ -460,9 +578,11 @@ impl Replay {
         info.var(self.units.len() as u64);
         info.bytes(&self.teams);
         info.var(u64::from(self.ticks));
+        info.bool(self.conquest.is_some());
         let mut w = Writer::default();
         self.write_units(&mut w);
         self.write_map(&mut w);
+        self.write_conquest(&mut w);
         self.write_tail(&mut w);
         let packed = lz4_flex::compress_prepend_size(&w.buf);
         let mut out = Vec::with_capacity(10 + info.buf.len() + packed.len());
@@ -558,6 +678,7 @@ impl Replay {
             return None;
         }
         info.ticks = r.var_as()?;
+        info.conquest = format >= 12 && r.bool()?;
         Some(info)
     }
 
@@ -635,6 +756,11 @@ impl Replay {
             return None;
         }
         let champions = format >= 4 && r.bool()?;
+        let conquest = if format >= 12 && info.conquest {
+            Some(ConquestRecord::read(r)?)
+        } else {
+            None
+        };
         if format < 10 {
             info.ticks = r.var_as()?;
         }
@@ -693,6 +819,7 @@ impl Replay {
             water_level,
             cover,
             champions,
+            conquest,
             ticks: info.ticks,
             turns,
             checkpoints,
@@ -830,6 +957,7 @@ impl Recorder {
                     Vec::new()
                 },
                 champions: setup.champions,
+                conquest: None,
                 ticks: 0,
                 turns: Vec::new(),
                 checkpoints: vec![(0, world.state_hash())],
@@ -838,6 +966,16 @@ impl Recorder {
             every: CHECKPOINT_EVERY,
             trail: None,
         }
+    }
+
+    /// Record that the match is a Conquest one, made so by `record`'s
+    /// setup. The world given to [`Recorder::new`] must already have been
+    /// ([`World::conquest`]), so the first state hash counts it.
+    #[must_use]
+    pub fn conquest(mut self, record: ConquestRecord) -> Recorder {
+        assert_eq!(self.replay.ticks, 0, "recording starts at tick 0");
+        self.replay.conquest = Some(record);
+        self
     }
 
     /// Also keep each system's hashes at the last [`SYSTEM_TRAIL`]
@@ -1050,6 +1188,271 @@ mod tests {
         assert!(Replay::decode(&crowd.encode()).is_err());
     }
 
+    /// Two minutes of a small Conquest match on an open map: a hall and a
+    /// worker each, gathering, a house built, regiments trained, a rally
+    /// point, an upgrade called off.
+    fn record_conquest() -> Replay {
+        use gc_fixed::FxVec2;
+        use gc_sim::structures::{Armour, DROP_OFF_GRUB, Role};
+        use gc_sim::{BuildingStats, ConquestUnit, NodeSetup, Resource};
+        let nav = vec![
+            1u8;
+            64 * 64
+                * gc_sim::nav::CELLS_PER_TILE as usize
+                * gc_sim::nav::CELLS_PER_TILE as usize
+        ];
+        let setup = MatchSetup {
+            seed: 3,
+            capacities: Capacities { regiments: 32 },
+            units: &DRILL_UNITS,
+            map_tiles: 64,
+            nav: &nav,
+            teams: &[],
+            ground: Ground::FLAT,
+            champions: false,
+        };
+        let hall = BuildingStats {
+            role: Role::Main,
+            tier: 1,
+            upgrades_from: None,
+            cost_grub: 400,
+            cost_marrow: 0,
+            build_ticks: 600,
+            hp: 3000,
+            armour: Armour::Fortified,
+            width: 5,
+            depth: 5,
+            supply: 10,
+            flags: DROP_OFF_GRUB,
+            attack: None,
+        };
+        let buildings = [
+            hall,
+            BuildingStats {
+                role: Role::Housing,
+                cost_grub: 50,
+                build_ticks: 200,
+                hp: 500,
+                armour: Armour::Structure,
+                width: 2,
+                depth: 2,
+                flags: 0,
+                ..hall
+            },
+            BuildingStats {
+                tier: 2,
+                upgrades_from: Some(0),
+                cost_grub: 100,
+                cost_marrow: 0,
+                build_ticks: 900,
+                ..hall
+            },
+        ];
+        let units = [
+            ConquestUnit {
+                worker: true,
+                supply: 1,
+                cost_grub: 50,
+                train_ticks: 200,
+                trained_at: Some(0),
+                tier: 1,
+                ..ConquestUnit::default()
+            },
+            ConquestUnit {
+                supply: 2,
+                cost_grub: 80,
+                train_ticks: 300,
+                trained_at: Some(0),
+                tier: 1,
+                ..ConquestUnit::default()
+            },
+        ];
+        let nodes = [
+            NodeSetup {
+                resource: Resource::Grub,
+                at: FxVec2::from_ints(16, 8),
+                amount: 5000,
+            },
+            NodeSetup {
+                resource: Resource::Grub,
+                at: FxVec2::from_ints(48, 56),
+                amount: 5000,
+            },
+        ];
+        let mut start = [(0, 0); MAX_PARTIES];
+        start[0] = (600, 0);
+        start[1] = (600, 0);
+        let conquest = ConquestSetup {
+            buildings: &buildings,
+            units: &units,
+            structures: 64,
+            nodes: &nodes,
+            start,
+            gather_percent: 150,
+            build_percent: 75,
+        };
+        let mut world = World::new(&setup);
+        assert!(world.conquest(&conquest));
+        let mut rec =
+            Recorder::new(&setup, &world, "test conquest").conquest(ConquestRecord::of(&conquest));
+        let say = |player: u8, command: Command| PlayerCommand { player, command };
+        let structure = |w: &World, player: u8, x: i32| {
+            w.structures()
+                .unwrap()
+                .iter()
+                .find(|v| v.owner == player && v.tile.0 == x)
+                .map(|v| v.handle)
+        };
+        let worker = |w: &World, player: u8| {
+            w.regiments
+                .iter()
+                .find(|r| r.owner == player)
+                .map(|r| r.handle)
+        };
+        for _ in 0..120 * TICKS_PER_SECOND {
+            let t = world.tick_count();
+            let mut commands = Vec::new();
+            for p in 0..2u8 {
+                let (hx, wy): (i16, i16) = if p == 0 { (8, 16) } else { (52, 44) };
+                match t {
+                    0 => {
+                        commands.push(say(
+                            p,
+                            Command::SpawnStructure {
+                                building: 0,
+                                tile: (hx, if p == 0 { 8 } else { 52 }),
+                            },
+                        ));
+                    }
+                    1 => commands.push(say(
+                        p,
+                        Command::SpawnRegiment {
+                            unit: 0,
+                            position: FxVec2::from_ints(i32::from(hx) + 2, i32::from(wy)),
+                            facing: gc_fixed::Angle(0),
+                        },
+                    )),
+                    2 => commands.push(say(
+                        p,
+                        Command::Gather {
+                            regiment: worker(&world, p).unwrap(),
+                            node: u16::from(p),
+                        },
+                    )),
+                    400 => commands.push(say(
+                        p,
+                        Command::Build {
+                            regiment: worker(&world, p).unwrap(),
+                            building: 1,
+                            tile: (hx + 8, wy),
+                        },
+                    )),
+                    401 => {
+                        let h = structure(&world, p, i32::from(hx)).unwrap();
+                        commands.push(say(
+                            p,
+                            Command::Train {
+                                structure: h,
+                                unit: 1,
+                            },
+                        ));
+                        commands.push(say(
+                            p,
+                            Command::Train {
+                                structure: h,
+                                unit: 0,
+                            },
+                        ));
+                        commands.push(say(
+                            p,
+                            Command::Rally {
+                                structure: h,
+                                at: FxVec2::from_ints(32, 32),
+                            },
+                        ));
+                    }
+                    402 => {
+                        let h = structure(&world, p, i32::from(hx)).unwrap();
+                        commands.push(say(p, Command::Untrain { structure: h }));
+                        commands.push(say(p, Command::Upgrade { structure: h }));
+                    }
+                    600 => {
+                        let h = structure(&world, p, i32::from(hx)).unwrap();
+                        commands.push(say(p, Command::CallOff { structure: h }));
+                    }
+                    900 => {
+                        if let (Some(r), Some(h)) =
+                            (worker(&world, p), structure(&world, p, i32::from(hx) + 8))
+                        {
+                            commands.push(say(
+                                p,
+                                Command::Construct {
+                                    regiment: r,
+                                    structure: h,
+                                },
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rec.tick(&mut world, &commands);
+        }
+        rec.finish()
+    }
+
+    #[test]
+    fn a_conquest_match_round_trips_and_verifies() {
+        let replay = record_conquest();
+        assert!(replay.conquest.is_some());
+        let world = replay.verify().expect("the replay plays back identically");
+        // It was a match: a house went up and regiments were trained.
+        let s = world.structures().unwrap();
+        assert_eq!(s.len(), 4, "a hall and a house each");
+        assert!(s.iter().all(|v| v.finished()));
+        assert_eq!(world.regiments.iter().count(), 4);
+        let bytes = replay.encode();
+        let back = Replay::decode(&bytes).unwrap();
+        assert_eq!(back, replay);
+        assert!(back.info().conquest);
+        // Without its Conquest record it doesn't play the same.
+        let mut field = replay.clone();
+        field.conquest = None;
+        assert!(field.verify().is_err());
+    }
+
+    #[test]
+    fn damaged_conquest_files_never_panic() {
+        let replay = record_conquest();
+        let bytes = replay.encode();
+        let info_len = u32::from_le_bytes(bytes[6..10].try_into().unwrap()) as usize;
+        let (head, packed) = bytes.split_at(10 + info_len);
+        let body = lz4_flex::decompress_size_prepended(packed).unwrap();
+        let mut w = Writer::default();
+        replay.write_units(&mut w);
+        replay.write_map(&mut w);
+        // Every byte of the Conquest record.
+        let mut c = Writer::default();
+        replay.write_conquest(&mut c);
+        for i in w.buf.len()..w.buf.len() + c.buf.len() {
+            for flip in [0x01, 0x7f, 0xff] {
+                let mut bad = body.clone();
+                bad[i] ^= flip;
+                let mut file = head.to_vec();
+                file.extend_from_slice(&lz4_flex::compress_prepend_size(&bad));
+                let _ = Replay::decode(&file);
+            }
+        }
+        // A flag saying Conquest with a body that isn't is refused.
+        let mut lying = head.to_vec();
+        let mut body = Writer::default();
+        replay.write_units(&mut body);
+        replay.write_map(&mut body);
+        replay.write_tail(&mut body);
+        lying.extend_from_slice(&lz4_flex::compress_prepend_size(&body.buf));
+        assert!(Replay::decode(&lying).is_err());
+    }
+
     #[test]
     fn round_trips_and_verifies() {
         let replay = record();
@@ -1192,11 +1595,41 @@ mod tests {
         ));
     }
 
+    /// `replay` (a Field Battle) as format 11 wrote it: format 12 without
+    /// the Conquest flags at the end of the info block and after the map.
+    fn format_11(replay: &Replay) -> Vec<u8> {
+        assert!(replay.conquest.is_none());
+        let new = replay.encode();
+        let len = u32::from_le_bytes(new[6..10].try_into().unwrap()) as usize;
+        let info = &new[10..10 + len];
+        assert_eq!(info.last(), Some(&0));
+        let mut body = Writer::default();
+        replay.write_units(&mut body);
+        replay.write_map(&mut body);
+        replay.write_tail(&mut body);
+        let mut old = MAGIC.to_vec();
+        old.extend_from_slice(&11u16.to_le_bytes());
+        old.extend_from_slice(&(len as u32 - 1).to_le_bytes());
+        old.extend_from_slice(&info[..len - 1]);
+        old.extend_from_slice(&lz4_flex::compress_prepend_size(&body.buf));
+        old
+    }
+
+    #[test]
+    fn a_format_11_replay_is_a_field_battle() {
+        let replay = record();
+        let old = format_11(&replay);
+        assert_eq!(Replay::decode(&old).unwrap(), replay);
+        let path = temp("header-11", &old);
+        assert_eq!(Replay::read_header(&path).unwrap(), replay.info());
+        let _ = std::fs::remove_file(path);
+    }
+
     #[test]
     fn a_format_10_replay_has_no_map_choice() {
         let mut replay = record();
         replay.header = Header::default();
-        let new = replay.encode();
+        let new = format_11(&replay);
         // Format 10 is format 11 without the map choice: the last byte of
         // the header, before the seed, map size and the rest of the info
         // block.

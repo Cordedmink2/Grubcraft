@@ -12,6 +12,8 @@ Two modes at launch, and a third, the **Campaign**, planned to follow. All of th
 
 ## Conquest
 
+*Built (2026-10-16, Conquest step 4a): Conquest starts from the lobby, on Ribcage Pass (2 players) or The Four Teeth (4 players). The lobby offers only those two maps for Conquest and won't start with more players than the map holds. A Tempo setting sets how fast gathering and building go: Standard (gather 100%, build and train times 100%), Swift (gather 150%, times 75%) and Epic (gather 80%, times 120%). At the start every side gets its faction's starting buildings (its main building on its map start), its starting units (workers, and for the Concord also a Caravan) and its starting stores (300 Grub, or 400 for the Concord). No computer player plays Conquest yet, so AI slots stand idle. Until Annihilation and Titan's Heart arrive (step 5), the match ends as a Field Battle does, when one side alone holds the field. The economy readout in the top bar and the build and train controls are not on screen yet (steps 4b and 4c). The `--conquest ribcage_pass|four_teeth` command-line flag starts Conquest straight away, with every other start held by an idle side.*
+
 ### Flow of a match
 1. **Lobby:** map, teams, factions, colours, Tempo, victory conditions, Titan Events on/off.
 2. **Opening (0 to 5 min):** workers out, first structures, scout, first regiments. Creep a camp with your hero.

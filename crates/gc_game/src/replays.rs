@@ -148,11 +148,24 @@ pub fn title(replay: &Info) -> String {
     sides.join(" v ")
 }
 
+/// How many regiment types the game has for each kind of match.
+#[derive(Clone, Copy, Debug)]
+pub struct UnitTypes {
+    pub field: usize,
+    pub conquest: usize,
+}
+
 /// Why this build can't show `replay`, if it can't: unit ids name entries
-/// in the game's unit table, so a table of another size names other
-/// regiments, and the game draws no more regiments than its capacity.
-pub fn unplayable(replay: &Info, unit_types: usize, capacity: Capacities) -> Option<String> {
-    if replay.units != unit_types {
+/// in the game's unit table (Conquest's own in a Conquest match), so a
+/// table of another size names other regiments, and the game draws no more
+/// regiments than its capacity.
+pub fn unplayable(replay: &Info, unit_types: UnitTypes, capacity: Capacities) -> Option<String> {
+    let types = if replay.conquest {
+        unit_types.conquest
+    } else {
+        unit_types.field
+    };
+    if replay.units != types {
         Some("Made with other unit data: this build can't show it".into())
     } else if replay.regiments > capacity.regiments {
         Some("Too many regiments for this build to show".into())
@@ -166,7 +179,7 @@ pub fn unplayable(replay: &Info, unit_types: usize, capacity: Capacities) -> Opt
 /// different size, so its unit ids name other regiments) says why.
 pub fn list(
     dir: &Path,
-    unit_types: usize,
+    unit_types: UnitTypes,
     capacity: Capacities,
     data_hash: u64,
 ) -> Vec<ReplayEntry> {
@@ -219,7 +232,7 @@ pub type Listing = mpsc::Receiver<Vec<ReplayEntry>>;
 /// with nothing sent.
 pub fn list_in_background(
     dir: PathBuf,
-    unit_types: usize,
+    unit_types: UnitTypes,
     capacity: Capacities,
     data_hash: u64,
 ) -> Listing {
@@ -288,7 +301,11 @@ mod tests {
         assert!(again.ends_with("2026-10-15 21-50-04 Field Battle 2.gcr"));
         std::fs::write(dir.join("junk.gcr"), b"not a replay").unwrap();
         prune(&dir, 3);
-        let listed = list(&dir, units.len(), Capacities::default(), 0);
+        let types = |field| UnitTypes {
+            field,
+            conquest: field + 1,
+        };
+        let listed = list(&dir, types(units.len()), Capacities::default(), 0);
         assert_eq!(listed.len(), 3, "{listed:?}");
         // "junk" sorts after the dates, so it is the newest.
         assert!(listed[0].unplayable.is_some());
@@ -300,13 +317,13 @@ mod tests {
         );
         assert!(listed[1].unplayable.is_none());
         assert_eq!(
-            list(&dir, units.len() + 1, Capacities::default(), 0)[1]
+            list(&dir, types(units.len() + 1), Capacities::default(), 0)[1]
                 .unplayable
                 .as_deref()
                 .map(|s| &s[..10]),
             Some("Made with ")
         );
-        let listing = list_in_background(dir.clone(), units.len(), Capacities::default(), 0);
+        let listing = list_in_background(dir.clone(), types(units.len()), Capacities::default(), 0);
         let later = listing
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("the list arrives");

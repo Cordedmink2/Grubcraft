@@ -47,6 +47,8 @@ A Marrow vein saturated by 3 workers (or one Siphon) yields about **50 Marrow pe
 
 *Built (2026-10-16, M3 step 3): construction, training and tiers are simulated. A foundation stands at 10% of its hit points and rises as it is built, with up to four builders (the first at full speed, each further one at half). It gives no supply, tier or drop-off until finished. A building's queue holds five regiments, paid for when queued, and each starts once supply has room. Calling off a building refunds 75%. Tier upgrades take their time with no builders, and the building keeps working. Tempo scales all of it. The lobby and HUD come in step 4.*
 
+*Built (2026-10-16, Conquest step 4a): until each faction's own economy arrives (Brood veins, Choir Resonators, Concord caravans), every faction's main building takes both Grub and Marrow from workers, so all four can gather in Conquest. The roster files say so for now (`data/rosters/*.ron`), each marked to come out when that faction's own economy is built.*
+
 ## Starting state (Conquest)
 
 | | Clans | Brood | Choir | Concord |

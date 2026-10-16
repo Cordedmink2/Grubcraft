@@ -43,6 +43,12 @@ pub enum Resource {
 }
 
 impl Resource {
+    pub fn from_u8(v: u8) -> Option<Resource> {
+        [Resource::Grub, Resource::Marrow]
+            .get(usize::from(v))
+            .copied()
+    }
+
     /// Workers who can gather at one node at once.
     pub fn slots(self) -> u8 {
         match self {

@@ -366,10 +366,10 @@ impl Running {
             }
             hud.cards.push(Card {
                 id: h.index,
-                name: self.unit_names[r.unit as usize].clone(),
+                name: self.units.names[r.unit as usize].clone(),
                 color: crate::color_of(&self.parties, r.owner),
                 models: r.models,
-                max_models: self.unit_stats[r.unit as usize].models,
+                max_models: self.units.stats[r.unit as usize].models,
                 morale: r.morale_points,
                 state: match r.morale {
                     MoraleState::Steady => CardState::Steady,
