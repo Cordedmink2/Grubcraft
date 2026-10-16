@@ -17,7 +17,6 @@ use gc_ai::army::{Placement, deploy, spawn_commands};
 use gc_ai::scripted::ChargeBot;
 use gc_ai::{
     Difficulty, Doctrine, Knobs, Mind, MindConfig, Minds, Perception, Plan, Stance, Terrain,
-    holding_the_field,
 };
 use gc_fixed::Pcg32;
 use gc_sim::scenario::DRILL_UNITS;
@@ -27,9 +26,9 @@ use glam::Vec2;
 const MAP: u32 = 256;
 /// Spears, pikes, fast troops and archers (DRILL_UNITS 0, 3, 1, 2).
 const ARMY: [UnitId; 10] = [0, 0, 0, 0, 3, 3, 1, 1, 2, 2];
-/// A battle is over once one side has held the field this long, ticks.
-const HELD: u32 = 10 * 20;
-/// Or after eight minutes, when whoever has more soldiers still fighting wins.
+/// A battle is over once the simulation's verdict names who held the
+/// field, or after eight minutes, when whoever has more soldiers still
+/// fighting wins.
 const LIMIT: u32 = 8 * 60 * 20;
 
 /// Who plays a side.
@@ -158,7 +157,6 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
     };
     let mut players = [seat(us, side), seat(them, against)];
     let mut view = Perception::new();
-    let mut held_by: Option<(PlayerId, u32)> = None;
     let mut winner = None;
     let mut last_verdict = None;
     while world.tick_count() < LIMIT {
@@ -171,6 +169,10 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
         }
         minds.tick(&world, &mut out);
         world.tick(&out);
+        if let Some(v) = world.verdict() {
+            winner = Some(v.holder);
+            break;
+        }
         if trace(seed)
             && let Some(v) = minds.get(us).and_then(Mind::verdict)
             && Some(v.tick) != last_verdict
@@ -182,16 +184,6 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
             view.capture(&world);
             if trace(seed) && world.tick_count().is_multiple_of(40) {
                 print_field(&view, us, minds.get(us));
-            }
-            match (holding_the_field(&view), held_by) {
-                (Some(p), Some((q, since))) if p == q => {
-                    if world.tick_count() >= since + HELD {
-                        winner = Some(p);
-                        break;
-                    }
-                }
-                (Some(p), _) => held_by = Some((p, world.tick_count())),
-                (None, _) => held_by = None,
             }
         }
     }

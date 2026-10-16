@@ -28,20 +28,24 @@ use std::fmt;
 use std::path::Path;
 
 use gc_sim::{
-    Capacities, Ground, MatchSetup, PlayerCommand, TICKS_PER_SECOND, TickStats, UnitStats, World,
+    Capacities, Ground, MatchSetup, PlayerCommand, TICKS_PER_SECOND, TickStats, UnitStats, Verdict,
+    World,
 };
 
 use codec::{Reader, Writer};
 
 pub const MAGIC: [u8; 4] = *b"GCRP";
-/// Bumped whenever the file layout changes. Older replays are refused
-/// with [`Error::Format`], except format 6, which is format 7 without the
-/// header's sim version (read as unknown), format 5, which is format 6 without the
-/// [`Header`] (read as an empty one), format 4, which is format 5 without
-/// the deployment commands, format 3, which is format 4 without the champions
-/// flag (read as no champions), and format 2, which is format 3 without
-/// the cover layer (read as a map with no woods or grass).
-pub const FORMAT: u16 = 7;
+/// Bumped whenever the file layout changes. Older formats still read,
+/// each as the next one up without:
+/// - 7: the header's battle result (read as undecided);
+/// - 6: the header's sim version (read as unknown);
+/// - 5: the [`Header`] (read as an empty one);
+/// - 4: the deployment commands;
+/// - 3: the champions flag (read as no champions);
+/// - 2: the cover layer (read as a map with no woods or grass).
+///
+/// Anything older is refused with [`Error::Format`].
+pub const FORMAT: u16 = 8;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -82,6 +86,9 @@ pub struct Header {
     /// `None` for files from before format 7. Under another version it may
     /// play out differently.
     pub sim_version: Option<u32>,
+    /// How the battle was decided, if it was by the end of the recording
+    /// ([`World::verdict`]); `None` too for files from before format 8.
+    pub result: Option<Verdict>,
 }
 
 /// A recorded match.
@@ -291,6 +298,7 @@ impl Replay {
         }
         self.checkpoints = checkpoints;
         self.header.sim_version = Some(gc_sim::SIM_VERSION);
+        self.header.result = world.verdict();
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -308,6 +316,13 @@ impl Replay {
         w.var(h.recorded_by.map_or(0, |p| u64::from(p) + 1));
         w.var(h.desync_tick.map_or(0, |t| u64::from(t) + 1));
         w.var(h.sim_version.map_or(0, |v| u64::from(v) + 1));
+        match h.result {
+            Some(v) => {
+                w.var(u64::from(v.holder) + 1);
+                w.var(u64::from(v.tick));
+            }
+            None => w.var(0),
+        }
         w.u64(self.seed);
         w.var(u64::from(self.regiments));
         w.var(u64::from(self.map_tiles));
@@ -501,6 +516,19 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
     let recorded_by = maybe(r)?.map(u8::try_from).transpose().ok()?;
     let desync_tick = maybe(r)?;
     let sim_version = if format >= 7 { maybe(r)? } else { None };
+    let result = if format >= 8 {
+        match maybe(r)? {
+            Some(holder) => Some(Verdict {
+                holder: u8::try_from(holder)
+                    .ok()
+                    .filter(|&p| usize::from(p) < gc_sim::MAX_PARTIES)?,
+                tick: r.var_as()?,
+            }),
+            None => None,
+        }
+    } else {
+        None
+    };
     Some(Header {
         build,
         data_hash,
@@ -508,6 +536,7 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
         recorded_by,
         desync_tick,
         sim_version,
+        result,
     })
 }
 
@@ -581,6 +610,7 @@ impl Recorder {
         }
         let stats = world.tick(commands);
         self.replay.ticks += 1;
+        self.replay.header.result = world.verdict();
         if self.replay.ticks.is_multiple_of(self.every) {
             self.replay
                 .checkpoints
@@ -650,6 +680,7 @@ mod tests {
             recorded_by: Some(0),
             desync_tick: None,
             sim_version: Some(gc_sim::SIM_VERSION),
+            result: None,
         };
         let mut drill = Drill::new(7);
         drill.regiments_per_player = 6;
@@ -763,7 +794,7 @@ mod tests {
         let empty = lz4_flex::decompress_size_prepended(&replay.encode()[6..]).unwrap();
         // The empty header: no build, data hash 0, no players, nobody, no
         // desync, no sim version.
-        let header_len = 1 + 8 + 1 + 1 + 1 + 1;
+        let header_len = 1 + 8 + 1 + 1 + 1 + 1 + 1;
         body.extend_from_slice(&empty[body.len() + header_len..]);
         assert!(full.len() > empty.len());
         let mut old = MAGIC.to_vec();
@@ -772,21 +803,47 @@ mod tests {
         assert_eq!(Replay::decode(&old).unwrap(), replay);
     }
 
+    /// `replay` with an empty header, written as `format`: the current
+    /// format less the header's last `dropped` bytes (each 0 for none),
+    /// which follow the note and the empty header's no build, data hash 0,
+    /// no players, nobody and no desync.
+    fn older(replay: &mut Replay, format: u16, dropped: usize) -> Vec<u8> {
+        replay.header = Header::default();
+        let mut body = lz4_flex::decompress_size_prepended(&replay.encode()[6..]).unwrap();
+        let mut w = Writer::default();
+        w.bytes(replay.note.as_bytes());
+        let at = w.buf.len() + 1 + 8 + 1 + 1 + 1;
+        assert!(body.drain(at..at + dropped).all(|b| b == 0));
+        let mut old = MAGIC.to_vec();
+        old.extend_from_slice(&format.to_le_bytes());
+        old.extend_from_slice(&lz4_flex::compress_prepend_size(&body));
+        old
+    }
+
+    #[test]
+    fn a_format_7_replay_has_no_result() {
+        let mut replay = record();
+        // Format 7 is format 8 without the battle result.
+        let old = older(&mut replay, 7, 1);
+        assert_eq!(Replay::decode(&old).unwrap(), replay);
+    }
+
     #[test]
     fn a_format_6_replay_has_no_sim_version() {
         let mut replay = record();
-        replay.header = Header::default();
-        let mut body = lz4_flex::decompress_size_prepended(&replay.encode()[6..]).unwrap();
-        // Format 6 is format 7 without the header's last byte, the sim
-        // version (0 for none), after the note and the empty header's no
-        // build, data hash 0, no players, nobody and no desync.
-        let mut w = Writer::default();
-        w.bytes(replay.note.as_bytes());
-        assert_eq!(body.remove(w.buf.len() + 1 + 8 + 1 + 1 + 1), 0);
-        let mut old = MAGIC.to_vec();
-        old.extend_from_slice(&6u16.to_le_bytes());
-        old.extend_from_slice(&lz4_flex::compress_prepend_size(&body));
+        // Format 6 is format 7 without the sim version.
+        let old = older(&mut replay, 6, 2);
         assert_eq!(Replay::decode(&old).unwrap(), replay);
+    }
+
+    #[test]
+    fn the_result_round_trips() {
+        let mut replay = record();
+        replay.header.result = Some(Verdict {
+            holder: 1,
+            tick: 1234,
+        });
+        assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
     }
 
     #[test]

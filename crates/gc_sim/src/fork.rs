@@ -87,6 +87,7 @@ impl World {
             // A rehearsal is all battle.
             deploy: crate::deploy::Deployment::default(),
             champions: None,
+            judge: crate::verdict::Judge::default(),
             regiments: Regiments::with_capacity(n),
         }
     }
@@ -173,6 +174,7 @@ impl World {
         let mut w = self.scratch(capacity, 0);
         w.rng = self.rng.clone();
         w.combat_rng = self.combat_rng.clone();
+        w.judge = self.judge.clone();
         w.regiments.party_morale.clone_from(&regs.party_morale);
         let mut copied = alloc::vec![false; capacity as usize];
         for &i in &picked {

@@ -12,18 +12,18 @@
 //! `AI_BATTLES=400 cargo test -p gc_ai --release --test estimator calls -- --ignored --nocapture`
 //! prints every miss over more battles, for tuning.
 
+use gc_ai::Perception;
 use gc_ai::army::{Placement, spawn_commands};
 use gc_ai::estimator::{self, Approach, Force};
 use gc_ai::scripted::ChargeBot;
-use gc_ai::{Perception, holding_the_field};
 use gc_fixed::Pcg32;
 use gc_sim::scenario::DRILL_UNITS;
 use gc_sim::{Capacities, MatchSetup, PlayerCommand, PlayerId, UnitId, World};
 use glam::Vec2;
 
 const MAP: u32 = 256;
-/// A battle is won once one side has held the field this long, ticks.
-const HELD: u32 = 10 * 20;
+/// A battle is won once the simulation's verdict names who held the field;
+/// one still going after this many ticks is a draw.
 const LIMIT: u32 = 4 * 60 * 20;
 
 struct Battle {
@@ -117,7 +117,6 @@ fn fight(seed: u64) -> Battle {
         },
     );
     let mut bots = [ChargeBot::new(0), ChargeBot::new(1)];
-    let mut held: Option<(PlayerId, u32)> = None;
     let mut winner = None;
     while world.tick_count() < LIMIT {
         out.clear();
@@ -126,18 +125,9 @@ fn fight(seed: u64) -> Battle {
             bot.tick(&view, &mut out);
         }
         world.tick(&out);
-        if world.tick_count().is_multiple_of(20) {
-            view.capture(&world);
-            match (holding_the_field(&view), held) {
-                (Some(p), Some((q, since))) if p == q => {
-                    if world.tick_count() >= since + HELD {
-                        winner = Some(p);
-                        break;
-                    }
-                }
-                (Some(p), _) => held = Some((p, world.tick_count())),
-                (None, _) => held = None,
-            }
+        if let Some(v) = world.verdict() {
+            winner = Some(v.holder);
+            break;
         }
     }
     Battle {

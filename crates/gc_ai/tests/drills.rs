@@ -190,7 +190,7 @@ impl Field<'_> {
 }
 
 /// Fight `drill` for up to `seconds`, calling `watch` after every tick.
-/// Stops early once one side has held the field for ten seconds, and
+/// Stops early once the simulation's verdict names who held the field, and
 /// returns that side.
 fn run(drill: Drill, seconds: u32, mut watch: impl FnMut(&Field)) -> Option<PlayerId> {
     let units = units();
@@ -233,7 +233,6 @@ fn run(drill: Drill, seconds: u32, mut watch: impl FnMut(&Field)) -> Option<Play
     let mut view = Perception::new();
     view.capture(&world);
     let trace = std::env::var_os("AI_TRACE").is_some();
-    let mut held: Option<(PlayerId, u32)> = None;
     while world.tick_count() < seconds * 20 {
         out.clear();
         if drill.foe_plays == Foe::Charge {
@@ -251,16 +250,8 @@ fn run(drill: Drill, seconds: u32, mut watch: impl FnMut(&Field)) -> Option<Play
         if trace && view.tick.is_multiple_of(40) {
             print_field(&view, mind);
         }
-        if view.tick.is_multiple_of(20) {
-            match (gc_ai::holding_the_field(&view), held) {
-                (Some(p), Some((q, since))) if p == q => {
-                    if view.tick >= since + 200 {
-                        return Some(p);
-                    }
-                }
-                (Some(p), _) => held = Some((p, view.tick)),
-                (None, _) => held = None,
-            }
+        if let Some(v) = world.verdict() {
+            return Some(v.holder);
         }
     }
     if trace {

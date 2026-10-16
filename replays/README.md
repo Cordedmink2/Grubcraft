@@ -25,7 +25,7 @@ Recorded battles that the simulation must keep playing exactly as recorded. Each
   cargo run --release -p gc_replay -- bless replays
   ```
 
-- **Every bless also bumps `SIM_VERSION`** in `gc_sim/src/lib.rs` and updates the `PINNED` table in `gc_replay/tests/goldens.rs` (the test prints the new table). The sim version is in the build's name, so the lobby keeps builds with different rules apart, and it is stamped in each replay's header (format 7), so the replay list marks replays made with other rules, and the viewer pauses at the first checkpoint where a replay plays differently and says so. A test fails if the goldens change without the bump.
+- **Every bless also bumps `SIM_VERSION`** in `gc_sim/src/lib.rs` and updates the `PINNED` table in `gc_replay/tests/goldens.rs` (the test prints the new table). The sim version is in the build's name, so the lobby keeps builds with different rules apart, and it is stamped in each replay's header (format 7; format 8 adds the battle's result, `World::verdict`, as the recording ended), so the replay list marks replays made with other rules, and the viewer pauses at the first checkpoint where a replay plays differently and says so. A test fails if the goldens change without the bump.
 - **Mac and Windows disagree:** a real cross-platform determinism bug; this is what the check exists to catch. Never bless to make it go away.
 
 Retuning `data/units.ron` or changing the map generator doesn't touch these files: each replay keeps the unit table and the map it was recorded with.

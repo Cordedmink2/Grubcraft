@@ -29,7 +29,7 @@ use gc_sim::{
 };
 use glam::Vec2;
 
-use crate::battle::{HOLD_TICKS, battle_starts, holding_the_field, zone_order};
+use crate::battle::{battle_starts, zone_order};
 use crate::terrain_gen::{Heightmap, start_positions};
 
 /// One side of a recorded battle: a computer player.
@@ -470,7 +470,6 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     let mut rec = Recorder::new(&setup, &world, String::new());
     rec.tick(&mut world, &first);
     let limit = golden.minutes * 60 * gc_sim::TICKS_PER_SECOND;
-    let mut held: Option<(PlayerId, u32)> = None;
     let mut most_engaged = (0, 0);
     let mut ambushes = 0;
     while world.tick_count() < limit {
@@ -517,16 +516,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         if engaged > most_engaged.0 {
             most_engaged = (engaged, world.tick_count());
         }
-        let now = world.tick_count();
-        if world.deploying() {
-            continue;
-        }
-        held = match (held, holding_the_field(&world)) {
-            (Some((p, since)), Some(h)) if !world.hostile(p, h) => Some((p, since)),
-            (_, Some(h)) => Some((h, now)),
-            (_, None) => None,
-        };
-        if held.is_some_and(|(_, since)| now - since >= HOLD_TICKS) {
+        if world.verdict().is_some() {
             break;
         }
     }
@@ -548,9 +538,12 @@ fn record(golden: &Golden) -> gc_replay::Replay {
             )
         })
         .collect();
-    let ending = match held {
-        Some((p, _)) if secs < golden.minutes * 60 => {
-            format!("team {} holds the field", golden.sides[p as usize].team)
+    let ending = match world.verdict() {
+        Some(v) => {
+            format!(
+                "team {} holds the field",
+                golden.sides[v.holder as usize].team
+            )
         }
         _ => "cut at the time limit".into(),
     };

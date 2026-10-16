@@ -29,6 +29,7 @@ mod regiments;
 pub mod scenario;
 pub mod stances;
 pub mod terrain;
+pub mod verdict;
 pub mod vision;
 
 pub use champions::Challenge;
@@ -38,6 +39,7 @@ pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
 pub use terrain::{Cover, Ground, Terrain};
+pub use verdict::{HOLD_TICKS, Verdict};
 pub use vision::Ambush;
 
 use champions::Champions;
@@ -53,7 +55,7 @@ use vision::Vision;
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 2;
+pub const SIM_VERSION: u32 = 3;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -535,6 +537,8 @@ pub struct World {
     deploy: Deployment,
     /// Only in matches that allow champions.
     champions: Option<Champions>,
+    /// Who holds the field, and who won (see [`verdict`]).
+    judge: verdict::Judge,
     pub regiments: Regiments,
 }
 
@@ -566,6 +570,7 @@ impl World {
                     Pcg32::new(setup.seed, streams::EVENTS),
                 )
             }),
+            judge: verdict::Judge::default(),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
@@ -596,6 +601,7 @@ impl World {
         }
         // Time stands still while the armies deploy.
         if self.deploying() {
+            self.judge.deploying();
             self.tick += 1;
             return stats;
         }
@@ -658,6 +664,8 @@ impl World {
             &self.terrain,
         );
         self.tick += 1;
+        self.judge
+            .update(&self.regiments, &self.stances, &self.vision, self.tick);
         stats
     }
 
@@ -863,6 +871,20 @@ impl World {
         })
     }
 
+    /// How the battle was decided, once it has been: a side held the field
+    /// (see [`verdict`]).
+    pub fn verdict(&self) -> Option<Verdict> {
+        self.judge.verdict()
+    }
+
+    /// The party holding the field right now, if one is (see [`verdict`]).
+    pub fn holding_the_field(&self) -> Option<PlayerId> {
+        if self.deploying() {
+            return None;
+        }
+        verdict::holding_the_field(&self.regiments, &self.stances, &self.vision)
+    }
+
     /// Whether regiment `h` is hidden from every enemy of its owner.
     pub fn hidden(&self, h: RegimentHandle) -> bool {
         self.regiments
@@ -921,6 +943,7 @@ impl World {
         self.nav.hash_into(&mut h);
         self.vision.hash_into(&self.regiments, &mut h);
         self.deploy.hash_into(&mut h);
+        self.judge.hash_into(&mut h);
         // Only in matches that allow champions, so other worlds hash as
         // they did before champions existed.
         if let Some(champions) = &self.champions {
