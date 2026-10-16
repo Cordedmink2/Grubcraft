@@ -31,8 +31,9 @@ These run in `gc_bake` and in `gc_game`'s build script. `blake3` never reaches t
 | Crate | Why | Cost and notes |
 |---|---|---|
 | `gltf` 1.4 (`utils`, `names`; default features off) | Reads the glTF and GLB model files | Pure Rust |
-| `meshopt` 0.6 | Simplifies meshes for the distant level of detail and orders triangles for the GPU cache | Builds meshoptimizer's C++ with `cc`, so the tool needs a C++ compiler |
+| `meshopt` 0.6 | Simplifies meshes for the four levels of detail and orders triangles for the GPU cache | Builds meshoptimizer's C++ with `cc`, so the tool needs a C++ compiler |
 | `png` 0.17 | Decodes model textures so vertex colours can be sampled from them | Pure Rust |
+| `intel_tex_2` 0.5 | BC7-compresses material textures | Prebuilt ISPC kernels for Linux, macOS and Windows on x86_64 and arm64, so no ISPC install is needed. MIT/Apache-2.0. Tool-only, never in the game |
 | `base64` 0.22 | Decodes glTF buffers embedded as data URIs | Pure Rust |
 
 ## Development only

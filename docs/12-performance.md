@@ -93,7 +93,7 @@ Collected here so they're easy to find; detailed in [10 · Architecture](10-arch
 
 1. **Regiments in the sim, soldiers in presentation.** The deterministic state is hundreds of formations, not thousands of soldiers. Simulation memory and CPU scale with regiments.
 2. **Lockstep networking.** Bandwidth and replays scale with clicks, not units.
-3. **Small shared textures.** Stand-in units and buildings are palette-coloured; textured soldiers share one 512 × 512 texture array (4 MB per unit type, before compression).
+3. **Small shared textures.** Stand-in units and buildings are palette-coloured; textured soldiers share one 512 × 512 texture array, BC7-compressed to about 1 MB per material (4 MB as RGBA8).
 4. **Bone animation textures with four-bone skinning.** Kilobytes per unit type instead of megabytes.
 5. **One instanced draw call per unit type**, 16 bytes per soldier.
 6. **Commander View.** Zooming out makes rendering *cheaper*.

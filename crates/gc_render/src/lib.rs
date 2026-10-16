@@ -295,14 +295,15 @@ impl Renderer {
         let small_hdr = adapter
             .features()
             .contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE);
+        // Soldier textures are BC7, which every Mac and Windows GPU we
+        // target reads; without it textured models fall back to their
+        // vertex colours.
+        let wanted =
+            wgpu::Features::RG11B10UFLOAT_RENDERABLE | wgpu::Features::TEXTURE_COMPRESSION_BC;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("grubcraft"),
-                required_features: if small_hdr {
-                    wgpu::Features::RG11B10UFLOAT_RENDERABLE
-                } else {
-                    wgpu::Features::empty()
-                },
+                required_features: adapter.features() & wanted,
                 required_limits: wgpu::Limits::downlevel_defaults()
                     .using_resolution(adapter.limits()),
                 memory_hints: wgpu::MemoryHints::MemoryUsage,

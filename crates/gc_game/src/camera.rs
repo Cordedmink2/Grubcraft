@@ -43,6 +43,11 @@ impl RtsCamera {
         Vec3::new(s * PITCH.cos(), PITCH.sin(), c * PITCH.cos())
     }
 
+    /// The direction the camera looks.
+    pub fn forward(&self) -> Vec3 {
+        -self.offset_dir()
+    }
+
     pub fn eye(&self) -> Vec3 {
         self.target() + self.offset_dir() * self.distance
     }
@@ -55,6 +60,13 @@ impl RtsCamera {
         let view = look_at_mat4(self.eye(), self.target(), Vec3::Y);
         let proj = perspective(FOV_Y, self.aspect, 1.0, self.distance * 3.0 + 300.0);
         proj * view
+    }
+
+    /// How many pixels tall something 1 tile tall shows, 1 tile from the
+    /// eye, on a viewport `height` pixels tall (divide by the distance for
+    /// anything further).
+    pub fn pixel_scale(&self, height: f32) -> f32 {
+        height / (2.0 * (FOV_Y * 0.5).tan())
     }
 
     /// Pan in screen-relative directions; `dx`/`dy` in screen fractions.
@@ -148,5 +160,13 @@ mod tests {
         assert_eq!(cam.yaw, cam.home_yaw);
         cam.face(Vec2::NEG_Y);
         assert_eq!(cam.yaw, 0.0);
+    }
+
+    #[test]
+    fn pixel_scale_gives_the_projected_size() {
+        let cam = RtsCamera::new(256.0, Vec2::ZERO);
+        let expected = 760.0 / (2.0 * 17.5_f32.to_radians().tan());
+        let scale = cam.pixel_scale(760.0);
+        assert!((scale - expected).abs() < 0.01, "{scale} vs {expected}");
     }
 }

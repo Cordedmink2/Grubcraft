@@ -1,11 +1,11 @@
 //! Material textures: the painted maps a model's UV atlas points into,
 //! shrunk to [`TEXTURE_SIZE`], packed into the three layers the soldier
-//! shader reads (see [`gc_assets::model::MaterialLayer`]), each with its full
-//! mip chain.
+//! shader reads (see [`gc_assets::model::MaterialLayer`]), each with its mip
+//! chain, and BC7-compressed (a quarter of the bytes of RGBA8).
 
 use std::path::Path;
 
-use gc_assets::model::{TEXTURE_MIPS, TEXTURE_SIZE};
+use gc_assets::model::{BLOCK_SIDE, Block, TEXTURE_MIPS, TEXTURE_SIZE};
 use glam::Vec3;
 use serde::Deserialize;
 
@@ -157,14 +157,42 @@ fn shrink(img: &Image, path: &Path, enc: Encoding) -> Result<Layer, String> {
     Ok(layer)
 }
 
-/// The three layers of one material, each with its mips, back to back.
-/// `albedo` is the `cfg.albedo` map, already loaded from `albedo_path`.
+/// The three layers of one material, each with its mips, back to back, in
+/// BC7 blocks. `albedo` is the `cfg.albedo` map, already loaded from
+/// `albedo_path`.
 pub fn bake(
     cfg: &TextureConfig,
     albedo: &Image,
     albedo_path: &Path,
     resolve: impl Fn(&str) -> Result<std::path::PathBuf, String>,
-) -> Result<Vec<[u8; 4]>, String> {
+) -> Result<Vec<Block>, String> {
+    Ok(compress(&levels(cfg, albedo, albedo_path, resolve)?))
+}
+
+/// BC7-compress mips from [`levels`], back to back.
+fn compress(levels: &[(u32, Vec<u8>)]) -> Vec<Block> {
+    let settings = intel_tex_2::bc7::alpha_slow_settings();
+    let mut out = Vec::new();
+    for (side, rgba) in levels {
+        let surface = intel_tex_2::RgbaSurface {
+            data: rgba,
+            width: *side,
+            height: *side,
+            stride: side * 4,
+        };
+        let blocks = intel_tex_2::bc7::compress_blocks(&settings, &surface);
+        out.extend(blocks.as_chunks::<16>().0);
+    }
+    out
+}
+
+/// Every mip of the three layers, in order, as their side and RGBA8 texels.
+fn levels(
+    cfg: &TextureConfig,
+    albedo: &Image,
+    albedo_path: &Path,
+    resolve: impl Fn(&str) -> Result<std::path::PathBuf, String>,
+) -> Result<Vec<(u32, Vec<u8>)>, String> {
     let map = |src: &Option<String>, enc: Encoding| -> Result<Option<Layer>, String> {
         src.as_ref()
             .map(|s| {
@@ -222,17 +250,25 @@ pub fn bake(
             if mip > 0 {
                 level = level.half(enc);
             }
-            out.extend(level.px.iter().map(|p| {
-                let byte = |c: usize| {
-                    let v = if enc == Encoding::Srgb && c < 3 {
-                        linear_to_srgb(p[c])
-                    } else {
-                        p[c]
-                    };
-                    (v.clamp(0.0, 1.0) * 255.0).round() as u8
-                };
-                [byte(0), byte(1), byte(2), byte(3)]
-            }));
+            debug_assert!(level.side >= BLOCK_SIDE as usize);
+            out.push((
+                level.side as u32,
+                level
+                    .px
+                    .iter()
+                    .flat_map(|p| {
+                        let byte = |c: usize| {
+                            let v = if enc == Encoding::Srgb && c < 3 {
+                                linear_to_srgb(p[c])
+                            } else {
+                                p[c]
+                            };
+                            (v.clamp(0.0, 1.0) * 255.0).round() as u8
+                        };
+                        [byte(0), byte(1), byte(2), byte(3)]
+                    })
+                    .collect(),
+            ));
         }
     }
     Ok(out)
@@ -241,7 +277,7 @@ pub fn bake(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gc_assets::model::{TEXELS_PER_LAYER, TEXELS_PER_MATERIAL};
+    use gc_assets::model::BLOCKS_PER_MATERIAL;
 
     #[test]
     fn halving_keeps_normals_unit_and_averages_colour() {
@@ -294,14 +330,20 @@ mod tests {
             emissive: None,
         };
         let albedo = load_png(&path).unwrap();
-        let texels = bake(&cfg, &albedo, &path, |s| Ok(dir.join(s))).unwrap();
+        let resolve = |s: &str| Ok(dir.join(s));
+        let levels = levels(&cfg, &albedo, &path, resolve).unwrap();
+        let blocks = compress(&levels);
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(texels.len(), TEXELS_PER_MATERIAL);
+        assert_eq!(blocks.len(), BLOCKS_PER_MATERIAL);
+        let mips = TEXTURE_MIPS as usize;
+        assert_eq!(levels.len(), 3 * mips);
+        assert_eq!(levels[0].0, TEXTURE_SIZE);
+        assert_eq!(levels[mips - 1].0, BLOCK_SIDE);
         // Albedo survives shrinking; no team; a flat normal; default roughness.
-        assert_eq!(texels[0], [200, 200, 200, 0]);
-        let b = texels[TEXELS_PER_LAYER];
+        assert_eq!(levels[0].1[..4], [200, 200, 200, 0]);
+        let b = &levels[mips].1;
         assert_eq!((b[0], b[1], b[2]), (128, 128, 255));
         assert_eq!(b[3], (DEFAULT_ROUGHNESS * 255.0).round() as u8);
-        assert_eq!(texels[2 * TEXELS_PER_LAYER], [0, 0, 0, 0]);
+        assert_eq!(levels[2 * mips].1[..4], [0, 0, 0, 0]);
     }
 }

@@ -11,8 +11,8 @@
 //! 2. Skins every vertex to its four heaviest bones (or binds a rigid prop,
 //!    such as a bow, to the bone it hangs from), and keeps its texture
 //!    coordinate and tangent.
-//! 3. Welds, simplifies to two levels of detail and orders the triangles for
-//!    the GPU's vertex cache.
+//! 3. Welds, simplifies to four levels of detail (each from the one before)
+//!    and orders the triangles for the GPU's vertex cache.
 //! 4. Samples each clip at a fixed rate into bone texture rows: for every
 //!    frame, a 3 × 4 matrix per bone that moves a stored vertex to that pose.
 //!
@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use gc_assets::model::{
-    BONE_TEXELS_PER_ROW, BONES_PER_VERTEX, ClipKind, ClipRecord, MAX_BONES, MAX_MATERIALS,
+    BONE_TEXELS_PER_ROW, BONES_PER_VERTEX, ClipKind, ClipRecord, LODS, MAX_BONES, MAX_MATERIALS,
     ModelRecord, ModelTables, ModelVertex, NAME_BYTES, POSITION_SCALE, f16_bits,
 };
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
@@ -39,6 +39,19 @@ use serde::Deserialize;
 
 /// Frames per second clips are sampled at. The shader blends between frames.
 const SAMPLE_FPS: f32 = 12.0;
+/// How much moving a texture coordinate across the whole atlas counts,
+/// against moving a vertex across the whole model, when a textured model's
+/// smaller levels of detail collapse across texture seams.
+const UV_WEIGHT: f32 = 1.0;
+/// When a textured model's smaller levels of detail are cut part by part,
+/// parts at least this big (their box's longest side, against the model's
+/// height) keep [`MIN_PART_TRIANGLES`], so a hat brim stays a brim.
+const BIG_PART: f32 = 0.1;
+const MIN_PART_TRIANGLES: usize = 8;
+/// How far, against its own size, a part may move as it is cut. Thin
+/// shells (a crown, a brim, armour plates) stop short of their share
+/// rather than flatten into nothing.
+const PART_ERROR: f32 = 0.2;
 
 #[derive(Deserialize)]
 struct Config {
@@ -70,8 +83,8 @@ struct ModelConfig {
     team_hue: Option<(f32, f32, f32)>,
     /// Clip kind (`Idle`, `Walk`, ...) to the glTF animation's name.
     clips: HashMap<String, String>,
-    /// Triangle budgets for the full and the reduced level of detail.
-    lod_triangles: (usize, usize),
+    /// Triangle budgets for each level of detail, from full to fewest.
+    lod_triangles: [usize; LODS],
     /// Painted texture maps, for models whose detail is in textures rather
     /// than vertex colours.
     #[serde(default)]
@@ -173,6 +186,15 @@ fn run(opts: &Options) -> Result<(), String> {
     let mut pack = gc_assets::PackWriter::new();
     tables.write(&mut pack);
     let bytes = pack.finish();
+    // The game turns soldier models off for a pack its loader rejects, so
+    // load it here first.
+    let mut store = vec![0u128; bytes.len().div_ceil(16)];
+    bytemuck::cast_slice_mut::<u128, u8>(&mut store)[..bytes.len()].copy_from_slice(&bytes);
+    let view = &bytemuck::cast_slice::<u128, u8>(&store)[..bytes.len()];
+    let loaded = gc_assets::Pack::parse(view).map_err(|e| e.to_string());
+    loaded
+        .and_then(|p| gc_assets::model::Models::from_pack(&p).map_err(|e| e.to_string()))
+        .map_err(|e| format!("the baked pack does not load: {e}"))?;
     if let Some(dir) = opts.out.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
@@ -206,7 +228,7 @@ struct Vert {
 
 struct BakedModel {
     verts: Vec<ModelVertex>,
-    lods: [Vec<u16>; 2],
+    lods: [Vec<u16>; LODS],
     height: f32,
     bones: u32,
     /// Clip kind, and its frames: per frame, `bones` matrices (stored vertex
@@ -225,7 +247,7 @@ impl BakedModel {
         name_bytes[..name.len()].copy_from_slice(name.as_bytes());
         let first_vertex = t.vertices.len() as u32;
         t.vertices.extend_from_slice(&self.verts);
-        let mut lods = [[0; 2]; 2];
+        let mut lods = [[0; 2]; LODS];
         for (lod, indices) in self.lods.iter().enumerate() {
             lods[lod] = [t.indices.len() as u32, indices.len() as u32];
             t.indices.extend_from_slice(indices);
@@ -267,11 +289,11 @@ impl BakedModel {
 }
 
 fn report(m: &BakedModel) {
+    let tris: Vec<String> = m.lods.iter().map(|l| (l.len() / 3).to_string()).collect();
     println!(
-        "  {} vertices, {} / {} triangles, {} bones, {} clips; colours (team marked *):",
+        "  {} vertices, {} triangles, {} bones, {} clips; colours (team marked *):",
         m.verts.len(),
-        m.lods[0].len() / 3,
-        m.lods[1].len() / 3,
+        tris.join(" / "),
         m.bones,
         m.clips.len()
     );
@@ -648,7 +670,7 @@ fn bake_model(
         .collect();
     let indices: Vec<u32> = indices.iter().map(|&i| remap[i as usize]).collect();
 
-    // 4. Two levels of detail, each ordered for the vertex cache.
+    // 4. The levels of detail, each ordered for the vertex cache.
     let positions: Vec<[f32; 3]> = welded
         .iter()
         .map(|v| v.pos.map(|c| f32::from(c) / POSITION_SCALE))
@@ -656,31 +678,75 @@ fn bake_model(
     let adapter = meshopt::VertexDataAdapter::new(bytemuck::cast_slice(&positions), 12, 0)
         .map_err(|e| e.to_string())?;
     let textured = cfg.textures.is_some();
+    // Texture coordinates, for the permissive pass to weigh.
+    let uvs: Vec<[f32; 2]> = welded
+        .iter()
+        .map(|v| v.uv.map(|c| f32::from(c) / 65_535.0))
+        .collect();
+    let unlocked = vec![false; welded.len()];
     let simplify = |indices: &[u32], tris: usize| -> Vec<u32> {
         if indices.len() / 3 <= tris {
             return indices.to_vec();
         }
-        // Texture seams must hold, or reduced triangles would span unrelated
-        // parts of the atlas; vertex-coloured models may collapse across them.
+        // Texture seams hold first, or reduced triangles would span
+        // unrelated parts of the atlas; vertex-coloured models may collapse
+        // across them.
         let options = if textured {
             meshopt::SimplifyOptions::None
         } else {
             meshopt::SimplifyOptions::Permissive
         };
-        let mut out = meshopt::simplify(indices, &adapter, tris * 3, 0.05, options, None);
-        if !textured && out.len() / 3 > tris * 5 / 4 {
-            // Attribute seams can stop the careful simplifier early.
-            out = meshopt::simplify_sloppy(indices, &adapter, tris * 3, 0.1, None);
+        let out = meshopt::simplify(indices, &adapter, tris * 3, 0.05, options, None);
+        if out.len() / 3 <= tris * 5 / 4 {
+            return out;
         }
-        out
+        if !textured {
+            // Attribute seams can stop the careful simplifier early.
+            return meshopt::simplify_sloppy(indices, &adapter, tris * 3, 0.1, None);
+        }
+        // The seams stop it: cut each separate part (a hat's crown, its
+        // brim) to its share, letting collapses cross seams where the
+        // texture coordinates barely move. Thin shells would otherwise
+        // flatten away whole.
+        let ratio = tris as f32 / (out.len() / 3) as f32;
+        let mut cut = Vec::new();
+        for part in parts(&out, &welded) {
+            let n = part.len() / 3;
+            let (lo, hi) = part.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), &i| {
+                let p = Vec3::from(positions[i as usize]);
+                (lo.min(p), hi.max(p))
+            });
+            let mut target = (n as f32 * ratio).round() as usize;
+            if (hi - lo).max_element() >= BIG_PART * cfg.height {
+                target = target.max(MIN_PART_TRIANGLES.min(n));
+            }
+            cut.extend(meshopt::simplify_with_attributes_and_locks(
+                &part,
+                &adapter,
+                bytemuck::cast_slice(&uvs),
+                &[UV_WEIGHT; 2],
+                8,
+                &unlocked,
+                target * 3,
+                PART_ERROR,
+                meshopt::SimplifyOptions::Permissive | meshopt::SimplifyOptions::Sparse,
+                None,
+            ));
+        }
+        cut
     };
-    let lod0 =
-        meshopt::optimize_vertex_cache(&simplify(&indices, cfg.lod_triangles.0), welded.len());
-    let lod1 = meshopt::optimize_vertex_cache(&simplify(&lod0, cfg.lod_triangles.1), welded.len());
+    let mut chain: Vec<Vec<u32>> = Vec::with_capacity(LODS);
+    for &tris in &cfg.lod_triangles {
+        let finer = chain.last().unwrap_or(&indices);
+        chain.push(meshopt::optimize_vertex_cache(
+            &simplify(finer, tris),
+            welded.len(),
+        ));
+    }
     // Keep only vertices a level of detail uses, in first-use order.
     let mut new_index = vec![u32::MAX; welded.len()];
     let mut verts_out = Vec::new();
-    for &i in lod0.iter().chain(&lod1) {
+    for &i in chain.iter().flatten() {
         if new_index[i as usize] == u32::MAX {
             new_index[i as usize] = verts_out.len() as u32;
             verts_out.push(welded[i as usize]);
@@ -689,7 +755,12 @@ fn bake_model(
     if verts_out.len() > u16::MAX as usize + 1 {
         return Err(format!("{} vertices, more than 65,536", verts_out.len()));
     }
-    let lods = [&lod0, &lod1].map(|l| l.iter().map(|&i| new_index[i as usize] as u16).collect());
+    let lods = core::array::from_fn(|l| {
+        chain[l]
+            .iter()
+            .map(|&i| new_index[i as usize] as u16)
+            .collect()
+    });
 
     // 5. Sample the clips into bone matrices (in game space).
     let mut clips = Vec::new();
@@ -734,6 +805,45 @@ fn bake_model(
         clips,
         palette,
     })
+}
+
+/// The triangles of `indices` grouped into separate parts: sets joined by
+/// shared positions (texture seams don't split a part).
+fn parts(indices: &[u32], verts: &[ModelVertex]) -> Vec<Vec<u32>> {
+    let mut slot: HashMap<[i16; 3], usize> = HashMap::new();
+    let ids: Vec<usize> = indices
+        .iter()
+        .map(|&i| {
+            let n = slot.len();
+            *slot.entry(verts[i as usize].pos).or_insert(n)
+        })
+        .collect();
+    let mut parent: Vec<usize> = (0..slot.len()).collect();
+    fn root(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    for t in ids.chunks(3) {
+        let a = root(&mut parent, t[0]);
+        for &v in &t[1..] {
+            let b = root(&mut parent, v);
+            parent[b] = a;
+        }
+    }
+    let mut part_of: HashMap<usize, usize> = HashMap::new();
+    let mut out: Vec<Vec<u32>> = Vec::new();
+    for (t, tri) in ids.chunks(3).zip(indices.chunks(3)) {
+        let r = root(&mut parent, t[0]);
+        let k = *part_of.entry(r).or_insert_with(|| {
+            out.push(Vec::new());
+            out.len() - 1
+        });
+        out[k].extend_from_slice(tri);
+    }
+    out
 }
 
 fn quantise(
@@ -1002,5 +1112,60 @@ mod tests {
     fn a_vertex_without_weights_follows_its_first_joint() {
         let (bones, weights) = quantise_weights(&top_weights(&[(5, 0.0), (1, 0.0)]));
         assert_eq!((bones, weights), ([5, 0, 0, 0], [255, 0, 0, 0]));
+    }
+
+    fn vert(pos: [i16; 3], uv: [u16; 2]) -> ModelVertex {
+        ModelVertex {
+            pos,
+            uv,
+            ..bytemuck::Zeroable::zeroed()
+        }
+    }
+
+    #[test]
+    fn separate_triangles_are_separate_parts() {
+        let verts = [
+            vert([0, 0, 0], [0, 0]),
+            vert([10, 0, 0], [0, 0]),
+            vert([0, 10, 0], [0, 0]),
+            vert([100, 0, 0], [0, 0]),
+            vert([110, 0, 0], [0, 0]),
+            vert([100, 10, 0], [0, 0]),
+        ];
+        let got = parts(&[0, 1, 2, 3, 4, 5], &verts);
+        assert_eq!(got, vec![vec![0, 1, 2], vec![3, 4, 5]]);
+    }
+
+    #[test]
+    fn a_texture_seam_does_not_split_a_part() {
+        // Vertices 3 and 4 repeat 1 and 2 with other uvs.
+        let verts = [
+            vert([0, 0, 0], [0, 0]),
+            vert([10, 0, 0], [100, 0]),
+            vert([0, 10, 0], [0, 100]),
+            vert([10, 0, 0], [900, 0]),
+            vert([0, 10, 0], [900, 900]),
+            vert([10, 10, 0], [1000, 1000]),
+        ];
+        let got = parts(&[0, 1, 2, 3, 5, 4], &verts);
+        assert_eq!(got, vec![vec![0, 1, 2, 3, 5, 4]]);
+    }
+
+    #[test]
+    fn parts_keep_every_index() {
+        let verts = [
+            vert([0, 0, 0], [0, 0]),
+            vert([10, 0, 0], [0, 0]),
+            vert([0, 10, 0], [0, 0]),
+            vert([10, 10, 0], [5, 5]),
+            vert([100, 0, 0], [0, 0]),
+            vert([110, 0, 0], [0, 0]),
+            vert([100, 10, 0], [0, 0]),
+        ];
+        let indices = [0, 1, 2, 1, 3, 2, 4, 5, 6];
+        let got = parts(&indices, &verts);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got.iter().map(Vec::len).sum::<usize>(), indices.len());
+        assert_eq!(got.concat(), indices);
     }
 }

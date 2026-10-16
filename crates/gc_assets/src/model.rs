@@ -7,15 +7,17 @@
 //! - `models/index`: one [`ModelRecord`] per model.
 //! - `models/vertices`: every model's [`ModelVertex`]es, back to back.
 //! - `models/indices`: `u16` triangle indices, relative to the model's first
-//!   vertex; each model has a full and a reduced level of detail.
+//!   vertex; each model has [`LODS`] levels of detail, from full to fewest
+//!   triangles.
 //! - `models/clips`: one [`ClipRecord`] per animation clip.
 //! - `models/bones`: the bone animation texture, [`BONE_TEXELS_PER_ROW`]
 //!   texels per row, one row per frame of every clip. Each texel is four
 //!   half floats; a bone takes three texels (the rows of a 3 × 4 matrix that
 //!   moves a vertex from where it is stored to that frame's pose).
 //! - `models/textures`: [`LAYERS_PER_MATERIAL`] texture layers per material,
-//!   each [`TEXTURE_SIZE`] square RGBA8 with its full mip chain (see
-//!   [`MaterialLayer`]). Models painted in vertex colours have none.
+//!   each [`TEXTURE_SIZE`] square, BC7-compressed (16 bytes per 4 × 4 block
+//!   of RGBA texels) with its mips down to one block (see [`MaterialLayer`]).
+//!   Models painted in vertex colours have none.
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -26,8 +28,8 @@ use crate::{Pack, TableError, read_table};
 
 /// Bumped whenever a record's layout or meaning changes. 2: vertices follow
 /// up to four weighted bones and carry a texture coordinate and tangent.
-/// 3: textured materials.
-pub const MODEL_SCHEMA: u32 = 3;
+/// 3: textured materials. 4: four levels of detail, BC7 textures.
+pub const MODEL_SCHEMA: u32 = 4;
 pub const INDEX_PATH: &str = "models/index";
 pub const VERTICES_PATH: &str = "models/vertices";
 pub const INDICES_PATH: &str = "models/indices";
@@ -47,15 +49,22 @@ pub const BONE_TEXELS_PER_ROW: u32 = 3 * (MAX_BONES + 1);
 pub const POSITION_SCALE: f32 = 4096.0;
 pub const NAME_BYTES: usize = 24;
 
+/// Levels of detail per model: full, then fewer triangles at each step.
+pub const LODS: usize = 4;
+
 /// Side of a material texture layer, in texels.
 pub const TEXTURE_SIZE: u32 = 512;
-/// Mip levels per layer, down to 1 × 1.
-pub const TEXTURE_MIPS: u32 = TEXTURE_SIZE.ilog2() + 1;
-/// Texels in one layer with all its mips (a geometric series, the side
+/// Texels on a side of a compressed block.
+pub const BLOCK_SIDE: u32 = 4;
+/// One BC7 block: 4 × 4 RGBA texels in 16 bytes.
+pub type Block = [u8; 16];
+/// Mip levels per layer, down to a single block (4 × 4).
+pub const TEXTURE_MIPS: u32 = TEXTURE_SIZE.ilog2() - BLOCK_SIDE.ilog2() + 1;
+/// Blocks in one layer with all its mips (a geometric series, the side
 /// being a power of two).
-pub const TEXELS_PER_LAYER: usize = (4 * (TEXTURE_SIZE as usize).pow(2) - 1) / 3;
+pub const BLOCKS_PER_LAYER: usize = (4 * ((TEXTURE_SIZE / BLOCK_SIDE) as usize).pow(2) - 1) / 3;
 pub const LAYERS_PER_MATERIAL: usize = 3;
-pub const TEXELS_PER_MATERIAL: usize = TEXELS_PER_LAYER * LAYERS_PER_MATERIAL;
+pub const BLOCKS_PER_MATERIAL: usize = BLOCKS_PER_LAYER * LAYERS_PER_MATERIAL;
 /// Most materials a pack may hold: GPUs promise 256 texture array layers.
 pub const MAX_MATERIALS: usize = 256 / LAYERS_PER_MATERIAL;
 
@@ -113,7 +122,7 @@ impl ClipKind {
     }
 }
 
-/// One model. 64 bytes.
+/// One model. 80 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct ModelRecord {
@@ -122,7 +131,7 @@ pub struct ModelRecord {
     pub first_vertex: u32,
     pub vertex_count: u32,
     /// First index and index count of each level of detail (0 is full).
-    pub lods: [[u32; 2]; 2],
+    pub lods: [[u32; 2]; LODS],
     pub first_clip: u32,
     pub clip_count: u32,
     /// Height of the rest pose, in tiles.
@@ -223,8 +232,9 @@ pub struct Models<'a> {
     pub clips: &'a [ClipRecord],
     /// Bone texture texels, four half floats each, row by row.
     pub bones: &'a [[u16; 4]],
-    /// Material texture texels: [`TEXELS_PER_LAYER`] per layer, mip by mip.
-    pub textures: &'a [[u8; 4]],
+    /// Material texture blocks: [`BLOCKS_PER_LAYER`] per layer, mip by mip,
+    /// each mip row by row.
+    pub textures: &'a [Block],
 }
 
 impl<'a> Models<'a> {
@@ -243,7 +253,7 @@ impl<'a> Models<'a> {
             textures: table(pack, TEXTURES_PATH)?,
         };
         let rows = m.bones.len() / BONE_TEXELS_PER_ROW as usize;
-        if !m.textures.len().is_multiple_of(TEXELS_PER_MATERIAL) || m.materials() > MAX_MATERIALS {
+        if !m.textures.len().is_multiple_of(BLOCKS_PER_MATERIAL) || m.materials() > MAX_MATERIALS {
             return Err(ModelError::BadTextures);
         }
         for (k, r) in m.models.iter().enumerate() {
@@ -253,6 +263,10 @@ impl<'a> Models<'a> {
                 || r.vertex_count > u32::from(u16::MAX) + 1
                 || r.bones > MAX_BONES + 1
             {
+                return Err(bad);
+            }
+            // Every level has triangles, no more than the level before.
+            if r.lods.iter().any(|l| l[1] == 0) || r.lods.windows(2).any(|w| w[1][1] > w[0][1]) {
                 return Err(bad);
             }
             for &[first, count] in &r.lods {
@@ -297,7 +311,7 @@ impl<'a> Models<'a> {
 
     /// Materials in the texture table.
     pub fn materials(&self) -> usize {
-        self.textures.len() / TEXELS_PER_MATERIAL
+        self.textures.len() / BLOCKS_PER_MATERIAL
     }
 
     /// Rows in the bone texture.
@@ -326,13 +340,13 @@ pub struct ModelTables {
     pub indices: Vec<u16>,
     pub clips: Vec<ClipRecord>,
     pub bones: Vec<[u16; 4]>,
-    pub textures: Vec<[u8; 4]>,
+    pub textures: Vec<Block>,
 }
 
 impl ModelTables {
     /// Materials in the texture table.
     pub fn materials(&self) -> usize {
-        self.textures.len() / TEXELS_PER_MATERIAL
+        self.textures.len() / BLOCKS_PER_MATERIAL
     }
 
     pub fn write(&self, pack: &mut crate::PackWriter) {
@@ -441,14 +455,15 @@ mod tests {
     #[test]
     fn a_layer_holds_every_mip() {
         let sum: usize = (0..TEXTURE_MIPS)
-            .map(|i| ((TEXTURE_SIZE >> i) as usize).pow(2))
+            .map(|i| ((TEXTURE_SIZE >> i) / BLOCK_SIDE).pow(2) as usize)
             .sum();
-        assert_eq!(TEXELS_PER_LAYER, sum);
+        assert_eq!(BLOCKS_PER_LAYER, sum);
+        assert_eq!(TEXTURE_SIZE >> (TEXTURE_MIPS - 1), BLOCK_SIDE);
     }
 
     #[test]
     fn record_sizes_are_stable() {
-        assert_eq!(size_of::<ModelRecord>(), 64);
+        assert_eq!(size_of::<ModelRecord>(), 80);
         assert_eq!(size_of::<ModelVertex>(), 32);
         assert_eq!(size_of::<ClipRecord>(), 16);
     }
@@ -467,7 +482,7 @@ mod tests {
                 name,
                 first_vertex: 0,
                 vertex_count: 3,
-                lods: [[0, 3], [0, 3]],
+                lods: [[0, 3]; LODS],
                 first_clip: 0,
                 clip_count: 1,
                 height: 1.0,
@@ -513,6 +528,17 @@ mod tests {
             assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
         });
         let mut bad = one_model();
+        bad.models[0].lods[3] = [0, 0];
+        parsed(&bad, |m| {
+            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
+        });
+        let mut bad = one_model();
+        bad.indices.extend_from_slice(&[0, 2, 1]);
+        bad.models[0].lods[2] = [0, 6];
+        parsed(&bad, |m| {
+            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
+        });
+        let mut bad = one_model();
         bad.clips[0].frames = 3;
         parsed(&bad, |m| {
             assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
@@ -535,7 +561,7 @@ mod tests {
         });
         let mut mixed = one_model();
         mixed.vertices[1].material = 1;
-        mixed.textures = alloc::vec![[0; 4]; TEXELS_PER_MATERIAL];
+        mixed.textures = alloc::vec![[0; 16]; BLOCKS_PER_MATERIAL];
         parsed(&mixed, |m| {
             assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
         });
@@ -545,7 +571,7 @@ mod tests {
         }
         parsed(&fine, |m| assert_eq!(m.unwrap().materials(), 1));
         let mut bad = one_model();
-        bad.textures = alloc::vec![[0; 4]; TEXELS_PER_LAYER];
+        bad.textures = alloc::vec![[0; 16]; BLOCKS_PER_LAYER];
         parsed(&bad, |m| assert_eq!(m.err(), Some(ModelError::BadTextures)));
         for weights in [[0, 0, 0, 0], [200, 0, 55, 0], [55, 200, 0, 0]] {
             let mut bad = one_model();

@@ -88,7 +88,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Disconnect handling and rejoin, multiplayer save and load.
 - Settings completeness, key rebinding, accessibility options.
 - Performance pass against every budget; stretch targets attempted.
-- Art pass: custom models for faction-defining units and heroes, moving toward high-fidelity soldiers (smooth skinning, 63-bone skeletons, textured materials, shadows and glow are built ahead of time; more detail levels follow); soldier fighting stage 3, matched kills for heroes, charges and cavalry.
+- Art pass: custom models for faction-defining units and heroes, moving toward high-fidelity soldiers (smooth skinning, 63-bone skeletons, textured materials, shadows and glow, four levels of detail and BC7 texture compression are built ahead of time; more final-quality models follow); soldier fighting stage 3, matched kills for heroes, charges and cavalry.
 - Simple self-update check (host's version offered to joining friends).
 - Lobby option: an AI runs a disconnected player's army until they rejoin.
 - **Exit:** 1.0 tagged; a month of game nights with no crash or desync.
