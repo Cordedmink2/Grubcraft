@@ -1,10 +1,7 @@
 //! Sandbox tools: the unit stats you can tune live, and reloading
 //! `data/units.ron` from disk while the game runs.
 
-use std::path::{Path, PathBuf};
-
-use gc_assets::Pack;
-use gc_data::{GameData, UnitRecord};
+use gc_data::UnitRecord;
 use gc_fixed::Fx;
 use gc_sim::{Mass, UnitStats};
 
@@ -165,35 +162,88 @@ fn count(v: u16, d: i32) -> u16 {
     (i32::from(v) + d).clamp(0, i32::from(u16::MAX)) as u16
 }
 
-/// Where `data/` is when the game runs from a checkout of the repository:
-/// `GRUBCRAFT_DATA` if set, else `data/` under the working directory, else
-/// the one this build was made from.
-pub fn data_dir() -> Option<PathBuf> {
-    let candidates = [
-        std::env::var_os("GRUBCRAFT_DATA").map(PathBuf::from),
-        Some(PathBuf::from("data")),
-        Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")),
-    ];
-    candidates
-        .into_iter()
-        .flatten()
-        .find(|d| d.join("units.ron").is_file())
+/// Reading `data/units.ron` from a checkout of the repository.
+#[cfg(feature = "dev")]
+pub mod disk {
+    use std::path::{Path, PathBuf};
+
+    use gc_assets::Pack;
+    use gc_data::GameData;
+    use gc_sim::UnitStats;
+
+    use super::stats_of;
+
+    /// Where `data/` is when the game runs from a checkout of the repository:
+    /// `GRUBCRAFT_DATA` if set, else `data/` under the working directory, else
+    /// the one this build was made from.
+    pub fn data_dir() -> Option<PathBuf> {
+        let candidates = [
+            std::env::var_os("GRUBCRAFT_DATA").map(PathBuf::from),
+            Some(PathBuf::from("data")),
+            Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")),
+        ];
+        candidates
+            .into_iter()
+            .flatten()
+            .find(|d| d.join("units.ron").is_file())
+    }
+
+    /// Unit types read fresh from `dir`, checked by the same rules as the build:
+    /// their names and stats.
+    pub fn reload(dir: &Path) -> Result<(Vec<String>, Vec<UnitStats>), String> {
+        let baked = gc_bake::bake(dir).map_err(|e| e.to_string())?;
+        // A pack must be 16-byte aligned to be read in place.
+        let mut store = vec![0u128; baked.pack.len().div_ceil(16)];
+        let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut store);
+        bytes[..baked.pack.len()].copy_from_slice(&baked.pack);
+        let pack = Pack::parse(&bytes[..baked.pack.len()]).map_err(|e| e.to_string())?;
+        let data = GameData::from_pack(&pack).map_err(|e| e.to_string())?;
+        Ok((
+            data.units.iter().map(|u| u.name().to_string()).collect(),
+            data.units.iter().map(stats_of).collect(),
+        ))
+    }
 }
 
-/// Unit types read fresh from `dir`, checked by the same rules as the build:
-/// their names and stats.
-pub fn reload(dir: &Path) -> Result<(Vec<String>, Vec<UnitStats>), String> {
-    let baked = gc_bake::bake(dir).map_err(|e| e.to_string())?;
-    // A pack must be 16-byte aligned to be read in place.
-    let mut store = vec![0u128; baked.pack.len().div_ceil(16)];
-    let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut store);
-    bytes[..baked.pack.len()].copy_from_slice(&baked.pack);
-    let pack = Pack::parse(&bytes[..baked.pack.len()]).map_err(|e| e.to_string())?;
-    let data = GameData::from_pack(&pack).map_err(|e| e.to_string())?;
-    Ok((
-        data.units.iter().map(|u| u.name().to_string()).collect(),
-        data.units.iter().map(stats_of).collect(),
-    ))
+/// How freshly read unit types line up with the running match's.
+#[cfg(any(feature = "dev", test))]
+#[derive(Debug, PartialEq)]
+pub struct ReloadPlan {
+    /// Index in the fresh table and in the running one, for each name both have.
+    pub matched: Vec<(usize, usize)>,
+    /// Fresh names the running match has no type for.
+    pub added: Vec<String>,
+    /// Running types the fresh table no longer has.
+    pub removed: Vec<String>,
+}
+
+/// Match fresh unit types to the running ones by name, never by position,
+/// so inserting or removing a row cannot hand one type another's stats.
+/// A different order of the types both have is refused: the match, its
+/// replay and the model table all count types by row.
+#[cfg(any(feature = "dev", test))]
+pub fn plan_reload(running: &[String], fresh: &[String]) -> Result<ReloadPlan, String> {
+    let mut matched = Vec::new();
+    let mut added = Vec::new();
+    for (f, name) in fresh.iter().enumerate() {
+        match running.iter().position(|n| n == name) {
+            Some(r) => matched.push((f, r)),
+            None => added.push(name.clone()),
+        }
+    }
+    if matched.windows(2).any(|w| w[0].1 > w[1].1) {
+        return Err("the unit types are in a different order; restart to use the new order".into());
+    }
+    let removed = running
+        .iter()
+        .filter(|n| !fresh.contains(n))
+        .cloned()
+        .collect();
+    Ok(ReloadPlan {
+        matched,
+        added,
+        removed,
+    })
 }
 
 #[cfg(test)]
@@ -220,10 +270,36 @@ mod tests {
         assert_eq!(s.speed.raw() - before.raw(), 1 << 15);
     }
 
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn reload_matches_types_by_name() {
+        let running = names(&["Yari", "Yumi", "Pikes"]);
+        // A row inserted at the front moves every type down one.
+        let plan = plan_reload(&running, &names(&["Skitter", "Yari", "Yumi", "Pikes"])).unwrap();
+        assert_eq!(plan.matched, vec![(1, 0), (2, 1), (3, 2)]);
+        assert_eq!(plan.added, names(&["Skitter"]));
+        assert!(plan.removed.is_empty());
+        // A row removed from the middle.
+        let plan = plan_reload(&running, &names(&["Yari", "Pikes"])).unwrap();
+        assert_eq!(plan.matched, vec![(0, 0), (1, 2)]);
+        assert_eq!(plan.removed, names(&["Yumi"]));
+    }
+
+    #[test]
+    fn reload_refuses_a_reorder() {
+        let running = names(&["Yari", "Yumi", "Pikes"]);
+        assert!(plan_reload(&running, &names(&["Yumi", "Yari", "Pikes"])).is_err());
+        assert!(plan_reload(&running, &names(&["Pikes", "Yari"])).is_err());
+    }
+
+    #[cfg(feature = "dev")]
     #[test]
     fn reload_matches_the_baked_data() {
-        let dir = data_dir().expect("data/ from the repository");
-        let (names, stats) = reload(&dir).expect("data reloads");
+        let dir = disk::data_dir().expect("data/ from the repository");
+        let (names, stats) = disk::reload(&dir).expect("data reloads");
         let data = crate::data::load();
         assert_eq!(names.len(), data.units.len());
         for (u, s) in data.units.iter().zip(&stats) {

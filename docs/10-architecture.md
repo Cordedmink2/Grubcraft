@@ -281,13 +281,13 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 - Every entry is aligned and stored in its final in-memory layout: no parsing, just pointer casts over validated headers.
 - Textures are meant to be stored **BC-compressed** (BC7 colour, BC4/BC5 masks and normals) with mipmaps, uploaded as-is. BC formats are supported by the Metal GPUs in every Mac we target and by every Windows GPU. **Built so far (engine upgrade step 4):** soldier material textures are BC7, with mips down to 4 × 4; terrain and the other textures are not yet stored this way.
 - Small data tables may be LZ4-compressed when it pays off.
-- Dev builds can load loose files and hot-reload them; release builds read only the pack.
+- Dev builds (`--features dev`) can re-bake `data/units.ron` and hot-reload it; release builds read only the pack and do not contain the baker.
 
 ### Game data
 - Factions, units, abilities, upgrades and maps are defined in RON under `data/`, compiled by `gc_bake` into binary tables.
 - The game's build script bakes `data/` and embeds the resulting data pack in the executable, so a build can never run with stale or mismatched data. Art and audio (from M1) go in a separate pack that is memory-mapped, as above.
 - The compiled data has a **BLAKE3 hash**. The lobby refuses to start unless every player has the same game build hash and data hash, which rules out the most common cause of desyncs.
-- In solo sandbox, RON files hot-reload for balance tuning. **Built so far (M1 step 7):** `Shift`+`R` re-bakes `data/units.ron` with `gc_bake` (the same checks as the build) and sends a `TuneUnit` command for each type that changed; the stats panel sends the same command. Tuning goes through the command stream like any order, so it is deterministic and will replay. The unit table is part of the state hash. Adding or removing unit types still needs a restart.
+- In solo sandbox, RON files hot-reload for balance tuning. **Built so far (M1 step 7):** `Shift`+`R` re-bakes `data/units.ron` with `gc_bake` (the same checks as the build) and sends a `TuneUnit` command for each type that changed; the stats panel sends the same command. Types are matched by name, so a row added or removed above a type cannot hand it another's stats, and a changed order of the types is refused (2026-10-16). Reload is behind the `dev` feature of `gc_game` (`cargo run -p gc_game --features dev`), so release builds do not carry the baker. Tuning goes through the command stream like any order, so it is deterministic and will replay. The unit table is part of the state hash. Adding or removing unit types still needs a restart.
 
 ## Maps
 - Heightmap (`u16`), tile types (`u8`), water depth layer (reserved for naval), object list, Bloodseep sites and a small event-script block.

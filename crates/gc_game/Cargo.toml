@@ -15,13 +15,17 @@ path = "src/main.rs"
 # Frame and tick profiling with Tracy (https://github.com/wolfpld/tracy).
 # Off by default: zero cost unless built with `--features profile`.
 profile = ["dep:tracy-client"]
+# Shift+R in the sandbox re-bakes `data/units.ron` from a repository checkout
+# and tunes the types that changed. It pulls the data baker (and its parser)
+# into the executable, so releases leave it out.
+dev = ["dep:gc_bake"]
 
 [dependencies]
 bytemuck.workspace = true
 gc_ai.workspace = true
 gc_assets.workspace = true
 gc_audio.workspace = true
-gc_bake.workspace = true
+gc_bake = { workspace = true, optional = true }
 gc_data.workspace = true
 gc_fixed.workspace = true
 gc_net.workspace = true

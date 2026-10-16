@@ -28,6 +28,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets
       - name: Tracy profiling build
         run: cargo clippy -p gc_game --features profile
+      - name: Data reload build (dev feature)
+        run: cargo clippy -p gc_game --all-targets --features dev
 
   test:
     # The determinism tests must produce identical hashes on every platform:
@@ -47,6 +49,9 @@ jobs:
         with:
           alsa: 'true'
       - run: cargo test --workspace
+      - name: Data reload tests (dev feature)
+        if: runner.os == 'Linux'
+        run: cargo test -p gc_game --features dev
       - name: Determinism in release mode
         run: cargo test --release -p gc_sim --test determinism
       - name: Golden replays in release mode

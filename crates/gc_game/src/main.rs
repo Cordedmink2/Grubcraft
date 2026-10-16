@@ -11,8 +11,8 @@
 //! or speed it up to four times. T opens the stats panel for the chosen type:
 //! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
 //! and regiments on the field change at once. Shift+R reloads `data/units.ron`
-//! when the game runs from the repository. H hides the sandbox panel; C
-//! shows the credits for the art. I hands the side you command to the
+//! when the game runs from the repository and was built with `--features dev`.
+//! H hides the sandbox panel; C shows the credits for the art. I hands the side you command to the
 //! battle AI (Recruit, then Veteran, then General, then back to you); the
 //! panel shows what each computer player is doing and expects.
 //!
@@ -3454,16 +3454,17 @@ impl Running {
         });
     }
 
-    /// R: read `data/units.ron` again and tune every type that changed.
+    /// Shift+R: read `data/units.ron` again and tune every type that changed.
+    #[cfg(feature = "dev")]
     fn reload_data(&mut self) {
-        let Some(dir) = sandbox::data_dir() else {
+        let Some(dir) = sandbox::disk::data_dir() else {
             self.say(
                 "Shift+R reloads data/units.ron, but there is none here (run from the repository)."
                     .into(),
             );
             return;
         };
-        let (names, stats) = match sandbox::reload(&dir) {
+        let (names, stats) = match sandbox::disk::reload(&dir) {
             Ok(fresh) => fresh,
             Err(e) => {
                 logln!("grubcraft: reloading data: {e}");
@@ -3471,25 +3472,35 @@ impl Running {
                 return;
             }
         };
+        // By name, so a row added or removed above a type cannot hand it
+        // another type's stats.
+        let plan = match sandbox::plan_reload(&self.unit_names, &names) {
+            Ok(plan) => plan,
+            Err(e) => {
+                self.say(format!("data/units.ron not reloaded: {e}."));
+                return;
+            }
+        };
         let mut changed = 0;
-        for (unit, new) in stats.iter().enumerate().take(self.unit_stats.len()) {
-            let new = new.sanitized();
-            if new != self.unit_stats[unit] {
-                self.tune(unit as UnitId, new);
+        for &(fresh, running) in &plan.matched {
+            let new = stats[fresh].sanitized();
+            if new != self.unit_stats[running] {
+                self.tune(running as UnitId, new);
                 changed += 1;
             }
         }
-        for (old, new) in self.unit_names.iter_mut().zip(names) {
-            *old = new;
-        }
         let mut message = format!("Reloaded data/units.ron: {changed} unit types changed.");
-        if stats.len() != self.unit_stats.len() {
-            message += &format!(
-                " It now has {} types; restart to add or remove types.",
-                stats.len()
-            );
+        for (what, names) in [("add", &plan.added), ("remove", &plan.removed)] {
+            if !names.is_empty() {
+                message += &format!(" Restart to {what}: {}.", names.join(", "));
+            }
         }
         self.say(message);
+    }
+
+    #[cfg(not(feature = "dev"))]
+    fn reload_data(&mut self) {
+        self.say("Shift+R reloads data/units.ron in a build made with --features dev.".into());
     }
 
     /// Show a line in the sandbox panel for a few seconds.

@@ -18,7 +18,7 @@ Every third-party crate the game uses, why, and what it costs. Policy: see [10 Â
 
 ## Build time only (baker)
 
-These run in `gc_bake` and in `gc_game`'s build script. `blake3` never reaches the game executable; `ron` and `serde` do, for the settings file and the AI personalities (above).
+These run in `gc_bake` and in `gc_game`'s build script (and in the game itself only in a `--features dev` build, for the sandbox's data reload). `blake3` never reaches the game executable; `ron` and `serde` do, for the settings file and the AI personalities (above).
 
 | Crate | Why | Cost and notes |
 |---|---|---|
