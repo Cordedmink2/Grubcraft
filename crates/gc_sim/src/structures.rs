@@ -105,6 +105,10 @@ pub enum Refusal {
     Built,
     /// A regiment is standing there.
     Crowded,
+    /// Its owner's tier is too low for it.
+    Tier,
+    /// Its owner can't pay for it.
+    Price,
     /// A Grub seep or Marrow vein is there.
     Node,
 }
@@ -216,9 +220,18 @@ pub struct StructureView {
     /// Hit points left (rounded up: a building with any left shows 1).
     pub hp: u32,
     pub max_hp: u32,
+    /// Percent built: 100 once finished.
+    pub built_percent: u8,
+    /// While its main building's tier upgrade goes on: the building it
+    /// becomes, and percent done.
+    pub upgrading: Option<(BuildingId, u8)>,
 }
 
 impl StructureView {
+    pub fn finished(&self) -> bool {
+        self.built_percent == 100
+    }
+
     /// Centre of the footprint.
     pub fn centre(&self) -> FxVec2 {
         let (x, y) = self.tile;
@@ -316,12 +329,33 @@ const MELEE_REACH: Fx = Fx::from_int(2);
 const RETRY_TICKS: u16 = TICKS_PER_SECOND as u16;
 /// Tries in a row that bring a regiment no nearer before it gives up.
 const STALLS: u8 = 3;
+/// A building goes up at this percent of its hit points and fills up as
+/// it is built.
+const FOUNDATION_PERCENT: u32 = 10;
+/// Work a builder does a tick, in hundredths of a tick of build time: the
+/// first at full speed, each other at half, up to [`CREW`] at once.
+const FIRST_HAND: u32 = 100;
+const OTHER_HAND: u32 = 50;
+const CREW: u8 = 4;
+/// Hit points a builder mends a second on a finished building.
+const REPAIR_HP: u32 = 8;
+/// Percent of its cost a building still going up gives back when
+/// cancelled.
+pub const CANCEL_REFUND_PERCENT: u32 = 75;
+
+/// What a regiment does at a building it was sent to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Work {
+    /// Knock it down (an enemy's).
+    Attack = 0,
+    /// Build it, or mend it once it is up (its owner's).
+    Build = 1,
+}
 
 /// Every building on the field, and which regiments are attacking which.
 pub struct Structures {
     buildings: Vec<BuildingStats>,
-    /// Each regiment type's class against buildings, by [`crate::UnitId`].
-    breakers: Vec<Breaker>,
     generation: Vec<u16>,
     owner: Vec<PlayerId>,
     building: Vec<BuildingId>,
@@ -329,11 +363,26 @@ pub struct Structures {
     /// Hit points left, in hundredths; 0 for a free slot.
     hp: Vec<u32>,
     free: Vec<u32>,
+    /// Build work left and in all, in hundredths of a tick (see
+    /// [`FIRST_HAND`]); `work_left` is 0 once finished.
+    work_left: Vec<u32>,
+    work_full: Vec<u32>,
+    /// A main building's tier upgrade going on: what it becomes, and ticks
+    /// left and in all.
+    upgrade_to: Vec<Option<BuildingId>>,
+    upgrade_left: Vec<u32>,
+    upgrade_full: Vec<u32>,
+    /// Builders who worked on each building this tick.
+    crew: Vec<u8>,
+    /// Tempo: build and upgrade times at this percent of Standard.
+    build_percent: u32,
     /// By regiment slot: the building it is attacking, and the generation
     /// of the regiment the order was given to (a slot reused by a new
     /// regiment doesn't inherit it).
     siege: Vec<Option<StructureHandle>>,
     siege_gen: Vec<u16>,
+    /// By regiment slot: what it does there.
+    work: Vec<Work>,
     /// By regiment slot: ticks until its next blow, or its next try to
     /// reach the building.
     siege_clock: Vec<u16>,
@@ -345,25 +394,49 @@ pub struct Structures {
     pub(crate) fallen: Vec<StructureHandle>,
 }
 
+/// The match's building table, each made sane, and with no tier upgrade
+/// from a building of another footprint (it would grow over its ground).
+fn sanitized(buildings: &[BuildingStats]) -> Vec<BuildingStats> {
+    let mut table: Vec<BuildingStats> = buildings.iter().map(|b| b.sanitized()).collect();
+    for i in 0..table.len() {
+        let size = |b: &BuildingStats| (b.width, b.depth);
+        if let Some(from) = table[i].upgrades_from
+            && table
+                .get(usize::from(from))
+                .is_none_or(|f| size(f) != size(&table[i]))
+        {
+            table[i].upgrades_from = None;
+        }
+    }
+    table
+}
+
 impl Structures {
     pub(crate) fn new(
         buildings: &[BuildingStats],
-        units: &[ConquestUnit],
         capacity: u32,
         regiments: usize,
+        build_percent: u32,
     ) -> Structures {
         let n = capacity as usize;
         Structures {
-            buildings: buildings.iter().map(|b| b.sanitized()).collect(),
-            breakers: units.iter().map(|u| u.breaker).collect(),
+            buildings: sanitized(buildings),
             generation: vec![0; n],
             owner: vec![0; n],
             building: vec![0; n],
             tile: vec![(0, 0); n],
             hp: vec![0; n],
             free: (0..capacity).rev().collect(),
+            work_left: vec![0; n],
+            work_full: vec![0; n],
+            upgrade_to: vec![None; n],
+            upgrade_left: vec![0; n],
+            upgrade_full: vec![0; n],
+            crew: vec![0; n],
+            build_percent: build_percent.clamp(10, 1000),
             siege: vec![None; regiments],
             siege_gen: vec![0; regiments],
+            work: vec![Work::Attack; regiments],
             siege_clock: vec![0; regiments],
             siege_gap: vec![Fx::ZERO; regiments],
             siege_stalls: vec![0; regiments],
@@ -401,6 +474,11 @@ impl Structures {
         self.resolve(h).map(|i| self.owner[i])
     }
 
+    /// Building `h`'s slot, if it stands and is `player`'s.
+    pub(crate) fn owned(&self, h: StructureHandle, player: PlayerId) -> Option<usize> {
+        self.resolve(h).filter(|&i| self.owner[i] == player)
+    }
+
     pub fn get(&self, h: StructureHandle) -> Option<StructureView> {
         self.resolve(h).map(|i| self.view(i))
     }
@@ -416,7 +494,94 @@ impl Structures {
             depth: b.depth,
             hp: self.hp[i].div_ceil(HP_SCALE),
             max_hp: u32::from(b.hp),
+            built_percent: if self.finished(i) {
+                100
+            } else {
+                // Never 100 until it is.
+                (99 - u64::from(self.work_left[i]) * 99 / u64::from(self.work_full[i].max(1))) as u8
+            },
+            upgrading: self.upgrade_to[i].map(|to| {
+                let done = self.upgrade_full[i] - self.upgrade_left[i];
+                (to, (done * 100 / self.upgrade_full[i].max(1)) as u8)
+            }),
         }
+    }
+
+    /// Whether building slot `i` is finished.
+    pub(crate) fn finished(&self, i: usize) -> bool {
+        self.work_left[i] == 0
+    }
+
+    /// The slots of `owner`'s finished buildings, in index order.
+    fn finished_of(&self, owner: PlayerId) -> impl Iterator<Item = usize> + '_ {
+        self.standing()
+            .filter(move |&i| self.owner[i] == owner && self.finished(i))
+    }
+
+    /// `owner`'s tier: the highest of their finished main buildings', 0
+    /// with none.
+    pub fn tier_of(&self, owner: PlayerId) -> u8 {
+        self.finished_of(owner)
+            .map(|i| self.stats_of(i))
+            .filter(|b| b.role == Role::Main)
+            .map(|b| b.tier.max(1))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Whether building type `building` is `of` or one of its tier
+    /// upgrades.
+    pub(crate) fn grew_from(&self, mut building: BuildingId, of: BuildingId) -> bool {
+        // Upgrades chain at most a few deep; the bound keeps a bad table
+        // from looping.
+        for _ in 0..self.buildings.len() {
+            if building == of {
+                return true;
+            }
+            match self
+                .buildings
+                .get(building as usize)
+                .and_then(|b| b.upgrades_from)
+            {
+                Some(from) => building = from,
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// The building type that upgrades building type `building`, if any.
+    pub(crate) fn upgrade_of(&self, building: BuildingId) -> Option<BuildingId> {
+        self.buildings
+            .iter()
+            .position(|b| b.upgrades_from == Some(building))
+            .map(|i| i as BuildingId)
+    }
+
+    /// The type of building slot `i`.
+    pub(crate) fn kind_of(&self, i: usize) -> BuildingId {
+        self.building[i]
+    }
+
+    /// Where what building slot `i` trains comes out: two tiles off the
+    /// middle of its south side, or of its east, west or north side where
+    /// that is blocked.
+    pub(crate) fn door(&self, i: usize, nav: &Nav) -> FxVec2 {
+        let [x, y, w, d] = self.footprint(i);
+        let (mid_x, mid_y) = (
+            Fx::from_int(x) + Fx::from_ratio(w, 2),
+            Fx::from_int(y) + Fx::from_ratio(d, 2),
+        );
+        let off = Fx::from_int(2);
+        let south = FxVec2::new(mid_x, Fx::from_int(y + d) + off);
+        [
+            FxVec2::new(Fx::from_int(x + w) + off, mid_y),
+            FxVec2::new(Fx::from_int(x) - off, mid_y),
+            FxVec2::new(mid_x, Fx::from_int(y) - off),
+        ]
+        .into_iter()
+        .find(|&p| !nav.walkable(south) && nav.walkable(p))
+        .unwrap_or(south)
     }
 
     /// Live buildings in index order.
@@ -448,16 +613,32 @@ impl Structures {
         flag: u8,
         here: FxVec2,
     ) -> Option<[i32; 4]> {
-        self.standing()
-            .filter(|&i| self.owner[i] == owner && self.stats_of(i).flags & flag != 0)
+        self.finished_of(owner)
+            .filter(|&i| self.stats_of(i).flags & flag != 0)
             .map(|i| self.footprint(i))
             .min_by_key(|&foot| (nearest_point(foot, here) - here).length_sq_raw())
     }
 
-    /// What `owner`'s standing buildings add to their supply cap.
+    /// `owner`'s supply cap: what their finished buildings add, up to
+    /// [`crate::economy::SUPPLY_LIMIT`].
+    pub(crate) fn supply_cap(&self, owner: PlayerId) -> u32 {
+        self.supply_of(owner).min(crate::economy::SUPPLY_LIMIT)
+    }
+
+    /// Whether building slot `i` has a tier upgrade going on.
+    pub(crate) fn upgrading(&self, i: usize) -> bool {
+        self.upgrade_to[i].is_some()
+    }
+
+    /// Building slot `i`'s owner, if the building of generation
+    /// `generation` still stands there.
+    pub(crate) fn live_slot(&self, i: usize, generation: u16) -> Option<PlayerId> {
+        (self.hp[i] > 0 && self.generation[i] == generation).then(|| self.owner[i])
+    }
+
+    /// What `owner`'s finished buildings add to their supply cap.
     pub(crate) fn supply_of(&self, owner: PlayerId) -> u32 {
-        self.standing()
-            .filter(|&i| self.owner[i] == owner)
+        self.finished_of(owner)
             .map(|i| u32::from(self.stats_of(i).supply))
             .sum()
     }
@@ -514,8 +695,59 @@ impl Structures {
         self.building[i] = building;
         self.tile[i] = tile;
         self.hp[i] = u32::from(self.buildings[building as usize].hp) * HP_SCALE;
+        self.work_left[i] = 0;
+        self.upgrade_to[i] = None;
         nav.set_built(self.footprint(i), true, regs);
         Some(self.handle(i))
+    }
+
+    /// Lay the foundation of a building for `owner`: it stands at
+    /// [`FOUNDATION_PERCENT`] of its hit points until built. `None` when
+    /// the pool is full; the caller has checked [`Structures::check`].
+    pub(crate) fn found(
+        &mut self,
+        owner: PlayerId,
+        building: BuildingId,
+        tile: (i32, i32),
+        nav: &mut Nav,
+        regs: &Regiments,
+    ) -> Option<StructureHandle> {
+        let h = self.spawn(owner, building, tile, nav, regs)?;
+        let i = h.index as usize;
+        let b = self.buildings[building as usize];
+        self.hp[i] = (u32::from(b.hp) * HP_SCALE * FOUNDATION_PERCENT / 100).max(1);
+        self.work_full[i] = u32::from(b.build_ticks) * self.build_percent;
+        self.work_left[i] = self.work_full[i];
+        Some(h)
+    }
+
+    /// Start building slot `i`'s tier upgrade to building type `to`.
+    pub(crate) fn start_upgrade(&mut self, i: usize, to: BuildingId) {
+        let ticks = u32::from(self.buildings[to as usize].build_ticks) * self.build_percent / 100;
+        self.upgrade_to[i] = Some(to);
+        self.upgrade_full[i] = ticks.max(1);
+        self.upgrade_left[i] = self.upgrade_full[i];
+    }
+
+    /// What building slot `i` cost to start: a foundation's full price, or
+    /// its upgrade's, while going on; `None` when there is nothing to call
+    /// off. Calling it off stops it.
+    pub(crate) fn call_off(
+        &mut self,
+        i: usize,
+        nav: &mut Nav,
+        regs: &Regiments,
+    ) -> Option<(u32, u32)> {
+        let cost = |b: &BuildingStats| (u32::from(b.cost_grub), u32::from(b.cost_marrow));
+        if let Some(to) = self.upgrade_to[i].take() {
+            return Some(cost(&self.buildings[to as usize]));
+        }
+        if self.finished(i) {
+            return None;
+        }
+        let paid = cost(self.stats_of(i));
+        self.remove(i, nav, regs);
+        Some(paid)
     }
 
     /// Take a building off the field; its ground is free again.
@@ -532,14 +764,30 @@ impl Structures {
         nav.set_built(self.footprint(i), false, regs);
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.hp[i] = 0;
+        self.work_left[i] = 0;
+        self.upgrade_to[i] = None;
         self.free.push(i as u32);
     }
 
     /// Order regiment slot `r` to attack building `target`. The caller has
     /// checked the regiment is the issuer's and the building an enemy's.
     pub(crate) fn besiege(&mut self, regs: &mut Regiments, r: usize, target: StructureHandle) {
+        self.send(regs, r, target, Work::Attack);
+    }
+
+    /// Send regiment slot `r` to building `target` to do `work` there. The
+    /// caller has checked the regiment is the issuer's, and the building an
+    /// enemy's to attack or the issuer's own to build.
+    pub(crate) fn send(
+        &mut self,
+        regs: &mut Regiments,
+        r: usize,
+        target: StructureHandle,
+        work: Work,
+    ) {
         // Whatever it was doing, it stops to see to this.
         regs.halt(r);
+        self.work[r] = work;
         self.siege[r] = Some(target);
         self.siege_gen[r] = regs.generation[r];
         self.siege_clock[r] = 0;
@@ -552,7 +800,12 @@ impl Structures {
         self.siege[r] = None;
     }
 
-    /// The building regiment slot `r` is attacking, if any (and if both
+    /// The building regiment slot `r` was sent to, and what to do there.
+    pub(crate) fn job_of(&self, regs: &Regiments, r: usize) -> Option<(StructureHandle, Work)> {
+        Some((self.siege_of(regs, r)?, self.work[r]))
+    }
+
+    /// The building regiment slot `r` was sent to, if any (and if both
     /// still stand).
     pub(crate) fn siege_of(&self, regs: &Regiments, r: usize) -> Option<StructureHandle> {
         self.siege[r].filter(|&s| {
@@ -561,8 +814,16 @@ impl Structures {
     }
 
     /// One tick of regiments attacking buildings: close in, then hit.
-    pub(crate) fn update(&mut self, regs: &mut Regiments, units: &[UnitStats], nav: &mut Nav) {
+    pub(crate) fn update(
+        &mut self,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        kinds: &[ConquestUnit],
+        nav: &mut Nav,
+    ) {
         self.fallen.clear();
+        self.upgrades();
+        self.crew.fill(0);
         for r in 0..self.siege.len() {
             let Some(target) = self.siege_of(regs, r) else {
                 // No order, or the building or the regiment is gone.
@@ -585,7 +846,8 @@ impl Structures {
             let s = target.index as usize;
             let unit = &units[regs.unit[r] as usize];
             let way = Approach::of(regs, unit, r, self.footprint(s));
-            let reach = if unit.range > Fx::ZERO {
+            let building = self.work[r] == Work::Build;
+            let reach = if unit.range > Fx::ZERO && !building {
                 unit.range
             } else {
                 way.reach()
@@ -598,15 +860,77 @@ impl Structures {
                 continue;
             }
             way.arrive(regs, r);
+            if building {
+                if !self.build(s) {
+                    // Built and whole: its work is done.
+                    self.siege[r] = None;
+                }
+                continue;
+            }
             if self.siege_clock[r] > 0 {
                 continue;
             }
-            self.blow(regs, unit, r, s);
+            let breaker = kinds
+                .get(usize::from(regs.unit[r]))
+                .map_or(Breaker::Regiment, |k| k.breaker);
+            self.blow(regs, unit, breaker, r, s);
             if self.hp[s] == 0 {
                 self.fallen.push(target);
                 self.remove(s, nav, regs);
                 self.siege[r] = None;
             }
+        }
+    }
+
+    /// One builder's tick on building slot `s`: build it, or once it is up,
+    /// mend it. Returns false when there is nothing left to do (or the crew
+    /// is full, which the builder waits out).
+    fn build(&mut self, s: usize) -> bool {
+        let max = u32::from(self.stats_of(s).hp) * HP_SCALE;
+        if self.crew[s] >= CREW {
+            return true;
+        }
+        if self.finished(s) {
+            if self.hp[s] >= max {
+                return false;
+            }
+            self.crew[s] += 1;
+            self.hp[s] = (self.hp[s] + REPAIR_HP * HP_SCALE / TICKS_PER_SECOND).min(max);
+            return true;
+        }
+        let hand = if self.crew[s] == 0 {
+            FIRST_HAND
+        } else {
+            OTHER_HAND
+        };
+        self.crew[s] += 1;
+        // Hit points rise with the work done, from the foundation's to
+        // full, so damage taken while building stays taken.
+        let full = u64::from(self.work_full[s].max(1));
+        let rise = u64::from(max) * u64::from(100 - FOUNDATION_PERCENT) / 100;
+        let risen = |left: u32| (rise * (full - u64::from(left)) / full) as u32;
+        let before = risen(self.work_left[s]);
+        self.work_left[s] = self.work_left[s].saturating_sub(hand);
+        self.hp[s] = (self.hp[s] + risen(self.work_left[s]) - before).min(max);
+        true
+    }
+
+    /// Tier upgrades go on by themselves; one done turns the building into
+    /// its upgrade, keeping the damage it has taken.
+    fn upgrades(&mut self) {
+        for i in 0..self.hp.len() {
+            let Some(to) = self.upgrade_to[i].filter(|_| self.hp[i] > 0) else {
+                continue;
+            };
+            self.upgrade_left[i] -= 1;
+            if self.upgrade_left[i] > 0 {
+                continue;
+            }
+            let gain = u32::from(self.buildings[to as usize].hp)
+                .saturating_sub(u32::from(self.stats_of(i).hp));
+            self.hp[i] += gain * HP_SCALE;
+            self.building[i] = to;
+            self.upgrade_to[i] = None;
         }
     }
 
@@ -631,7 +955,7 @@ impl Structures {
 
     /// Regiment slot `r` (of type `unit`) strikes building slot `s`: a
     /// volley each reload, or its front rank's blows once a second.
-    fn blow(&mut self, regs: &Regiments, unit: &UnitStats, r: usize, s: usize) {
+    fn blow(&mut self, regs: &Regiments, unit: &UnitStats, breaker: Breaker, r: usize, s: usize) {
         let (base, every) = if unit.range > Fx::ZERO {
             (
                 u64::from(regs.models[r]) * u64::from(unit.missile_damage) * u64::from(HP_SCALE),
@@ -648,11 +972,6 @@ impl Structures {
             )
         };
         self.siege_clock[r] = every;
-        let breaker = self
-            .breakers
-            .get(regs.unit[r] as usize)
-            .copied()
-            .unwrap_or_default();
         let armour = self.buildings[self.building[s] as usize].armour;
         let damage = base * u64::from(breaker.percent(armour)) / 100;
         self.hp[s] = self.hp[s].saturating_sub(u32::try_from(damage).unwrap_or(u32::MAX));
@@ -662,10 +981,6 @@ impl Structures {
         h.u32(self.buildings.len() as u32);
         for b in &self.buildings {
             b.hash_into(h);
-        }
-        h.u32(self.breakers.len() as u32);
-        for b in &self.breakers {
-            h.u8(*b as u8);
         }
         for i in 0..self.hp.len() {
             h.u16(self.generation[i]);
@@ -677,11 +992,21 @@ impl Structures {
             h.u16(self.building[i]);
             h.i32(self.tile[i].0);
             h.i32(self.tile[i].1);
+            h.u32(self.work_left[i]);
+            if self.work_left[i] > 0 {
+                h.u32(self.work_full[i]);
+            }
+            if let Some(to) = self.upgrade_to[i] {
+                h.u16(to);
+                h.u32(self.upgrade_left[i]);
+                h.u32(self.upgrade_full[i]);
+            }
         }
+        h.u32(self.build_percent);
         for r in 0..self.siege.len() {
             match self.siege_of(regs, r) {
                 Some(s) => {
-                    h.u8(1);
+                    h.u8(1 + self.work[r] as u8);
                     h.u32(s.index);
                     h.u16(s.generation);
                     h.u16(self.siege_clock[r]);

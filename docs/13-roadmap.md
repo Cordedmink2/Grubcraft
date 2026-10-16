@@ -63,7 +63,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Annihilation and Titan's Heart victories.
 - One Duel map (Ribcage Pass) and one Warfield map (The Four Teeth).
   - **Progress (2026-10-15):** both maps and the map validator `gc_mapcheck` are built (`data/maps/`, [07 · Map format and tooling](07-world-and-maps.md#map-format-and-tooling)): first versions with plain terrain, checked for fairness, and the game opens them only in the sandbox (`--map`).
-- **Progress (2026-10-16):** Conquest mode is being built in six steps (buildings, economy, construction and training, Conquest in the game, victory and fog of war, six players). Step 1: buildings in the simulation and the faction rosters baked into the game data. Step 2: the economy in the simulation (workers gather Grub and Marrow and carry it home, seeps and veins run to dregs, supply and upkeep).
+- **Progress (2026-10-16):** Conquest mode is being built in six steps (buildings, economy, construction and training, Conquest in the game, victory and fog of war, six players). Step 1: buildings in the simulation and the faction rosters baked into the game data. Step 2: the economy in the simulation (workers gather Grub and Marrow and carry it home, seeps and veins run to dregs, supply and upkeep). Step 3 (2026-10-16): construction, training and tiers in the simulation (foundations and builders, production queues with supply and rally points, call-offs and tier upgrades).
 - AI track: Conquest AI for the Ember Clans and the Brood; AI allies answer pings; the AI arena (AI-3).
 - **Exit:** a full 6-player Conquest game finishes inside the 6 GB memory budget.
 

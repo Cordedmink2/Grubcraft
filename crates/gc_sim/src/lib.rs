@@ -28,6 +28,7 @@ pub mod formation;
 mod hash;
 pub mod morale;
 pub mod nav;
+pub mod production;
 mod regiments;
 pub mod scenario;
 pub mod stances;
@@ -44,8 +45,10 @@ pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource};
 pub use fork::Standing;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
+pub use production::Production;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
+use structures::Work;
 pub use structures::{
     BuildingId, BuildingStats, Refusal, StructureHandle, StructureView, Structures,
 };
@@ -64,7 +67,7 @@ use vision::Vision;
 
 /// The parts of the simulation's state, in the order [`World::state_hash`]
 /// hashes them and [`World::system_hashes`] lists them.
-pub const SYSTEMS: [&str; 12] = [
+pub const SYSTEMS: [&str; 13] = [
     "clock",
     "random streams",
     "unit stats",
@@ -77,6 +80,7 @@ pub const SYSTEMS: [&str; 12] = [
     "champions",
     "structures",
     "economy",
+    "production",
 ];
 
 /// The simulation's rules version. Two builds with the same version play
@@ -533,6 +537,40 @@ pub enum Command {
     /// Marrow vein, see [`economy`]) and carries each load home, until
     /// given another order.
     Gather { regiment: RegimentHandle, node: u16 },
+    /// Conquest: a worker lays the foundation of a building of type
+    /// `building` with its north-west tile at `tile`, pays for it, and
+    /// builds it (see [`structures`]). Refused where it doesn't fit, before
+    /// its owner's tier allows it, or when they can't pay.
+    Build {
+        regiment: RegimentHandle,
+        building: BuildingId,
+        tile: (i16, i16),
+    },
+    /// Conquest: a worker helps build one of its owner's buildings, or
+    /// mends it once it is up.
+    Construct {
+        regiment: RegimentHandle,
+        structure: StructureHandle,
+    },
+    /// Conquest: call off a building still going up, or its tier upgrade,
+    /// for most of what it cost.
+    CallOff { structure: StructureHandle },
+    /// Conquest: a building queues a regiment of type `unit` (see
+    /// [`production`]), paid for now.
+    Train {
+        structure: StructureHandle,
+        unit: UnitId,
+    },
+    /// Conquest: take the last regiment off a building's queue, for all it
+    /// cost.
+    Untrain { structure: StructureHandle },
+    /// Conquest: a main building starts its tier upgrade.
+    Upgrade { structure: StructureHandle },
+    /// Conquest: where what a building trains marches to.
+    Rally {
+        structure: StructureHandle,
+        at: FxVec2,
+    },
     /// Sandbox: take a building off the field (any player's).
     RemoveStructure { structure: StructureHandle },
 }
@@ -549,7 +587,14 @@ impl Command {
             | Command::SetFormation { .. }
             | Command::Ready
             | Command::AttackStructure { .. }
-            | Command::Gather { .. } => true,
+            | Command::Gather { .. }
+            | Command::Build { .. }
+            | Command::Construct { .. }
+            | Command::CallOff { .. }
+            | Command::Train { .. }
+            | Command::Untrain { .. }
+            | Command::Upgrade { .. }
+            | Command::Rally { .. } => true,
             Command::SpawnRegiment { .. }
             | Command::RemoveRegiment { .. }
             | Command::TuneUnit { .. }
@@ -663,8 +708,30 @@ impl World {
 
     /// Player `p`'s store and supply (Conquest only).
     pub fn bank(&self, p: PlayerId) -> Option<Bank> {
-        let c = self.conquest.as_ref()?;
-        Some(c.economy.bank(&self.regiments, &c.structures, p))
+        Some(self.conquest.as_ref()?.bank(&self.regiments, p))
+    }
+
+    /// Training queues and rally points (Conquest only).
+    pub fn production(&self) -> Option<&Production> {
+        Some(&self.conquest.as_ref()?.production)
+    }
+
+    /// Whether `player` could have a worker lay a building of type
+    /// `building` at `tile` now, and if not, why: the check
+    /// [`Command::Build`] makes.
+    pub fn can_lay(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        tile: (i32, i32),
+    ) -> Result<(), Refusal> {
+        self.conquest.as_ref().ok_or(Refusal::NoBuildings)?.can_lay(
+            player,
+            building,
+            tile,
+            &self.nav,
+            &self.regiments,
+        )
     }
 
     /// Whether a building of type `building` could go up now with its
@@ -693,8 +760,20 @@ impl World {
 
     /// The building regiment `h` is attacking, if any.
     pub fn siege_target(&self, h: RegimentHandle) -> Option<StructureHandle> {
+        self.job_of(h, Work::Attack)
+    }
+
+    /// The building regiment `h` is building or mending, if any.
+    pub fn building_target(&self, h: RegimentHandle) -> Option<StructureHandle> {
+        self.job_of(h, Work::Build)
+    }
+
+    fn job_of(&self, h: RegimentHandle, work: Work) -> Option<StructureHandle> {
         let i = self.regiments.resolve(h)?;
-        self.structures()?.siege_of(&self.regiments, i)
+        self.structures()?
+            .job_of(&self.regiments, i)
+            .filter(|&(_, w)| w == work)
+            .map(|(s, _)| s)
     }
 
     /// The match's regiment types, indexed by [`UnitId`].
@@ -765,13 +844,9 @@ impl World {
             self.tick,
             &mut self.combat_rng,
         );
-        if let Some(Conquest {
-            structures,
-            economy,
-        }) = &mut self.conquest
-        {
-            structures.update(&mut self.regiments, &self.units, &mut self.nav);
-            economy.update(&mut self.regiments, &self.units, structures);
+        if let Some(conquest) = &mut self.conquest {
+            conquest.update(&mut self.regiments, &self.units, &mut self.nav);
+            self.raise_trained();
         }
         morale::update(
             &mut self.regiments,
@@ -977,7 +1052,7 @@ impl World {
                     Some(r)
                         if self.regiments.owner[r] == pc.player
                             && !self.regiments.morale_state[r].broken()
-                            && conquest.economy.can_gather(&self.regiments, r, node) =>
+                            && conquest.can_gather(&self.regiments, r, node) =>
                     {
                         // Sent again to the node it works: it keeps on.
                         if conquest.economy.work_of(&self.regiments, r) != Some(node) {
@@ -989,11 +1064,108 @@ impl World {
                     _ => false,
                 }
             }
+            Command::Build {
+                regiment,
+                building,
+                tile,
+            } => {
+                let tile = (i32::from(tile.0), i32::from(tile.1));
+                match (self.worker_of(pc.player, regiment), &mut self.conquest) {
+                    (Some(r), Some(c)) => c.lay(
+                        pc.player,
+                        r,
+                        building,
+                        tile,
+                        &mut self.nav,
+                        &mut self.regiments,
+                    ),
+                    _ => false,
+                }
+            }
+            Command::Construct {
+                regiment,
+                structure,
+            } => match (self.worker_of(pc.player, regiment), &mut self.conquest) {
+                (Some(r), Some(c)) => c.construct(pc.player, r, structure, &mut self.regiments),
+                _ => false,
+            },
+            Command::CallOff { structure } => self
+                .conquest
+                .as_mut()
+                .is_some_and(|c| c.call_off(pc.player, structure, &mut self.nav, &self.regiments)),
+            Command::Train { structure, unit } => self
+                .conquest
+                .as_mut()
+                .is_some_and(|c| c.train(pc.player, structure, unit)),
+            Command::Untrain { structure } => self
+                .conquest
+                .as_mut()
+                .is_some_and(|c| c.untrain(pc.player, structure)),
+            Command::Upgrade { structure } => self
+                .conquest
+                .as_mut()
+                .is_some_and(|c| c.upgrade(pc.player, structure)),
+            Command::Rally { structure, at } => self
+                .conquest
+                .as_mut()
+                .is_some_and(|c| c.set_rally(pc.player, structure, at)),
             Command::RemoveStructure { structure } => self.conquest.as_mut().is_some_and(|c| {
                 c.structures
                     .despawn(structure, &mut self.nav, &self.regiments)
             }),
         }
+    }
+
+    /// The slot of `player`'s regiment `h`, if it is theirs and not
+    /// broken: one they can set to work.
+    fn worker_of(&self, player: PlayerId, h: RegimentHandle) -> Option<usize> {
+        self.regiments.resolve(h).filter(|&r| {
+            self.regiments.owner[r] == player && !self.regiments.morale_state[r].broken()
+        })
+    }
+
+    /// Put the regiments that finished training this tick on the field,
+    /// out of the building's south side and marching to its rally point.
+    fn raise_trained(&mut self) {
+        // Down the map (scenario::NORTH is up it).
+        const SOUTH: Angle = Angle(0x4000);
+        let Some(conquest) = &mut self.conquest else {
+            return;
+        };
+        // Taken out and put back, so the list keeps its room.
+        let trained = core::mem::take(&mut conquest.production.trained);
+        for t in &trained {
+            let spawned = self
+                .units
+                .get(usize::from(t.unit))
+                .and_then(|stats| self.regiments.spawn(t.owner, t.unit, t.at, SOUTH, stats));
+            let Some(h) = spawned else {
+                // No room for it: what it cost comes back.
+                let u = conquest.unit(t.unit);
+                conquest
+                    .economy
+                    .refund(t.owner, u32::from(u.cost_grub), u32::from(u.cost_marrow));
+                continue;
+            };
+            self.vision.start(
+                &self.regiments,
+                &self.units,
+                &self.terrain,
+                h.index as usize,
+            );
+            if let Some(target) = t.rally {
+                self.regiments.order(
+                    h,
+                    Order {
+                        target,
+                        facing: None,
+                        files: 0,
+                        pace: Fx::ZERO,
+                    },
+                );
+            }
+        }
+        conquest.production.trained = trained;
     }
 
     /// Regiment `h` was given another order: it stops attacking any
@@ -1210,13 +1382,18 @@ impl World {
             }
             // Only in Conquest, so Field Battles hash as before buildings.
             "structures" => {
-                if let Some(structures) = self.structures() {
-                    structures.hash_into(&self.regiments, h);
+                if let Some(conquest) = &self.conquest {
+                    conquest.hash_structures(&self.regiments, h);
                 }
             }
             "economy" => {
                 if let Some(economy) = self.economy() {
                     economy.hash_into(&self.regiments, h);
+                }
+            }
+            "production" => {
+                if let Some(c) = &self.conquest {
+                    c.production.hash_into(&c.structures, h);
                 }
             }
             other => unreachable!("no hash for system {other}"),

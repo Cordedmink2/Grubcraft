@@ -166,6 +166,47 @@ impl Writer {
                 self.handle(regiment);
                 self.var(u64::from(node));
             }
+            Command::Build {
+                regiment,
+                building,
+                tile,
+            } => {
+                self.u8(12);
+                self.handle(regiment);
+                self.var(u64::from(building));
+                self.var(u64::from(tile.0 as u16));
+                self.var(u64::from(tile.1 as u16));
+            }
+            Command::Construct {
+                regiment,
+                structure,
+            } => {
+                self.u8(13);
+                self.handle(regiment);
+                self.structure(structure);
+            }
+            Command::CallOff { structure } => {
+                self.u8(14);
+                self.structure(structure);
+            }
+            Command::Train { structure, unit } => {
+                self.u8(15);
+                self.structure(structure);
+                self.var(u64::from(unit));
+            }
+            Command::Untrain { structure } => {
+                self.u8(16);
+                self.structure(structure);
+            }
+            Command::Upgrade { structure } => {
+                self.u8(17);
+                self.structure(structure);
+            }
+            Command::Rally { structure, at } => {
+                self.u8(18);
+                self.structure(structure);
+                self.vec(at);
+            }
         }
     }
 }
@@ -338,6 +379,32 @@ impl<'a> Reader<'a> {
                 regiment: self.handle()?,
                 node: self.var_as()?,
             },
+            12 => Command::Build {
+                regiment: self.handle()?,
+                building: self.var_as()?,
+                tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+            },
+            13 => Command::Construct {
+                regiment: self.handle()?,
+                structure: self.structure()?,
+            },
+            14 => Command::CallOff {
+                structure: self.structure()?,
+            },
+            15 => Command::Train {
+                structure: self.structure()?,
+                unit: self.var_as()?,
+            },
+            16 => Command::Untrain {
+                structure: self.structure()?,
+            },
+            17 => Command::Upgrade {
+                structure: self.structure()?,
+            },
+            18 => Command::Rally {
+                structure: self.structure()?,
+                at: self.vec()?,
+            },
             _ => return None,
         };
         Some(PlayerCommand { player, command })
@@ -382,6 +449,56 @@ mod tests {
                     generation: 3,
                 },
                 node: 65_535,
+            },
+            Command::Build {
+                regiment: RegimentHandle {
+                    index: 8,
+                    generation: 1,
+                },
+                building: 2,
+                tile: (40, -5),
+            },
+            Command::Construct {
+                regiment: RegimentHandle {
+                    index: 9,
+                    generation: 0,
+                },
+                structure: StructureHandle {
+                    index: 3,
+                    generation: 4,
+                },
+            },
+            Command::CallOff {
+                structure: StructureHandle {
+                    index: 900,
+                    generation: 7,
+                },
+            },
+            Command::Train {
+                structure: StructureHandle {
+                    index: 2,
+                    generation: 1,
+                },
+                unit: 13,
+            },
+            Command::Untrain {
+                structure: StructureHandle {
+                    index: 2,
+                    generation: 1,
+                },
+            },
+            Command::Upgrade {
+                structure: StructureHandle {
+                    index: 0,
+                    generation: 65535,
+                },
+            },
+            Command::Rally {
+                structure: StructureHandle {
+                    index: 1,
+                    generation: 2,
+                },
+                at: FxVec2::from_ints(-8, 120),
             },
         ];
         let mut w = Writer::default();

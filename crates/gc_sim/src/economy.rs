@@ -166,7 +166,6 @@ enum Step {
 
 /// The match's nodes, each player's store and every worker's round.
 pub struct Economy {
-    units: Vec<ConquestUnit>,
     gather_percent: u32,
     node_resource: Vec<Resource>,
     node_at: Vec<FxVec2>,
@@ -199,7 +198,6 @@ impl Economy {
     pub(crate) fn new(setup: &ConquestSetup, regiments: usize) -> Economy {
         let n = regiments;
         Economy {
-            units: setup.units.to_vec(),
             gather_percent: setup.gather_percent.clamp(10, 1000),
             node_resource: setup.nodes.iter().map(|n| n.resource).collect(),
             node_at: setup.nodes.iter().map(|n| n.at).collect(),
@@ -219,37 +217,59 @@ impl Economy {
         }
     }
 
-    /// Player `p`'s store and supply.
-    pub(crate) fn bank(&self, regs: &Regiments, structures: &Structures, p: PlayerId) -> Bank {
+    /// Player `p`'s Grub and Marrow.
+    pub(crate) fn store(&self, p: PlayerId) -> (u32, u32) {
         let i = usize::from(p);
         if i >= MAX_PARTIES {
-            return Bank::default();
+            return (0, 0);
         }
-        let supply_used = self.supply_in_use(regs)[i];
-        let supply_cap = structures.supply_of(p).min(SUPPLY_LIMIT);
-        Bank {
-            grub: self.grub[i] / GRUB_SCALE,
-            marrow: self.marrow[i],
-            supply_used,
-            supply_cap,
-        }
+        (self.grub[i] / GRUB_SCALE, self.marrow[i])
     }
 
     /// Each player's supply in use: what their regiments take. (Their cap
     /// is what their standing buildings add, up to [`SUPPLY_LIMIT`].)
-    fn supply_in_use(&self, regs: &Regiments) -> [u32; MAX_PARTIES] {
+    pub(crate) fn supply_in_use(
+        &self,
+        units: &[ConquestUnit],
+        regs: &Regiments,
+    ) -> [u32; MAX_PARTIES] {
         let mut used = [0; MAX_PARTIES];
         for r in 0..regs.alive.len() {
             if regs.alive[r]
                 && let Some(u) = used.get_mut(usize::from(regs.owner[r]))
             {
-                *u += self
-                    .units
+                *u += units
                     .get(usize::from(regs.unit[r]))
                     .map_or(0, |unit| u32::from(unit.supply));
             }
         }
         used
+    }
+
+    /// Whether `p` has `grub` and `marrow` in store.
+    pub(crate) fn can_afford(&self, p: PlayerId, grub: u32, marrow: u32) -> bool {
+        let i = usize::from(p);
+        i < MAX_PARTIES && self.grub[i] >= grub * GRUB_SCALE && self.marrow[i] >= marrow
+    }
+
+    /// Take `grub` and `marrow` from `p`'s store, if they have it.
+    pub(crate) fn spend(&mut self, p: PlayerId, grub: u32, marrow: u32) -> bool {
+        if !self.can_afford(p, grub, marrow) {
+            return false;
+        }
+        let i = usize::from(p);
+        self.grub[i] -= grub * GRUB_SCALE;
+        self.marrow[i] -= marrow;
+        true
+    }
+
+    /// Give `grub` and `marrow` back to `p`'s store.
+    pub(crate) fn refund(&mut self, p: PlayerId, grub: u32, marrow: u32) {
+        let i = usize::from(p);
+        if i < MAX_PARTIES {
+            self.grub[i] = self.grub[i].saturating_add(grub * GRUB_SCALE);
+            self.marrow[i] = self.marrow[i].saturating_add(marrow);
+        }
     }
 
     /// Every node, in index order.
@@ -267,11 +287,6 @@ impl Economy {
     /// Where each node is, by index.
     pub(crate) fn node_positions(&self) -> &[FxVec2] {
         &self.node_at
-    }
-
-    /// Whether regiment type `unit` gathers.
-    pub fn is_worker(&self, unit: crate::UnitId) -> bool {
-        self.units.get(usize::from(unit)).is_some_and(|u| u.worker)
     }
 
     /// Whether the regiment in slot `r` is the one this economy's record
@@ -292,8 +307,8 @@ impl Economy {
     }
 
     /// Whether the regiment in slot `r` could be sent to gather at `node`.
-    pub(crate) fn can_gather(&self, regs: &Regiments, r: usize, node: u16) -> bool {
-        self.is_worker(regs.unit[r]) && usize::from(node) < self.node_at.len()
+    pub(crate) fn can_gather(&self, node: u16) -> bool {
+        usize::from(node) < self.node_at.len()
     }
 
     /// Send worker slot `r` to gather at `node`; the caller has checked
@@ -363,6 +378,7 @@ impl Economy {
         &mut self,
         regs: &mut Regiments,
         units: &[UnitStats],
+        kinds: &[ConquestUnit],
         structures: &Structures,
     ) {
         self.node_busy.fill(0);
@@ -394,7 +410,7 @@ impl Economy {
             match self.step[r] {
                 Step::ToNode => self.walk_to_node(regs, r, n),
                 Step::Filling if self.clock[r] == 0 => self.fill(r, n),
-                Step::Carrying => self.carry(regs, units, structures, r, &mut used),
+                Step::Carrying => self.carry(regs, units, kinds, structures, r, &mut used),
                 Step::Idle | Step::Filling => {}
             }
         }
@@ -466,6 +482,7 @@ impl Economy {
         &mut self,
         regs: &mut Regiments,
         units: &[UnitStats],
+        kinds: &[ConquestUnit],
         structures: &Structures,
         r: usize,
         used: &mut Option<[u32; MAX_PARTIES]>,
@@ -496,7 +513,7 @@ impl Economy {
         let amount = u32::from(amount);
         match kind {
             Resource::Grub => {
-                let used = used.get_or_insert_with(|| self.supply_in_use(regs))[p];
+                let used = used.get_or_insert_with(|| self.supply_in_use(kinds, regs))[p];
                 let kept = amount * upkeep_percent(used) * GRUB_SCALE / 100;
                 self.grub[p] = self.grub[p].saturating_add(kept);
             }
@@ -508,10 +525,6 @@ impl Economy {
     }
 
     pub(crate) fn hash_into(&self, regs: &Regiments, h: &mut StateHasher) {
-        h.u32(self.units.len() as u32);
-        for u in &self.units {
-            u.hash_into(h);
-        }
         h.u32(self.gather_percent);
         h.u32(self.node_at.len() as u32);
         for i in 0..self.node_at.len() {

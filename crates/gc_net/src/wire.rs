@@ -304,6 +304,47 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.handle(regiment);
             w.var(u64::from(node));
         }
+        Command::Build {
+            regiment,
+            building,
+            tile,
+        } => {
+            w.u8(12);
+            w.handle(regiment);
+            w.var(u64::from(building));
+            w.var(u64::from(tile.0 as u16));
+            w.var(u64::from(tile.1 as u16));
+        }
+        Command::Construct {
+            regiment,
+            structure,
+        } => {
+            w.u8(13);
+            w.handle(regiment);
+            w.structure(structure);
+        }
+        Command::CallOff { structure } => {
+            w.u8(14);
+            w.structure(structure);
+        }
+        Command::Train { structure, unit } => {
+            w.u8(15);
+            w.structure(structure);
+            w.var(u64::from(unit));
+        }
+        Command::Untrain { structure } => {
+            w.u8(16);
+            w.structure(structure);
+        }
+        Command::Upgrade { structure } => {
+            w.u8(17);
+            w.structure(structure);
+        }
+        Command::Rally { structure, at } => {
+            w.u8(18);
+            w.structure(structure);
+            w.vec(at);
+        }
     }
 }
 
@@ -358,6 +399,32 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         11 => Command::Gather {
             regiment: r.handle()?,
             node: r.var_as()?,
+        },
+        12 => Command::Build {
+            regiment: r.handle()?,
+            building: r.var_as()?,
+            tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+        },
+        13 => Command::Construct {
+            regiment: r.handle()?,
+            structure: r.structure()?,
+        },
+        14 => Command::CallOff {
+            structure: r.structure()?,
+        },
+        15 => Command::Train {
+            structure: r.structure()?,
+            unit: r.var_as()?,
+        },
+        16 => Command::Untrain {
+            structure: r.structure()?,
+        },
+        17 => Command::Upgrade {
+            structure: r.structure()?,
+        },
+        18 => Command::Rally {
+            structure: r.structure()?,
+            at: r.vec()?,
         },
         _ => return None,
     })
@@ -498,6 +565,50 @@ mod tests {
             Command::Gather {
                 regiment: h(2, 9),
                 node: 300,
+            },
+            Command::Build {
+                regiment: h(4, 2),
+                building: 300,
+                tile: (-3, 4000),
+            },
+            Command::Construct {
+                regiment: h(1, 1),
+                structure: StructureHandle {
+                    index: 7,
+                    generation: 2,
+                },
+            },
+            Command::CallOff {
+                structure: StructureHandle {
+                    index: 1023,
+                    generation: 1,
+                },
+            },
+            Command::Train {
+                structure: StructureHandle {
+                    index: 4,
+                    generation: 9,
+                },
+                unit: 200,
+            },
+            Command::Untrain {
+                structure: StructureHandle {
+                    index: 5,
+                    generation: 0,
+                },
+            },
+            Command::Upgrade {
+                structure: StructureHandle {
+                    index: 6,
+                    generation: 65_535,
+                },
+            },
+            Command::Rally {
+                structure: StructureHandle {
+                    index: 0,
+                    generation: 3,
+                },
+                at: FxVec2::new(Fx::from_raw(-9), Fx::from_int(300)),
             },
         ];
         let pcs: Vec<PlayerCommand> = cmds

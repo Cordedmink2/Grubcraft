@@ -67,6 +67,13 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::AttackStructure { .. } => "AttackStructure",
         Command::RemoveStructure { .. } => "RemoveStructure",
         Command::Gather { .. } => "Gather",
+        Command::Build { .. } => "Build",
+        Command::Construct { .. } => "Construct",
+        Command::CallOff { .. } => "CallOff",
+        Command::Train { .. } => "Train",
+        Command::Untrain { .. } => "Untrain",
+        Command::Upgrade { .. } => "Upgrade",
+        Command::Rally { .. } => "Rally",
     };
     // Not yet in KINDS: the Conquest commands, which join it with a
     // Conquest golden once replays record Conquest matches (M3 step 4,

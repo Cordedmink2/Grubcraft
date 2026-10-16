@@ -281,6 +281,8 @@ pub fn push_ghost(
         depth: stats.depth,
         hp: 1,
         max_hp: 1,
+        built_percent: 100,
+        upgrading: None,
     };
     let [r, g, b] = colour;
     let colour = if fits { [r, g, b, GHOST_GLOW] } else { REFUSED };
@@ -348,6 +350,8 @@ pub fn refusal(world: &World, id: BuildingId, tile: (i32, i32)) -> Option<&'stat
         Refusal::Built => "Another building is in the way.",
         Refusal::Crowded => "A regiment is standing in the way.",
         Refusal::Node => "Workers need room at a seep or vein.",
+        Refusal::Tier => "Your tier is too low for that.",
+        Refusal::Price => "You can't afford that.",
     })
 }
 

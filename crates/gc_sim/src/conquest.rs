@@ -1,11 +1,20 @@
 //! What a Conquest match adds to a battle (see [`crate::World::conquest`]):
-//! buildings ([`crate::structures`]) and the economy ([`crate::economy`]).
+//! buildings and their construction ([`crate::structures`]), the economy
+//! ([`crate::economy`]) and training ([`crate::production`]).
 
-use crate::economy::{Economy, NodeSetup};
+use alloc::vec::Vec;
+
+use gc_fixed::FxVec2;
+
+use crate::economy::{Bank, Economy, NodeSetup};
 use crate::nav::Nav;
+use crate::production::Production;
 use crate::regiments::Regiments;
-use crate::structures::{Breaker, BuildingId, BuildingStats, Refusal, Structures};
-use crate::{MAX_PARTIES, StateHasher};
+use crate::structures::{
+    Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, Refusal, Role, StructureHandle,
+    Structures, Work,
+};
+use crate::{MAX_PARTIES, PlayerId, StateHasher, UnitId, UnitStats};
 
 /// What a Conquest match knows about each regiment type beyond its battle
 /// stats, by [`crate::UnitId`].
@@ -17,13 +26,27 @@ pub struct ConquestUnit {
     pub worker: bool,
     /// What it takes of its owner's supply.
     pub supply: u8,
+    pub cost_grub: u16,
+    pub cost_marrow: u16,
+    /// Ticks to train at Standard tempo.
+    pub train_ticks: u16,
+    /// The building type that trains it (or any of that building's tier
+    /// upgrades); `None` for a unit nothing trains.
+    pub trained_at: Option<BuildingId>,
+    /// The tier its owner needs to train it.
+    pub tier: u8,
 }
 
 impl ConquestUnit {
-    pub(crate) fn hash_into(&self, h: &mut StateHasher) {
+    fn hash_into(&self, h: &mut StateHasher) {
         h.u8(self.breaker as u8);
         h.u8(u8::from(self.worker));
         h.u8(self.supply);
+        h.u16(self.cost_grub);
+        h.u16(self.cost_marrow);
+        h.u16(self.train_ticks);
+        h.u16(self.trained_at.unwrap_or(u16::MAX));
+        h.u8(self.tier);
     }
 }
 
@@ -45,6 +68,9 @@ pub struct ConquestSetup<'a> {
     /// Tempo: gathering at this percent of the Standard rate (Swift 150,
     /// Epic 80).
     pub gather_percent: u32,
+    /// Tempo: building, upgrading and training take this percent of their
+    /// Standard time (Swift 75, Epic 120).
+    pub build_percent: u32,
 }
 
 impl ConquestSetup<'_> {
@@ -63,6 +89,7 @@ impl Default for ConquestSetup<'_> {
             nodes: &[],
             start: [(0, 0); MAX_PARTIES],
             gather_percent: Self::STANDARD,
+            build_percent: Self::STANDARD,
         }
     }
 }
@@ -70,16 +97,66 @@ impl Default for ConquestSetup<'_> {
 /// A Conquest match's own systems, made together by
 /// [`crate::World::conquest`].
 pub(crate) struct Conquest {
+    /// By [`UnitId`].
+    pub(crate) units: Vec<ConquestUnit>,
     pub(crate) structures: Structures,
     pub(crate) economy: Economy,
+    pub(crate) production: Production,
 }
 
 impl Conquest {
     pub(crate) fn new(setup: &ConquestSetup, regiments: usize) -> Conquest {
         Conquest {
-            structures: Structures::new(setup.buildings, setup.units, setup.structures, regiments),
+            units: setup.units.to_vec(),
+            structures: Structures::new(
+                setup.buildings,
+                setup.structures,
+                regiments,
+                setup.build_percent,
+            ),
             economy: Economy::new(setup, regiments),
+            production: Production::new(setup.structures as usize, setup.build_percent),
         }
+    }
+
+    /// The Conquest facts of unit type `unit`; a type past the end of the
+    /// table is a plain regiment.
+    pub(crate) fn unit(&self, unit: UnitId) -> ConquestUnit {
+        self.units
+            .get(usize::from(unit))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// One tick: sieges and builders, then gathering, then training.
+    pub(crate) fn update(&mut self, regs: &mut Regiments, stats: &[UnitStats], nav: &mut Nav) {
+        self.structures.update(regs, stats, &self.units, nav);
+        self.economy
+            .update(regs, stats, &self.units, &self.structures);
+        let (units, economy) = (&self.units, &self.economy);
+        self.production.update(&self.structures, nav, units, || {
+            economy.supply_in_use(units, regs)
+        });
+    }
+
+    /// Player `p`'s store and supply. Supply in use counts the regiments in
+    /// training.
+    pub(crate) fn bank(&self, regs: &Regiments, p: PlayerId) -> Bank {
+        let (grub, marrow) = self.economy.store(p);
+        let mut used = self.economy.supply_in_use(&self.units, regs);
+        self.production
+            .in_training(&self.structures, &self.units, &mut used);
+        Bank {
+            grub,
+            marrow,
+            supply_used: used.get(usize::from(p)).copied().unwrap_or(0),
+            supply_cap: self.structures.supply_cap(p),
+        }
+    }
+
+    /// Whether regiment slot `r` could be sent to gather at `node`.
+    pub(crate) fn can_gather(&self, regs: &Regiments, r: usize, node: u16) -> bool {
+        self.unit(regs.unit[r]).worker && self.economy.can_gather(node)
     }
 
     /// Whether a building of type `building` may go up with its north-west
@@ -95,11 +172,193 @@ impl Conquest {
             .check(building, tile, nav, regs, self.economy.node_positions())
     }
 
-    /// Regiment slot `r` was given another order: it stops attacking any
-    /// building and stops gathering. Every order that sets a regiment to
+    /// Whether `player` could have a worker lay a building of type
+    /// `building` at `tile` now: placement, tier and price.
+    pub(crate) fn can_lay(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        tile: (i32, i32),
+        nav: &Nav,
+        regs: &Regiments,
+    ) -> Result<(), Refusal> {
+        self.check(building, tile, nav, regs)?;
+        let b = self.structures.buildings()[usize::from(building)];
+        if b.upgrades_from.is_some() {
+            // Tier upgrades go up on the building they upgrade.
+            return Err(Refusal::Unknown);
+        }
+        if self.structures.tier_of(player) < b.tier.max(1) && b.role != Role::Main {
+            return Err(Refusal::Tier);
+        }
+        if !self
+            .economy
+            .can_afford(player, u32::from(b.cost_grub), u32::from(b.cost_marrow))
+        {
+            return Err(Refusal::Price);
+        }
+        Ok(())
+    }
+
+    /// Worker slot `r`, `player`'s, lays a building of type `building` at
+    /// `tile`, pays for it and goes to build it.
+    pub(crate) fn lay(
+        &mut self,
+        player: PlayerId,
+        r: usize,
+        building: BuildingId,
+        tile: (i32, i32),
+        nav: &mut Nav,
+        regs: &mut Regiments,
+    ) -> bool {
+        if !self.unit(regs.unit[r]).worker
+            || self.can_lay(player, building, tile, nav, regs).is_err()
+        {
+            return false;
+        }
+        let Some(h) = self.structures.found(player, building, tile, nav, regs) else {
+            return false;
+        };
+        let b = self.structures.buildings()[usize::from(building)];
+        self.economy
+            .spend(player, u32::from(b.cost_grub), u32::from(b.cost_marrow));
+        self.stop_work(r);
+        self.structures.send(regs, r, h, Work::Build);
+        true
+    }
+
+    /// Worker slot `r`, `player`'s, goes to build or mend `player`'s
+    /// building `h`.
+    pub(crate) fn construct(
+        &mut self,
+        player: PlayerId,
+        r: usize,
+        h: StructureHandle,
+        regs: &mut Regiments,
+    ) -> bool {
+        if !self.unit(regs.unit[r]).worker || self.structures.owned(h, player).is_none() {
+            return false;
+        }
+        self.stop_work(r);
+        self.structures.send(regs, r, h, Work::Build);
+        true
+    }
+
+    /// `player` calls off building `h`'s tier upgrade, or the building
+    /// itself while it is going up, for [`CANCEL_REFUND_PERCENT`] of what
+    /// it cost.
+    pub(crate) fn call_off(
+        &mut self,
+        player: PlayerId,
+        h: StructureHandle,
+        nav: &mut Nav,
+        regs: &Regiments,
+    ) -> bool {
+        let Some(i) = self
+            .structures
+            .resolve(h)
+            .filter(|_| self.structures.owner(h) == Some(player))
+        else {
+            return false;
+        };
+        let Some((grub, marrow)) = self.structures.call_off(i, nav, regs) else {
+            return false;
+        };
+        let back = |n: u32| n * CANCEL_REFUND_PERCENT / 100;
+        self.economy.refund(player, back(grub), back(marrow));
+        true
+    }
+
+    /// `player`'s building `h` queues a regiment of type `unit`.
+    pub(crate) fn train(&mut self, player: PlayerId, h: StructureHandle, unit: UnitId) -> bool {
+        let Some(i) = self.ready(player, h) else {
+            return false;
+        };
+        let u = self.unit(unit);
+        let building = self.structures.kind_of(i);
+        let trains = u
+            .trained_at
+            .is_some_and(|at| self.structures.grew_from(building, at));
+        if !trains
+            || self.structures.tier_of(player) < u.tier
+            || !self.production.has_room(h)
+            || !self
+                .economy
+                .spend(player, u32::from(u.cost_grub), u32::from(u.cost_marrow))
+        {
+            return false;
+        }
+        self.production.enqueue(h, unit);
+        true
+    }
+
+    /// `player` takes the last regiment off building `h`'s queue, for all
+    /// it cost.
+    pub(crate) fn untrain(&mut self, player: PlayerId, h: StructureHandle) -> bool {
+        if self.ready(player, h).is_none() {
+            return false;
+        }
+        let Some(unit) = self.production.dequeue(h) else {
+            return false;
+        };
+        let u = self.unit(unit);
+        self.economy
+            .refund(player, u32::from(u.cost_grub), u32::from(u.cost_marrow));
+        true
+    }
+
+    /// `player`'s main building `h` starts its tier upgrade.
+    pub(crate) fn upgrade(&mut self, player: PlayerId, h: StructureHandle) -> bool {
+        let Some(i) = self.ready(player, h) else {
+            return false;
+        };
+        let building = self.structures.kind_of(i);
+        let Some(to) = self.structures.upgrade_of(building) else {
+            return false;
+        };
+        let b = self.structures.buildings()[usize::from(to)];
+        if self.structures.upgrading(i)
+            || !self
+                .economy
+                .spend(player, u32::from(b.cost_grub), u32::from(b.cost_marrow))
+        {
+            return false;
+        }
+        self.structures.start_upgrade(i, to);
+        true
+    }
+
+    /// `player` sets where what building `h` trains goes.
+    pub(crate) fn set_rally(&mut self, player: PlayerId, h: StructureHandle, at: FxVec2) -> bool {
+        if self.structures.owned(h, player).is_none() {
+            return false;
+        }
+        self.production.set_rally(h, at);
+        true
+    }
+
+    /// The slot of building `h` if it is `player`'s and finished.
+    fn ready(&self, player: PlayerId, h: StructureHandle) -> Option<usize> {
+        self.structures
+            .owned(h, player)
+            .filter(|&i| self.structures.finished(i))
+    }
+
+    /// Regiment slot `r` was given another order: it stops attacking or
+    /// building, and stops gathering. Every order that sets a regiment to
     /// work calls this first.
     pub(crate) fn stop_work(&mut self, r: usize) {
         self.structures.stop(r);
         self.economy.stop(r);
+    }
+
+    /// The "structures" part of the state hash: the unit table and the
+    /// buildings.
+    pub(crate) fn hash_structures(&self, regs: &Regiments, h: &mut StateHasher) {
+        h.u32(self.units.len() as u32);
+        for u in &self.units {
+            u.hash_into(h);
+        }
+        self.structures.hash_into(regs, h);
     }
 }

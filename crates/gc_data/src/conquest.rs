@@ -312,6 +312,9 @@ pub fn validate_upgrade(table: &[BuildingRecord], i: usize) -> Result<(), &'stat
     if from.faction != b.faction || from.tier + 1 != b.tier {
         return Err("upgrades from a building of its own faction one tier below");
     }
+    if (from.width, from.depth) != (b.width, b.depth) {
+        return Err("upgrades from a building of the same footprint");
+    }
     Ok(())
 }
 
