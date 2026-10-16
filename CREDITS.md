@@ -24,7 +24,7 @@ The soldier and unit models baked into `assets/models.pak` (see `assets-src/mode
 | The Undertaker, made for Grubcraft on the Suit (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | The Undertaker |
 | The Usurer, made for Grubcraft on the Adventurer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | The Usurer |
 | Fire Spirit, made for Grubcraft (fully custom body, rig and clips) | Grubcraft | CC0 | Fire Spirit |
-| Ember Clans models (Yumi Ashigaru, Katana Samurai, Hands, The Ronin, The Onmyoji, Mounted Samurai, Yabusame Riders, The Daimyo, Spectral Samurai), made for Grubcraft on the Farmer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | Those units |
+| Ember Clans models (Yumi Ashigaru, Katana Samurai, Hands, The Ronin, The Onmyoji, Mounted Samurai, Yabusame Riders, The Daimyo, Spectral Samurai, Oni-Bound), made for Grubcraft on the Farmer (Ultimate Modular Men) | Grubcraft; body and rig by Quaternius | CC0 | Those units |
 | Ranger's bow clips (LowPoly RPG Characters), on the Yumi Ashigaru | Quaternius | CC0 | Yumi Ashigaru |
 | Wizard's casting clips (LowPoly RPG Characters), on The Onmyoji | Quaternius | CC0 | The Onmyoji |
 | Horse and Horse_White with their clips (Ultimate Animated Animals), under the Ember riders | Quaternius | CC0 | Mounted Samurai, Yabusame Riders, The Daimyo |

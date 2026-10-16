@@ -92,6 +92,26 @@
             )),
         ),
         (
+            name: "Oni-Bound",
+            // Ember Clans monster: the Farmer body bulked bone by bone into a
+            // red oni, with horns, tusks, a tiger hide, a shimenawa rope, iron
+            // shackles and a studded kanabo. Half again a man's size.
+            source: "shared:grubcraft/ember/oni-bound/oni-bound.glb",
+            height: 1.85,
+            clips: {
+                "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash",
+                "Attack2": "Kick_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Punch_Right",
+            },
+            lod_triangles: (20000, 7000, 2400, 800),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/oni-bound/albedo.png",
+                team: Some("shared:grubcraft/ember/oni-bound/team.png"),
+                normal: Some("shared:grubcraft/ember/oni-bound/normal.png"),
+                orm: Some("shared:grubcraft/ember/oni-bound/orm.png"),
+                emissive: Some("shared:grubcraft/ember/oni-bound/emissive.png"),
+            )),
+        ),
+        (
             name: "Hands",
             // Ember Clans worker, on the Farmer body and rig: mallet in the
             // right hand, a back basket of glowing Grub.
