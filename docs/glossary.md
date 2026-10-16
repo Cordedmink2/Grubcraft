@@ -40,7 +40,7 @@
 | **Metamorphosis** | Brood ability to evolve a regiment into another form in the field |
 | **Mind** | The AI that makes choices for a party (an AI player, a mercenary company, a faction); runs on the host and acts only through commands |
 | **Model** | One soldier within a regiment |
-| **Pack** | The single memory-mapped asset file, `grubcraft.pak` |
+| **Pack** | A baked asset file: `assets/models.pak` and `assets/audio/sounds.gcsnd`, each with a manifest, both compiled into the executable. The plan is one memory-mapped `grubcraft.pak` |
 | **Parley** | The panel for dealing with another party: trade, hire, gifts, with each answer shown before you commit |
 | **Party** | Anyone who can own units: a player (human or AI), a hamlet, a creep camp, a mercenary company, a faction |
 | **Pathfinder** | A campaign scout: fast, can't fight, reveals regions |
