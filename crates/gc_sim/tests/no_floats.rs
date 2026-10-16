@@ -1,9 +1,26 @@
 //! Floating point is banned from the simulation and its math library, because
 //! float results can differ between CPUs and compilers and would desync
 //! lockstep multiplayer. Test modules (after `#[cfg(test)]`) may use floats to
-//! check results against a reference.
+//! check results against a reference. The battle map generator
+//! (`gc_game`'s `terrain_gen.rs`) is held to the same rule.
 
 use std::path::Path;
+
+fn check_file(path: &Path, offenders: &mut Vec<String>) {
+    let src = std::fs::read_to_string(path).unwrap();
+    let non_test = src.split("#[cfg(test)]").next().unwrap();
+    for (n, line) in non_test.lines().enumerate() {
+        let code = line.split("//").next().unwrap();
+        let has_float = code
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .any(|tok| {
+                tok == "f32" || tok == "f64" || tok.ends_with("_f32") || tok.ends_with("_f64")
+            });
+        if has_float {
+            offenders.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
+        }
+    }
+}
 
 fn check_dir(dir: &Path, offenders: &mut Vec<String>) {
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -15,19 +32,7 @@ fn check_dir(dir: &Path, offenders: &mut Vec<String>) {
         if path.extension().is_none_or(|e| e != "rs") {
             continue;
         }
-        let src = std::fs::read_to_string(&path).unwrap();
-        let non_test = src.split("#[cfg(test)]").next().unwrap();
-        for (n, line) in non_test.lines().enumerate() {
-            let code = line.split("//").next().unwrap();
-            let has_float = code
-                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                .any(|tok| {
-                    tok == "f32" || tok == "f64" || tok.ends_with("_f32") || tok.ends_with("_f64")
-                });
-            if has_float {
-                offenders.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
-            }
-        }
+        check_file(&path, offenders);
     }
 }
 
@@ -37,6 +42,8 @@ fn simulation_crates_contain_no_floats() {
     let mut offenders = Vec::new();
     check_dir(&root.join("src"), &mut offenders);
     check_dir(&root.join("../gc_fixed/src"), &mut offenders);
+    // The battle map generator must make the same map on every machine.
+    check_file(&root.join("../gc_game/src/terrain_gen.rs"), &mut offenders);
     assert!(
         offenders.is_empty(),
         "floating point in simulation code:\n{}",

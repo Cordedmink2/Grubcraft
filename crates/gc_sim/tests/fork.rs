@@ -24,6 +24,12 @@ fn world_on(nav: &[u8]) -> World {
     })
 }
 
+/// An empty world to set regiments on directly, as the computer players'
+/// rehearsals do.
+fn scratch_on(nav: &[u8]) -> World {
+    world_on(nav).scratch(64, 1)
+}
+
 fn spawn(w: &mut World, player: u8, unit: u16, x: i32, y: i32, facing: Angle) -> RegimentHandle {
     let before: Vec<_> = w.regiments.iter().map(|r| r.handle).collect();
     w.tick(&[PlayerCommand {
@@ -119,7 +125,7 @@ fn a_scratch_world_shares_the_map() {
     }
     // The same order finds the same route in both.
     let mut a = world.scratch(4, 1);
-    let mut b = world_on(&nav);
+    let mut b = world_on(&nav).scratch(4, 1);
     let standing = Standing {
         owner: 0,
         unit: 0,
@@ -156,7 +162,7 @@ fn a_scratch_world_shares_the_map() {
 
 #[test]
 fn a_regiment_goes_on_the_field_as_it_stands() {
-    let mut world = world_on(&[]);
+    let mut world = scratch_on(&[]);
     let s = Standing {
         owner: 1,
         unit: 0,
@@ -180,7 +186,7 @@ fn a_regiment_goes_on_the_field_as_it_stands() {
         index: 9,
         generation: 4,
     };
-    let mut other = world_on(&[]);
+    let mut other = scratch_on(&[]);
     assert_eq!(other.spawn_standing(&s, Some(wanted)), Some(wanted));
     assert_eq!(other.spawn_standing(&s, Some(wanted)), None, "taken");
     assert_eq!(
@@ -221,7 +227,7 @@ fn a_regiment_goes_on_the_field_as_it_stands() {
 #[test]
 fn morale_carries_over() {
     let fight = |points: u8, state: MoraleState| {
-        let mut world = world_on(&[]);
+        let mut world = scratch_on(&[]);
         let us = Standing {
             owner: 0,
             unit: 0,
@@ -267,7 +273,7 @@ fn morale_carries_over() {
         shaken < fresh,
         "wavering broke after {shaken}, fresh after {fresh}"
     );
-    let mut world = world_on(&[]);
+    let mut world = scratch_on(&[]);
     let routing = Standing {
         owner: 0,
         unit: 0,
@@ -304,4 +310,26 @@ fn morale_carries_over() {
         "a routing regiment runs from the enemy: {:?}",
         r.position
     );
+}
+
+/// A match's own world changes only by its players' commands (review fix
+/// R21): it refuses regiments put straight on the field.
+#[test]
+fn a_match_world_takes_no_regiments_from_outside() {
+    let mut world = world_on(&[]);
+    let s = Standing {
+        owner: 0,
+        unit: 0,
+        position: FxVec2::from_ints(50, 60),
+        facing: NORTH,
+        files: 5,
+        formation: Formation::Line,
+        models: 10,
+        morale_points: 20,
+        morale: MoraleState::Steady,
+        hidden: false,
+    };
+    let before = world.state_hash();
+    assert_eq!(world.spawn_standing(&s, None), None);
+    assert_eq!(world.state_hash(), before);
 }

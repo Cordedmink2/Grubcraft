@@ -383,7 +383,8 @@ pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terrain_gen::{Heightmap, start_positions};
+    use crate::terrain_gen::Heightmap;
+    use crate::terrain_view::start_positions;
     use gc_sim::{Capacities, MatchSetup};
 
     const MAP: u32 = 256;

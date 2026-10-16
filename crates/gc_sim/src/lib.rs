@@ -554,6 +554,9 @@ pub struct World {
     champions: Option<Champions>,
     /// Who holds the field, and who won (see [`verdict`]).
     judge: verdict::Judge,
+    /// A scratch copy (see [`World::scratch`]), the only kind that may be
+    /// changed other than by commands: rehearsals set out their own field.
+    scratch: bool,
     pub regiments: Regiments,
 }
 
@@ -586,6 +589,7 @@ impl World {
                 )
             }),
             judge: verdict::Judge::default(),
+            scratch: false,
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
@@ -999,11 +1003,6 @@ impl World {
     /// the duel is over).
     pub fn challenge(&self) -> Option<&Challenge> {
         self.champions.as_ref()?.challenge()
-    }
-
-    /// The match's deterministic random stream (combat, events, ...).
-    pub fn rng(&mut self) -> &mut Pcg32 {
-        &mut self.rng
     }
 }
 

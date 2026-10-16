@@ -101,6 +101,7 @@ mod sandbox;
 mod scenery;
 mod sounds;
 mod terrain_gen;
+mod terrain_view;
 
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -2242,10 +2243,20 @@ impl Running {
             Some(rec) => rec.recorder.tick(&mut self.world, &self.pending),
             None => self.world.tick(&self.pending),
         });
+        // A rejoining player replays the match: the sounds still note what
+        // happened but stay quiet, and old ambushes raise no alert.
+        let catching_up = self.online.is_some() && self.menu.net().catching_up();
         if let Some(sounds) = &mut self.sounds {
-            tagged_alloc::scope(Tag::Audio, || sounds.observe(&self.world, &self.camera));
+            let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
+            tagged_alloc::scope(Tag::Audio, || {
+                sounds.observe(world, &self.camera, !catching_up, |h| {
+                    reveal || world.sees(viewer, h)
+                });
+            });
         }
-        self.alert_ambushes();
+        if !catching_up {
+            self.alert_ambushes();
+        }
         if self.watching.is_none() {
             self.note_losses();
         }
@@ -2763,7 +2774,7 @@ impl Running {
                 &self.unit_stats,
                 &self.unit_factions,
                 &self.unit_points,
-                terrain_gen::start_positions(MAP_TILES),
+                terrain_view::start_positions(MAP_TILES),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,

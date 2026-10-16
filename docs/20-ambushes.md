@@ -101,7 +101,7 @@ The 4-second window decides how close an ambusher must hide: line infantry at 3 
 The [UI principles](08-ui-ux.md#ui-principles) say nothing important is hidden. Ambushes hide *choices*, never *rules*:
 
 - **The map shows where anything could hide.** Woods are drawn as trees and tall grass as tufts, so every player knows which ground could hold an enemy, the same way they know which ground is high.
-- **Enemies you can't see aren't drawn**, and enemies your side spots appear where they stand. (The sound of their fighting isn't played either.)
+- **Enemies you can't see aren't drawn**, and enemies your side spots appear where they stand. (The sound of their fighting isn't played either: horns, charges, clashes and arrow twangs from regiments you can't see are silent. Arrows landing are still heard, as they land where you can see.)
 - **Your own hidden regiments carry a moss-green flag** above the treetops (and above the block in the Commander View), so you always know whether the enemy can see them.
 - **"Ambush!"**: when an ambush is sprung, by you or on you, a message names who caught whom, and a war drum and a horn sound.
 - **Orders follow sight**: right-clicking where a hidden enemy stands is a move, not an attack.

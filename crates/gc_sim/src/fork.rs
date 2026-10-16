@@ -88,14 +88,9 @@ impl World {
             deploy: crate::deploy::Deployment::default(),
             champions: None,
             judge: crate::verdict::Judge::default(),
+            scratch: true,
             regiments: Regiments::with_capacity(n),
         }
-    }
-
-    /// Give this world new random streams from `seed`.
-    pub fn reseed(&mut self, seed: u64) {
-        self.rng = Pcg32::new(seed, streams::WORLD);
-        self.combat_rng = Pcg32::new(seed, streams::COMBAT);
     }
 
     /// Put a regiment on the field as `s` describes it, mid-battle (engine
@@ -103,7 +98,10 @@ impl World {
     /// so it can be found by the handle it has in another world. It stands
     /// with no orders; a routing or shattered regiment counts as having just
     /// broken; one not `hidden` has been seen by everyone for a while.
-    /// Returns `None` if the unit is unknown, the owner is past
+    ///
+    /// Only on a scratch world: a match's own world changes only by its
+    /// players' commands (review fix R21). Returns `None` on a match's own
+    /// world, if the unit is unknown, the owner is past
     /// [`MAX_PARTIES`](crate::MAX_PARTIES), there are no soldiers, or there
     /// is no room (or `slot` is taken).
     pub fn spawn_standing(
@@ -113,7 +111,7 @@ impl World {
     ) -> Option<RegimentHandle> {
         let stats = *self.units.get(s.unit as usize)?;
         // The owner is checked before a slot is claimed for it.
-        if s.models == 0 || usize::from(s.owner) >= crate::MAX_PARTIES {
+        if !self.scratch || s.models == 0 || usize::from(s.owner) >= crate::MAX_PARTIES {
             return None;
         }
         if let Some(h) = slot
