@@ -67,6 +67,8 @@ pub struct MindConfig {
 
 /// One computer player.
 pub struct Mind {
+    /// How it was set up.
+    config: MindConfig,
     party: PlayerId,
     difficulty: Difficulty,
     knobs: Knobs,
@@ -126,6 +128,7 @@ impl Mind {
             ),
         );
         Mind {
+            config,
             party: config.party,
             difficulty: config.difficulty,
             knobs,
@@ -152,6 +155,11 @@ impl Mind {
 
     pub fn party(&self) -> PlayerId {
         self.party
+    }
+
+    /// How it was set up (to seat the same commander with other knobs).
+    pub fn config(&self) -> MindConfig {
+        self.config
     }
 
     pub fn difficulty(&self) -> Difficulty {

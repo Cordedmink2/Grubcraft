@@ -40,8 +40,15 @@ impl Captain {
         // enemy close, where turning away only invites a charge in the back.
         let threshold = -(0.15 + 0.35 * p.caution());
         let well_off = gap > WITHDRAW_GAP && self.closing < 1.0;
-        if margin < threshold && well_off {
-            let since = *self.losing_since.get_or_insert(now);
+        // Waiting for two other sides to fight, with one coming at it
+        // first: step out of its way, so it finds the other.
+        let shy = self.shy && gap > SHY_GAP;
+        if (margin < threshold && well_off) || shy {
+            let since = *self.losing_since.get_or_insert(if shy {
+                now.saturating_sub(WITHDRAW_AFTER_TICKS)
+            } else {
+                now
+            });
             let recently = self.withdrawn_at.is_some_and(|t| now < t + 30 * 20);
             if now >= since + WITHDRAW_AFTER_TICKS
                 && !recently
@@ -51,14 +58,19 @@ impl Captain {
                 self.posture = Posture::Withdraw;
                 self.withdrawn_at = Some(now);
                 self.withdrawals += 1;
+                // Away from the enemy it faces, or keeping out of a fight,
+                // away from both sides in it.
+                let away = if shy { self.shy_from } else { -self.forward };
                 let back = ctx
                     .terrain
-                    .clamp(self.anchor - self.forward * WITHDRAW_TILES, 8.0);
+                    .clamp(self.anchor + away * WITHDRAW_TILES, 8.0);
                 self.anchor = back;
-                ctx.journal.note(
-                    now,
-                    format!("Falling back: expects {}", describe_margin(margin)),
-                );
+                let why = if shy {
+                    "keeping out of their fight".to_string()
+                } else {
+                    format!("expects {}", describe_margin(margin))
+                };
+                ctx.journal.note(now, format!("Falling back: {why}"));
             }
         } else {
             self.losing_since = None;
@@ -129,8 +141,11 @@ impl Captain {
             let halted = behind_water || watching;
             let advance = if halted {
                 false
-            } else if only_archers {
+            } else if only_archers || self.pouncing {
                 true
+            } else if self.onlooking.is_some() {
+                // Two other sides are about to fight: let them.
+                false
             } else if coming {
                 meet && !losing
             } else if losing {

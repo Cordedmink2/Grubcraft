@@ -38,6 +38,7 @@ mod hunt;
 mod posture;
 mod roles;
 mod site;
+mod team;
 
 use helpers::*;
 pub use helpers::{describe_margin, fits, gap_between};
@@ -292,6 +293,9 @@ const WITHDRAW_TILES: f32 = 25.0;
 /// Only with the enemy front at least this far off, tiles.
 const WITHDRAW_GAP: f32 = 35.0;
 const WITHDRAW_AFTER_TICKS: u32 = 4 * 20;
+/// Keeping out of two other sides' fight, it falls back only with the
+/// enemy front at least this far off, tiles.
+const SHY_GAP: f32 = 20.0;
 /// The enemy is beaten once what still stands against us is this share of
 /// our soldiers or less: the line breaks up to finish the rest wherever they
 /// stand. It forms again if they gather past the second share.
@@ -339,6 +343,8 @@ const FORD_REACH: f32 = 40.0;
 /// Behind water, it crosses only when expecting to win by this much and
 /// after twice its usual patience.
 const CROSS_MARGIN: f32 = 0.3;
+/// Longest it waits for two other sides to come to blows, ticks.
+const ONLOOK_TICKS: u32 = 90 * 20;
 
 /// One of the Captain's regiments.
 #[derive(Clone, Copy, Debug)]
@@ -473,6 +479,22 @@ pub struct Captain {
     /// Where friends stand in the fight, as of this look (see
     /// [`Captain::room_at`]).
     taken: Vec<Taken>,
+    /// In a team game: the parties it is really fighting, and those
+    /// fighting them with it (see [`team`]); empty when it weighs everyone.
+    against: Vec<PlayerId>,
+    with: Vec<PlayerId>,
+    /// Two other sides about to fight each other, while it waits for them
+    /// to come to blows (see [`team::Field::others_fighting`]).
+    pub onlooking: Option<(PlayerId, PlayerId)>,
+    /// When it began waiting on them.
+    onlook_since: Option<u32>,
+    /// They came to blows and it has gone in.
+    pouncing: bool,
+    /// One of them is coming at it before they have fought each other, or
+    /// it stands nearer than the other: it keeps out of their way, falling
+    /// back this way.
+    shy: bool,
+    shy_from: Vec2,
 }
 
 /// A friend's ground in the fight: its own block while it fights, or where
@@ -536,6 +558,13 @@ impl Captain {
             focus: None,
             ambush: ambush::Plan::default(),
             taken: Vec::new(),
+            against: Vec::new(),
+            with: Vec::new(),
+            onlooking: None,
+            onlook_since: None,
+            pouncing: false,
+            shy: false,
+            shy_from: Vec2::ZERO,
         }
     }
 
@@ -606,6 +635,7 @@ impl Captain {
         }
         self.search = None;
         self.searched.clear();
+        self.read_sides(ctx);
         self.update_frame(ctx, &ours, &fighting);
         let now = view.tick;
         if now >= self.next_estimate {
@@ -801,12 +831,23 @@ impl Captain {
         let view = ctx.view;
         // Allies fight the same enemy: without them every side of a 2v2
         // expects to lose to both enemies at once, and waits.
-        let allies = view
-            .regiments
-            .iter()
-            .filter(|r| r.owner != ctx.party && !r.broken() && !view.hostile(ctx.party, r.owner));
+        // In a team game, only the enemies turned on its side count, and the
+        // friends turned on them (see [`team`]).
+        let (against, with) = (&self.against, &self.with);
+        let allies = view.regiments.iter().filter(|r| {
+            r.owner != ctx.party
+                && !r.broken()
+                && !view.hostile(ctx.party, r.owner)
+                && (with.is_empty() || with.contains(&r.owner))
+        });
         let mine = Force::of(view, ours.iter().copied().chain(allies));
-        let theirs = Force::of(view, fighting.iter().copied());
+        let theirs = Force::of(
+            view,
+            fighting
+                .iter()
+                .copied()
+                .filter(|f| against.is_empty() || against.contains(&f.owner)),
+        );
         let gap = self.front_gap(fighting);
         let closing = (mine.speed + theirs.speed) * 0.5;
         let est = estimator::estimate(&mine, &theirs, Approach { gap, closing });
@@ -820,11 +861,21 @@ impl Captain {
         self.front_gap_from(self.anchor, fighting)
     }
 
-    /// Tiles from a line standing at `from` to the nearest enemy front.
+    /// Tiles from a line standing at `from` to the nearest enemy front. In
+    /// a three-sided fight, only the enemies it is really fighting count,
+    /// and one behind the line is as far as it is.
     fn front_gap_from(&self, from: Vec2, fighting: &[&Seen]) -> f32 {
         let gap = fighting
             .iter()
-            .map(|f| (f.pos - from).dot(self.forward) - f.depth * 0.5)
+            .filter(|f| self.against.is_empty() || self.against.contains(&f.owner))
+            .map(|f| {
+                let ahead = (f.pos - from).dot(self.forward);
+                if ahead < 0.0 && !self.against.is_empty() {
+                    f.pos.distance(from) - f.radius()
+                } else {
+                    ahead - f.depth * 0.5
+                }
+            })
             .fold(f32::MAX, f32::min)
             - self.line_depth * 0.5;
         gap.max(0.0)
