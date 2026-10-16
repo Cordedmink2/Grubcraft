@@ -112,6 +112,26 @@
             )),
         ),
         (
+            name: "Battering Ram",
+            // Ember Clans siege: a roofed ram shed on four wheels under wet
+            // hides, with team-colour war curtains, a spiked iron ram head on
+            // a slung log, lanterns, nobori, and four crew walking inside.
+            source: "shared:grubcraft/ember/battering-ram/battering-ram.glb",
+            height: 2.0,
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Ram_Strike", "Hit": "Hit",
+                "Die": "Death", "Cheer": "Cheer",
+            },
+            lod_triangles: (20000, 7000, 2400, 800),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/battering-ram/albedo.png",
+                team: Some("shared:grubcraft/ember/battering-ram/team.png"),
+                normal: Some("shared:grubcraft/ember/battering-ram/normal.png"),
+                orm: Some("shared:grubcraft/ember/battering-ram/orm.png"),
+                emissive: Some("shared:grubcraft/ember/battering-ram/emissive.png"),
+            )),
+        ),
+        (
             name: "Hands",
             // Ember Clans worker, on the Farmer body and rig: mallet in the
             // right hand, a back basket of glowing Grub.
