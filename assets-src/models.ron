@@ -52,6 +52,26 @@
             )),
         ),
         (
+            name: "Spectral Samurai",
+            // Ember Clans summoned ancestors, made like the Katana Samurai:
+            // grave-green o-yoroi, an empty face with glowing eyes, spirit-lit
+            // lacing and a torn hakama hem, two soul flames at the hips.
+            source: "shared:grubcraft/ember/spectral-samurai/spectral-samurai.glb",
+            height: 1.16,
+            clips: {
+                "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash",
+                "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
+            },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((
+                albedo: "shared:grubcraft/ember/spectral-samurai/albedo.png",
+                team: Some("shared:grubcraft/ember/spectral-samurai/team.png"),
+                normal: Some("shared:grubcraft/ember/spectral-samurai/normal.png"),
+                orm: Some("shared:grubcraft/ember/spectral-samurai/orm.png"),
+                emissive: Some("shared:grubcraft/ember/spectral-samurai/emissive.png"),
+            )),
+        ),
+        (
             name: "Hands",
             // Ember Clans worker, on the Farmer body and rig: mallet in the
             // right hand, a back basket of glowing Grub.
