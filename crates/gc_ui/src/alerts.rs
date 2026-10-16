@@ -182,7 +182,7 @@ pub fn draw(
             n > 0 && input.left_pressed,
             input.left_released,
         );
-        if hit {
+        if hit && n > 0 {
             events.push(HudEvent::IdleWorker);
         }
         draw.rect(

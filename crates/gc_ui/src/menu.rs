@@ -450,6 +450,12 @@ impl<N: Network> Menu<N> {
         );
         self.join_password = password;
         let join_btn = Rect::new(s.x, panel.bottom() - sp(64) - 60, card_w, 52);
+        // A game that has gone, or fallen off the rows shown, is no longer
+        // picked: it would come back unseen if it reappeared.
+        let shown = |a: &String| games.iter().take(LISTED).any(|g| &g.address == a);
+        if self.selected_game.as_ref().is_some_and(|a| !shown(a)) {
+            self.selected_game = None;
+        }
         // A game listed without a password is joined without one, whatever
         // is left in the box.
         let picked = self

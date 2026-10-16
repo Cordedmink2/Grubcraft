@@ -315,7 +315,8 @@ impl Hud {
                 on && input.left_pressed,
                 input.left_released,
             );
-            if clicked {
+            // A slot that went off between the press and the release is no click.
+            if clicked && on {
                 events.push(HudEvent::Command(i));
             }
             let (back, edge, text) = match slot.state {
