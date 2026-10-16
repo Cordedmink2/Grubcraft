@@ -1,0 +1,20 @@
+# Written by `cargo run -p gc_artbake --release` beside models.pak and checked by
+# `cargo run -p gc_artbake -- --check` in CI. Do not edit by hand.
+# Hashes are XXH3-128. Sources marked "not in the repo" live in the project's
+# shared folder; CI cannot check them, so a change to one shows only in a re-bake.
+manifest = 1
+baker = gc_artbake 1
+schema = 4
+config = 49e804baca10036b4aa0d6293a920682
+pack = 3ba4bca1df51b12ff0b0b24b951a7055
+pack_bytes = 2336784
+source shared:grubcraft/yari-ashigaru/yari-ashigaru.glb = d8befd1b9beb333573f281c475354bb0 not in the repo
+source shared:grubcraft/yari-ashigaru/albedo.png = 60d242c6e7215dde4b6a7cd7e83e74cf not in the repo
+source shared:grubcraft/yari-ashigaru/team.png = 444ffd60fc0d1f4f4bc6eac2d3b51011 not in the repo
+source shared:grubcraft/yari-ashigaru/normal.png = a8dc37b0e5611ca9a31ba39e7913d2ae not in the repo
+source shared:grubcraft/yari-ashigaru/orm.png = 6bf7576f5ddfab5be4067186b8c37296 not in the repo
+source shared:grubcraft/yari-ashigaru/emissive.png = c962468b6362e3a0dfa6c0863d7cf067 not in the repo
+source shared:quaternius/rpg-characters/glTF/Ranger.gltf = 7a4d56e19f1565b37673e6171c71f747 not in the repo
+source repo:cc0/alien-bug-cdmir/alien-bug.glb = 4deccc86fb23fcb2cc9bbb31a90fd4fa
+source shared:quaternius/ultimate-monsters/Big/glTF/Alien.gltf = a95bcaba4bef1a0c46526925604e9beb not in the repo
+source shared:quaternius/ultimate-monsters/Big/glTF/Orc_Skull.gltf = 41fc344e032d4f7d14a143a4fce4e8ea not in the repo

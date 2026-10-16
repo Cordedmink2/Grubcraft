@@ -24,6 +24,7 @@
 
 pub mod codec;
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::path::Path;
 
@@ -37,6 +38,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 8: the per-system hashes of a desync report (read as none);
 /// - 7: the header's battle result (read as undecided);
 /// - 6: the header's sim version (read as unknown);
 /// - 5: the [`Header`] (read as an empty one);
@@ -45,13 +47,17 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 8;
+pub const FORMAT: u16 = 9;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
 pub const EXTENSION: &str = "gcr";
 /// State hashes are kept every this many ticks (one second of game time).
 pub const CHECKPOINT_EVERY: u32 = TICKS_PER_SECOND;
+/// A desync report keeps each system's hashes for this many of the last
+/// checkpoints: as many as the host keeps to compare with (gc_net's
+/// `HASHES_KEPT`), so a report covers any tick a desync is found at.
+pub const SYSTEM_TRAIL: usize = 256;
 /// A replay body larger than this is refused rather than allocated.
 const MAX_BODY: usize = 256 << 20;
 
@@ -119,6 +125,11 @@ pub struct Replay {
     /// `(tick, state hash)` at tick 0 and every [`CHECKPOINT_EVERY`]
     /// ticks after.
     pub checkpoints: Vec<(u32, u64)>,
+    /// A desync report's last checkpoints again, with each system's own
+    /// hash ([`World::system_hashes`], in the order of
+    /// [`gc_sim::SYSTEMS`]), so two machines' reports name the system that
+    /// parted first. Empty in other recordings.
+    pub systems: Vec<(u32, Vec<u64>)>,
 }
 
 /// The replay files in `dir`, sorted by name.
@@ -244,6 +255,22 @@ impl Replay {
             .map(|&(tick, _)| tick)
     }
 
+    /// Where two desync reports' system trails first disagree: the tick,
+    /// and the names of the systems ([`gc_sim::SYSTEMS`]) whose hashes
+    /// differ there. `None` when the trails share no differing tick (or
+    /// come from builds with other systems).
+    pub fn first_system_difference(&self, other: &Replay) -> Option<(u32, Vec<&'static str>)> {
+        self.systems.iter().find_map(|(tick, mine)| {
+            let (_, theirs) = other.systems.iter().find(|(t, _)| t == tick)?;
+            let differ: Vec<&'static str> = (mine.iter().zip(theirs))
+                .enumerate()
+                .filter(|(_, (a, b))| a != b)
+                .map(|(i, _)| gc_sim::SYSTEMS.get(i).copied().unwrap_or("unknown"))
+                .collect();
+            (!differ.is_empty()).then_some((*tick, differ))
+        })
+    }
+
     /// Play the whole replay and compare every checkpoint. Returns the
     /// final world when all of them match.
     pub fn verify(&self) -> Result<World, Divergence> {
@@ -298,6 +325,8 @@ impl Replay {
         }
         self.checkpoints = checkpoints;
         self.header.sim_version = Some(gc_sim::SIM_VERSION);
+        // A desync report's system hashes were the old rules'.
+        self.systems.clear();
         self.header.result = world.verdict();
     }
 
@@ -360,6 +389,14 @@ impl Replay {
             w.var(u64::from(tick - prev));
             prev = tick;
             w.u64(hash);
+        }
+        w.var(self.systems.len() as u64);
+        for (tick, hashes) in &self.systems {
+            w.var(u64::from(*tick));
+            w.var(hashes.len() as u64);
+            for &hash in hashes {
+                w.u64(hash);
+            }
         }
         let mut out = Vec::with_capacity(w.buf.len() / 2);
         out.extend_from_slice(&MAGIC);
@@ -461,6 +498,22 @@ impl Replay {
             tick = tick.checked_add(r.var_as()?)?;
             checkpoints.push((tick, r.u64()?));
         }
+        let mut systems = Vec::new();
+        if format >= 9 {
+            let n: usize = r.var_as()?;
+            if n > SYSTEM_TRAIL {
+                return None;
+            }
+            for _ in 0..n {
+                let tick = r.var_as()?;
+                let k: usize = r.var_as()?;
+                if k > 4 * gc_sim::SYSTEMS.len() {
+                    return None;
+                }
+                let hashes = (0..k).map(|_| r.u64()).collect::<Option<_>>()?;
+                systems.push((tick, hashes));
+            }
+        }
         if r.remaining() != 0 {
             return None;
         }
@@ -480,6 +533,7 @@ impl Replay {
             ticks,
             turns,
             checkpoints,
+            systems,
         })
     }
 
@@ -546,6 +600,8 @@ pub struct Recorder {
     replay: Replay,
     /// Ticks between state hashes ([`CHECKPOINT_EVERY`] unless set).
     every: u32,
+    /// Each system's hashes at the last checkpoints, when kept.
+    trail: Option<VecDeque<(u32, Vec<u64>)>>,
 }
 
 impl Recorder {
@@ -578,9 +634,28 @@ impl Recorder {
                 ticks: 0,
                 turns: Vec::new(),
                 checkpoints: vec![(0, world.state_hash())],
+                systems: Vec::new(),
             },
             every: CHECKPOINT_EVERY,
+            trail: None,
         }
+    }
+
+    /// Also keep each system's hashes at the last [`SYSTEM_TRAIL`]
+    /// checkpoints, for [`Recorder::desync_report`] (network matches).
+    #[must_use]
+    pub fn with_system_trail(mut self) -> Recorder {
+        self.trail = Some(VecDeque::with_capacity(SYSTEM_TRAIL));
+        self
+    }
+
+    /// The recording so far as a desync report: marked as out of sync from
+    /// `tick`, with the system trail if one is kept.
+    pub fn desync_report(&self, tick: u32) -> Replay {
+        let mut report = self.replay.clone();
+        report.header.desync_tick = Some(tick);
+        report.systems = self.trail.iter().flatten().cloned().collect();
+        report
     }
 
     /// Keep a state hash every `ticks` ticks instead, such as as often as a
@@ -615,6 +690,12 @@ impl Recorder {
             self.replay
                 .checkpoints
                 .push((self.replay.ticks, world.state_hash()));
+            if let Some(trail) = &mut self.trail {
+                if trail.len() == SYSTEM_TRAIL {
+                    trail.pop_front();
+                }
+                trail.push_back((self.replay.ticks, world.system_hashes().to_vec()));
+            }
         }
         stats
     }
@@ -796,6 +877,8 @@ mod tests {
         // desync, no sim version.
         let header_len = 1 + 8 + 1 + 1 + 1 + 1 + 1;
         body.extend_from_slice(&empty[body.len() + header_len..]);
+        // Nor, from format 8 down, the system trail's count.
+        assert_eq!(body.pop(), Some(0));
         assert!(full.len() > empty.len());
         let mut old = MAGIC.to_vec();
         old.extend_from_slice(&5u16.to_le_bytes());
@@ -803,8 +886,9 @@ mod tests {
         assert_eq!(Replay::decode(&old).unwrap(), replay);
     }
 
-    /// `replay` with an empty header, written as `format`: the current
-    /// format less the header's last `dropped` bytes (each 0 for none),
+    /// `replay` with an empty header, written as `format` (8 or older): the
+    /// current format less the system trail's count at the end, and less
+    /// the header's last `dropped` bytes (each 0 for none),
     /// which follow the note and the empty header's no build, data hash 0,
     /// no players, nobody and no desync.
     fn older(replay: &mut Replay, format: u16, dropped: usize) -> Vec<u8> {
@@ -814,10 +898,68 @@ mod tests {
         w.bytes(replay.note.as_bytes());
         let at = w.buf.len() + 1 + 8 + 1 + 1 + 1;
         assert!(body.drain(at..at + dropped).all(|b| b == 0));
+        assert_eq!(body.pop(), Some(0));
         let mut old = MAGIC.to_vec();
         old.extend_from_slice(&format.to_le_bytes());
         old.extend_from_slice(&lz4_flex::compress_prepend_size(&body));
         old
+    }
+
+    #[test]
+    fn a_format_8_replay_has_no_system_trail() {
+        let mut replay = record();
+        let old = older(&mut replay, 8, 0);
+        assert_eq!(Replay::decode(&old).unwrap(), replay);
+    }
+
+    #[test]
+    fn desync_reports_name_the_system_that_parted_first() {
+        let setup = MatchSetup {
+            seed: 3,
+            capacities: Capacities { regiments: 16 },
+            units: &DRILL_UNITS,
+            map_tiles: 64,
+            nav: &[],
+            teams: &[],
+            ground: Ground::FLAT,
+            champions: false,
+        };
+        let mut world = World::new(&setup);
+        let mut rec = Recorder::new(&setup, &world, "trail")
+            .checkpoint_every(10)
+            .with_system_trail();
+        let spawn = PlayerCommand {
+            player: 0,
+            command: Command::SpawnRegiment {
+                unit: 0,
+                position: gc_fixed::FxVec2::from_ints(32, 32),
+                facing: gc_fixed::Angle(0),
+            },
+        };
+        rec.tick(&mut world, &[spawn]);
+        for _ in 0..(SYSTEM_TRAIL as u32 + 5) * 10 {
+            rec.tick(&mut world, &[]);
+        }
+        let mine = rec.desync_report(500);
+        assert_eq!(mine.header.desync_tick, Some(500));
+        assert_eq!(mine.systems.len(), SYSTEM_TRAIL);
+        assert_eq!(rec.replay().systems.len(), 0, "only reports carry it");
+        let back = Replay::decode(&mine.encode()).unwrap();
+        assert_eq!(back, mine);
+        // The other machine's regiments went astray at one checkpoint.
+        let mut theirs = mine.clone();
+        let regiments = gc_sim::SYSTEMS
+            .iter()
+            .position(|&s| s == "regiments")
+            .unwrap();
+        let (tick, hashes) = &mut theirs.systems[10];
+        hashes[regiments] ^= 1;
+        let tick = *tick;
+        assert_eq!(
+            mine.first_system_difference(&theirs),
+            Some((tick, vec!["regiments"]))
+        );
+        assert_eq!(mine.first_system_difference(&mine), None);
     }
 
     #[test]

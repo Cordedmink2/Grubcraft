@@ -8,6 +8,7 @@
 //! `desync-reports` with the tick the worlds parted at.
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::time::UNIX_EPOCH;
 
 use gc_platform::logln;
@@ -209,6 +210,32 @@ pub fn list(
         .collect()
 }
 
+/// The list [`list_in_background`] will send.
+pub type Listing = mpsc::Receiver<Vec<ReplayEntry>>;
+
+/// [`list`] on a thread of its own: it decodes every replay in the folder,
+/// tens of milliseconds each, which the frame loop can't wait for. The list
+/// arrives on the channel; if the thread can't start, the channel closes
+/// with nothing sent.
+pub fn list_in_background(
+    dir: PathBuf,
+    unit_types: usize,
+    capacity: Capacities,
+    data_hash: u64,
+) -> Listing {
+    let (send, listing) = mpsc::channel();
+    let started = std::thread::Builder::new()
+        .name("replay-list".into())
+        .spawn(move || {
+            // The receiver is gone if the menu asked again; nobody wants this one.
+            let _ = send.send(list(&dir, unit_types, capacity, data_hash));
+        });
+    if let Err(e) = started {
+        logln!("grubcraft: could not start the replay list: {e}");
+    }
+    listing
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,6 +306,13 @@ mod tests {
                 .map(|s| &s[..10]),
             Some("Made with ")
         );
+        let listing = list_in_background(dir.clone(), units.len(), Capacities::default(), 0);
+        let later = listing
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the list arrives");
+        assert_eq!(later.len(), listed.len());
+        assert_eq!(later[1].title, listed[1].title);
+        assert_eq!(later[1].path, listed[1].path);
         let back = parties(&Replay::load(&listed[1].path).unwrap().header);
         assert_eq!(back[0].faction, Some(gc_ai::Faction::from_index(1)));
         std::fs::remove_dir_all(&dir).unwrap();

@@ -291,6 +291,28 @@ fn compare(a: &Path, b: &Path) -> ExitCode {
                     "; their commands first differ at tick {t}"
                 ))
             );
+            let width = |r: &Replay| r.systems.first().map(|(_, h)| h.len());
+            match ra.first_system_difference(&rb) {
+                // A trail that starts after the worlds parted shows how far
+                // the difference spread, not where it began.
+                Some((t, systems)) => println!(
+                    "        at tick {t} ({}) {}: {}",
+                    clock(t),
+                    if t > tick {
+                        "these differ"
+                    } else {
+                        "these parted"
+                    },
+                    systems.join(", ")
+                ),
+                None if ra.systems.is_empty() || rb.systems.is_empty() => {
+                    println!("        (no system hashes: these aren't both desync reports)");
+                }
+                None if width(&ra) != width(&rb) => {
+                    println!("        (their builds hash different systems)");
+                }
+                None => println!("        (their system hashes share no tick that differs)"),
+            }
             ExitCode::FAILURE
         }
     }

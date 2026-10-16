@@ -47,6 +47,10 @@ const DELAY_LOWER_AFTER: u32 = 3;
 
 /// Players send the host a state hash every this many ticks.
 pub const HASH_EVERY: u32 = 10;
+/// The host keeps its own hashes for this many checks, so it can compare
+/// a joiner's (a rejoiner's may be far behind). Desync reports keep each
+/// system's hashes as far back (`gc_replay::SYSTEM_TRAIL`).
+pub const HASHES_KEPT: usize = 256;
 
 /// A player silent this long has lost the connection.
 pub const PLAYER_TIMEOUT: Duration = Duration::from_secs(3);
@@ -525,7 +529,7 @@ impl Lan {
             Role::Host(h) => {
                 if let Some(g) = &mut h.game {
                     g.hashes.push_back((tick, hash));
-                    if g.hashes.len() > 256 {
+                    if g.hashes.len() > HASHES_KEPT {
                         g.hashes.pop_front();
                     }
                 }

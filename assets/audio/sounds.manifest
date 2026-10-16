@@ -1,0 +1,10 @@
+# Written by `cargo run -p gc_sfx` beside sounds.gcsnd and checked by
+# `cargo run -p gc_sfx -- --check` in CI. Do not edit by hand.
+# The sounds are synthesised by tools/gc_sfx/src/synth.rs; there are no other sources.
+# Hashes are XXH3-128.
+manifest = 1
+baker = gc_sfx 1
+clips = 13
+sources = none (synthesised)
+bank = 9e1b643b594b984f2a947bed9da753d6
+bank_bytes = 401408

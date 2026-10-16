@@ -826,3 +826,6 @@ fn nothing_readable_crosses_the_network() {
     assert!(!found(b"Zanzibar"), "a name crossed in the clear");
     assert!(!found(b"Mario"), "the lobby crossed in the clear");
 }
+
+// Desync reports reach back as far as the host compares hashes.
+const _: () = assert!(gc_replay::SYSTEM_TRAIL >= gc_net::HASHES_KEPT);

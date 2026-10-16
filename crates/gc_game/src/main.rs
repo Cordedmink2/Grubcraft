@@ -102,7 +102,7 @@ mod scenery;
 mod sounds;
 mod terrain_gen;
 
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use battle::{Battle, Party, party_name};
@@ -493,6 +493,8 @@ struct Running {
     quit: bool,
     /// None with `--no-audio` or when there is no sound output.
     sounds: Option<sounds::Sounds>,
+    /// The replay list being read on another thread, until it arrives.
+    replay_list: Option<replays::Listing>,
 }
 
 /// Soldier models and the lists that draw them, rebuilt every frame.
@@ -956,6 +958,7 @@ impl App {
         let settings = settings_path
             .as_deref()
             .map_or_else(Settings::default, Settings::load);
+        let volumes = (settings.volume_master, settings.volume_music);
         let lan = Lan::new(gc_net::Identity {
             version: online::version(),
             data_hash: game_data.short_hash(),
@@ -969,7 +972,7 @@ impl App {
             .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
         let sounds = if opts.audio {
             tagged_alloc::scope(Tag::Audio, || {
-                sounds::Sounds::start(capacities.regiments as usize)
+                sounds::Sounds::start(capacities.regiments as usize, volumes.0, volumes.1)
             })
         } else {
             None
@@ -1057,6 +1060,7 @@ impl App {
             data_hash: game_data.short_hash(),
             quit: false,
             sounds,
+            replay_list: None,
         });
         if let Some(r) = self.running.as_mut() {
             r.menu.set_in_match(r.match_started);
@@ -2485,25 +2489,49 @@ impl Running {
         let (screen, scale) = self.ui_screen();
         let mut input = std::mem::take(&mut self.ui_input);
         input.mouse = self.ui_cursor();
+        if let Some(listing) = &self.replay_list {
+            let arrived = match listing.try_recv() {
+                Ok(list) => Some(list),
+                // The thread never started or died (the log says which).
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    logln!("grubcraft: the replay list did not arrive");
+                    Some(Vec::new())
+                }
+                Err(mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(list) = arrived {
+                self.menu.set_replays(list);
+                self.replay_list = None;
+            }
+        }
         self.ui.begin_frame(input, screen);
         let action = self.menu.frame(&mut self.ui);
         self.ui.end_frame();
         hud::upload_ui(&mut self.renderer, &mut self.ui_quads, &self.ui.draw, scale);
         match action {
-            MenuAction::None | MenuAction::SettingsChanged => {}
+            MenuAction::None => {}
+            MenuAction::SettingsChanged => {
+                let s = self.menu.settings();
+                if let Some(sounds) = &mut self.sounds {
+                    sounds.set_volumes(s.volume_master, s.volume_music);
+                }
+            }
             MenuAction::Resume => self.close_menu(),
             MenuAction::Quit => self.quit = true,
             MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox),
             MenuAction::ListReplays => {
                 // A replay being saved now belongs in the list.
                 self.save_recording();
-                let list = replays::list(
-                    &replays::folder(),
-                    self.data_stats.len(),
-                    self.capacities,
-                    self.data_hash,
-                );
-                self.menu.set_replays(list);
+                self.menu.replays_loading();
+                // One read at a time: asking again waits for the one under way.
+                if self.replay_list.is_none() {
+                    self.replay_list = Some(replays::list_in_background(
+                        replays::folder(),
+                        self.data_stats.len(),
+                        self.capacities,
+                        self.data_hash,
+                    ));
+                }
             }
             MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
                 Ok(r) => match replays::unplayable(&r, self.data_stats.len(), self.capacities) {
@@ -2627,17 +2655,20 @@ impl Running {
             } else {
                 "on this machine"
             };
+            let recorder = gc_replay::Recorder::new(
+                &setup,
+                &self.world,
+                format!("{mode} on {map}, played {place}"),
+            );
             self.recording = Some(Recording {
-                recorder: gc_replay::Recorder::new(
-                    &setup,
-                    &self.world,
-                    format!("{mode} on {map}, played {place}"),
-                )
-                .checkpoint_every(if net_seed.is_some() {
-                    gc_net::HASH_EVERY
-                } else {
-                    gc_replay::CHECKPOINT_EVERY
-                }),
+                // A network match hashes as often as the machines compare,
+                // and keeps each system's hashes for a desync report.
+                recorder: match net_seed {
+                    Some(_) => recorder
+                        .checkpoint_every(gc_net::HASH_EVERY)
+                        .with_system_trail(),
+                    None => recorder,
+                },
                 path: replays::new_path(&dir, replays::now(), mode),
                 saved_at: None,
             });
@@ -2872,8 +2903,7 @@ impl Running {
             return "Nothing was recorded to report".into();
         };
         // The recording carries on as a replay once the report is out.
-        rec.recorder.header_mut().desync_tick = Some(tick);
-        let report = rec.recorder.replay();
+        let report = &rec.recorder.desync_report(tick);
         let who = report.header.recorded_by.map_or(0, |p| u32::from(p) + 1);
         let path = replays::new_path(
             &replays::desync_folder(),
@@ -2881,7 +2911,6 @@ impl Running {
             &format!("desync player{who}"),
         );
         let saved = replays::save(report, &path);
-        rec.recorder.header_mut().desync_tick = None;
         let line = match saved {
             Ok(()) => format!(
                 "Saved a desync report for the developers: {}",
