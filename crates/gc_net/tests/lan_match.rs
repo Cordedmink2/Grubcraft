@@ -1,30 +1,30 @@
-//! Several machines in one process, talking over real UDP on this machine:
-//! joining a lobby, starting a match, and playing it in lockstep with lost
-//! packets, every world ending identical.
+//! Several machines in one process on a network inside it
+//! ([`MemoryNet`]), on a clock the test moves a millisecond at a time:
+//! joining a lobby, starting a match, and playing it in lockstep through
+//! lost, late, doubled and reordered packets, every world ending identical.
+//! Every run plays out the same way. `udp.rs` checks the real sockets.
 
-use std::sync::{Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant};
+use std::net::SocketAddr;
+use std::time::Duration;
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_net::{HASH_EVERY, INPUT_DELAY, Identity, Lan, MIN_DELAY, MatchEvent};
+use gc_net::net::{MemoryNet, Net};
+use gc_net::proto::{HEADER_LEN, Kind, header};
+use gc_net::wire::Writer;
+use gc_net::{HASH_EVERY, INPUT_DELAY, Identity, Lan, MIN_DELAY, MatchEvent, TURN};
 use gc_replay::{Recorder, Replay};
 use gc_sim::scenario::{DRILL_UNITS, Drill};
 use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, World};
 use gc_ui::lobby::{
-    Faction, LobbySettings, MAX_PLAYERS, NetError, NetEvent, Network, OnDrop, Profile, SlotEdit,
-    SlotKind,
+    DiscoveredGame, Faction, LobbySettings, MAX_PLAYERS, NetError, NetEvent, Network, OnDrop,
+    Profile, SlotEdit, SlotKind,
 };
 
-/// Hosts listen on a fixed few ports, so these tests take turns.
-static PORTS: Mutex<()> = Mutex::new(());
-
-/// Take the game ports for one test (a test that failed while holding them
-/// still lets the next one in).
-fn ports() -> MutexGuard<'static, ()> {
-    PORTS.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 const SEED: u64 = 0x6772_7562;
+
+/// How far the clock moves between looks at the network: finer than any
+/// game's frame.
+const STEP: Duration = Duration::from_millis(1);
 
 fn id(version: &str) -> Identity {
     Identity {
@@ -44,56 +44,56 @@ fn profile(name: &str) -> Profile {
     }
 }
 
-fn lan() -> Lan {
-    let mut l = Lan::new(id("test"));
-    l.set_turn_length(Duration::from_millis(5));
-    l
+fn lan_as(net: &MemoryNet, id: Identity) -> Lan {
+    Lan::on(id, Box::new(net.clone()))
 }
 
-fn gc_net_player_timeout() -> Duration {
-    gc_net::PLAYER_TIMEOUT
+fn lan(net: &MemoryNet) -> Lan {
+    lan_as(net, id("test"))
 }
 
 fn address(host: &Lan) -> String {
     format!("127.0.0.1:{}", host.port().unwrap())
 }
 
-/// `joiner` joins `host`, which answers meanwhile (on another machine it
-/// would be running on its own).
-fn join(joiner: &mut Lan, name: &str, host: &mut Lan) -> Result<(), NetError> {
+/// `joiner` joins `host`, which answers meanwhile.
+fn join(net: &MemoryNet, joiner: &mut Lan, name: &str, host: &mut Lan) -> Result<(), NetError> {
     let target = address(host);
-    join_at(joiner, name, &target, host)
-}
-
-fn join_at(joiner: &mut Lan, name: &str, target: &str, host: &mut Lan) -> Result<(), NetError> {
-    join_with(joiner, name, target, "", host)
+    join_with(net, joiner, name, &target, "", host)
 }
 
 fn join_with(
+    net: &MemoryNet,
     joiner: &mut Lan,
     name: &str,
     target: &str,
     password: &str,
     host: &mut Lan,
 ) -> Result<(), NetError> {
-    std::thread::scope(|s| {
-        let joining = s.spawn(|| joiner.join(&profile(name), target, password));
-        while !joining.is_finished() {
-            host.pump(Instant::now());
-            std::thread::sleep(Duration::from_millis(1));
+    joiner.start_join(&profile(name), target, password)?;
+    loop {
+        net.advance(STEP);
+        host.pump(net.now());
+        if let Some(done) = joiner.joining() {
+            return done;
         }
-        joining.join().unwrap()
-    })
+    }
 }
 
-/// Pump every machine for a moment.
-fn settle(lans: &mut [&mut Lan]) {
-    for _ in 0..20 {
+/// Run every machine for `time`.
+fn pass(net: &MemoryNet, lans: &mut [&mut Lan], time: Duration) {
+    let end = net.now() + time;
+    while net.now() < end {
+        net.advance(STEP);
         for l in lans.iter_mut() {
-            l.pump(Instant::now());
+            l.pump(net.now());
         }
-        std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+/// Run every machine for a moment.
+fn settle(net: &MemoryNet, lans: &mut [&mut Lan]) {
+    pass(net, lans, Duration::from_millis(300));
 }
 
 const SETUP: MatchSetup = MatchSetup {
@@ -107,13 +107,9 @@ const SETUP: MatchSetup = MatchSetup {
     champions: false,
 };
 
-fn world() -> World {
-    World::new(&SETUP)
-}
-
 /// `n` machines' worlds, each recorded the way the game records a match.
 fn machines(n: usize) -> (Vec<World>, Vec<Recorder>) {
-    let worlds: Vec<World> = (0..n).map(|_| world()).collect();
+    let worlds: Vec<World> = (0..n).map(|_| World::new(&SETUP)).collect();
     let recorders = worlds
         .iter()
         .map(|w| Recorder::new(&SETUP, w, "LAN test").checkpoint_every(HASH_EVERY))
@@ -121,28 +117,33 @@ fn machines(n: usize) -> (Vec<World>, Vec<Recorder>) {
     (worlds, recorders)
 }
 
+fn drill(players: u8) -> Drill {
+    let mut d = Drill::new(SEED);
+    d.regiments_per_player = 20;
+    d.players = players;
+    d
+}
+
 /// A match under way between `lans`, each playing the drill for its own
 /// players (`mine[i]`) on its own copy of the world.
 struct Match {
+    net: MemoryNet,
     lans: Vec<Lan>,
     worlds: Vec<World>,
     /// What each machine played, as it would save it for a desync report.
     recorders: Vec<Recorder>,
     drills: Vec<Drill>,
     mine: Vec<Vec<u8>>,
+    /// The most regiments each player has had on the host's field.
+    peak: Vec<usize>,
     cmds: Vec<PlayerCommand>,
 }
 
 impl Match {
-    /// Host a lobby, let `names` join and get ready, fill `ai` slots with
-    /// computer players, and start, with turns `turn_ms` long.
-    fn start(names: &[&str], ai: &[usize], on_drop: OnDrop, turn_ms: u64) -> Match {
-        let lan = || {
-            let mut l = Lan::new(id("test"));
-            l.set_turn_length(Duration::from_millis(turn_ms));
-            l
-        };
-        let mut host = lan();
+    /// Host a lobby on `net`, let `names` join and get ready, fill `ai`
+    /// slots with computer players, and start.
+    fn on(net: &MemoryNet, names: &[&str], ai: &[usize], on_drop: OnDrop) -> Match {
+        let mut host = lan(net);
         host.host(
             &profile("Mario"),
             LobbySettings {
@@ -154,8 +155,8 @@ impl Match {
         .unwrap();
         let mut lans = vec![host];
         for name in names {
-            let mut l = lan();
-            join(&mut l, name, &mut lans[0]).unwrap();
+            let mut l = lan(net);
+            join(net, &mut l, name, &mut lans[0]).unwrap();
             lans.push(l);
         }
         for &slot in ai {
@@ -165,10 +166,10 @@ impl Match {
             let me = l.lobby().unwrap().local_slot;
             l.edit_slot(me, SlotEdit::Ready(true));
         }
-        settle(&mut lans.iter_mut().collect::<Vec<_>>());
+        settle(net, &mut lans.iter_mut().collect::<Vec<_>>());
         let start = lans[0].start_match().unwrap();
         assert_eq!(start.seed, Some(SEED));
-        settle(&mut lans.iter_mut().collect::<Vec<_>>());
+        settle(net, &mut lans.iter_mut().collect::<Vec<_>>());
         let mut mine = vec![vec![0u8]];
         mine[0].extend((names.len() + 1..start.players.len()).map(|p| p as u8));
         for l in &mut lans[1..] {
@@ -181,23 +182,27 @@ impl Match {
         for l in &mut lans {
             l.loaded(Ok(()));
         }
-        let n = lans.len();
         // The drill fields four players unless the match has more.
         let players = start.players.len().max(4) as u8;
+        Match::playing(net, lans, mine, players)
+    }
+
+    fn start(names: &[&str], ai: &[usize], on_drop: OnDrop) -> Match {
+        Match::on(&MemoryNet::new(SEED), names, ai, on_drop)
+    }
+
+    /// `lans`, their match started and loaded, play it.
+    fn playing(net: &MemoryNet, lans: Vec<Lan>, mine: Vec<Vec<u8>>, players: u8) -> Match {
+        let n = lans.len();
         let (worlds, recorders) = machines(n);
         let mut m = Match {
+            net: net.clone(),
             lans,
             worlds,
             recorders,
-            drills: (0..n)
-                .map(|_| {
-                    let mut d = Drill::new(SEED);
-                    d.regiments_per_player = 20;
-                    d.players = players;
-                    d
-                })
-                .collect(),
+            drills: (0..n).map(|_| drill(players)).collect(),
             mine,
+            peak: vec![0; usize::from(players)],
             cmds: Vec::new(),
         };
         // The armies, ordered before the first turn.
@@ -221,16 +226,19 @@ impl Match {
         }));
     }
 
-    /// Run every machine except `away` (cut off from the network) for a
-    /// while, or until every running world reaches `until` ticks.
-    fn run(&mut self, away: &[usize], until: u32, for_at_most: Duration) {
-        let deadline = Instant::now() + for_at_most;
+    /// Run every machine except `away` (cut off from the network and not
+    /// playing) for `time` at most, or until every running world reaches
+    /// `until` ticks.
+    fn run(&mut self, away: &[usize], until: u32, time: Duration) {
+        let end = self.net.now() + time;
         let running: Vec<usize> = (0..self.lans.len()).filter(|i| !away.contains(i)).collect();
-        while Instant::now() < deadline
-            && running.iter().any(|&i| self.worlds[i].tick_count() < until)
-        {
+        for (i, l) in self.lans.iter().enumerate() {
+            self.net.cut(l.port().unwrap(), away.contains(&i));
+        }
+        while self.net.now() < end && running.iter().any(|&i| self.worlds[i].tick_count() < until) {
+            self.net.advance(STEP);
             for &i in &running {
-                let now = Instant::now();
+                let now = self.net.now();
                 self.lans[i].pump(now);
                 while self.worlds[i].tick_count() < until
                     && let Some(turn) = self.lans[i].next_turn(now)
@@ -241,23 +249,50 @@ impl Match {
                     if let Some(hash) = self.recorders[i].hash_now() {
                         self.lans[i].record_hash(tick, hash);
                     }
+                    if i == 0 {
+                        for (p, peak) in self.peak.iter_mut().enumerate() {
+                            let n = self.worlds[0]
+                                .regiments
+                                .iter()
+                                .filter(|r| usize::from(r.owner) == p)
+                                .count();
+                            *peak = (*peak).max(n);
+                        }
+                    }
                     self.order(i);
                 }
             }
-            std::thread::sleep(Duration::from_millis(1));
         }
+        for l in &self.lans {
+            self.net.cut(l.port().unwrap(), false);
+        }
+    }
+
+    /// Long enough to play `turns` turns with time to spare.
+    fn turns(turns: u32) -> Duration {
+        TURN * turns * 2 + Duration::from_secs(2)
     }
 
     fn ticks(&self) -> Vec<u32> {
         self.worlds.iter().map(gc_sim::World::tick_count).collect()
     }
 
-    /// Let the last hashes reach the host.
+    /// Let the last hashes reach the host, on a network that loses nothing.
     fn settle(&mut self) {
-        for l in &mut self.lans {
-            l.simulate_loss(0);
+        self.net.set_loss(0);
+        settle(&self.net, &mut self.lans.iter_mut().collect::<Vec<_>>());
+    }
+
+    fn same_worlds(&self) -> bool {
+        let hash = self.worlds[0].state_hash();
+        self.worlds.iter().all(|w| w.state_hash() == hash)
+    }
+
+    /// Every player's regiments made it into the match.
+    fn every_army_raised(&self) {
+        for (p, &n) in self.peak.iter().enumerate() {
+            assert_eq!(n, 20, "player {p}");
         }
-        settle(&mut self.lans.iter_mut().collect::<Vec<_>>());
     }
 
     fn desyncs(&mut self) -> Vec<u32> {
@@ -272,17 +307,23 @@ impl Match {
     }
 }
 
+fn notice(events: &[MatchEvent], text: &str) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e, MatchEvent::Notice(t) if t == text))
+}
+
 #[test]
-fn three_machines_play_in_lockstep_through_lost_packets() {
-    let _turn = ports();
-    let mut host = lan();
+fn three_machines_play_in_lockstep_through_lost_late_and_doubled_packets() {
+    let net = MemoryNet::new(SEED);
+    let mut host = lan(&net);
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
-    let mut alex = lan();
-    let mut sam = lan();
-    join(&mut alex, "Alex", &mut host).unwrap();
-    join(&mut sam, "Sam", &mut host).unwrap();
-    settle(&mut [&mut host, &mut alex, &mut sam]);
+    let mut alex = lan(&net);
+    let mut sam = lan(&net);
+    join(&net, &mut alex, "Alex", &mut host).unwrap();
+    join(&net, &mut sam, "Sam", &mut host).unwrap();
+    settle(&net, &mut [&mut host, &mut alex, &mut sam]);
 
     // Everyone sees everyone; the joiners get ready and pick teams.
     for l in [&alex, &sam, &host] {
@@ -303,7 +344,7 @@ fn three_machines_play_in_lockstep_through_lost_packets() {
         let me = l.lobby().unwrap().local_slot;
         l.edit_slot(me, SlotEdit::Ready(true));
     }
-    settle(&mut [&mut host, &mut alex, &mut sam]);
+    settle(&net, &mut [&mut host, &mut alex, &mut sam]);
     let lobby = sam.lobby().unwrap();
     assert_eq!(lobby.slots[1].team, 0);
     assert_eq!(lobby.slots[2].team, 2);
@@ -312,7 +353,7 @@ fn three_machines_play_in_lockstep_through_lost_packets() {
     let start = host.start_match().unwrap();
     assert_eq!(start.players.len(), 4);
     assert_eq!(start.seed, Some(SEED));
-    settle(&mut [&mut host, &mut alex, &mut sam]);
+    settle(&net, &mut [&mut host, &mut alex, &mut sam]);
     let mut starts = Vec::new();
     for l in [&mut alex, &mut sam] {
         match l.poll().as_slice() {
@@ -324,50 +365,32 @@ fn three_machines_play_in_lockstep_through_lost_packets() {
     assert_eq!(starts[0].local_player, 1);
     assert_eq!(starts[1].local_player, 2);
 
+    // A poor network: a packet in seven lost, one in twenty doubled, and
+    // each taking 30 to 90 ms, so they overtake each other.
+    net.set_loss(15);
+    net.set_duplicate(5);
+    net.set_latency(Duration::from_millis(30), Duration::from_millis(90));
     for l in [&mut host, &mut alex, &mut sam] {
-        l.simulate_loss(15);
         l.loaded(Ok(()));
     }
 
     // Host plays players 0 and 3 (the AI), Alex 1 and Sam 2.
-    let (worlds, recorders) = machines(3);
-    let mut m = Match {
-        lans: vec![host, alex, sam],
-        worlds,
-        recorders,
-        drills: (0..3)
-            .map(|_| {
-                let mut d = Drill::new(SEED);
-                d.regiments_per_player = 20;
-                d
-            })
-            .collect(),
-        mine: vec![vec![0, 3], vec![1], vec![2]],
-        cmds: Vec::new(),
-    };
-    for i in 0..3 {
-        m.order(i);
-    }
+    let mut m = Match::playing(
+        &net,
+        vec![host, alex, sam],
+        vec![vec![0, 3], vec![1], vec![2]],
+        4,
+    );
     const TURNS: u32 = 300;
-    m.run(&[], TURNS, Duration::from_secs(60));
+    m.run(&[], TURNS, Match::turns(TURNS));
     assert_eq!(m.ticks(), [TURNS; 3], "match stalled");
     m.settle();
-    let hashes: Vec<u64> = m.worlds.iter().map(gc_sim::World::state_hash).collect();
-    assert_eq!(hashes[0], hashes[1]);
-    assert_eq!(hashes[0], hashes[2]);
-    // Every player's regiments made it into the match.
-    for p in 0..4u8 {
-        let n = m.worlds[0]
-            .regiments
-            .iter()
-            .filter(|r| r.owner == p)
-            .count();
-        assert_eq!(n, 20, "player {p}");
-    }
+    assert!(m.same_worlds());
+    m.every_army_raised();
     assert!(TURNS.is_multiple_of(HASH_EVERY));
     assert_eq!(m.desyncs(), []);
-    // 5 ms turns are shorter than the 10 ms margin: the delay rose from
-    // where it started, and everyone heard.
+    // Round trips longer than a turn: the delay rose from where it
+    // started, and everyone heard.
     let delay = m.lans[0].input_delay().unwrap();
     assert!(delay > INPUT_DELAY, "{delay}");
     for l in &m.lans {
@@ -379,38 +402,60 @@ fn three_machines_play_in_lockstep_through_lost_packets() {
     let replay = Replay::decode(&m.recorders[2].replay().encode()).unwrap();
     assert_eq!(replay.ticks, TURNS);
     let back = replay.verify().expect("the recording plays back");
-    assert_eq!(back.state_hash(), hashes[2]);
+    assert_eq!(back.state_hash(), m.worlds[2].state_hash());
     assert_eq!(m.recorders[0].replay().first_difference(&replay), None);
 }
 
 #[test]
 fn the_delay_drops_on_a_fast_network() {
-    let _turn = ports();
-    // With 30 ms turns, a round trip on this machine plus the margin fits
-    // in one turn.
-    let mut m = Match::start(&["Alex"], &[], OnDrop::Wait, 30);
+    let mut m = Match::start(&["Alex"], &[], OnDrop::Wait);
     assert_eq!(m.lans[0].input_delay(), Some(INPUT_DELAY));
-    m.run(&[], 100, Duration::from_secs(20));
+    m.run(&[], 100, Match::turns(100));
     assert_eq!(m.ticks(), [100, 100]);
     assert_eq!(m.lans[0].input_delay(), Some(MIN_DELAY));
     m.settle();
     assert_eq!(m.lans[1].input_delay(), Some(MIN_DELAY));
-    assert_eq!(m.worlds[0].state_hash(), m.worlds[1].state_hash());
+    assert!(m.same_worlds());
+    assert_eq!(m.desyncs(), []);
+}
+
+#[test]
+fn the_delay_follows_a_slow_spell_up_and_back_down() {
+    let mut m = Match::start(&["Alex"], &[], OnDrop::Wait);
+    m.run(&[], 100, Match::turns(100));
+    assert_eq!(m.lans[0].input_delay(), Some(MIN_DELAY));
+
+    // Round trips of a quarter of a second: a few turns of delay.
+    m.net
+        .set_latency(Duration::from_millis(120), Duration::from_millis(130));
+    m.run(&[], 300, Match::turns(200));
+    let slow = m.lans[0].input_delay().unwrap();
+    assert!(slow >= 3, "{slow}");
+    assert_eq!(m.ticks(), [300, 300]);
+
+    // Fast again: back down, a turn at a time.
+    m.net
+        .set_latency(Duration::from_millis(1), Duration::from_millis(1));
+    m.run(&[], 600, Match::turns(300));
+    assert_eq!(m.ticks(), [600, 600]);
+    assert_eq!(m.lans[0].input_delay(), Some(MIN_DELAY));
+    m.settle();
+    assert_eq!(m.lans[1].input_delay(), Some(MIN_DELAY));
+    assert!(m.same_worlds());
     assert_eq!(m.desyncs(), []);
 }
 
 #[test]
 fn the_match_waits_for_a_player_who_drops() {
-    let _turn = ports();
-    let mut m = Match::start(&["Alex", "Sam"], &[], OnDrop::Wait, 5);
-    m.run(&[], 100, Duration::from_secs(20));
+    let mut m = Match::start(&["Alex", "Sam"], &[], OnDrop::Wait);
+    m.run(&[], 100, Match::turns(100));
     assert_eq!(m.ticks(), [100; 3]);
 
     // Alex's Wi-Fi goes: after a few quiet seconds the host pauses.
     m.run(
         &[1],
         u32::MAX,
-        gc_net_player_timeout() + Duration::from_millis(500),
+        gc_net::PLAYER_TIMEOUT + Duration::from_millis(500),
     );
     let paused_at = m.ticks();
     assert!(m.lans[0].paused_for_player());
@@ -426,7 +471,7 @@ fn the_match_waits_for_a_player_who_drops() {
 
     // Alex comes back: everyone carries on, in step.
     let target = paused_at[0] + 100;
-    m.run(&[], target, Duration::from_secs(20));
+    m.run(&[], target, Match::turns(200));
     assert_eq!(m.ticks(), [target; 3]);
     assert!(!m.lans[0].paused_for_player());
     assert_eq!(m.lans[2].waiting(), None);
@@ -435,22 +480,17 @@ fn the_match_waits_for_a_player_who_drops() {
     m.run(
         &[2],
         u32::MAX,
-        gc_net_player_timeout() + Duration::from_millis(500),
+        gc_net::PLAYER_TIMEOUT + Duration::from_millis(500),
     );
     assert!(m.lans[0].paused_for_player());
     m.lans[0].carry_on();
     let target = m.ticks()[0] + 50;
-    m.run(&[2], target, Duration::from_secs(20));
+    m.run(&[2], target, Match::turns(50));
     assert_eq!(&m.ticks()[..2], [target; 2]);
     m.settle();
     assert_eq!(m.worlds[0].state_hash(), m.worlds[1].state_hash());
     let notices: Vec<MatchEvent> = m.lans[1].match_events();
-    assert!(
-        notices
-            .iter()
-            .any(|e| matches!(e, MatchEvent::Notice(t) if t == "Carrying on without Sam.")),
-        "{notices:?}"
-    );
+    assert!(notice(&notices, "Carrying on without Sam."), "{notices:?}");
     assert!(
         !notices
             .iter()
@@ -461,31 +501,24 @@ fn the_match_waits_for_a_player_who_drops() {
 
 #[test]
 fn carry_on_plays_through_a_drop() {
-    let _turn = ports();
-    let mut m = Match::start(&["Alex"], &[2], OnDrop::CarryOn, 5);
-    m.run(&[], 50, Duration::from_secs(20));
+    let mut m = Match::start(&["Alex"], &[2], OnDrop::CarryOn);
+    m.run(&[], 50, Match::turns(50));
     let before = m.ticks()[0];
-    m.run(
-        &[1],
-        u32::MAX,
-        gc_net_player_timeout() + Duration::from_millis(500),
-    );
+    let quiet = gc_net::PLAYER_TIMEOUT + Duration::from_millis(500);
+    m.run(&[1], u32::MAX, quiet);
     assert!(!m.lans[0].paused_for_player());
-    assert!(m.ticks()[0] > before + 100, "{:?}", m.ticks());
+    // The host never stopped: it played nearly every turn of that time.
+    let played = m.ticks()[0] - before;
+    let all = (quiet.as_millis() / TURN.as_millis()) as u32;
+    assert!(played * 10 >= all * 9, "{played} of {all}");
     let events = m.lans[0].match_events();
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, MatchEvent::Notice(t) if t == "Alex lost connection.")),
-        "{events:?}"
-    );
+    assert!(notice(&events, "Alex lost connection."), "{events:?}");
 }
 
 #[test]
 fn a_joiner_cannot_use_the_sandbox_on_everyone() {
-    let _turn = ports();
-    let mut m = Match::start(&["Alex"], &[], OnDrop::Wait, 5);
-    m.run(&[], 20, Duration::from_secs(20));
+    let mut m = Match::start(&["Alex"], &[], OnDrop::Wait);
+    m.run(&[], 20, Match::turns(20));
     let units = m.worlds[0].units().to_vec();
     // A tampered client tries every command only the host may send: take
     // the host's army off the field, retune a unit for everyone, raise more
@@ -514,10 +547,10 @@ fn a_joiner_cannot_use_the_sandbox_on_everyone() {
             .into_iter()
             .map(|command| PlayerCommand { player: 0, command }),
     );
-    m.run(&[], 100, Duration::from_secs(20));
+    m.run(&[], 100, Match::turns(100));
     assert_eq!(m.ticks(), [100, 100]);
     m.settle();
-    assert_eq!(m.worlds[0].state_hash(), m.worlds[1].state_hash());
+    assert!(m.same_worlds());
     for w in &m.worlds {
         for p in 0..2u8 {
             let n = w.regiments.iter().filter(|r| r.owner == p).count();
@@ -531,12 +564,11 @@ fn a_joiner_cannot_use_the_sandbox_on_everyone() {
 
 #[test]
 fn a_desync_is_found_and_reported_everywhere() {
-    let _turn = ports();
-    let mut m = Match::start(&["Alex"], &[], OnDrop::Wait, 5);
-    m.run(&[], 40, Duration::from_secs(20));
+    let mut m = Match::start(&["Alex"], &[], OnDrop::Wait);
+    m.run(&[], 40, Match::turns(40));
     // Something only Alex's machine does: an extra tick of its own.
     m.recorders[1].tick(&mut m.worlds[1], &[]);
-    m.run(&[], 100, Duration::from_secs(20));
+    m.run(&[], 100, Match::turns(100));
     m.settle();
     let found = m.desyncs();
     // The host and Alex both hear, at the first hash after the split.
@@ -548,20 +580,20 @@ fn a_desync_is_found_and_reported_everywhere() {
 
 #[test]
 fn a_player_whose_game_restarts_rejoins_and_catches_up() {
-    let _turn = ports();
-    let mut m = Match::start(&["Alex", "Sam"], &[], OnDrop::Wait, 5);
-    m.run(&[], 300, Duration::from_secs(20));
+    let mut m = Match::start(&["Alex", "Sam"], &[], OnDrop::Wait);
+    m.run(&[], 300, Match::turns(300));
 
     // Alex's game closes without a goodbye: the host pauses for them.
     m.run(
         &[1],
         u32::MAX,
-        gc_net_player_timeout() + Duration::from_millis(500),
+        gc_net::PLAYER_TIMEOUT + Duration::from_millis(500),
     );
     assert!(m.lans[0].paused_for_player());
 
     // A stranger still can't join the match.
-    let err = join(&mut lan(), "Kim", &mut m.lans[0]).unwrap_err();
+    let net = m.net.clone();
+    let err = join(&net, &mut lan(&net), "Kim", &mut m.lans[0]).unwrap_err();
     assert_eq!(
         err,
         NetError::Refused("That game has already started.".into())
@@ -569,32 +601,31 @@ fn a_player_whose_game_restarts_rejoins_and_catches_up() {
 
     // Alex starts the game again and joins: they get the match's start and
     // every turn so far, and the match carries on.
-    let mut again = lan();
-    join(&mut again, "Alex", &mut m.lans[0]).unwrap();
+    let mut again = lan(&net);
+    join(&net, &mut again, "Alex", &mut m.lans[0]).unwrap();
     match again.poll().as_slice() {
         [NetEvent::Started(s)] => assert_eq!(s.local_player, 1),
         other => panic!("{other:?}"),
     }
     again.loaded(Ok(()));
-    std::mem::forget(std::mem::replace(&mut m.lans[1], again));
+    // The old game is gone without a word.
+    let old = std::mem::replace(&mut m.lans[1], again);
+    net.cut(old.port().unwrap(), true);
+    std::mem::forget(old);
     let (mut worlds, mut recorders) = machines(1);
     m.worlds[1] = worlds.pop().unwrap();
     m.recorders[1] = recorders.pop().unwrap();
-    m.drills[1] = Drill::new(SEED);
-    m.drills[1].regiments_per_player = 20;
+    m.drills[1] = drill(4);
     assert!(!m.lans[0].paused_for_player());
 
     let target = m.ticks()[0] + 200;
-    m.run(&[], target, Duration::from_secs(30));
+    m.run(&[], target, Match::turns(500));
     assert_eq!(m.ticks(), [target; 3]);
     m.settle();
-    let hash = m.worlds[0].state_hash();
-    assert!(m.worlds.iter().all(|w| w.state_hash() == hash));
+    assert!(m.same_worlds());
     let events = m.lans[2].match_events();
     assert!(
-        events.iter().any(
-            |e| matches!(e, MatchEvent::Notice(t) if t == "Alex rejoined and is catching up.")
-        ),
+        notice(&events, "Alex rejoined and is catching up."),
         "{events:?}"
     );
     assert_eq!(m.desyncs(), []);
@@ -602,90 +633,153 @@ fn a_player_whose_game_restarts_rejoins_and_catches_up() {
 
 #[test]
 fn six_machines_play_in_lockstep() {
-    let _turn = ports();
     let joiners = ["Alex", "Sam", "Kai", "Jo", "Ren"];
-    let mut m = Match::start(&joiners, &[], OnDrop::Wait, 10);
+    let net = MemoryNet::new(SEED);
+    net.set_latency(Duration::from_millis(2), Duration::from_millis(20));
+    net.set_loss(5);
+    let mut m = Match::on(&net, &joiners, &[], OnDrop::Wait);
     assert_eq!(m.lans.len(), MAX_PLAYERS);
-    // Every player's regiments made it into the match. Count them a few
-    // turns in, before the drill's fighting can kill any.
-    m.run(&[], 5, Duration::from_secs(30));
-    assert_eq!(m.ticks(), [5; MAX_PLAYERS], "match stalled");
-    for p in 0..MAX_PLAYERS as u8 {
-        let n = m.worlds[0]
-            .regiments
-            .iter()
-            .filter(|r| r.owner == p)
-            .count();
-        assert_eq!(n, 20, "player {p}");
-    }
     const TURNS: u32 = 200;
-    m.run(&[], TURNS, Duration::from_secs(60));
+    m.run(&[], TURNS, Match::turns(TURNS));
     assert_eq!(m.ticks(), [TURNS; MAX_PLAYERS], "match stalled");
     m.settle();
-    let hash = m.worlds[0].state_hash();
-    assert!(m.worlds.iter().all(|w| w.state_hash() == hash));
+    assert!(m.same_worlds());
+    m.every_army_raised();
     assert_eq!(m.desyncs(), []);
 }
 
 #[test]
+fn garbage_and_forged_packets_change_nothing() {
+    let mut m = Match::start(&["Alex"], &[], OnDrop::Wait);
+    m.run(&[], 40, Match::turns(40));
+    let at = |port| SocketAddr::from(([127, 0, 0, 1], port));
+    let host = at(m.lans[0].port().unwrap());
+    let alex = at(m.lans[1].port().unwrap());
+    let stranger = at(9999);
+    let kinds = [
+        Kind::Query,
+        Kind::Beacon,
+        Kind::Link,
+        Kind::WrongProtocol,
+        Kind::Hi,
+        Kind::KeyReply,
+    ];
+    let mut rng = 0x1234_5678_9abc_def0u64;
+    for round in 0..200usize {
+        let mut packet: Vec<u8> = (0..(round * 7) % 1400)
+            .map(|_| {
+                rng ^= rng << 13;
+                rng ^= rng >> 7;
+                rng ^= rng << 17;
+                rng as u8
+            })
+            .collect();
+        // Half of them pass the header check: the right magic, protocol and
+        // a kind of packet, with garbage after.
+        if round % 2 == 0 && packet.len() >= HEADER_LEN {
+            let mut w = Writer::new();
+            header(&mut w, kinds[round / 2 % kinds.len()]);
+            packet[..HEADER_LEN].copy_from_slice(&w.buf);
+        }
+        // To each side, from a stranger and forged as from the other side.
+        m.net.inject(&packet, stranger, host);
+        m.net.inject(&packet, alex, host);
+        m.net.inject(&packet, stranger, alex);
+        m.net.inject(&packet, host, alex);
+        m.run(&[], u32::MAX, STEP * 3);
+    }
+    let target = m.ticks()[0] + 100;
+    m.run(&[], target, Match::turns(100));
+    assert_eq!(m.ticks(), [target; 2]);
+    m.settle();
+    assert!(m.same_worlds());
+    assert_eq!(m.desyncs(), []);
+    assert!(!m.lans[0].paused_for_player());
+}
+
+#[test]
+fn the_same_network_plays_out_the_same_way() {
+    let play = || {
+        let net = MemoryNet::new(99);
+        net.set_latency(Duration::from_millis(5), Duration::from_millis(60));
+        net.set_loss(10);
+        let began = net.now();
+        let mut m = Match::on(&net, &["Alex"], &[], OnDrop::Wait);
+        m.run(&[], 150, Match::turns(150));
+        (
+            net.now() - began,
+            m.lans[0].input_delay(),
+            m.worlds[0].state_hash(),
+        )
+    };
+    assert_eq!(play(), play());
+}
+
+#[test]
 fn joiners_are_refused_when_full_or_on_different_data() {
-    let _turn = ports();
-    let mut host = lan();
+    let net = MemoryNet::new(SEED);
+    let mut host = lan(&net);
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
     for slot in 1..MAX_PLAYERS {
         host.edit_slot(slot, SlotEdit::Kind(SlotKind::Ai));
     }
-    let mut late = lan();
-    let err = join(&mut late, "Late", &mut host).unwrap_err();
+    let mut late = lan(&net);
+    let err = join(&net, &mut late, "Late", &mut host).unwrap_err();
     assert_eq!(err, NetError::Refused("That lobby is full.".into()));
     assert!(late.lobby().is_none());
 
     host.edit_slot(MAX_PLAYERS - 1, SlotEdit::Kind(SlotKind::Open));
-    let mut odd = Lan::new(Identity {
-        data_hash: 1,
-        ..id("test")
-    });
-    let err = join(&mut odd, "Odd", &mut host).unwrap_err();
+    let mut odd = lan_as(
+        &net,
+        Identity {
+            data_hash: 1,
+            ..id("test")
+        },
+    );
+    let err = join(&net, &mut odd, "Odd", &mut host).unwrap_err();
     assert!(err.to_string().contains("game data differs"), "{err}");
     // Builds that differ only in commit play by the same rules, so their
     // data must match too.
-    let mut retuned = Lan::new(Identity {
-        data_hash: 1,
-        ..id("test (other commit)")
-    });
-    let err = join(&mut retuned, "Retuned", &mut host).unwrap_err();
+    let mut retuned = lan_as(
+        &net,
+        Identity {
+            data_hash: 1,
+            ..id("test (other commit)")
+        },
+    );
+    let err = join(&net, &mut retuned, "Retuned", &mut host).unwrap_err();
     assert!(err.to_string().contains("game data differs"), "{err}");
 
     // A different build is let in, and the lobby says who differs.
-    let mut old = Lan::new(id("0.0.9"));
-    join(&mut old, "Old", &mut host).unwrap();
-    settle(&mut [&mut host, &mut old]);
+    let mut old = lan_as(&net, id("0.0.9"));
+    join(&net, &mut old, "Old", &mut host).unwrap();
+    settle(&net, &mut [&mut host, &mut old]);
     let why = host.lobby().unwrap().start_blocker().unwrap();
     assert_eq!(why, "Old is on 0.0.9, host is on test");
 }
 
 #[test]
 fn leaving_and_being_removed() {
-    let _turn = ports();
-    let mut host = lan();
+    let net = MemoryNet::new(SEED);
+    let mut host = lan(&net);
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
-    let mut alex = lan();
-    join(&mut alex, "Alex", &mut host).unwrap();
-    settle(&mut [&mut host, &mut alex]);
+    let mut alex = lan(&net);
+    join(&net, &mut alex, "Alex", &mut host).unwrap();
+    settle(&net, &mut [&mut host, &mut alex]);
     assert_eq!(host.lobby().unwrap().slots[1].name, "Alex");
 
     // Alex leaves: the slot opens again.
     alex.leave();
-    settle(&mut [&mut host, &mut alex]);
+    settle(&net, &mut [&mut host, &mut alex]);
     assert_eq!(host.lobby().unwrap().slots[1].kind, SlotKind::Open);
 
     // Back in, then the host gives the place to an AI.
-    join(&mut alex, "Alex", &mut host).unwrap();
-    settle(&mut [&mut host, &mut alex]);
+    join(&net, &mut alex, "Alex", &mut host).unwrap();
+    settle(&net, &mut [&mut host, &mut alex]);
     host.edit_slot(1, SlotEdit::Kind(SlotKind::Ai));
-    settle(&mut [&mut host, &mut alex]);
+    settle(&net, &mut [&mut host, &mut alex]);
     let events = alex.poll();
     assert!(
         matches!(events.as_slice(), [NetEvent::Left(why)] if why.contains("gave your place")),
@@ -694,104 +788,131 @@ fn leaving_and_being_removed() {
     assert!(alex.lobby().is_none());
 
     // The host closing the lobby sends everyone back.
-    let mut sam = lan();
-    join(&mut sam, "Sam", &mut host).unwrap();
+    let mut sam = lan(&net);
+    join(&net, &mut sam, "Sam", &mut host).unwrap();
     host.leave();
-    settle(&mut [&mut sam]);
+    settle(&net, &mut [&mut sam]);
     assert!(matches!(sam.poll().as_slice(), [NetEvent::Left(_)]));
 }
 
 #[test]
-fn the_join_screen_finds_a_hosted_game() {
-    let _turn = ports();
-    let mut host = lan();
+fn a_host_that_goes_quiet_is_given_up_on() {
+    let net = MemoryNet::new(SEED);
+    let mut host = lan(&net);
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
-    let mut finder = lan();
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut alex = lan(&net);
+    join(&net, &mut alex, "Alex", &mut host).unwrap();
+    // The host's machine stops answering, without a goodbye.
+    net.cut(host.port().unwrap(), true);
+    pass(
+        &net,
+        &mut [&mut alex],
+        gc_net::HOST_TIMEOUT - Duration::from_millis(500),
+    );
+    assert!(alex.lobby().is_some(), "gave up too soon");
+    pass(&net, &mut [&mut alex], Duration::from_secs(1));
+    assert!(matches!(alex.poll().as_slice(), [NetEvent::Left(_)]));
+    assert!(alex.lobby().is_none());
+}
+
+/// Look for games on the Join screen until one hosted by `name` shows up.
+fn find(net: &MemoryNet, finder: &mut Lan, name: &str, host: &mut Lan) -> DiscoveredGame {
+    let give_up = net.now() + Duration::from_secs(3);
     loop {
-        host.pump(Instant::now());
-        let games = finder.discovered();
-        if let Some(g) = games.iter().find(|g| g.host == "Mario") {
-            assert_eq!(g.players, 1);
-            assert_eq!(g.version, "test");
-            let addr = g.address.clone();
-            join_at(&mut finder, "Alex", &addr, &mut host).unwrap();
-            break;
+        net.advance(STEP);
+        host.pump(net.now());
+        if let Some(g) = finder.discovered().iter().find(|g| g.host == name) {
+            return g.clone();
         }
-        assert!(Instant::now() < deadline, "no game found");
-        std::thread::sleep(Duration::from_millis(5));
+        assert!(net.now() < give_up, "no game found");
     }
+}
+
+#[test]
+fn the_join_screen_finds_a_hosted_game() {
+    let net = MemoryNet::new(SEED);
+    let mut host = lan(&net);
+    host.host(&profile("Mario"), LobbySettings::default(), "")
+        .unwrap();
+    let mut finder = lan(&net);
+    let g = find(&net, &mut finder, "Mario", &mut host);
+    assert_eq!(g.players, 1);
+    assert_eq!(g.version, "test");
+    join_with(&net, &mut finder, "Alex", &g.address, "", &mut host).unwrap();
     assert_eq!(finder.lobby().unwrap().slots[0].name, "Mario");
 }
 
 #[test]
 fn nobody_answering_is_a_clear_error() {
-    let _turn = ports();
-    let mut alex = lan();
+    let net = MemoryNet::new(SEED);
+    let mut alex = lan(&net);
     // A port nothing listens on.
-    let err = alex.join(&profile("Alex"), "127.0.0.1:9", "").unwrap_err();
+    alex.start_join(&profile("Alex"), "127.0.0.1:9", "")
+        .unwrap();
+    let began = net.now();
+    let err = loop {
+        net.advance(STEP);
+        if let Some(done) = alex.joining() {
+            break done.unwrap_err();
+        }
+    };
     assert!(err.to_string().contains("No answer"), "{err}");
+    assert!(net.now() - began > gc_net::JOIN_TIMEOUT);
 }
 
 #[test]
 fn a_password_keeps_strangers_out() {
-    let _turn = ports();
-    let mut host = lan();
+    let net = MemoryNet::new(SEED);
+    let mut host = lan(&net);
     host.host(&profile("Mario"), LobbySettings::default(), "moles")
         .unwrap();
     let target = address(&host);
-    let mut alex = lan();
-    let err = join_with(&mut alex, "Alex", &target, "", &mut host).unwrap_err();
+    let mut alex = lan(&net);
+    let err = join_with(&net, &mut alex, "Alex", &target, "", &mut host).unwrap_err();
     assert!(err.to_string().contains("needs a password"), "{err}");
-    let err = join_with(&mut alex, "Alex", &target, "voles", &mut host).unwrap_err();
+    let err = join_with(&net, &mut alex, "Alex", &target, "voles", &mut host).unwrap_err();
     assert_eq!(err, NetError::Refused("Wrong password.".into()));
-    join_with(&mut alex, "Alex", &target, "moles", &mut host).unwrap();
-    settle(&mut [&mut host, &mut alex]);
+    join_with(&net, &mut alex, "Alex", &target, "moles", &mut host).unwrap();
+    settle(&net, &mut [&mut host, &mut alex]);
     assert_eq!(host.lobby().unwrap().slots[1].name, "Alex");
 
     // The Join list says a password is needed.
-    let mut finder = lan();
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        host.pump(Instant::now());
-        if let Some(g) = finder.discovered().iter().find(|g| g.host == "Mario") {
-            assert!(g.locked);
-            break;
-        }
-        assert!(Instant::now() < deadline, "no game found");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let mut finder = lan(&net);
+    assert!(find(&net, &mut finder, "Mario", &mut host).locked);
 
     // A password where none is set is caught too.
-    let mut open = lan();
+    let mut open = lan(&net);
     open.host(&profile("Sam"), LobbySettings::default(), "")
         .unwrap();
-    let mut late = lan();
+    let mut late = lan(&net);
     let target = address(&open);
-    let err = join_with(&mut late, "Late", &target, "moles", &mut open).unwrap_err();
+    let err = join_with(&net, &mut late, "Late", &target, "moles", &mut open).unwrap_err();
     assert!(err.to_string().contains("no password"), "{err}");
 
     // Five wrong guesses from one address in a minute, and it gets no more
-    // tries, not even with the right password.
+    // tries, not even with the right password...
     drop(host);
-    let mut host = lan();
+    let mut host = lan(&net);
     host.host(&profile("Mario"), LobbySettings::default(), "moles")
         .unwrap();
-    let mut guesser = lan();
+    let mut guesser = lan(&net);
     let target = address(&host);
     for _ in 0..5 {
-        let err = join_with(&mut guesser, "Guess", &target, "voles", &mut host).unwrap_err();
+        let err = join_with(&net, &mut guesser, "Guess", &target, "voles", &mut host).unwrap_err();
         assert_eq!(err, NetError::Refused("Wrong password.".into()));
     }
-    let err = join_with(&mut guesser, "Guess", &target, "moles", &mut host).unwrap_err();
+    let err = join_with(&net, &mut guesser, "Guess", &target, "moles", &mut host).unwrap_err();
     assert!(err.to_string().starts_with("No answer"), "{err}");
+    // ...until the minute is up.
+    pass(&net, &mut [&mut host], Duration::from_secs(60));
+    join_with(&net, &mut guesser, "Guess", &target, "moles", &mut host).unwrap();
 }
 
 #[test]
 fn friends_join_with_a_code() {
-    let _turn = ports();
-    let mut host = lan();
+    let net = MemoryNet::new(SEED);
+    let mut host = lan(&net);
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
     // The lobby shows a code for this machine's network address (when it
@@ -804,48 +925,47 @@ fn friends_join_with_a_code() {
     }
     let code =
         gc_net::joincode::encode(std::net::Ipv4Addr::LOCALHOST, host.port().unwrap()).unwrap();
-    let mut alex = lan();
-    join_at(&mut alex, "Alex", &code.to_lowercase(), &mut host).unwrap();
-    settle(&mut [&mut host, &mut alex]);
+    let mut alex = lan(&net);
+    join_with(&net, &mut alex, "Alex", &code.to_lowercase(), "", &mut host).unwrap();
+    settle(&net, &mut [&mut host, &mut alex]);
     assert_eq!(host.lobby().unwrap().slots[1].name, "Alex");
 }
 
 #[test]
 fn nothing_readable_crosses_the_network() {
-    let _turn = ports();
+    let net = MemoryNet::new(SEED);
     // A listener between the two sees every packet the joiner sends.
-    let mut host = lan();
+    let mut host = lan(&net);
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
-    let relay = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-    relay.set_nonblocking(true).unwrap();
-    let host_addr: std::net::SocketAddr = address(&host).parse().unwrap();
+    let relay = net.bind(0).unwrap();
+    let host_addr: SocketAddr = address(&host).parse().unwrap();
     let mut seen: Vec<Vec<u8>> = Vec::new();
-    let mut alex = lan();
+    let mut alex = lan(&net);
     let target = relay.local_addr().unwrap().to_string();
-    std::thread::scope(|s| {
-        let joining = s.spawn(|| alex.join(&profile("Zanzibar"), &target, ""));
-        let mut joiner = None;
-        let mut buf = [0u8; 2048];
-        while !joining.is_finished() {
-            host.pump(Instant::now());
-            // Pass packets both ways, keeping a copy.
-            while let Ok((n, from)) = relay.recv_from(&mut buf) {
-                seen.push(buf[..n].to_vec());
-                if from == host_addr {
-                    if let Some(j) = joiner {
-                        relay.send_to(&buf[..n], j).unwrap();
-                    }
-                } else {
-                    joiner = Some(from);
-                    relay.send_to(&buf[..n], host_addr).unwrap();
+    alex.start_join(&profile("Zanzibar"), &target, "").unwrap();
+    let mut joiner = None;
+    let mut buf = [0u8; 2048];
+    let joined = loop {
+        net.advance(STEP);
+        host.pump(net.now());
+        // Pass packets both ways, keeping a copy.
+        while let Ok((n, from)) = relay.recv_from(&mut buf) {
+            seen.push(buf[..n].to_vec());
+            if from == host_addr {
+                if let Some(j) = joiner {
+                    relay.send_to(&buf[..n], j).unwrap();
                 }
+            } else {
+                joiner = Some(from);
+                relay.send_to(&buf[..n], host_addr).unwrap();
             }
-            std::thread::sleep(Duration::from_millis(1));
         }
-        joining.join().unwrap()
-    })
-    .unwrap();
+        if let Some(done) = alex.joining() {
+            break done;
+        }
+    };
+    joined.unwrap();
     assert!(seen.len() > 2);
     // The host only knows the relay, but the name made it through, sealed.
     let lobby = host.lobby().unwrap();

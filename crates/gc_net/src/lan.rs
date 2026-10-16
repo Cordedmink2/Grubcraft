@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 use std::io::ErrorKind;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 use gc_sim::{PlayerCommand, PlayerId};
@@ -16,6 +16,7 @@ use gc_ui::lobby::{
 use crate::crypt::{Cipher, KeyPair};
 use crate::joincode;
 use crate::link::Link;
+use crate::net::{Net, Socket, Udp};
 use crate::proto::{
     Beacon, Kind, LobbyWire, MAX_PACKET, Msg, PROTOCOL, header, read_header, short_name,
 };
@@ -246,49 +247,42 @@ enum Role {
 /// orders out).
 pub struct Lan {
     id: Identity,
-    socket: Option<UdpSocket>,
+    /// The clock and sockets it runs on.
+    net: Box<dyn Net>,
+    socket: Option<Box<dyn Socket>>,
     role: Role,
+    /// When a join began, while it waits for the host's answer.
+    joining_since: Option<Instant>,
     /// The Join screen's socket and what it has heard.
-    finder: Option<UdpSocket>,
+    finder: Option<Box<dyn Socket>>,
     last_query: Option<Instant>,
     found: Vec<(DiscoveredGame, Instant)>,
     games: Vec<DiscoveredGame>,
     events: Vec<NetEvent>,
     match_events: Vec<MatchEvent>,
-    /// Length of a turn: [`TURN`], shorter in tests.
-    turn: Duration,
-    /// Test hook: drop this percentage of outgoing packets.
-    loss: u32,
-    loss_rng: u32,
 }
 
 impl Lan {
     pub fn new(id: Identity) -> Lan {
+        Lan::on(id, Box::new(Udp))
+    }
+
+    /// A machine on `net` instead of real UDP and the wall clock (tests use
+    /// a [`MemoryNet`](crate::net::MemoryNet)).
+    pub fn on(id: Identity, net: Box<dyn Net>) -> Lan {
         Lan {
             id,
+            net,
             socket: None,
             role: Role::Idle,
+            joining_since: None,
             finder: None,
             last_query: None,
             found: Vec::new(),
             games: Vec::new(),
             events: Vec::new(),
             match_events: Vec::new(),
-            turn: TURN,
-            loss: 0,
-            loss_rng: 0x9e37_79b9,
         }
-    }
-
-    /// For tests: lose `percent` of the packets this machine sends.
-    pub fn simulate_loss(&mut self, percent: u32) {
-        self.loss = percent.min(100);
-    }
-
-    /// For tests: run turns this long instead of [`TURN`]. Every machine in
-    /// a match must use the same length.
-    pub fn set_turn_length(&mut self, turn: Duration) {
-        self.turn = turn;
     }
 
     /// The port this machine's game socket is on, if any.
@@ -336,11 +330,12 @@ impl Lan {
             }
             Role::Idle => {}
         }
-        self.flush(Instant::now(), true);
+        self.flush(self.net.now(), true);
     }
 
     /// While the match waits for players to load, what it waits for.
     pub fn waiting(&self) -> Option<String> {
+        let now = self.net.now();
         match &self.role {
             Role::Host(h) => {
                 let g = h.game.as_ref()?;
@@ -349,7 +344,7 @@ impl Lan {
                         .peers
                         .iter()
                         .filter_map(|p| p.lost_at.filter(|_| !p.gone))
-                        .map(|t| RECONNECT_WAIT.saturating_sub(t.elapsed()))
+                        .map(|t| RECONNECT_WAIT.saturating_sub(now.saturating_duration_since(t)))
                         .min()
                         .unwrap_or_default();
                     return Some(format!(
@@ -375,7 +370,7 @@ impl Lan {
             }
             Role::Client(c) => {
                 let g = c.game.as_ref()?;
-                let quiet = c.link.last_heard.elapsed();
+                let quiet = now.saturating_duration_since(c.link.last_heard);
                 if quiet > Duration::from_secs(1) {
                     let left = client_timeout(c).saturating_sub(quiet);
                     return Some(format!(
@@ -384,7 +379,7 @@ impl Lan {
                     ));
                 }
                 if let Some((who, until)) = &g.wait {
-                    let left = until.saturating_duration_since(Instant::now());
+                    let left = until.saturating_duration_since(now);
                     return Some(format!(
                         "Paused: waiting for {who} to reconnect ({} s)",
                         left.as_secs()
@@ -461,7 +456,7 @@ impl Lan {
     /// Call until it returns `None` each frame (it paces itself to 20 turns a
     /// second, catching up when behind).
     pub fn next_turn(&mut self, now: Instant) -> Option<Vec<PlayerCommand>> {
-        let length = self.turn;
+        let length = TURN;
         let turn = match &mut self.role {
             Role::Host(h) => host_turn(h, now, length),
             Role::Client(c) => {
@@ -506,7 +501,7 @@ impl Lan {
     /// The host stops waiting for the players who lost the connection:
     /// the match carries on and their regiments stand and defend.
     pub fn carry_on(&mut self) {
-        let now = Instant::now();
+        let now = self.net.now();
         let Role::Host(h) = &self.role else { return };
         let lost: Vec<usize> = (0..h.peers.len())
             .filter(|&i| h.peers[i].lost_at.is_some() && !h.peers[i].gone)
@@ -567,14 +562,6 @@ impl Lan {
     }
 
     fn send_raw(&mut self, bytes: &[u8], to: SocketAddr) {
-        if self.loss > 0 {
-            self.loss_rng ^= self.loss_rng << 13;
-            self.loss_rng ^= self.loss_rng >> 17;
-            self.loss_rng ^= self.loss_rng << 5;
-            if self.loss_rng % 100 < self.loss {
-                return;
-            }
-        }
         if let Some(s) = &self.socket {
             let _ = s.send_to(bytes, to);
         }
@@ -1048,7 +1035,7 @@ impl Lan {
                     g.wait = (!who.is_empty()).then(|| {
                         (
                             who,
-                            Instant::now() + Duration::from_secs(u64::from(seconds)),
+                            self.net.now() + Duration::from_secs(u64::from(seconds)),
                         )
                     });
                 }
@@ -1178,7 +1165,7 @@ impl Lan {
     /// Pause the match while anyone is reconnecting, and carry on (from
     /// now, without rushing) once nobody is; tell the players either way.
     fn update_wait(&mut self, now: Instant) {
-        let length = self.turn;
+        let length = TURN;
         let Role::Host(h) = &mut self.role else {
             return;
         };
@@ -1292,7 +1279,7 @@ impl Lan {
             return;
         }
         // A human whose slot the host gave away is turned out.
-        let now = Instant::now();
+        let now = self.net.now();
         for p in h.peers.iter_mut().filter(|p| !p.gone) {
             if let Some(s) = p.slot
                 && h.lobby.slots[s].kind != SlotKind::Human
@@ -1376,7 +1363,7 @@ impl Lan {
             let finder = self.finder.as_ref().unwrap();
             for port in DEFAULT_PORT..DEFAULT_PORT + PORTS {
                 for ip in [Ipv4Addr::BROADCAST, Ipv4Addr::LOCALHOST] {
-                    let _ = finder.send_to(&w.buf, SocketAddrV4::new(ip, port));
+                    let _ = finder.send_to(&w.buf, SocketAddrV4::new(ip, port).into());
                 }
             }
         }
@@ -1417,9 +1404,9 @@ impl Lan {
         self.games = self.found.iter().map(|(g, _)| g.clone()).collect();
     }
 
-    fn bind_host() -> Result<UdpSocket, NetError> {
+    fn bind_host(&self) -> Result<Box<dyn Socket>, NetError> {
         for port in DEFAULT_PORT..DEFAULT_PORT + PORTS {
-            if let Ok(s) = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)) {
+            if let Ok(s) = self.net.bind(port) {
                 return Ok(s);
             }
         }
@@ -1427,14 +1414,6 @@ impl Lan {
             "Could not open a network port ({DEFAULT_PORT} to {}): is another program using them?",
             DEFAULT_PORT + PORTS - 1
         )))
-    }
-
-    fn open(socket: UdpSocket) -> Result<UdpSocket, NetError> {
-        socket
-            .set_nonblocking(true)
-            .map_err(|e| NetError::Unavailable(format!("Network error: {e}")))?;
-        let _ = socket.set_broadcast(true);
-        Ok(socket)
     }
 }
 
@@ -1673,6 +1652,83 @@ fn client_turn(g: &mut ClientGame, now: Instant, length: Duration) -> Option<Vec
     g.ready.pop_front()
 }
 
+impl Lan {
+    /// Begin joining `target` without waiting: [`Lan::joining`] says how it
+    /// went. (The menus' [`Network::join`] waits for the answer.)
+    pub fn start_join(
+        &mut self,
+        me: &Profile,
+        target: &str,
+        password: &str,
+    ) -> Result<(), NetError> {
+        let target = target.trim();
+        if target.is_empty() {
+            return Err(NetError::BadAddress("Type an address or join code".into()));
+        }
+        let addr = parse_address(target)?;
+        self.leave();
+        let socket = self
+            .net
+            .bind(0)
+            .map_err(|e| NetError::Unavailable(format!("Network error: {e}")))?;
+        self.socket = Some(socket);
+        let start = self.net.now();
+        let keys = KeyPair::new()
+            .ok_or_else(|| NetError::Unavailable("No randomness for a secure link".into()))?;
+        let mut link = Link::new(start);
+        link.send(&Msg::Hello {
+            version: self.id.version.clone(),
+            data_hash: self.id.data_hash,
+            name: short_name(&me.name),
+            faction: me.faction,
+            color: me.color,
+        });
+        self.role = Role::Client(Box::new(Client {
+            host: addr,
+            keys,
+            password: password.trim().to_string(),
+            hi_sent: None,
+            link,
+            slot: None,
+            lobby: None,
+            game: None,
+        }));
+        self.joining_since = Some(start);
+        Ok(())
+    }
+
+    /// While a join started by [`Lan::start_join`] waits, talk to the host
+    /// and say how it went: `None` while there is no answer yet.
+    pub fn joining(&mut self) -> Option<Result<(), NetError>> {
+        let start = self.joining_since?;
+        let now = self.net.now();
+        self.flush(now, false);
+        self.pump(now);
+        let done = match &self.role {
+            // A player rejoining a match in progress gets its start.
+            Role::Client(c) if c.lobby.is_some() || c.game.is_some() => Ok(()),
+            Role::Client(c) if now - start > JOIN_TIMEOUT => {
+                let addr = c.host;
+                self.leave();
+                Err(NetError::Refused(format!(
+                    "No answer from {addr}. Is a game hosted there, on the same network and build?"
+                )))
+            }
+            Role::Client(_) => return None,
+            _ => {
+                let why = self.events.iter().rev().find_map(|e| match e {
+                    NetEvent::Left(why) => Some(why.clone()),
+                    NetEvent::Started(_) => None,
+                });
+                self.events.clear();
+                Err(NetError::Refused(why.unwrap_or_else(|| "Refused".into())))
+            }
+        };
+        self.joining_since = None;
+        Some(done)
+    }
+}
+
 impl Network for Lan {
     fn host(
         &mut self,
@@ -1681,7 +1737,7 @@ impl Network for Lan {
         password: &str,
     ) -> Result<(), NetError> {
         self.leave();
-        let socket = Lan::open(Lan::bind_host()?)?;
+        let socket = self.bind_host()?;
         let port = socket.local_addr().map_or(DEFAULT_PORT, |a| a.port());
         let invite = joincode::invite(port, joincode::tailscale_ip(), joincode::local_ip());
         let mut slots: [Slot; MAX_PLAYERS] = std::array::from_fn(Slot::open);
@@ -1717,11 +1773,9 @@ impl Network for Lan {
 
     fn discovered(&mut self) -> &[DiscoveredGame] {
         if matches!(self.role, Role::Idle) && self.finder.is_none() {
-            self.finder = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
-                .ok()
-                .and_then(|s| Lan::open(s).ok());
+            self.finder = self.net.bind(0).ok();
         }
-        self.find(Instant::now());
+        self.find(self.net.now());
         &self.games
     }
 
@@ -1733,60 +1787,13 @@ impl Network for Lan {
     }
 
     fn join(&mut self, me: &Profile, target: &str, password: &str) -> Result<(), NetError> {
-        let target = target.trim();
-        if target.is_empty() {
-            return Err(NetError::BadAddress("Type an address or join code".into()));
-        }
-        let addr = parse_address(target)?;
-        self.leave();
-        let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
-            .map_err(|e| NetError::Unavailable(format!("Network error: {e}")))?;
-        self.socket = Some(Lan::open(socket)?);
-        let start = Instant::now();
-        let keys = KeyPair::new()
-            .ok_or_else(|| NetError::Unavailable("No randomness for a secure link".into()))?;
-        let mut link = Link::new(start);
-        link.send(&Msg::Hello {
-            version: self.id.version.clone(),
-            data_hash: self.id.data_hash,
-            name: short_name(&me.name),
-            faction: me.faction,
-            color: me.color,
-        });
-        self.role = Role::Client(Box::new(Client {
-            host: addr,
-            keys,
-            password: password.trim().to_string(),
-            hi_sent: None,
-            link,
-            slot: None,
-            lobby: None,
-            game: None,
-        }));
+        self.start_join(me, target, password)?;
         // Wait for the host's answer: the lobby, or a refusal.
         loop {
-            let now = Instant::now();
-            self.flush(now, false);
-            self.pump(now);
-            match &self.role {
-                // A player rejoining a match in progress gets its start.
-                Role::Client(c) if c.lobby.is_some() || c.game.is_some() => return Ok(()),
-                Role::Client(_) if now - start > JOIN_TIMEOUT => {
-                    self.leave();
-                    return Err(NetError::Refused(format!(
-                        "No answer from {addr}. Is a game hosted there, on the same network and build?"
-                    )));
-                }
-                Role::Client(_) => std::thread::sleep(Duration::from_millis(5)),
-                _ => {
-                    let why = self.events.iter().rev().find_map(|e| match e {
-                        NetEvent::Left(why) => Some(why.clone()),
-                        NetEvent::Started(_) => None,
-                    });
-                    self.events.clear();
-                    return Err(NetError::Refused(why.unwrap_or_else(|| "Refused".into())));
-                }
+            if let Some(done) = self.joining() {
+                return done;
             }
+            self.net.sleep(Duration::from_millis(5));
         }
     }
 
@@ -1810,7 +1817,7 @@ impl Network for Lan {
             _ => return,
         }
         self.sync_lobby();
-        self.flush(Instant::now(), false);
+        self.flush(self.net.now(), false);
     }
 
     fn edit_settings(&mut self, settings: LobbySettings) {
@@ -1842,7 +1849,7 @@ impl Network for Lan {
         let start = h.lobby.match_start(Some(seed));
         let mut g = HostGame {
             go_at: None,
-            started_at: Instant::now(),
+            started_at: self.net.now(),
             host_loaded: false,
             handed: 0,
             next_close: 0,
@@ -1870,12 +1877,12 @@ impl Network for Lan {
             p.link.send(&g.start_msg(map_hash, you));
         }
         h.game = Some(g);
-        self.flush(Instant::now(), true);
+        self.flush(self.net.now(), true);
         Ok(start)
     }
 
     fn leave(&mut self) {
-        let now = Instant::now();
+        let now = self.net.now();
         match &mut self.role {
             Role::Host(h) => {
                 let reason = if h.game.is_some() {
@@ -1898,6 +1905,7 @@ impl Network for Lan {
         self.flush(now, true);
         self.flush(now, true);
         self.role = Role::Idle;
+        self.joining_since = None;
         self.socket = None;
         self.finder = None;
         self.found.clear();
@@ -1905,7 +1913,7 @@ impl Network for Lan {
     }
 
     fn poll(&mut self) -> Vec<NetEvent> {
-        self.pump(Instant::now());
+        self.pump(self.net.now());
         std::mem::take(&mut self.events)
     }
 }

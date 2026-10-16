@@ -15,6 +15,8 @@
 //!   the local network, and the turns of a match.
 //! - [`crypt`]: the key exchange and encryption that secure every link.
 //! - [`joincode`]: a host's address as a short code to type.
+//! - [`net`]: the clock and sockets a [`Lan`] runs on: real UDP, or a
+//!   network inside the process for tests.
 //!
 //! Not built yet (later M2 steps): resyncing a player whose world
 //! diverged.
@@ -23,10 +25,12 @@ pub mod crypt;
 pub mod joincode;
 mod lan;
 pub mod link;
+pub mod net;
 pub mod proto;
 pub mod wire;
 
 pub use lan::{
-    DEFAULT_PORT, HASH_EVERY, HASHES_KEPT, HostMap, INPUT_DELAY, Identity, Lan, MAX_DELAY,
-    MIN_DELAY, MatchEvent, PLAYER_TIMEOUT, PORTS, RECONNECT_WAIT, TURN,
+    DEFAULT_PORT, HASH_EVERY, HASHES_KEPT, HOST_TIMEOUT, HostMap, INPUT_DELAY, Identity,
+    JOIN_TIMEOUT, Lan, MAX_DELAY, MIN_DELAY, MatchEvent, PLAYER_TIMEOUT, PORTS, RECONNECT_WAIT,
+    TURN,
 };
