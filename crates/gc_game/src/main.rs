@@ -2545,13 +2545,15 @@ impl Running {
                 }
             }
             MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
-                Ok(r) => match replays::unplayable(&r, self.data_stats.len(), self.capacities) {
-                    None => {
-                        logln!("grubcraft: watching {}", path.display());
-                        self.start_match(MatchKind::Replay(Box::new(r)));
+                Ok(r) => {
+                    match replays::unplayable(&r.info(), self.data_stats.len(), self.capacities) {
+                        None => {
+                            logln!("grubcraft: watching {}", path.display());
+                            self.start_match(MatchKind::Replay(Box::new(r)));
+                        }
+                        Some(why) => self.menu.tell(why),
                     }
-                    Some(why) => self.menu.tell(why),
-                },
+                }
                 Err(e) => self.menu.tell(format!("Can't open that replay: {e}")),
             },
             MenuAction::StartMatch(setup) => {
@@ -2842,7 +2844,7 @@ impl Running {
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
         self.camera.distance = 120.0;
         self.watching = Some(Watching {
-            title: replays::title(&replay),
+            title: replays::title(&replay.info()),
             replay,
             stats_before,
             diverged_at: None,

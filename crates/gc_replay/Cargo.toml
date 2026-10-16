@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 gc_fixed.workspace = true
+gc_platform.workspace = true
 gc_sim.workspace = true
 lz4_flex.workspace = true
 

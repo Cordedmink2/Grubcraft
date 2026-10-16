@@ -19,8 +19,12 @@
 //! replays valid; only changes to the simulation itself move their hashes.
 //!
 //! File layout: the magic `GCRP`, the format number (two bytes, little
-//! endian), then the body compressed with LZ4 (size-prefixed block). The
-//! body is written by [`codec`].
+//! endian), then (since format 10) the length of the **info block** (four
+//! bytes) and the info block itself: the note, [`Header`], seed, map size,
+//! unit count, teams and ticks, which is all the game's replay list shows,
+//! so [`Replay::read_header`] reads just it. Last comes the rest of the
+//! replay compressed with LZ4 (size-prefixed block). Before format 10 the
+//! whole body was the one compressed block. Both are written by [`codec`].
 
 pub mod codec;
 
@@ -38,6 +42,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 10: the separate info block (read from the one compressed body);
 /// - 8: the per-system hashes of a desync report (read as none);
 /// - 7: the header's battle result (read as undecided);
 /// - 6: the header's sim version (read as unknown);
@@ -47,7 +52,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 9;
+pub const FORMAT: u16 = 10;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -60,6 +65,8 @@ pub const CHECKPOINT_EVERY: u32 = TICKS_PER_SECOND;
 pub const SYSTEM_TRAIL: usize = 256;
 /// A replay body larger than this is refused rather than allocated.
 const MAX_BODY: usize = 256 << 20;
+/// An info block longer than this is refused rather than allocated.
+const MAX_INFO: usize = 1 << 20;
 
 /// One side of a recorded match, as the game showed it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -95,6 +102,23 @@ pub struct Header {
     /// How the battle was decided, if it was by the end of the recording
     /// ([`World::verdict`]); `None` too for files from before format 8.
     pub result: Option<Verdict>,
+}
+
+/// What the replay list needs of a file, which format 10 keeps in a block
+/// of its own ([`Replay::read_header`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Info {
+    pub note: String,
+    pub header: Header,
+    pub seed: u64,
+    /// Regiment capacity the world was created with.
+    pub regiments: u32,
+    pub map_tiles: u32,
+    /// The size of the unit table.
+    pub units: usize,
+    pub teams: Vec<u8>,
+    /// Ticks recorded.
+    pub ticks: u32,
 }
 
 /// A recorded match.
@@ -330,8 +354,9 @@ impl Replay {
         self.header.result = world.verdict();
     }
 
-    pub fn encode(&self) -> Vec<u8> {
-        let mut w = Writer::default();
+    /// The note, header, seed and map size: how the info block starts, and
+    /// how the body of formats 2 to 9 did.
+    fn write_head(&self, w: &mut Writer) {
         w.bytes(self.note.as_bytes());
         let h = &self.header;
         w.bytes(h.build.as_bytes());
@@ -355,11 +380,16 @@ impl Replay {
         w.u64(self.seed);
         w.var(u64::from(self.regiments));
         w.var(u64::from(self.map_tiles));
+    }
+
+    fn write_units(&self, w: &mut Writer) {
         w.var(self.units.len() as u64);
         for u in &self.units {
             w.stats(u);
         }
-        w.bytes(&self.teams);
+    }
+
+    fn write_map(&self, w: &mut Writer) {
         w.bytes(&self.nav);
         // Heights as differences from the one before: neighbouring heights
         // are close, so most take one byte.
@@ -372,7 +402,9 @@ impl Replay {
         w.var(u64::from(self.water_level));
         w.bytes(&self.cover);
         w.bool(self.champions);
-        w.var(u64::from(self.ticks));
+    }
+
+    fn write_tail(&self, w: &mut Writer) {
         w.var(self.turns.len() as u64);
         let mut prev = 0;
         for (tick, commands) in &self.turns {
@@ -398,22 +430,58 @@ impl Replay {
                 w.u64(hash);
             }
         }
-        let mut out = Vec::with_capacity(w.buf.len() / 2);
+    }
+
+    /// The fields the replay list shows.
+    pub fn info(&self) -> Info {
+        Info {
+            note: self.note.clone(),
+            header: self.header.clone(),
+            seed: self.seed,
+            regiments: self.regiments,
+            map_tiles: self.map_tiles,
+            units: self.units.len(),
+            teams: self.teams.clone(),
+            ticks: self.ticks,
+        }
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut info = Writer::default();
+        self.write_head(&mut info);
+        info.var(self.units.len() as u64);
+        info.bytes(&self.teams);
+        info.var(u64::from(self.ticks));
+        let mut w = Writer::default();
+        self.write_units(&mut w);
+        self.write_map(&mut w);
+        self.write_tail(&mut w);
+        let packed = lz4_flex::compress_prepend_size(&w.buf);
+        let mut out = Vec::with_capacity(10 + info.buf.len() + packed.len());
         out.extend_from_slice(&MAGIC);
         out.extend_from_slice(&FORMAT.to_le_bytes());
-        out.extend_from_slice(&lz4_flex::compress_prepend_size(&w.buf));
+        out.extend_from_slice(&(info.buf.len() as u32).to_le_bytes());
+        out.extend_from_slice(&info.buf);
+        out.extend_from_slice(&packed);
         out
     }
 
+    /// The body as formats 2 to 9 stored it, as the one compressed block:
+    /// for the tests of the older formats.
+    #[cfg(test)]
+    fn legacy_body(&self) -> Vec<u8> {
+        let mut w = Writer::default();
+        self.write_head(&mut w);
+        self.write_units(&mut w);
+        w.bytes(&self.teams);
+        self.write_map(&mut w);
+        w.var(u64::from(self.ticks));
+        self.write_tail(&mut w);
+        w.buf
+    }
+
     pub fn decode(bytes: &[u8]) -> Result<Replay, Error> {
-        if bytes.len() < 6 || bytes[..4] != MAGIC {
-            return Err(Error::NotAReplay);
-        }
-        let format = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if !(OLDEST_FORMAT..=FORMAT).contains(&format) {
-            return Err(Error::Format(format));
-        }
-        let packed = &bytes[6..];
+        let (format, info, packed) = split(bytes)?;
         let size = packed
             .get(..4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
@@ -421,13 +489,73 @@ impl Replay {
         if size > MAX_BODY {
             return Err(Error::Corrupt("body too large"));
         }
+        let info = info.map(|b| Replay::parse_info(b, format)).transpose()?;
         let body = lz4_flex::decompress_size_prepended(packed)
             .map_err(|_| Error::Corrupt("compressed body"))?;
-        Replay::read_body(&mut Reader::new(&body), format).ok_or(Error::Corrupt("body"))
+        Replay::read_body(&mut Reader::new(&body), format, info).ok_or(Error::Corrupt("body"))
     }
 
-    fn read_body(r: &mut Reader, format: u16) -> Option<Replay> {
-        // Counts are checked against the bytes left before allocating.
+    /// Only what the replay list shows, without reading the rest: from
+    /// format 10 on that is one small block at the start of the file. An
+    /// older file has to be read and decoded whole.
+    pub fn read_header(path: impl AsRef<Path>) -> Result<Info, Error> {
+        use std::io::Read;
+        let path = path.as_ref();
+        let mut file = std::fs::File::open(path)?;
+        let mut start = Vec::with_capacity(10);
+        (&mut file).take(10).read_to_end(&mut start)?;
+        if start.len() < 6 || start[..4] != MAGIC {
+            return Err(Error::NotAReplay);
+        }
+        let format = u16::from_le_bytes([start[4], start[5]]);
+        if !(OLDEST_FORMAT..=FORMAT).contains(&format) {
+            return Err(Error::Format(format));
+        }
+        if format < 10 {
+            return Ok(Replay::load(path)?.info());
+        }
+        let len = start
+            .get(6..10)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
+            .ok_or(Error::Corrupt("no info block"))?;
+        if len > MAX_INFO {
+            return Err(Error::Corrupt("info block too large"));
+        }
+        // Not allocated up front: a lying length in a short file costs
+        // only the bytes there are.
+        let mut block = Vec::new();
+        file.take(len as u64).read_to_end(&mut block)?;
+        if block.len() != len {
+            return Err(Error::Corrupt("info block"));
+        }
+        Replay::parse_info(&block, format)
+    }
+
+    fn parse_info(block: &[u8], format: u16) -> Result<Info, Error> {
+        let corrupt = || Error::Corrupt("info block");
+        let mut r = Reader::new(block);
+        let info = Replay::read_info(&mut r, format).ok_or_else(corrupt)?;
+        if r.remaining() != 0 {
+            return Err(corrupt());
+        }
+        Ok(info)
+    }
+
+    /// The info block (format 10 and later).
+    fn read_info(r: &mut Reader, format: u16) -> Option<Info> {
+        let mut info = Replay::read_head(r, format)?;
+        info.units = r.var_as()?;
+        info.teams = r.bytes()?.to_vec();
+        if info.teams.len() > gc_sim::MAX_PARTIES {
+            return None;
+        }
+        info.ticks = r.var_as()?;
+        Some(info)
+    }
+
+    /// The note, header, seed and map size, which the body of formats up to
+    /// 9 starts with and the info block of format 10 does.
+    fn read_head(r: &mut Reader, format: u16) -> Option<Info> {
         let note = String::from_utf8(r.bytes()?.to_vec()).ok()?;
         let header = if format >= 6 {
             read_header(r, format)?
@@ -440,14 +568,39 @@ impl Replay {
         if regiments > Capacities::MAX_REGIMENTS || map_tiles > gc_sim::MAX_MAP_TILES {
             return None;
         }
+        Some(Info {
+            note,
+            header,
+            seed,
+            regiments,
+            map_tiles,
+            ..Info::default()
+        })
+    }
+
+    /// `info` is the info block, for format 10 and later; older formats
+    /// have it at the start of the body.
+    fn read_body(r: &mut Reader, format: u16, info: Option<Info>) -> Option<Replay> {
+        // Counts are checked against the bytes left before allocating.
+        let mut info = match info {
+            Some(info) => info,
+            None => Replay::read_head(r, format)?,
+        };
+        let map_tiles = info.map_tiles;
         let n: usize = r.var_as()?;
         let mut units = Vec::with_capacity(n.min(r.remaining()));
         for _ in 0..n {
             units.push(r.stats()?);
         }
-        let teams = r.bytes()?.to_vec();
-        if teams.len() > gc_sim::MAX_PARTIES {
-            return None;
+        if format >= 10 {
+            if n != info.units {
+                return None;
+            }
+        } else {
+            info.teams = r.bytes()?.to_vec();
+            if info.teams.len() > gc_sim::MAX_PARTIES {
+                return None;
+            }
         }
         let nav = r.bytes()?.to_vec();
         let side = map_tiles as usize * gc_sim::nav::CELLS_PER_TILE as usize;
@@ -474,7 +627,9 @@ impl Replay {
             return None;
         }
         let champions = format >= 4 && r.bool()?;
-        let ticks = r.var_as()?;
+        if format < 10 {
+            info.ticks = r.var_as()?;
+        }
         let n: usize = r.var_as()?;
         let mut turns = Vec::with_capacity(n.min(r.remaining()));
         let mut tick = 0u32;
@@ -518,19 +673,19 @@ impl Replay {
             return None;
         }
         Some(Replay {
-            note,
-            header,
-            seed,
-            regiments,
+            note: info.note,
+            header: info.header,
+            seed: info.seed,
+            regiments: info.regiments,
             units,
             map_tiles,
-            teams,
+            teams: info.teams,
             nav,
             heights,
             water_level,
             cover,
             champions,
-            ticks,
+            ticks: info.ticks,
             turns,
             checkpoints,
             systems,
@@ -542,8 +697,38 @@ impl Replay {
     }
 
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), Error> {
-        Ok(std::fs::write(path, self.encode())?)
+        Ok(gc_platform::fsutil::write_atomic(
+            path.as_ref(),
+            &self.encode(),
+        )?)
     }
+}
+
+/// The magic and format number, then (format 10 and later) the info block
+/// and what follows it.
+type Split<'a> = (u16, Option<&'a [u8]>, &'a [u8]);
+
+fn split(bytes: &[u8]) -> Result<Split<'_>, Error> {
+    if bytes.len() < 6 || bytes[..4] != MAGIC {
+        return Err(Error::NotAReplay);
+    }
+    let format = u16::from_le_bytes([bytes[4], bytes[5]]);
+    if !(OLDEST_FORMAT..=FORMAT).contains(&format) {
+        return Err(Error::Format(format));
+    }
+    let rest = &bytes[6..];
+    if format < 10 {
+        return Ok((format, None, rest));
+    }
+    let len = rest
+        .get(..4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
+        .ok_or(Error::Corrupt("no info block"))?;
+    if len > MAX_INFO {
+        return Err(Error::Corrupt("info block too large"));
+    }
+    let info = rest.get(4..4 + len).ok_or(Error::Corrupt("info block"))?;
+    Ok((format, Some(info), &rest[4 + len..]))
 }
 
 fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
@@ -813,13 +998,23 @@ mod tests {
     #[test]
     fn damaged_files_never_panic() {
         let bytes = record().encode();
-        let body = lz4_flex::decompress_size_prepended(&bytes[6..]).unwrap();
+        let info_len = u32::from_le_bytes(bytes[6..10].try_into().unwrap()) as usize;
+        let (head, packed) = bytes.split_at(10 + info_len);
+        let body = lz4_flex::decompress_size_prepended(packed).unwrap();
         let file = |body: &[u8]| {
-            let mut out = bytes[..6].to_vec();
+            let mut out = head.to_vec();
             out.extend_from_slice(&lz4_flex::compress_prepend_size(body));
             out
         };
         assert!(Replay::decode(&file(&body)).is_ok());
+        // Every byte of the info block too.
+        for i in 10..head.len() {
+            for flip in [0x01, 0xff] {
+                let mut bad = bytes.clone();
+                bad[i] ^= flip;
+                let _ = Replay::decode(&bad);
+            }
+        }
         // Every byte of the header and counts, a sample of the rest.
         let positions = (0..body.len().min(256)).chain((256..body.len()).step_by(1021));
         for i in positions {
@@ -870,9 +1065,9 @@ mod tests {
         let mut w = Writer::default();
         w.bytes(replay.note.as_bytes());
         let mut body = w.buf;
-        let full = lz4_flex::decompress_size_prepended(&replay.encode()[6..]).unwrap();
+        let full = replay.legacy_body();
         replay.header = Header::default();
-        let empty = lz4_flex::decompress_size_prepended(&replay.encode()[6..]).unwrap();
+        let empty = replay.legacy_body();
         // The empty header: no build, data hash 0, no players, nobody, no
         // desync, no sim version.
         let header_len = 1 + 8 + 1 + 1 + 1 + 1 + 1;
@@ -893,7 +1088,7 @@ mod tests {
     /// no players, nobody and no desync.
     fn older(replay: &mut Replay, format: u16, dropped: usize) -> Vec<u8> {
         replay.header = Header::default();
-        let mut body = lz4_flex::decompress_size_prepended(&replay.encode()[6..]).unwrap();
+        let mut body = replay.legacy_body();
         let mut w = Writer::default();
         w.bytes(replay.note.as_bytes());
         let at = w.buf.len() + 1 + 8 + 1 + 1 + 1;
@@ -903,6 +1098,80 @@ mod tests {
         old.extend_from_slice(&format.to_le_bytes());
         old.extend_from_slice(&lz4_flex::compress_prepend_size(&body));
         old
+    }
+
+    /// A temporary file named for the test and process, removed at the end.
+    fn temp(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("gc-replay-{}-{name}.gcr", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn the_header_reads_without_the_body() {
+        let replay = record();
+        let path = temp("header", &replay.encode());
+        let info = Replay::read_header(&path).unwrap();
+        assert_eq!(info, replay.info());
+        assert_eq!(info, Replay::load(&path).unwrap().info());
+        assert_eq!(info.header, replay.header);
+        assert_eq!(info.teams, [0, 1, 0, 1]);
+        assert_eq!(info.units, DRILL_UNITS.len());
+        // Damage to the body leaves the header readable: it never looks.
+        let mut bytes = replay.encode();
+        let n = bytes.len();
+        bytes.truncate(n - 20);
+        let cut = temp("header-cut-body", &bytes);
+        assert_eq!(Replay::read_header(&cut).unwrap(), replay.info());
+        assert!(Replay::load(&cut).is_err());
+        // Save is atomic and reads back.
+        replay.save(&path).unwrap();
+        assert_eq!(Replay::load(&path).unwrap(), replay);
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(cut);
+    }
+
+    #[test]
+    fn an_older_file_reads_its_header_whole() {
+        let mut replay = record();
+        let old = older(&mut replay, 8, 0);
+        let path = temp("header-old", &old);
+        assert_eq!(Replay::read_header(&path).unwrap(), replay.info());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_truncated_or_lying_info_block_is_refused() {
+        let bytes = record().encode();
+        let len = u32::from_le_bytes(bytes[6..10].try_into().unwrap()) as usize;
+        for cut in [0, 3, 5, 8, 10, 10 + len / 2, 10 + len - 1] {
+            let path = temp("header-cut", &bytes[..cut]);
+            assert!(Replay::read_header(&path).is_err(), "cut at {cut}");
+            assert!(Replay::decode(&bytes[..cut]).is_err(), "cut at {cut}");
+            let _ = std::fs::remove_file(path);
+        }
+        // A length that is huge is refused without allocating it; one that
+        // promises more than the file has is truncation.
+        for lie in [u32::MAX, MAX_INFO as u32 + 1, len as u32 + 1_000_000] {
+            let mut bad = bytes[..10 + len].to_vec();
+            bad[6..10].copy_from_slice(&lie.to_le_bytes());
+            let path = temp("header-lie", &bad);
+            assert!(Replay::read_header(&path).is_err());
+            assert!(Replay::decode(&bad).is_err());
+            let _ = std::fs::remove_file(path);
+        }
+        // A block that doesn't end where its fields do is refused.
+        let mut long = bytes[..10 + len].to_vec();
+        long.push(0);
+        long[6..10].copy_from_slice(&(len as u32 + 1).to_le_bytes());
+        let path = temp("header-long", &long);
+        assert!(matches!(Replay::read_header(&path), Err(Error::Corrupt(_))));
+        let _ = std::fs::remove_file(path);
+        assert!(matches!(
+            Replay::read_header("/nonexistent/x.gcr"),
+            Err(Error::Io(_))
+        ));
     }
 
     #[test]

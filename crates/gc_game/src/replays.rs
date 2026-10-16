@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use std::time::UNIX_EPOCH;
 
 use gc_platform::logln;
-use gc_replay::{EXTENSION, Header, Player, Replay};
+use gc_replay::{EXTENSION, Header, Info, Player, Replay};
 use gc_sim::{Capacities, TICKS_PER_SECOND};
 use gc_ui::ReplayEntry;
 
@@ -127,7 +127,7 @@ pub fn parties(header: &Header) -> Vec<Party> {
 }
 
 /// "Red (Mario) v Blue (AI 2)", sides on one team joined by "and".
-pub fn title(replay: &Replay) -> String {
+pub fn title(replay: &Info) -> String {
     let names = &replay.header.players;
     if names.is_empty() {
         return replay.note.clone();
@@ -151,8 +151,8 @@ pub fn title(replay: &Replay) -> String {
 /// Why this build can't show `replay`, if it can't: unit ids name entries
 /// in the game's unit table, so a table of another size names other
 /// regiments, and the game draws no more regiments than its capacity.
-pub fn unplayable(replay: &Replay, unit_types: usize, capacity: Capacities) -> Option<String> {
-    if replay.units.len() != unit_types {
+pub fn unplayable(replay: &Info, unit_types: usize, capacity: Capacities) -> Option<String> {
+    if replay.units != unit_types {
         Some("Made with other unit data: this build can't show it".into())
     } else if replay.regiments > capacity.regiments {
         Some("Too many regiments for this build to show".into())
@@ -181,7 +181,7 @@ pub fn list(
                 .map_or(String::new(), |d| {
                     format!("{} UTC, ", date_time(d.as_secs()))
                 });
-            match Replay::load(&path) {
+            match Replay::read_header(&path) {
                 Ok(r) => {
                     let mut detail = format!("{saved}{} long", gc_ai::lens::clock(r.ticks));
                     if r.header.data_hash != 0 && r.header.data_hash != data_hash {
@@ -213,8 +213,8 @@ pub fn list(
 /// The list [`list_in_background`] will send.
 pub type Listing = mpsc::Receiver<Vec<ReplayEntry>>;
 
-/// [`list`] on a thread of its own: it decodes every replay in the folder,
-/// tens of milliseconds each, which the frame loop can't wait for. The list
+/// [`list`] on a thread of its own: it reads the header of every replay in
+/// the folder, which the frame loop shouldn't wait for. The list
 /// arrives on the channel; if the thread can't start, the channel closes
 /// with nothing sent.
 pub fn list_in_background(
