@@ -4,7 +4,7 @@ Every regiment, worker, summon and hero for all four factions, with first-pass s
 
 The numbers live as data in `data/rosters/*.ron`, one file per faction, and the tables here are a readable copy of them. Where the two disagree, the data files win. A test (`tools/gc_bake/tests/rosters.rs`) checks every roster entry against the same rules the baker applies to `data/units.ron`, so each stat block can be moved into the game unchanged.
 
-**Built so far:** this is design data only. The game reads `data/units.ron`, which holds five of these regiments (Yari Ashigaru, Yumi Ashigaru, Skitterlings, Shardlings, Bone Pikes); their roster entries copy its numbers as of the [Field Battle balance pass](#field-battle-balance), and `units.ron` stays the live copy for those five until the rosters are baked. Costs, supply, tiers, abilities, heroes and every class rule below need the Conquest systems of M3 before they do anything; [Schema proposals](#schema-proposals) lists what the engine needs to add.
+**Built so far:** this is design data only. The game reads `data/units.ron`, which holds five of these regiments (Yari Ashigaru, Yumi Ashigaru, Skitterlings, Shardlings, Bone Pikes); their roster entries copy its numbers as of the [Field Battle balance pass](#field-battle-balance), and `units.ron` stays the live copy for those five until the rosters are baked. The same test fails if a live regiment's stats (everything but Field Battle points) differ from its roster entry, so tuning one file without the other is caught. Costs, supply, tiers, abilities, heroes and every class rule below need the Conquest systems of M3 before they do anything; [Schema proposals](#schema-proposals) lists what the engine needs to add.
 
 ## How to read the tables
 

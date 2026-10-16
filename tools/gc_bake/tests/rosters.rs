@@ -503,6 +503,65 @@ fn live_units_are_in_the_rosters() {
     }
 }
 
+/// A regiment in both `data/units.ron` and a roster has the same stats in
+/// each, field for field. Points are left out: the rosters don't set them.
+#[test]
+fn live_unit_stats_match_the_rosters() {
+    /// Each field as RON text, split from the struct's text: `ron::Value`
+    /// would drop the enum variants (`faction`, `mass`).
+    fn fields(s: &Stats) -> BTreeMap<String, String> {
+        let text = ron::to_string(s).unwrap();
+        let body = text
+            .strip_prefix('(')
+            .and_then(|t| t.strip_suffix(')'))
+            .unwrap();
+        let (mut out, mut depth, mut quoted, mut start) = (BTreeMap::new(), 0, false, 0);
+        for (i, c) in body.char_indices().chain([(body.len(), ',')]) {
+            match c {
+                '"' => quoted = !quoted,
+                '(' if !quoted => depth += 1,
+                ')' if !quoted => depth -= 1,
+                ',' if !quoted && depth == 0 => {
+                    if let Some((k, v)) = body[start..i].split_once(':') {
+                        out.insert(k.to_string(), v.to_string());
+                    }
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+    let text = std::fs::read_to_string(data_dir().join("units.ron")).unwrap();
+    let live: Vec<Stats> = ron::from_str(&text).unwrap();
+    let mut rosters = BTreeMap::new();
+    for &(file, _) in ROSTERS {
+        let r = load(file);
+        let stats = r.units.into_iter().map(|u| u.stats);
+        let heroes = r.heroes.into_iter().map(|h| h.stats);
+        rosters.extend(stats.chain(heroes).map(|s| (s.name.clone(), s)));
+    }
+    for s in &live {
+        let Some(r) = rosters.get(&s.name) else {
+            continue;
+        };
+        let (want, got) = (fields(s), fields(r));
+        let names: BTreeSet<&str> = want.keys().chain(got.keys()).map(String::as_str).collect();
+        for field in names {
+            if field == "points" {
+                continue;
+            }
+            let a = want.get(field).map_or("absent", String::as_str);
+            let b = got.get(field).map_or("absent", String::as_str);
+            assert_eq!(
+                b, a,
+                "{}: {field} differs: units.ron has {a}, the roster has {b}",
+                s.name
+            );
+        }
+    }
+}
+
 /// Every building besides the main building that adds supply, and how much,
 /// as docs/04-economy.md lists it.
 const SUPPLY: [(&str, u8); 6] = [
