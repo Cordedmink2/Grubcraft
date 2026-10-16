@@ -40,6 +40,17 @@ pub struct Pose {
     pub blend: f32,
 }
 
+/// A soldier instance's `flags`: the blend toward the second frame, the
+/// selection `highlight`, and whether it lies `flat`, as 0 to 255.
+pub fn pose_flags(pose: Pose, highlight: u8, flat: bool) -> [u8; 4] {
+    [
+        (pose.blend * 255.0) as u8,
+        highlight,
+        u8::from(flat) * 255,
+        0,
+    ]
+}
+
 /// Clips to try for an action, best first.
 fn candidates(action: Action) -> &'static [ClipKind] {
     use ClipKind::*;

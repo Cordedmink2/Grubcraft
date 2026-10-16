@@ -69,6 +69,24 @@ impl RtsCamera {
         height / (2.0 * (FOV_Y * 0.5).tan())
     }
 
+    /// How far from the focus the camera must be, at its current focus,
+    /// height and turn, for every point in `points` to fall inside the
+    /// middle `fill` of the window (1 is edge to edge).
+    pub fn fit_distance(&self, points: impl IntoIterator<Item = Vec3>, fill: f32) -> f32 {
+        let back = self.offset_dir();
+        let right = Vec3::Y.cross(back).normalize();
+        let up = back.cross(right);
+        let half = (FOV_Y * 0.5).tan() * fill;
+        points.into_iter().fold(0.0, |need: f32, p| {
+            // The point across the screen, up it, and how much nearer the
+            // eye than the focus it lies.
+            let q = p - self.target();
+            let nearer = q.dot(back);
+            need.max(q.dot(right).abs() / (half * self.aspect) + nearer)
+                .max(q.dot(up).abs() / half + nearer)
+        })
+    }
+
     /// Pan in screen-relative directions; `dx`/`dy` in screen fractions.
     pub fn pan(&mut self, dx: f32, dy: f32) {
         let (s, c) = self.yaw.sin_cos();
