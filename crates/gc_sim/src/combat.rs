@@ -119,7 +119,7 @@ const EMPTY: u32 = u32::MAX;
 /// The grid keeps each owner's regiments apart (by `owner % OWNER_SLOTS`) so a
 /// search for enemies skips crowds of its own regiments, and a search for
 /// friends only visits its own and its allies'.
-const OWNER_SLOTS: usize = 8;
+const OWNER_SLOTS: usize = crate::MAX_PARTIES;
 /// Grid cells one regiment may occupy before it is checked by everyone instead.
 const MAX_CELLS_PER_REGIMENT: usize = 9;
 /// Every owner slot, for searches that look at friends and enemies alike.

@@ -30,9 +30,9 @@
 //! On a map with no cover all of this is switched off: everyone sees
 //! everything, nothing is a surprise, nothing is stored or hashed.
 //!
-//! Sightings are kept for eight parties, the combat grid's owner slots.
-//! Parties numbered 8 and up (none exist yet) see everything and are seen
-//! by everyone.
+//! Sightings are kept for [`MAX_PARTIES`](crate::MAX_PARTIES) parties,
+//! the combat grid's owner slots; the sim refuses regiments for parties
+//! past that.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -46,7 +46,9 @@ use crate::terrain::{Cover, Terrain};
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats};
 
 /// Parties whose sight is tracked.
-pub const PARTIES: usize = 8;
+pub const PARTIES: usize = crate::MAX_PARTIES;
+// Ally masks are a byte per party: widen them before raising the limit.
+const _: () = assert!(PARTIES <= 8);
 /// Spotting distances, edge to edge, in tiles.
 pub const GRASS_STILL: Fx = Fx::from_int(3);
 pub const WOOD_STILL: Fx = Fx::from_int(4);

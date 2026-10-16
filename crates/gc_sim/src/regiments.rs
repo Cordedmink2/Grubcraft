@@ -201,7 +201,8 @@ impl Regiments {
     }
 
     /// Create a full-strength regiment. `stats` must already be sanitised
-    /// (see [`UnitStats::sanitized`]).
+    /// (see [`UnitStats::sanitized`]). `None` when the pool is full or the
+    /// owner is past [`MAX_PARTIES`](crate::MAX_PARTIES).
     pub fn spawn(
         &mut self,
         owner: PlayerId,
@@ -210,6 +211,9 @@ impl Regiments {
         facing: Angle,
         stats: &UnitStats,
     ) -> Option<RegimentHandle> {
+        if usize::from(owner) >= crate::MAX_PARTIES {
+            return None;
+        }
         let index = self.free.pop()?;
         let i = index as usize;
         self.alive[i] = true;

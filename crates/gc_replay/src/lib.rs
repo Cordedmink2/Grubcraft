@@ -383,6 +383,9 @@ impl Replay {
             units.push(r.stats()?);
         }
         let teams = r.bytes()?.to_vec();
+        if teams.len() > gc_sim::MAX_PARTIES {
+            return None;
+        }
         let nav = r.bytes()?.to_vec();
         let side = map_tiles as usize * gc_sim::nav::CELLS_PER_TILE as usize;
         if !nav.is_empty() && nav.len() != side * side {
@@ -702,6 +705,10 @@ mod tests {
         big.map_tiles = u32::MAX;
         (big.nav, big.heights, big.cover) = (Vec::new(), Vec::new(), Vec::new());
         assert!(Replay::decode(&big.encode()).is_err());
+        // So are more parties than a world holds.
+        let mut crowd = record();
+        crowd.teams = vec![0; gc_sim::MAX_PARTIES + 1];
+        assert!(Replay::decode(&crowd.encode()).is_err());
     }
 
     #[test]

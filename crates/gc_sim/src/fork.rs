@@ -101,15 +101,18 @@ impl World {
     /// hook 6). With `slot`, it takes that handle (its slot must be free),
     /// so it can be found by the handle it has in another world. It stands
     /// with no orders; a routing or shattered regiment counts as having just
-    /// broken; one not `hidden` has been seen by everyone for a while. Returns `None` if the unit is unknown, there are no soldiers,
-    /// or there is no room (or `slot` is taken).
+    /// broken; one not `hidden` has been seen by everyone for a while.
+    /// Returns `None` if the unit is unknown, the owner is past
+    /// [`MAX_PARTIES`](crate::MAX_PARTIES), there are no soldiers, or there
+    /// is no room (or `slot` is taken).
     pub fn spawn_standing(
         &mut self,
         s: &Standing,
         slot: Option<RegimentHandle>,
     ) -> Option<RegimentHandle> {
         let stats = *self.units.get(s.unit as usize)?;
-        if s.models == 0 {
+        // The owner is checked before a slot is claimed for it.
+        if s.models == 0 || usize::from(s.owner) >= crate::MAX_PARTIES {
             return None;
         }
         if let Some(h) = slot
