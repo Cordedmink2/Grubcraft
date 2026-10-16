@@ -20,10 +20,18 @@
 //! live in the project's shared folder, not the repository; only the baked
 //! pack is committed (docs/16-art-sourcing.md).
 //!
+//! Next to the pack the baker writes `models.manifest`: the baker and model
+//! schema versions, hashes of `models.ron`, of every source and of the pack.
+//! `--check` compares the committed pack with that manifest and the sources
+//! the repository holds, so CI notices a pack that no longer matches
+//! (`manifest.rs`).
+//!
 //! Usage: gc_artbake [--config assets-src/models.ron] [--shared DIR]
-//!                   [--out assets/models.pak] [--report]
+//!                   [--out assets/models.pak] [--report | --check]
 //! `--report` prints each model's most common colours, for choosing team colours.
+//! `--check` bakes nothing: it checks `--out` and its manifest.
 
+mod manifest;
 mod textures;
 
 use std::collections::HashMap;
@@ -101,6 +109,20 @@ struct Options {
     repo_src: PathBuf,
     out: PathBuf,
     report: bool,
+    check: bool,
+}
+
+impl Options {
+    /// The file a `shared:` or `repo:` source names.
+    fn resolve(&self, src: &str) -> Result<PathBuf, String> {
+        if let Some(p) = src.strip_prefix("shared:") {
+            Ok(self.shared.join(p))
+        } else if let Some(p) = src.strip_prefix("repo:") {
+            Ok(self.repo_src.join(p))
+        } else {
+            Err(format!("{src}: must start with shared: or repo:"))
+        }
+    }
 }
 
 fn main() {
@@ -111,12 +133,20 @@ fn main() {
         repo_src: root.join("assets-src"),
         out: root.join("assets/models.pak"),
         report: false,
+        check: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
-        if flag == "--report" {
-            opts.report = true;
-            continue;
+        match flag.as_str() {
+            "--report" => {
+                opts.report = true;
+                continue;
+            }
+            "--check" => {
+                opts.check = true;
+                continue;
+            }
+            _ => {}
         }
         let Some(value) = args.next() else { usage() };
         match flag.as_str() {
@@ -126,14 +156,19 @@ fn main() {
             _ => usage(),
         }
     }
-    if let Err(e) = run(&opts) {
+    let result = if opts.check {
+        manifest::check(&opts)
+    } else {
+        run(&opts)
+    };
+    if let Err(e) = result {
         eprintln!("gc_artbake: {e}");
         std::process::exit(1);
     }
 }
 
 fn usage() -> ! {
-    eprintln!("usage: gc_artbake [--config FILE] [--shared DIR] [--out FILE] [--report]");
+    eprintln!("usage: gc_artbake [--config FILE] [--shared DIR] [--out FILE] [--report | --check]");
     std::process::exit(2);
 }
 
@@ -142,15 +177,28 @@ fn run(opts: &Options) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", opts.config.display()))?;
     let config: Config =
         ron::from_str(&text).map_err(|e| format!("{}: {e}", opts.config.display()))?;
-    let resolve = |src: &str| -> Result<PathBuf, String> {
-        if let Some(p) = src.strip_prefix("shared:") {
-            Ok(opts.shared.join(p))
-        } else if let Some(p) = src.strip_prefix("repo:") {
-            Ok(opts.repo_src.join(p))
-        } else {
-            Err(format!("{src}: must start with shared: or repo:"))
-        }
-    };
+    let (bytes, tables) = bake_pack(&config, opts)?;
+    if let Some(dir) = opts.out.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    std::fs::write(&opts.out, &bytes).map_err(|e| format!("{}: {e}", opts.out.display()))?;
+    manifest::write(opts, &text, &config, &bytes)?;
+    println!(
+        "wrote {} ({} KB): {} models, {} vertices, {} triangles at full detail, {} bone rows, {} materials",
+        opts.out.display(),
+        bytes.len() / 1024,
+        tables.models.len(),
+        tables.vertices.len(),
+        tables.models.iter().map(|m| m.lods[0][1] / 3).sum::<u32>(),
+        tables.bones.len() / BONE_TEXELS_PER_ROW as usize,
+        tables.materials(),
+    );
+    Ok(())
+}
+
+/// Bake every model in `config` into pack bytes, without writing anything.
+fn bake_pack(config: &Config, opts: &Options) -> Result<(Vec<u8>, ModelTables), String> {
+    let resolve = |src: &str| opts.resolve(src);
     let mut tables = ModelTables::default();
     for m in &config.models {
         let path = resolve(&m.source).map_err(|e| format!("{}: {e}", m.name))?;
@@ -195,21 +243,7 @@ fn run(opts: &Options) -> Result<(), String> {
     loaded
         .and_then(|p| gc_assets::model::Models::from_pack(&p).map_err(|e| e.to_string()))
         .map_err(|e| format!("the baked pack does not load: {e}"))?;
-    if let Some(dir) = opts.out.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    std::fs::write(&opts.out, &bytes).map_err(|e| format!("{}: {e}", opts.out.display()))?;
-    println!(
-        "wrote {} ({} KB): {} models, {} vertices, {} triangles at full detail, {} bone rows, {} materials",
-        opts.out.display(),
-        bytes.len() / 1024,
-        tables.models.len(),
-        tables.vertices.len(),
-        tables.models.iter().map(|m| m.lods[0][1] / 3).sum::<u32>(),
-        tables.bones.len() / BONE_TEXELS_PER_ROW as usize,
-        tables.materials(),
-    );
-    Ok(())
+    Ok((bytes, tables))
 }
 
 /// A vertex before quantisation, in tiles.
@@ -1112,6 +1146,63 @@ mod tests {
     fn a_vertex_without_weights_follows_its_first_joint() {
         let (bones, weights) = quantise_weights(&top_weights(&[(5, 0.0), (1, 0.0)]));
         assert_eq!((bones, weights), ([5, 0, 0, 0], [255, 0, 0, 0]));
+    }
+
+    /// The repo's own CC0 model (the Skitterlings, from the alien bug),
+    /// baked in memory with the budgets in the real `models.ron`.
+    fn bake_alien_bug() -> (Vec<u8>, ModelTables, ModelConfig) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let opts = Options {
+            config: root.join("assets-src/models.ron"),
+            shared: PathBuf::from("/nonexistent"),
+            repo_src: root.join("assets-src"),
+            out: PathBuf::new(),
+            report: false,
+            check: false,
+        };
+        let text = std::fs::read_to_string(&opts.config).unwrap();
+        let mut config: Config = ron::from_str(&text).unwrap();
+        config
+            .models
+            .retain(|m| m.source == "repo:cc0/alien-bug-cdmir/alien-bug.glb");
+        assert_eq!(config.models.len(), 1, "models.ron lost the alien bug");
+        let (bytes, tables) = bake_pack(&config, &opts).unwrap();
+        (bytes, tables, config.models.remove(0))
+    }
+
+    #[test]
+    fn the_alien_bug_bakes_within_its_budgets() {
+        let (bytes, tables, cfg) = bake_alien_bug();
+        let pack = gc_assets::Pack::parse(&bytes).unwrap();
+        let models = gc_assets::model::Models::from_pack(&pack).unwrap();
+        let model = &models.models[0];
+        assert_eq!(model.name(), cfg.name);
+        for (lod, budget) in cfg.lod_triangles.iter().enumerate() {
+            let tris = model.lods[lod][1] as usize / 3;
+            assert!(
+                tris > 0 && tris <= *budget,
+                "level {lod}: {tris} > {budget}"
+            );
+        }
+        assert!(!tables.vertices.is_empty());
+        for v in &tables.vertices {
+            assert_eq!(v.weights.iter().map(|&w| u32::from(w)).sum::<u32>(), 255);
+        }
+        for kind in [
+            ClipKind::Idle,
+            ClipKind::Run,
+            ClipKind::Attack,
+            ClipKind::Attack2,
+        ] {
+            assert!(models.clip(0, kind).is_some(), "no {kind:?} clip");
+        }
+    }
+
+    #[test]
+    fn two_bakes_of_the_alien_bug_are_byte_identical() {
+        let (a, _, _) = bake_alien_bug();
+        let (b, _, _) = bake_alien_bug();
+        assert!(a == b, "two bakes differ");
     }
 
     fn vert(pos: [i16; 3], uv: [u16; 2]) -> ModelVertex {

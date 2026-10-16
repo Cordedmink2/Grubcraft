@@ -7,7 +7,9 @@
 // is in textures rather than vertex colours. `lod_triangles` budgets the four
 // levels of detail, from full to the one drawn smallest. Clip kinds: Idle,
 // Walk, Run, Attack, Attack2, Hit, Die, Cheer, Shoot, Block (a model without
-// a Block clip guards with its Idle).
+// a Block clip guards with its Idle). The bake also writes
+// assets/models.manifest, which `gc_artbake --check` compares with this file
+// and the sources in CI: re-bake and commit both after editing here.
 (
     models: [
         (
