@@ -40,12 +40,16 @@ pub enum Armed {
 pub const SLOT_MOVE: usize = 0;
 pub const SLOT_ATTACK: usize = 1;
 pub const SLOT_FORMATION: usize = 3;
+/// Brace (Z), sharing its slot with Skirmish when that order arrives, and
+/// Fall back (V).
+pub const SLOT_BRACE: usize = 8;
+pub const SLOT_FALL_BACK: usize = 11;
 /// The first of the four slots (A, S, D, F) a hero's abilities use.
-// Run (C) and Retire (V) share keys with the sandbox's credits and reveal-all
-// tools; those move when the two orders arrive.
+// Run (C) shares its key with the sandbox's credits tool, which moves when
+// the order arrives.
 const LABELS: [&str; GRID_SLOTS] = [
-    "Move", "Attack", "Hold", "Form", "Skill1", "Skill2", "Skill3", "Ultim", "Skirm", "Charge",
-    "Run", "Retire",
+    "Move", "Attack", "Hold", "Form", "Skill1", "Skill2", "Skill3", "Ultim", "Brace", "Charge",
+    "Run", "Back",
 ];
 
 /// An alert stays this long (in sim ticks, so a paused game keeps it) after
@@ -471,6 +475,14 @@ impl Running {
         grid[SLOT_MOVE].state = ready(has_orders);
         grid[SLOT_ATTACK].state = ready(has_orders);
         grid[SLOT_FORMATION].state = ready(has_orders);
+        let has_spears = self.selected.iter().any(|&h| {
+            self.world
+                .regiments
+                .get(h)
+                .is_some_and(|r| self.units.stats[r.unit as usize].reach)
+        });
+        grid[SLOT_BRACE].state = ready(has_orders && has_spears);
+        grid[SLOT_FALL_BACK].state = ready(has_orders);
         // A hero's abilities take the A, S, D and F slots.
         if let Some(h) = &hero {
             for (i, a) in h.abilities.iter().enumerate() {
@@ -655,6 +667,8 @@ impl Running {
                 self.hud.armed = (self.hud.armed != Some(want)).then_some(want);
             }
             SLOT_FORMATION => self.cycle_formation(),
+            SLOT_BRACE => self.toggle_brace(),
+            SLOT_FALL_BACK => self.fall_back(),
             _ => {}
         }
     }

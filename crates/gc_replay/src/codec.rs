@@ -253,6 +253,15 @@ impl Writer {
                 self.structure(structure);
                 self.vec(at);
             }
+            Command::FallBack { regiment } => {
+                self.u8(19);
+                self.handle(regiment);
+            }
+            Command::Brace { regiment, on } => {
+                self.u8(20);
+                self.handle(regiment);
+                self.bool(on);
+            }
         }
     }
 }
@@ -504,6 +513,13 @@ impl<'a> Reader<'a> {
             18 => Command::Rally {
                 structure: self.structure()?,
                 at: self.vec()?,
+            },
+            19 => Command::FallBack {
+                regiment: self.handle()?,
+            },
+            20 => Command::Brace {
+                regiment: self.handle()?,
+                on: self.bool()?,
             },
             _ => return None,
         };

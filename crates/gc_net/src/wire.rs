@@ -345,6 +345,15 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.structure(structure);
             w.vec(at);
         }
+        Command::FallBack { regiment } => {
+            w.u8(19);
+            w.handle(regiment);
+        }
+        Command::Brace { regiment, on } => {
+            w.u8(20);
+            w.handle(regiment);
+            w.bool(on);
+        }
     }
 }
 
@@ -425,6 +434,13 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         18 => Command::Rally {
             structure: r.structure()?,
             at: r.vec()?,
+        },
+        19 => Command::FallBack {
+            regiment: r.handle()?,
+        },
+        20 => Command::Brace {
+            regiment: r.handle()?,
+            on: r.bool()?,
         },
         _ => return None,
     })
@@ -609,6 +625,15 @@ mod tests {
                     generation: 3,
                 },
                 at: FxVec2::new(Fx::from_raw(-9), Fx::from_int(300)),
+            },
+            Command::FallBack { regiment: h(5, 9) },
+            Command::Brace {
+                regiment: h(6, 0),
+                on: true,
+            },
+            Command::Brace {
+                regiment: h(6, 1),
+                on: false,
             },
         ];
         let pcs: Vec<PlayerCommand> = cmds

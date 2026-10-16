@@ -31,10 +31,10 @@ Kept deliberately small. Every order is on the same hotkey for every regiment.
 | Attack | right-click enemy / `W` | Engage target, or attack-move to a point |
 | Hold | `E` | Hold position and facing, only fight what reaches you |
 | Charge | `X` | Cavalry and shock units charge for bonus damage and morale shock |
-| Skirmish / Brace | `Z` (toggle) | Ranged units keep distance from approaching melee; spears brace against charges |
+| Skirmish / Brace | `Z` (toggle) | **Brace is built:** spears and pikes set against a charge ([below](#brace-and-fall-back)). Skirmish, where ranged units keep distance from approaching melee, comes later |
 | Formation | `R` (cycle) | Line / Tight / Loose / Shield wall (shields only); Column and Wedge (cavalry) later. See [Weapons and formations](#weapons-and-formations) |
 | Run | double right-click / `C` | Faster move, then **Winded** for 10 s |
-| Retreat | `V` | Disengage toward the nearest friendly structure, ignoring attacks |
+| Fall back | `V` | Pull out of the fight in good order: back 8 tiles at half pace, still facing the foe ([below](#brace-and-fall-back)). Retreat toward the nearest friendly structure comes with Conquest |
 
 Keys follow the fixed 4 × 3 command grid; abilities take the middle row (see [08 · UI and UX](08-ui-ux.md#screen-layout-1080p-reference)).
 
@@ -49,8 +49,8 @@ Keys follow the fixed 4 × 3 command grid; abilities take the middle row (see [0
 | Rear | ×1.8 | heavy |
 
 - Regiments take time to turn. Big blocks turn slowly; cavalry and swarms turn fast.
-- **Charges** add a bonus proportional to speed at impact, then fade over a few seconds. Charging braced spears into the front is suicide; charging archers in the rear wins battles. A charge needs a run-up: a regiment only charges after a second of marching without stopping or fighting (about 3 tiles for infantry), so blocks that brush apart and close again, a regiment turned or pushed out of reach that presses straight back in, or one that starts next to its foe, don't win a charge.
-- A regiment engaged in melee is **locked**. It can only disengage with Retreat (taking free hits) or by routing, though a stronger foe can drive it back ([Lines that push](#lines-that-push)). Contact is sticky: two blocks meet when their edges come within half a tile, and a regiment keeps fighting the foe it is touching even when another enemy comes up nearer, so who is winning the fight isn't reset. Lines that drift apart (blocks shrinking as soldiers fall, or turning to face their foe) stay locked, with no other enemy in reach, until their edges are two tiles apart, and close up again at a tile a second; blows land only within the half tile. A foe that routs no longer holds a regiment. (Before this, nine in ten contacts brushed apart and re-formed within two seconds.)
+- **Charges** add a bonus proportional to speed at impact, then fade over a few seconds. A charge into the front of braced spears doesn't count as a charge, and the spears turn it back on the charger ([Brace and Fall back](#brace-and-fall-back)); charging archers in the rear wins battles. A charge needs a run-up: a regiment only charges after a second of marching without stopping or fighting (about 3 tiles for infantry), so blocks that brush apart and close again, a regiment turned or pushed out of reach that presses straight back in, or one that starts next to its foe, don't win a charge.
+- A regiment engaged in melee is **locked**. It can disengage by Fall back (each foe locked with it gets one parting blow, see [Brace and Fall back](#brace-and-fall-back)) or by routing, though a stronger foe can drive it back ([Lines that push](#lines-that-push)). Contact is sticky: two blocks meet when their edges come within half a tile, and a regiment keeps fighting the foe it is touching even when another enemy comes up nearer, so who is winning the fight isn't reset. Lines that drift apart (blocks shrinking as soldiers fall, or turning to face their foe) stay locked, with no other enemy in reach, until their edges are two tiles apart, and close up again at a tile a second; blows land only within the half tile. A foe that routs no longer holds a regiment. (Before this, nine in ten contacts brushed apart and re-formed within two seconds.)
 
 ## Weapons and formations
 
@@ -86,6 +86,29 @@ A locked melee is not a standing trade of blows: the side winning it drives the 
 - Routers, and regiments not in melee, are never pushed.
 
 **Built so far (2026-10-15):** as described. Soldiers on screen keep facing their man as their block gives ground, so a pushed line steps backwards; a pinned one breaks ranks under the amber disorder outline. Computer players don't yet read a bending line to send reserves.
+
+## Brace and Fall back
+
+Two orders for the fight itself (adapted from Mount & Blade, [decision 28](14-decisions-needed.md#battle-feel-from-mount--blade-decided-2026-10-15)).
+
+**Brace** (`Z`, the grid slot labelled "Brace"; Skirmish shares that slot when it arrives):
+
+- Only regiments with long weapons, the `reach` flag (spears and pikes, such as Yari Ashigaru and Bone Pikes), can brace. A regiment must not be locked in melee, falling back or routing to brace.
+- Bracing halts the regiment where it stands. It stays braced until it gets a move or attack order, falls back or routs. `Z` again lifts the spears. It can be set during deployment too.
+- A braced regiment doesn't press back in after a foe that is pushed out of reach ([Lines that push](#lines-that-push)).
+- A charge that hits a braced regiment's **front** is not a charge. The charger gets no charge bonus, loses its next blow (stopped dead on the points) and falls into disorder, as in [Pushing through friends](#pushing-through-friends): 20% less melee damage dealt and 20% more taken, fading over 3 s. The braced spears strike at once, and for the next 3 seconds their blows carry a charge bonus equal to the bigger of their own and the charger's: the charge's weight turned back on the charger.
+- A charge into a braced regiment's **flank or rear** is a normal charge.
+- In the drill test, chargers running into braced spears lost about 1.3× as many hit points in the first 3 seconds as against unbraced spears, and the spears lost under half as much.
+
+**Fall back** (`V`, the grid slot labelled "Back"; a regiment pulls out of its fight in good order):
+
+- It backs 8 tiles straight back from the foe it is fighting (or straight behind it, if it isn't fighting), kept on the map, at half pace and still facing the enemy. It stops after 8 seconds, wherever it got to. A second Fall back while it is still falling back does nothing.
+- On the tick it is ordered, every enemy locked with it gets one parting blow, which strikes at once. It doesn't strike back while it falls back.
+- Its foes let it go: they don't follow it or press back in.
+- While it falls back, no enemy in front of it can lock it in melee. An enemy ordered to attack it waits at its front until it stops. An enemy that reaches its flank or rear catches it, and it stops falling back.
+- Routing regiments can't fall back. Falling back lifts a brace.
+
+**Built so far (2026-10-16):** Brace and Fall back work as described. Computer players don't use either order yet. The sandbox's `Shift`+`V` now reveals every hidden regiment (it was `V`). Retreat toward the nearest friendly structure still comes with Conquest. The golden replay `replays/field-brace-1v1.gcr` plays a braced Ember Clans line against a Brood army that only charges, with two of side 0's regiments falling back out of the fight once the lines meet.
 
 ## Morale
 
@@ -206,6 +229,6 @@ The simulation models each regiment as a formation (position, facing, width, dep
 - **Weapons and formations (2026-10-15):** reach, swing room, shields and mass work as in [Weapons and formations](#weapons-and-formations). The formation key is `R`, as in the command grid (the sandbox's unit-data reload moved to `Shift`+`R`; `F` still cycles formation too until the Ultimate slot has an ability). Of today's five Field Battle regiments the Yari Ashigaru and Bone Pikes have reach, the Shardlings have swing room and the Skitterlings are light; none carries shields yet, so the Shield wall needs a roster unit with shields (Chitin Guard, Shellbacks, Gravewardens) or the sandbox's stats panel. Computer players don't change formation yet.
 - **Lines that push (2026-10-15):** as in [Lines that push](#lines-that-push).
 - **Morale:** Steady, Wavering, Routing and Shattered work as described above, driven by casualties, flank and rear hits, being outnumbered nearby, being pinned, and nearby routs. Winning a fight lifts morale. Routers are slower than their pursuers and rally after 10 s with no enemy within 20 tiles. A second rout within 2 minutes shatters a regiment; with no structures yet, a shattered regiment runs, then stands for good. Concord undead (the Bone Pikes) never rout. A battered regiment never recovers its full morale.
-- **Not yet:** heroes, terror and veterancy as morale sources, the other faction exceptions, and Conquest's gentler rules. The Hold, Charge, Skirmish/Brace, Run and Retreat orders, the Column and Wedge formations, terrain beyond high ground and fords (see [Terrain](#terrain)), air, heroes, counters and veterancy also come later.
+- **Not yet:** heroes, terror and veterancy as morale sources, the other faction exceptions, and Conquest's gentler rules. The Hold, Charge, Skirmish and Run orders, the full Retreat toward a structure (with Conquest), the Column and Wedge formations, terrain beyond high ground and fords (see [Terrain](#terrain)), air, heroes, counters and veterancy also come later.
 
 The exact formulas are in [10 · Architecture](10-architecture.md#formations-and-combat).

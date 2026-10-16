@@ -42,7 +42,10 @@
 //! melee): Line, Tight (stronger to hold, cramped for swinging blades),
 //! Loose (gaps for blades to swing and arrows to miss) and, for regiments
 //! with shields, Shield wall (turns arrows from the front, marches at half
-//! pace, never charges). Banners show morale: blinking amber is wavering,
+//! pace, never charges). Z braces spears and pikes against a charge (they
+//! stand until given another order; Z again lifts them) and V pulls the
+//! selection out of its fights in good order: it backs away 8 tiles facing
+//! the enemy, who gets one parting blow and doesn't follow. Banners show morale: blinking amber is wavering,
 //! white is routing (no orders until it rallies), grey is shattered.
 //! Regiments find their own way around cliffs and deep water; a selected
 //! regiment's route shows as a dotted line, and G shows the ground no
@@ -50,7 +53,7 @@
 //! Woods and tall grass hide regiments (docs/20-ambushes.md): enemies your
 //! side can't see aren't drawn, yours that the enemy can't see carry a
 //! moss-green flag, and a sprung ambush shows an "AMBUSH!" message with a
-//! drum and horn. V in the sandbox shows every regiment, hidden or not.
+//! drum and horn. Shift+V in the sandbox shows every regiment, hidden or not.
 //! Ctrl (or Cmd) + a number key saves the selection as a control group; the
 //! number recalls it (Shift adds it), and pressing it twice quickly centres
 //! the camera on it.
@@ -569,7 +572,7 @@ struct Running {
     scenery: scenery::Scenery,
     /// The models on show instead of a match, with `--showroom`.
     showroom: Option<showroom::Showroom>,
-    /// Sandbox: draw regiments hidden from the side you command too (V).
+    /// Sandbox: draw regiments hidden from the side you command too (Shift+V).
     reveal_all: bool,
     /// Data hash and size, for the overlay.
     data_label: String,
@@ -1469,6 +1472,8 @@ impl ApplicationHandler for App {
                         KeyCode::KeyR | KeyCode::KeyF if grid_key => {
                             r.grid_press(hud::SLOT_FORMATION);
                         }
+                        KeyCode::KeyZ if grid_key => r.grid_press(hud::SLOT_BRACE),
+                        KeyCode::KeyV if grid_key => r.grid_press(hud::SLOT_FALL_BACK),
                         KeyCode::Space if grid_key => r.jump_to_alert(),
                         KeyCode::F1 if down && !event.repeat => r.next_idle_worker(),
                         KeyCode::KeyC if down && !event.repeat => {
@@ -1487,10 +1492,12 @@ impl ApplicationHandler for App {
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
                         }
-                        // Seeing through the woods is for the sandbox only.
+                        // Seeing through the woods is for the sandbox only
+                        // (Shift+V: V is Fall back).
                         KeyCode::KeyV
                             if down
                                 && !event.repeat
+                                && r.input.shift
                                 && (r.battle.is_none() || r.watching.is_some())
                                 && r.online.is_none() =>
                         {
@@ -2029,6 +2036,70 @@ impl Running {
             ""
         };
         self.say(format!("{}{note}: {}", next.name(), formation_hint(next)));
+    }
+
+    /// Z: set the selection's spears and pikes against a charge, or, if
+    /// they all stand braced already, lift them. Only regiments with long
+    /// weapons out of the fight can brace.
+    fn toggle_brace(&mut self) {
+        let units = self.world.units();
+        let spears: Vec<_> = self
+            .selected
+            .iter()
+            .filter_map(|&h| self.world.regiments.get(h))
+            .filter(|r| units[r.unit as usize].reach && !r.morale.broken())
+            .collect();
+        if spears.is_empty() {
+            self.say("Only spears and pikes can brace".into());
+            return;
+        }
+        // Set any that can be set; once none can, lift those that are.
+        let settable = |r: &&gc_sim::RegimentView| !r.braced && !r.engaged && !r.falling_back;
+        let on = spears.iter().any(|r| settable(&r));
+        let ready: Vec<_> = spears
+            .iter()
+            .filter(|r| if on { settable(r) } else { r.braced })
+            .map(|r| r.handle)
+            .collect();
+        if ready.is_empty() {
+            self.say("Locked in melee: no time to set spears".into());
+            return;
+        }
+        for regiment in ready {
+            self.human_orders.push(PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::Brace { regiment, on },
+            });
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        self.say(if on {
+            "Braced: a charge into their front runs onto the points; they stand until ordered"
+                .into()
+        } else {
+            "Spears lifted".into()
+        });
+    }
+
+    /// V: the selection pulls back out of its fights in good order.
+    fn fall_back(&mut self) {
+        let ready: Vec<_> = self
+            .selected
+            .iter()
+            .filter_map(|&h| self.world.regiments.get(h))
+            .filter(|r| !r.morale.broken() && !r.falling_back)
+            .map(|r| r.handle)
+            .collect();
+        if ready.is_empty() {
+            return;
+        }
+        for regiment in ready {
+            self.human_orders.push(PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::FallBack { regiment },
+            });
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        self.say("Falling back: they back away facing the enemy, who gets one parting blow".into());
     }
 
     fn nearest_own(&self, p: Vec2, radius: f32) -> Option<RegimentHandle> {

@@ -42,6 +42,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 13: the fall back and brace commands;
 /// - 12: the Conquest setup (read as a Field Battle);
 /// - 11: the header's map choice (read as the Proving Ground);
 /// - 10: the separate info block (read from the one compressed body);
@@ -54,7 +55,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 12;
+pub const FORMAT: u16 = 13;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.

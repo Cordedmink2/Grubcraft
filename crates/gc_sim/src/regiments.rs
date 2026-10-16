@@ -196,6 +196,9 @@ regiment_fields! {
     engaged: Option<RegimentHandle> = None,
     /// Ticks of charge bonus left.
     charge: u16 = 0,
+    /// That charge's bonus, percent: the unit's own, or for braced spears
+    /// a charge turned back on its charger (see `Combat::before_move`).
+    charge_bonus: u8 = 0,
     strike: Strike = Strike::Turn,
     /// Ticks until a ranged regiment can loose its next volley.
     reload: u16 = 0,
@@ -238,6 +241,14 @@ regiment_fields! {
     /// [`GIVE_GROUND`](crate::combat::GIVE_GROUND), from the exchange as it
     /// stood at its last blow.
     giving: u8 = 0,
+    /// Spears or pikes set against a charge (see [`Regiments::brace`]):
+    /// standing until given another order.
+    braced: bool = false,
+    /// Ticks left of pulling out of a fight in good order (see
+    /// [`Regiments::fall_back`]); 0 when not falling back. It starts at
+    /// [`FALL_BACK_TICKS`](crate::combat::FALL_BACK_TICKS) for the tick the
+    /// order lands, when its foes still hold it for their parting blow.
+    falling_back: u16 = 0,
 }
 
 impl Regiments {
@@ -310,6 +321,10 @@ impl Regiments {
             // Shields taken away: the wall comes apart.
             if !stats.can_form(self.formation[i]) {
                 self.formation[i] = Formation::Line;
+            }
+            // Long weapons taken away: nothing left to brace.
+            if !stats.reach {
+                self.braced[i] = false;
             }
         }
     }
@@ -508,6 +523,8 @@ impl Regiments {
         self.target[i] = Some(order.target);
         self.target_facing[i] = order.facing;
         self.attack_target[i] = None;
+        self.braced[i] = false;
+        self.falling_back[i] = 0;
         self.held[i] = 0;
         self.clear[i] = 0;
         if order.files != 0 {
@@ -559,9 +576,74 @@ impl Regiments {
         }
         self.attack_target[i] = Some(target);
         self.target_facing[i] = None;
+        self.braced[i] = false;
+        self.falling_back[i] = 0;
         self.held[i] = 0;
         self.clear[i] = 0;
         self.pace[i] = self.speed[i];
+        true
+    }
+
+    /// Order a regiment to pull out of its fight in good order: it backs
+    /// away to `to` facing the way it faces now, at half pace, and the
+    /// enemies it was fighting each get one parting blow (they strike at
+    /// once) but don't follow it. While it falls back nobody in front of it
+    /// can lock it in melee; an enemy reaching its flank or rear catches it
+    /// (see [`crate::combat::Combat::before_move`]). Routing regiments don't
+    /// listen, and one already falling back carries on as it was.
+    pub(crate) fn fall_back(&mut self, h: RegimentHandle, to: FxVec2) -> bool {
+        let Some(i) = self.resolve(h) else {
+            return false;
+        };
+        if self.morale_state[i].broken() || self.falling_back[i] > 0 {
+            return false;
+        }
+        for k in 0..self.alive.len() {
+            if self.alive[k] && self.engaged[k] == Some(h) {
+                self.strike[k] = Strike::Early;
+            }
+        }
+        self.engaged[i] = None;
+        self.pressing[i] = 0;
+        self.pressed[i] = 0;
+        self.giving[i] = 0;
+        self.target[i] = Some(to);
+        self.target_facing[i] = Some(self.facing[i]);
+        self.attack_target[i] = None;
+        self.braced[i] = false;
+        self.falling_back[i] = crate::combat::FALL_BACK_TICKS;
+        self.held[i] = 0;
+        self.clear[i] = 0;
+        // Backing steps are half steps (see `step_movement`).
+        self.pace[i] = self.speed[i];
+        true
+    }
+
+    /// Set (or lift) a regiment's spears against a charge: it halts where
+    /// it stands, and a charge into its front loses its bonus and runs
+    /// onto the points instead (see [`crate::combat::Combat::before_move`]).
+    /// Only regiments with long weapons ([`UnitStats::reach`]) can brace,
+    /// and not while locked in melee, falling back or routing. Any move or
+    /// attack order lifts it.
+    pub(crate) fn brace(&mut self, h: RegimentHandle, on: bool, units: &[UnitStats]) -> bool {
+        let Some(i) = self.resolve(h) else {
+            return false;
+        };
+        if !on {
+            return core::mem::take(&mut self.braced[i]);
+        }
+        if self.morale_state[i].broken()
+            || self.engaged[i].is_some()
+            || self.falling_back[i] > 0
+            || !units[self.unit[i] as usize].reach
+        {
+            return false;
+        }
+        self.braced[i] = true;
+        self.target[i] = None;
+        self.target_facing[i] = None;
+        self.attack_target[i] = None;
+        self.held[i] = 0;
         true
     }
 
@@ -608,6 +690,8 @@ impl Regiments {
             morale_points: (self.morale[i].max(0) / morale::SCALE) as u8,
             disorder: self.disorder[i],
             giving_ground: self.giving[i] > 0 && self.engaged[i].is_some(),
+            braced: self.braced[i],
+            falling_back: self.falling_back[i] > 0,
         }
     }
 
@@ -630,8 +714,16 @@ impl Regiments {
             if !self.alive[i] {
                 continue;
             }
-            // Halting or fighting ends a run-up.
-            if self.target[i].is_none() || self.engaged[i].is_some() {
+            // Falling back ends when time runs out, wherever it got to.
+            if self.falling_back[i] > 0 {
+                self.falling_back[i] -= 1;
+                if self.falling_back[i] == 0 {
+                    self.target[i] = None;
+                    self.target_facing[i] = None;
+                }
+            }
+            // Halting, fighting or backing away ends a run-up.
+            if self.target[i].is_none() || self.engaged[i].is_some() || self.falling_back[i] > 0 {
                 self.run_up[i] = 0;
             }
             if self.target[i].is_none() {
@@ -659,7 +751,9 @@ impl Regiments {
                     100 => self.pace[i],
                     p => self.pace[i].min(Fx::from_raw((self.speed[i].raw() * p / 100).max(1))),
                 };
-                let shuffle = last && dist <= SHUFFLE_DISTANCE && self.target_facing[i].is_some();
+                // Falling back, it backs away all the way, facing its foe.
+                let shuffle = ((last && dist <= SHUFFLE_DISTANCE) || self.falling_back[i] > 0)
+                    && self.target_facing[i].is_some();
                 let step = if shuffle {
                     self.facing[i] =
                         self.facing[i].turn_toward(self.target_facing[i].unwrap(), turn);
@@ -718,6 +812,7 @@ impl Regiments {
                     self.position[i] = point;
                     if last {
                         self.target[i] = None;
+                        self.falling_back[i] = 0;
                     } else {
                         nav.reached(i);
                     }
@@ -727,7 +822,9 @@ impl Regiments {
                 } else {
                     self.position[i] = next;
                 }
-                self.run_up[i] = (self.run_up[i] + 1).min(crate::combat::RUN_UP_TICKS);
+                if self.falling_back[i] == 0 {
+                    self.run_up[i] = (self.run_up[i] + 1).min(crate::combat::RUN_UP_TICKS);
+                }
             } else if let Some(want) = self.target_facing[i] {
                 self.facing[i] = self.facing[i].turn_toward(want, turn);
                 if self.facing[i] == want {
@@ -797,6 +894,10 @@ pub struct RegimentView {
     /// [`Combat::push_lines`](crate::combat::Combat::push_lines)), or
     /// pinned where it can't give ground.
     pub giving_ground: bool,
+    /// Spears or pikes set against a charge (see [`Regiments::brace`]).
+    pub braced: bool,
+    /// Pulling out of a fight in good order (see [`Regiments::fall_back`]).
+    pub falling_back: bool,
 }
 
 impl RegimentView {

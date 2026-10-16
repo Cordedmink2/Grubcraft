@@ -80,11 +80,16 @@ fn no_extra(_: &World, _: &mut Vec<PlayerCommand>) {}
 /// to attack the nearest enemy: four players who only ever charge, so
 /// nearly every soldier ends up in the fight.
 fn charge(world: &World, out: &mut Vec<PlayerCommand>) {
+    charge_with(world, out, |_| true);
+}
+
+/// [`charge`], for the regiments of the parties `charging` picks.
+fn charge_with(world: &World, out: &mut Vec<PlayerCommand>, charging: fn(PlayerId) -> bool) {
     if world.tick_count() % 20 != 1 {
         return;
     }
     for r in world.regiments.iter() {
-        if r.engaged || r.morale.broken() {
+        if r.engaged || r.morale.broken() || !charging(r.owner) {
             continue;
         }
         let distance = |e: &gc_sim::RegimentView| {
@@ -108,6 +113,37 @@ fn charge(world: &World, out: &mut Vec<PlayerCommand>) {
                 },
             });
         }
+    }
+}
+
+/// Side 1 only ever charges; side 0 braces its spears where it stands and
+/// waits for them. Once the lines have met, two of side 0's regiments in
+/// the fight fall back; a minute and a half in, braced spears not yet in
+/// the fight lift their points (docs/05-combat.md, Brace and Fall back).
+fn braced(world: &World, out: &mut Vec<PlayerCommand>) {
+    charge_with(world, out, |p| p == 1);
+    let reach = |r: &gc_sim::RegimentView| world.units()[r.unit as usize].reach;
+    let mine = world.regiments.iter().filter(|r| r.owner == 0);
+    let order = |command| PlayerCommand { player: 0, command };
+    match world.tick_count() {
+        2 => out.extend(mine.filter(reach).map(|r| {
+            order(Command::Brace {
+                regiment: r.handle,
+                on: true,
+            })
+        })),
+        700 => out.extend(
+            mine.filter(|r| r.engaged)
+                .take(2)
+                .map(|r| order(Command::FallBack { regiment: r.handle })),
+        ),
+        1800 => out.extend(mine.filter(|r| r.braced && !r.engaged).map(|r| {
+            order(Command::Brace {
+                regiment: r.handle,
+                on: false,
+            })
+        })),
+        _ => {}
     }
 }
 
@@ -328,6 +364,21 @@ const GOLDENS: &[Golden] = &[
         minutes: 5,
         minds: false,
         extra: charge,
+        champions: false,
+        deployment: false,
+    },
+    // Braced spears against a side that only charges, and regiments
+    // falling back out of the fight (see [`braced`]).
+    Golden {
+        name: "field-brace-1v1",
+        seed: 0xb4ace,
+        map_tiles: 256,
+        sides: &[side(EmberClans, Veteran, 0), side(Brood, Veteran, 1)],
+        soldiers: 0,
+        rows: 1,
+        minutes: 3,
+        minds: false,
+        extra: braced,
         champions: false,
         deployment: false,
     },
