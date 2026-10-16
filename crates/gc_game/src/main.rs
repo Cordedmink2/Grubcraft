@@ -96,6 +96,8 @@
 //! idle|walk|attack|shoot|cheer|die` holds one clip instead.
 
 mod battle;
+#[cfg(test)]
+mod battle_tables;
 mod buildings;
 mod camera;
 mod credits;

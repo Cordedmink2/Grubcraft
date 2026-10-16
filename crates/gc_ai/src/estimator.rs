@@ -149,6 +149,22 @@ impl Force {
         self.hp <= 0.0
     }
 
+    /// The same force fighting down a slope at its foe (docs/05-combat.md,
+    /// "Terrain"): its blows land harder and its archers reach further.
+    pub fn downhill(mut self) -> Force {
+        let melee = gc_sim::terrain::DOWNHILL_MELEE_PERCENT as f32 / 100.0;
+        self.front_damage *= melee;
+        self.front_damage_attack *= melee;
+        self.charge *= melee;
+        self.range *= gc_sim::terrain::DOWNHILL_RANGE_PERCENT as f32 / 100.0;
+        self
+    }
+
+    /// Whether its archers clearly shoot better than `other`'s.
+    pub fn outshoots(&self, other: &Force) -> bool {
+        self.ranged > other.ranged * 1.15
+    }
+
     /// Hit points a second this force deals in melee against `defence`,
     /// at full strength and before flanking.
     fn melee_against(&self, defence: f32) -> f32 {

@@ -27,6 +27,11 @@ use crate::terrain::Terrain;
 pub const COVER_REACH: f32 = 6.0;
 /// Water narrower than this along the way is a puddle, not a river, tiles.
 pub const MIN_WATER: f32 = 2.0;
+/// How far a side must stand above the ground in front of it to fight
+/// downhill, tiles (the simulation's
+/// [`HIGH_GROUND`](gc_sim::terrain::HIGH_GROUND)).
+pub const DOWNHILL: f32 =
+    gc_sim::terrain::HIGH_GROUND as f32 / gc_sim::terrain::HEIGHT_UNITS as f32;
 /// Steps the ground is sampled at, tiles.
 const STEP: f32 = 0.5;
 
@@ -62,15 +67,27 @@ impl Line {
             -self.depth * 0.5 + 0.5,
             -self.depth * 0.5 - behind,
         ];
-        let (mut good, mut all) = (0, 0);
-        for ahead in rows {
-            for across in self.across(2.0) {
-                let p = self.at(across, ahead);
+        self.share(&rows, 2.0, |p| terrain.walkable(p) && !terrain.wet(p))
+    }
+
+    /// Share of the places under the line in a wood, where the trees catch
+    /// some of the arrows shot at it.
+    pub fn wooded(&self, terrain: &Terrain) -> f32 {
+        let rows = [self.depth * 0.5 - 0.5, 0.0, -self.depth * 0.5 + 0.5];
+        self.share(&rows, 1.0, |p| terrain.cover(p) == gc_sim::Cover::Wood)
+    }
+
+    /// Share of the places along `rows` (tiles ahead of the centre), `inset`
+    /// tiles in from each end, where `good` holds.
+    fn share(&self, rows: &[f32], inset: f32, good: impl Fn(Vec2) -> bool) -> f32 {
+        let (mut n, mut all) = (0, 0);
+        for &ahead in rows {
+            for across in self.across(inset) {
                 all += 1;
-                good += usize::from(terrain.walkable(p) && !terrain.wet(p));
+                n += usize::from(good(self.at(across, ahead)));
             }
         }
-        good as f32 / all.max(1) as f32
+        n as f32 / all.max(1) as f32
     }
 
     /// For the left and right ends: tiles from the end of the line out to
@@ -170,6 +187,65 @@ pub fn ford(
         across += 1.0;
     }
     best.map(|(_, exit)| exit)
+}
+
+/// A place the water can be waded: where a lane straight across goes in
+/// on the near side and comes out on the far side.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ford {
+    pub entry: Vec2,
+    pub exit: Vec2,
+}
+
+/// Every ford across water lying `water.near` to `water.far` tiles ahead of
+/// `from` along `forward`, within `reach` tiles to either side: one for each
+/// stretch of the bank where lanes straight across can be waded, at the
+/// middle of the stretch, nearest `from` first.
+pub fn fords(
+    terrain: &Terrain,
+    from: Vec2,
+    forward: Vec2,
+    water: Crossing,
+    reach: f32,
+) -> Vec<Ford> {
+    let right = right_of(forward);
+    let length = water.far + MIN_WATER * 4.0;
+    let mut found: Vec<Ford> = Vec::new();
+    // The lanes of the stretch being walked.
+    let mut stretch: Vec<Ford> = Vec::new();
+    let mut close = |stretch: &mut Vec<Ford>| {
+        if !stretch.is_empty() {
+            found.push(stretch[stretch.len() / 2]);
+            stretch.clear();
+        }
+    };
+    let mut across = -reach;
+    while across <= reach {
+        let start = from + right * across;
+        match crossing_lane(terrain, start, forward, length) {
+            Some(f) => stretch.push(f),
+            None => close(&mut stretch),
+        }
+        across += 1.0;
+    }
+    close(&mut stretch);
+    found.sort_by(|a, b| a.entry.distance(from).total_cmp(&b.entry.distance(from)));
+    found
+}
+
+/// Walking `length` tiles from `start` along `forward`: if the first water
+/// met can be waded all the way across, where it goes in and comes out.
+fn crossing_lane(terrain: &Terrain, start: Vec2, forward: Vec2, length: f32) -> Option<Ford> {
+    let entry = lane(terrain, start, forward, length)?;
+    let mut s = 0.0;
+    while s <= length {
+        let p = entry + forward * s;
+        if !terrain.water(p) {
+            return Some(Ford { entry, exit: p });
+        }
+        s += STEP;
+    }
+    None
 }
 
 /// Walking `length` tiles from `start` along `forward`: if the first water
@@ -308,6 +384,22 @@ mod tests {
             "{exit}"
         );
         assert_eq!(ford(&t, from, Vec2::Y, water, 10.0), None);
+    }
+
+    #[test]
+    fn each_ford_is_found_once_with_where_it_comes_out() {
+        let t = ground();
+        let from = Vec2::new(12.0, 40.0);
+        let water = crossing(&t, from, Vec2::new(12.0, 62.0)).unwrap();
+        let found = fords(&t, from, Vec2::Y, water, 40.0);
+        assert_eq!(found.len(), 1, "{found:?}");
+        let f = found[0];
+        assert!((28.0..36.0).contains(&f.entry.x), "{f:?}");
+        assert!(
+            (f.entry.y - 50.0).abs() <= 0.5 && (f.exit.y - 56.0).abs() <= 0.5,
+            "{f:?}"
+        );
+        assert!(fords(&t, from, Vec2::Y, water, 10.0).is_empty());
     }
 
     #[test]

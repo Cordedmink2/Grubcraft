@@ -293,10 +293,7 @@ fn the_veteran_beats_charge_straight_in_more_often_than_not() {
 fn the_general_beats_the_veteran_seven_times_in_ten() {
     let general = Side::Mind(Difficulty::General);
     let wins = contest(general, Side::Mind(Difficulty::Veteran), 1..=30);
-    // Lowered from 21 while the General is retuned for sticky melee
-    // contact (docs/05-combat.md): it had leaned on lines brushing apart to
-    // re-order regiments mid-fight. Put back to 21 with that retune.
-    assert!(wins >= 18, "won {wins} of 30");
+    assert!(wins >= 21, "won {wins} of 30");
 }
 
 #[test]
@@ -488,7 +485,7 @@ fn knob_study() {
     };
     let against = against();
     let only = std::env::var("AI_TUNE").ok();
-    let tunes: [Tune; 10] = [
+    let tunes: [Tune; 11] = [
         ("as is", |_| {}),
         ("reaction 0.8 s", |k| k.reaction_ticks = 16),
         ("45 orders a minute", |k| k.orders_per_minute = 45),
@@ -499,13 +496,14 @@ fn knob_study() {
         ("untimed hammer", |k| k.timed_hammer = false),
         ("engages at 10", |k| k.engage_tiles = 10.0),
         ("slips 10%", |k| k.slip_percent = 10),
+        ("hunt leash 55", |k| k.hunt_leash = 55.0),
     ];
     for (name, tune) in tunes {
         if only.as_ref().is_some_and(|o| !name.contains(o.as_str())) {
             continue;
         }
         let from = first_seed();
-        let wins = contest(Side::Tuned(level, tune), against, from..=from + n - 1);
+        let wins = contest_parallel(Side::Tuned(level, tune), against, from..=from + n - 1);
         println!("{level:?} with {name} v {against:?}: won {wins} of {n}");
     }
 }

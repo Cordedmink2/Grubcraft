@@ -55,6 +55,8 @@ impl Difficulty {
                 save_wavering: false,
                 focus_fire: false,
                 ground: false,
+                read_ground: false,
+                team_play: true,
                 engage_tiles: 14.0,
                 hunt_leash: 120.0,
                 slip_percent: 35,
@@ -72,6 +74,8 @@ impl Difficulty {
                 save_wavering: true,
                 focus_fire: true,
                 ground: true,
+                read_ground: true,
+                team_play: true,
                 engage_tiles: 10.0,
                 hunt_leash: 55.0,
                 slip_percent: 10,
@@ -89,7 +93,9 @@ impl Difficulty {
                 save_wavering: true,
                 focus_fire: true,
                 ground: true,
-                engage_tiles: 9.0,
+                read_ground: true,
+                team_play: true,
+                engage_tiles: 12.0,
                 hunt_leash: 40.0,
                 slip_percent: 2,
                 slip_gap_ticks: 90 * 20,
@@ -106,7 +112,9 @@ impl Difficulty {
                 save_wavering: true,
                 focus_fire: true,
                 ground: true,
-                engage_tiles: 9.0,
+                read_ground: true,
+                team_play: true,
+                engage_tiles: 12.0,
                 hunt_leash: 40.0,
                 slip_percent: 0,
                 slip_gap_ticks: 90 * 20,
@@ -144,6 +152,16 @@ pub struct Knobs {
     /// Picks its ground: anchors a flank on a cliff, takes high ground,
     /// waits behind water for the enemy to cross.
     pub ground: bool,
+    /// Reads what the ground does in a fight (docs/18-ai.md, "Reading the
+    /// ground"): holds a hill rather than attack up one, shelters from
+    /// better archers in a wood, keeps its cavalry out of the trees, and
+    /// crosses water at a ford, together.
+    pub read_ground: bool,
+    /// Plays its part in a team game (docs/18-ai.md, "Team games"): weighs
+    /// the fight against the enemies coming at its side, not every army on
+    /// the field; takes its own stretch of a front shared with its allies;
+    /// lets two other sides wear each other down.
+    pub team_play: bool,
     /// How close (tiles between blocks) an enemy gets before a line
     /// regiment charges it.
     pub engage_tiles: f32,
