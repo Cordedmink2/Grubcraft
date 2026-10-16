@@ -231,7 +231,7 @@ impl HudState {
 }
 
 /// The ground as colours: water, woods, grass and rising hide.
-fn minimap_terrain(hm: &Map) -> MinimapTerrain {
+pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
     let tiles = hm.tiles;
     let n = tiles as f32;
     MinimapTerrain::from_fn(TERRAIN_CELLS, |u, v| {

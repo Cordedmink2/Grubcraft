@@ -110,8 +110,59 @@ pub const AI_LEVELS: [&str; 4] = ["Recruit", "Veteran", "General", "Warlord"];
 /// The level a newly added AI starts at.
 pub const DEFAULT_AI_LEVEL: u8 = 1;
 
-/// Maps the lobby offers. Only the placeholder map exists so far.
-pub const MAPS: [&str; 1] = ["Proving Ground"];
+/// How many tiles a side a Field Battle map is for `players`: 256, or 320
+/// for five or six, whose Grand Battle armies don't fit on 256. The same
+/// map choice and code make a different map at each size.
+pub fn field_map_tiles(players: usize) -> u32 {
+    if players > 4 { 320 } else { 256 }
+}
+
+/// Maps the lobby offers: the seeded map, a random map from each recipe,
+/// and a random recipe. The same names in the same order as
+/// `gc_map::FIELD_MAPS` (the game checks).
+pub const MAPS: [&str; 6] = [
+    "Proving Ground",
+    "Random: Pass",
+    "Random: Ford",
+    "Random: Hill",
+    "Random: Open",
+    "Random: Any",
+];
+
+/// The map seed a new lobby starts on (the Proving Ground every battle was
+/// played on before maps could be picked).
+pub const DEFAULT_MAP_SEED: u64 = 0x6772_7562;
+
+/// A new map seed for the host's "New map" button. Each `RandomState` gets
+/// fresh random keys from the standard library, so every press differs. It
+/// is not secret and the simulation never sees it, which is why gc_ui needs
+/// no random number crate.
+pub fn fresh_map_seed() -> u64 {
+    use std::hash::BuildHasher;
+    std::collections::hash_map::RandomState::new().hash_one(0u8)
+}
+
+/// A map seed as players share it: all 16 hex digits in four groups,
+/// "0000-0000-6772-7562". [`parse_map_code`] reads it back exactly.
+pub fn map_code(seed: u64) -> String {
+    format!(
+        "{:04X}-{:04X}-{:04X}-{:04X}",
+        seed >> 48,
+        (seed >> 32) & 0xFFFF,
+        (seed >> 16) & 0xFFFF,
+        seed & 0xFFFF
+    )
+}
+
+/// The seed a map code stands for. Dashes, spaces and letter case don't
+/// matter; anything else, or anything but 16 hex digits, is not a code.
+pub fn parse_map_code(text: &str) -> Option<u64> {
+    let digits: String = text.chars().filter(|c| !matches!(c, '-' | ' ')).collect();
+    if digits.len() != 16 || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    u64::from_str_radix(&digits, 16).ok()
+}
 
 /// How many points each side has to raise its army in a Field Battle
 /// (docs/06-game-modes.md).
@@ -190,7 +241,10 @@ impl OnDrop {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LobbySettings {
+    /// An index into [`MAPS`].
     pub map: usize,
+    /// The seed the map is made from; the host rerolls it for a new map.
+    pub map_seed: u64,
     pub mode: GameMode,
     pub tempo: Tempo,
     /// If a player drops out of a network match.
@@ -206,6 +260,7 @@ impl Default for LobbySettings {
     fn default() -> Self {
         LobbySettings {
             map: 0,
+            map_seed: DEFAULT_MAP_SEED,
             mode: GameMode::FieldBattle,
             tempo: Tempo::Normal,
             on_drop: OnDrop::Wait,
@@ -635,6 +690,60 @@ mod tests {
         let mut n = LocalNetwork::new();
         n.host(&me(), LobbySettings::default(), "").unwrap();
         n
+    }
+
+    #[test]
+    fn map_codes_round_trip_exactly() {
+        for seed in [0, 1, DEFAULT_MAP_SEED, 0xDEAD_BEEF_0123_4567, u64::MAX] {
+            let code = map_code(seed);
+            assert_eq!(code.len(), 19, "{code}");
+            assert_eq!(parse_map_code(&code), Some(seed), "{code}");
+        }
+        assert_eq!(map_code(DEFAULT_MAP_SEED), "0000-0000-6772-7562");
+        assert_eq!(map_code(u64::MAX), "FFFF-FFFF-FFFF-FFFF");
+        let mut seed: u64 = 0x1234_5678_9ABC_DEF0;
+        for _ in 0..200 {
+            seed = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17);
+            assert_eq!(parse_map_code(&map_code(seed)), Some(seed));
+        }
+    }
+
+    #[test]
+    fn map_codes_forgive_case_dashes_and_spaces() {
+        let want = Some(0xDEAD_BEEF_0123_4567);
+        assert_eq!(parse_map_code("DEAD-BEEF-0123-4567"), want);
+        assert_eq!(parse_map_code("dead-beef-0123-4567"), want);
+        assert_eq!(parse_map_code("deadbeef01234567"), want);
+        assert_eq!(parse_map_code("  DEAD BEEF 0123 4567 "), want);
+        assert_eq!(parse_map_code("DEADBEEF-01234567"), want);
+    }
+
+    #[test]
+    fn map_codes_reject_junk() {
+        for junk in [
+            "",
+            "-",
+            "hello",
+            "DEAD-BEEF-0123-456",
+            "DEAD-BEEF-0123-45678",
+            "DEAD-BEEF-0123-456G",
+            "0xDEADBEEF01234567",
+            "DEAD-BEEF-0123-4567-0000",
+            "DEAD_BEEF_0123_4567",
+            "\u{FF24}EAD-BEEF-0123-4567",
+        ] {
+            assert_eq!(parse_map_code(junk), None, "{junk:?}");
+        }
+    }
+
+    #[test]
+    fn fresh_map_seeds_differ_every_press() {
+        let seeds: Vec<u64> = (0..1000).map(|_| fresh_map_seed()).collect();
+        let mut sorted = seeds.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), seeds.len());
+        assert!(seeds.iter().any(|&s| s > u64::from(u32::MAX)));
     }
 
     #[test]

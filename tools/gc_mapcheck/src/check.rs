@@ -67,7 +67,11 @@ pub fn check(def: &MapDef) -> Report {
     }
 
     placement(&map, &walk, &mut r);
-    if !r.ok() || !counts(&map, &mut r) {
+    // A Field Battle map has armies and starts, no economy: it is checked
+    // for placement, for every start reaching every other, and for its set
+    // pieces, and its fairness is its symmetry.
+    let field = matches!(map.size, Some(SizeClass::Field(_)));
+    if !r.ok() || !starts(&map, &mut r) || (!field && !counts(&map, &mut r)) {
         return r;
     }
 
@@ -76,6 +80,10 @@ pub fn check(def: &MapDef) -> Report {
         .collect();
     connectivity(&map, &walk, &from, &mut r);
     if !r.ok() {
+        return r;
+    }
+    if field {
+        set_pieces(&map, &walk, &mut r);
         return r;
     }
     areas(&map, &from, &mut r);
@@ -96,8 +104,11 @@ fn header(def: &MapDef, r: &mut Report) -> bool {
         ));
         ok = false;
     }
+    // Each turned copy belongs to the players a turn further round, so the
+    // players must split evenly between the copies.
     match (def.symmetry, def.players) {
-        (Symmetry::Rot2, 2) | (Symmetry::Rot4, 4) | (Symmetry::None, _) => {}
+        (Symmetry::None, _) => {}
+        (s, n) if n % s.copies() as u8 == 0 => {}
         (s, n) => {
             r.err(format!("{s:?} symmetry doesn't fit {n} players"));
             ok = false;
@@ -181,7 +192,8 @@ fn count(map: &Map, kind: Kind) -> usize {
 }
 
 /// Each thing there should be the right number of times.
-fn counts(map: &Map, r: &mut Report) -> bool {
+/// One start for each player, and none for anyone else.
+fn starts(map: &Map, r: &mut Report) -> bool {
     let before = r.errors.len();
     for p in 0..map.players {
         let n = map
@@ -195,6 +207,13 @@ fn counts(map: &Map, r: &mut Report) -> bool {
     if count(map, Kind::Start) != map.players as usize {
         r.err("a start has an owner outside the player count");
     }
+    r.errors.len() == before
+}
+
+/// The economy's objects: one Heart, the Warfield's Old Mouth and Bazaar,
+/// the frontier slots and the Bloodseep sites.
+fn counts(map: &Map, r: &mut Report) -> bool {
+    let before = r.errors.len();
     if count(map, Kind::Heart) != 1 {
         r.err(format!(
             "a map needs exactly one Heart, this has {}",

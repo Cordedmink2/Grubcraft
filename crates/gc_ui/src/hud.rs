@@ -378,27 +378,7 @@ impl Hud {
             events.push(HudEvent::Order(at(mx, my)));
         }
 
-        let side = m.terrain.side;
-        let to_px = |i: usize| (i as i32 * r.w) / side.max(1) as i32;
-        if side == 0 || m.terrain.colors.len() < side * side {
-            draw.rect(r, theme::FIELD);
-        } else {
-            for row in 0..side {
-                // Merge runs of one colour into a single rectangle.
-                let mut col = 0;
-                while col < side {
-                    let c = m.terrain.colors[row * side + col];
-                    let mut end = col + 1;
-                    while end < side && m.terrain.colors[row * side + end] == c {
-                        end += 1;
-                    }
-                    let (x0, x1) = (r.x + to_px(col), r.x + to_px(end));
-                    let (y0, y1) = (r.y + to_px(row), r.y + to_px(row + 1));
-                    draw.rect(Rect::new(x0, y0, x1 - x0, (y1 - y0).max(1)), c);
-                    col = end;
-                }
-            }
-        }
+        draw_terrain(draw, r, m.terrain);
 
         let to_screen = |p: [f32; 2]| -> (i32, i32) {
             (
@@ -644,6 +624,32 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
 
 pub(crate) fn luma(c: [u8; 3]) -> u32 {
     (u32::from(c[0]) * 3 + u32::from(c[1]) * 6 + u32::from(c[2])) / 10
+}
+
+/// The ground picture filling `r` (a blank field when there is none). The
+/// minimap and the lobby's map preview both draw it.
+pub(crate) fn draw_terrain(draw: &mut DrawList, r: Rect, terrain: &MinimapTerrain) {
+    let side = terrain.side;
+    let to_px = |i: usize| (i as i32 * r.w) / side.max(1) as i32;
+    if side == 0 || terrain.colors.len() < side * side {
+        draw.rect(r, theme::FIELD);
+        return;
+    }
+    for row in 0..side {
+        // Merge runs of one colour into a single rectangle.
+        let mut col = 0;
+        while col < side {
+            let c = terrain.colors[row * side + col];
+            let mut end = col + 1;
+            while end < side && terrain.colors[row * side + end] == c {
+                end += 1;
+            }
+            let (x0, x1) = (r.x + to_px(col), r.x + to_px(end));
+            let (y0, y1) = (r.y + to_px(row), r.y + to_px(row + 1));
+            draw.rect(Rect::new(x0, y0, x1 - x0, (y1 - y0).max(1)), c);
+            col = end;
+        }
+    }
 }
 
 /// A 1-pixel line from `a` to `b`, kept inside `clip`.

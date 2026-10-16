@@ -39,6 +39,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Ambushes: woods and tall grass that hide regiments, spotting, and the morale shock of a sprung ambush; the AI plays fair with them and lays its own ([20 · Ambushes](20-ambushes.md)). *Built (2026-10-15): step A, the battle rules, the woods on the maps, the on-screen cues and the AI's Ambush doctrine. Forest slow-down and arrows caught by trees followed (2026-10-16); the rest of step B (unit traits) and step C (fog of war, with M3) follow.*
 - Teams: teammates are allied, through one hostility test that reads a stance table filled from the lobby ([18 · AI](18-ai.md#engine-hooks), hook 1). *Built with AI-1 step 1: lobby teams reach the sim and teammates don't fight.*
 - Six-player lobbies (2026-10-16): six slots and colours, protocol 8, a six-machine lockstep test, and six start plateaus on the generated map.
+- Random Field Battle maps, step 1 (2026-10-16): four recipes (Pass, Ford, Hill and Open) make a battle map from a seed, the lobby offers them with a map code, New map and a picture, the map travels in the lobby settings (protocol 9) and replays record it (format 11). See [07](07-world-and-maps.md#field-battle-maps-and-recipes).
 - AI track: the battle AI (phases AI-1 and AI-2), so any Field Battle or sandbox slot can be an AI opponent or ally. *AI-1 built (2026-10-13): the battle AI at three levels, reading the ground, and the AI lens (`L`). AI-2 built (2026-10-15): the fourth level, the Warlord, which reads the enemy's plan from how its army moves and rehearses its own plans in a copy of the real simulation before choosing one ([18 · AI](18-ai.md#build-plan)).*
 - Terrain rules for battle maps: high ground and fords ([05 · Combat](05-combat.md#terrain)). *Built (2026-10-13): fighting downhill and shooting from high ground, slow wading, no charging out of a river, extra blows on waders. Friendly regiments queue in fords and passes instead of stacking (built the same day); elsewhere they push through each other slowly and fall into disorder (2026-10-15).*
 - Desync detection with report files; cross-platform determinism CI on golden replays. *Detection built in step 1, report files in step 2 (replay files since step 6a); the golden-replay CI was built for the M1 exit.*
@@ -132,7 +133,7 @@ On 2026-10-15 the Campaign was designed as a third mode ([19 · Campaign and Exp
 | Host migration | Every client already has full state |
 | Internet join codes | UDP hole punching via a tiny rendezvous service |
 | Map editor for players | The internal edit mode, exposed |
-| Seeded map generator | Validated by `gc_mapcheck` for fairness |
+| Seeded map generator | Validated by `gc_mapcheck` for fairness. The Field Battle recipes are built (random maps step 1, [07](07-world-and-maps.md#field-battle-maps-and-recipes)) |
 | Co-op Siege mode | Wave defence against Titan-spawn |
 | Fifth faction | Feathered Republic (air nomads) or Drowned Tide (with naval) |
 

@@ -14,8 +14,7 @@ fn lan() -> Lan {
     Lan::new(Identity {
         version: "test".into(),
         data_hash: 42,
-        seed: 7,
-        map_hash: 7,
+        map_hash: |_, _| 7,
     })
 }
 

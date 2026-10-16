@@ -59,7 +59,7 @@ grubcraft/
 ├─ crates/
 │  ├─ gc_fixed/      fixed-point math, angles, trig tables, isqrt (no_std)
 │  ├─ gc_sim/        deterministic simulation (no_std + alloc, no floats)
-│  ├─ gc_map/        maps: the seeded generator, the RON map format and loader, the shared terrain rules (no floats outside the drawing views)
+│  ├─ gc_map/        maps: the seeded generator, the Field Battle recipes, the RON map format and loader, the shared terrain rules (no floats outside the drawing views)
 │  ├─ gc_ai/         AI players and world-party minds; reads sim views, sends commands
 │  ├─ gc_campaign/   campaign mode: regions, seasons, hosts, the long-term ledger (C-1, see 19) (later)
 │  ├─ gc_data/       unit/faction/ability definitions, compiled tables

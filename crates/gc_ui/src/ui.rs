@@ -381,6 +381,33 @@ impl Ui {
         max_chars: usize,
         placeholder: &str,
     ) -> bool {
+        self.field(r, value, max_chars, placeholder, false).0
+    }
+
+    /// [`Ui::text_field`] for a box whose text is submitted: also true when
+    /// Enter was pressed in it. That Enter is used up, so it doesn't press
+    /// the screen's primary button too.
+    pub fn text_entry(
+        &mut self,
+        r: Rect,
+        value: &mut String,
+        max_chars: usize,
+        placeholder: &str,
+    ) -> (bool, bool) {
+        self.field(r, value, max_chars, placeholder, true)
+    }
+
+    /// The text box behind [`Ui::text_field`] and [`Ui::text_entry`]:
+    /// `(changed, submitted)`. With `owns_enter`, a submitting Enter is not
+    /// left for the primary button.
+    fn field(
+        &mut self,
+        r: Rect,
+        value: &mut String,
+        max_chars: usize,
+        placeholder: &str,
+        owns_enter: bool,
+    ) -> (bool, bool) {
         let id = self.id();
         let hot = self.hovered(r);
         if hot && self.input.pressed {
@@ -392,6 +419,7 @@ impl Ui {
         let focused = self.focus == Some(id);
         self.focus_claimed |= focused;
         let mut changed = false;
+        let mut submitted = false;
         if focused {
             for ch in self.input.typed.chars() {
                 if (' '..='~').contains(&ch) && value.chars().count() < max_chars {
@@ -404,6 +432,8 @@ impl Ui {
             }
             if self.input.enter {
                 self.focus = None;
+                submitted = true;
+                self.enter_taken |= owns_enter;
             }
         }
         self.draw.rect(r, theme::FIELD);
@@ -439,7 +469,7 @@ impl Ui {
                 self.draw.rect(Rect::new(cursor_x, y, 2, 16), theme::ACCENT);
             }
         }
-        changed
+        (changed, submitted)
     }
 
     /// A selectable row in a list.
@@ -601,6 +631,38 @@ mod tests {
         let a = ui.button(Rect::new(0, 0, 50, 50), "a", ButtonStyle::Primary, true);
         let b = ui.button(Rect::new(60, 0, 50, 50), "b", ButtonStyle::Primary, true);
         assert!(a && !b);
+    }
+
+    #[test]
+    fn enter_in_a_text_entry_submits_it_and_not_the_primary_button() {
+        let mut ui = Ui::new();
+        let r = Rect::new(0, 0, 300, 30);
+        let mut s = String::from("abc");
+        let click = UiInput {
+            mouse: (5, 5),
+            pressed: true,
+            released: true,
+            ..Default::default()
+        };
+        ui.begin_frame(click.clone(), (800, 600));
+        assert_eq!(ui.text_entry(r, &mut s, 8, ""), (false, false));
+        ui.end_frame();
+        let enter = UiInput {
+            enter: true,
+            ..Default::default()
+        };
+        ui.begin_frame(enter.clone(), (800, 600));
+        assert_eq!(ui.text_entry(r, &mut s, 8, ""), (false, true));
+        let go = ui.button(Rect::new(0, 40, 50, 50), "go", ButtonStyle::Primary, true);
+        assert!(!go, "the Enter was used up by the text box");
+        ui.end_frame();
+        // A plain text field leaves its Enter for the primary button.
+        ui.begin_frame(click, (800, 600));
+        ui.text_field(r, &mut s, 8, "");
+        ui.end_frame();
+        ui.begin_frame(enter, (800, 600));
+        ui.text_field(r, &mut s, 8, "");
+        assert!(ui.button(Rect::new(0, 40, 50, 50), "go", ButtonStyle::Primary, true));
     }
 
     #[test]

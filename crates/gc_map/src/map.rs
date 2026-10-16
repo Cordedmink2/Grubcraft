@@ -63,8 +63,6 @@ pub struct Placed {
 pub struct Map {
     /// The map's name, or "Seed N" for a generated one.
     pub name: String,
-    /// The seed a generated map was made from; None for a described one.
-    pub seed: Option<u64>,
     /// The description's size class; None for a generated map.
     pub size: Option<SizeClass>,
     /// Tiles per side.
@@ -122,7 +120,6 @@ impl Map {
             .collect();
         Map {
             name: String::new(),
-            seed: None,
             size: None,
             tiles,
             players: 0,
@@ -240,6 +237,51 @@ impl Map {
         let mut starts: Vec<&Placed> = self.objects_of(Kind::Start).collect();
         starts.sort_by_key(|o| o.owner);
         starts.into_iter().map(|o| o.at).collect()
+    }
+
+    /// Tiles a regiment's centre can use, from [`Map::tile_ground`]: not
+    /// blocked and not touching a blocked tile (the sim keeps regiments
+    /// about a tile off cliffs).
+    pub fn standable(&self, ground: &[Ground]) -> Vec<bool> {
+        let n = self.tiles as i32;
+        let blocked = |x: i32, y: i32| {
+            !((0..n).contains(&x) && (0..n).contains(&y))
+                || ground[(y * n + x) as usize] == Ground::Blocked
+        };
+        let mut out = Vec::with_capacity(ground.len());
+        for y in 0..n {
+            for x in 0..n {
+                out.push((-1..=1).all(|dy| (-1..=1).all(|dx| !blocked(x + dx, y + dy))));
+            }
+        }
+        out
+    }
+
+    /// Whether an army can walk from every start to every other, keeping
+    /// a tile clear of blocked ground as regiments do.
+    pub fn starts_joined(&self) -> bool {
+        let n = self.tiles as i32;
+        let standable = self.standable(&self.tile_ground(&self.nav_costs()));
+        let open = |x: i32, y: i32| {
+            (0..n).contains(&x) && (0..n).contains(&y) && standable[(y * n + x) as usize]
+        };
+        let starts = self.starts();
+        let Some(&first) = starts.first() else {
+            return true;
+        };
+        let mut seen = vec![false; standable.len()];
+        let mut todo = vec![first];
+        seen[(first.1 * n + first.0) as usize] = true;
+        while let Some((x, y)) = todo.pop() {
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let (px, py) = (x + dx, y + dy);
+                if open(px, py) && !seen[(py * n + px) as usize] {
+                    seen[(py * n + px) as usize] = true;
+                    todo.push((px, py));
+                }
+            }
+        }
+        starts.iter().all(|&(x, y)| seen[(y * n + x) as usize])
     }
 
     /// The fingerprint machines compare before a network match

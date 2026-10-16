@@ -55,17 +55,7 @@ impl Map {
     /// Tiles a regiment's centre can use: walkable, and not touching a
     /// blocked tile (the sim keeps blocks about a tile off cliffs).
     pub fn walkable(&self) -> Vec<bool> {
-        let mut out = vec![false; self.ground.len()];
-        for y in 0..self.n {
-            for x in 0..self.n {
-                let clear = self.ground_at((x, y)) != Ground::Blocked
-                    && (-1..=1).all(|dy| {
-                        (-1..=1).all(|dx| self.ground_at((x + dx, y + dy)) != Ground::Blocked)
-                    });
-                out[self.idx((x, y))] = clear;
-            }
-        }
-        out
+        self.map.standable(&self.ground)
     }
 
     pub fn start_of(&self, player: u8) -> Option<Pos> {

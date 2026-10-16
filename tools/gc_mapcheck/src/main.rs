@@ -1,5 +1,7 @@
 //! `gc_mapcheck check [FILE|DIR]...` validates maps (default `data/maps`);
-//! `gc_mapcheck png FILE OUT.png` draws one.
+//! `gc_mapcheck png FILE OUT.png` draws one; `gc_mapcheck gen RECIPE TILES
+//! SEED OUT.ron` writes the Field Battle map a recipe makes from a seed
+//! (Pass, Ford, Hill or Open), so a good one can become a hand-tuned map.
 
 use gc_mapcheck::{Map, MapDef, check, preview};
 use std::path::{Path, PathBuf};
@@ -9,6 +11,17 @@ fn png_cmd(src: &str, out: &str) -> Result<(), String> {
     let map = Map::build(&MapDef::load(Path::new(src))?);
     let (side, rgb) = preview::render(&map, if map.tiles > 192 { 3 } else { 4 });
     std::fs::write(out, preview::png(side, &rgb)).map_err(|e| format!("{out}: {e}"))
+}
+
+fn gen_cmd(recipe: &str, tiles: &str, seed: &str, out: &str) -> Result<(), String> {
+    let recipe = gc_map::recipe::Recipe::ALL
+        .into_iter()
+        .find(|r| r.name().eq_ignore_ascii_case(recipe))
+        .ok_or_else(|| format!("no recipe called {recipe}"))?;
+    let tiles = tiles.parse().map_err(|_| format!("{tiles} isn't a size"))?;
+    let seed = seed.parse().map_err(|_| format!("{seed} isn't a seed"))?;
+    let def = gc_map::recipe::describe(recipe, tiles, seed);
+    std::fs::write(out, def.to_ron()).map_err(|e| format!("{out}: {e}"))
 }
 
 fn files(args: &[String]) -> Vec<PathBuf> {
@@ -87,9 +100,16 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("gen") if args.len() == 5 => match gen_cmd(&args[1], &args[2], &args[3], &args[4]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::FAILURE
+            }
+        },
         _ => {
             eprintln!(
-                "usage: gc_mapcheck check [FILE|DIR]...\n       gc_mapcheck png FILE OUT.png"
+                "usage: gc_mapcheck check [FILE|DIR]...\n       gc_mapcheck png FILE OUT.png\n       gc_mapcheck gen RECIPE TILES SEED OUT.ron"
             );
             ExitCode::FAILURE
         }

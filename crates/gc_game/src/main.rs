@@ -74,7 +74,7 @@
 //! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
 //! starts a Field Battle against one computer player of that level;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
-//! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed; `--frames N` quits after N frames
+//! (`--frames` implies it, `--menu` overrides); `--seed N` picks the map seed the Host a game card and a `--battle` start on; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
 //! `--map NAME|FILE` opens on a shipped map (`ribcage_pass`, `four_teeth`) or
 //! a map file instead of the seeded map, to look round it in the sandbox
@@ -100,6 +100,7 @@ mod data;
 mod goldens;
 mod hud;
 mod lens;
+mod map_preview;
 mod models;
 mod online;
 mod profile;
@@ -142,15 +143,13 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use camera::RtsCamera;
-use gc_map::Map;
+use gc_map::{FieldMap, Map};
 use models::Action;
 use puppets::{Block, Fighter, Puppets, Soldier};
 
 #[global_allocator]
 static ALLOC: TaggedAlloc = TaggedAlloc;
 
-/// Tiles on a side of the seeded battle maps.
-const MAP_TILES: u32 = 256;
 const TICK: Duration = Duration::from_millis(1000 / gc_sim::TICKS_PER_SECOND as u64);
 const HUMAN: PlayerId = 0;
 /// Team colours: Ember red, Brood violet, Choir cyan, Concord bone.
@@ -287,7 +286,7 @@ struct Options {
 
 fn parse_args() -> Options {
     let mut opts = Options {
-        seed: 0x6772_7562,
+        seed: gc_ui::lobby::DEFAULT_MAP_SEED,
         map: None,
         sandbox: false,
         frames: None,
@@ -460,7 +459,10 @@ struct Running {
     window: Arc<Window>,
     renderer: Renderer,
     camera: RtsCamera,
-    heightmap: Map,
+    heightmap: Arc<Map>,
+    /// Which Field Battle map `heightmap` is; `None` for one opened with
+    /// `--map`.
+    map_key: Option<FieldMap>,
     world: World,
     /// Orders the other sides about; None in an empty-field sandbox or a
     /// lobby battle.
@@ -566,6 +568,8 @@ struct Running {
     sounds: Option<sounds::Sounds>,
     /// The replay list being read on another thread, until it arrives.
     replay_list: Option<replays::Listing>,
+    /// Makes the pictures of maps the menus show, off the frame loop.
+    map_previews: map_preview::MapPreviews,
 }
 
 /// Soldier models and the lists that draw them, rebuilt every frame.
@@ -885,9 +889,18 @@ impl App {
             ))
         })?;
         self.memory_timeline.mark("gpu device + pipelines");
+        // The game opens on the map a two-player battle from a new lobby
+        // would be on, or on one opened with `--map`.
+        let first_key = battle_map(
+            &gc_ui::lobby::LobbySettings {
+                map_seed: opts.seed,
+                ..Default::default()
+            },
+            2,
+        );
         let heightmap = tagged_alloc::scope(Tag::Map, || match &opts.map {
-            Some(def) => Map::from_def(def),
-            None => Map::generate(opts.seed, MAP_TILES),
+            Some(def) => Arc::new(Map::from_def(def)),
+            None => make_map(first_key),
         });
         tagged_alloc::scope(Tag::Render, || {
             renderer.set_terrain(&terrain_of(&heightmap));
@@ -1049,15 +1062,11 @@ impl App {
         let lan = Lan::new(gc_net::Identity {
             version: online::version(),
             data_hash: game_data.short_hash(),
-            seed: opts.seed,
-            // Network matches play on the seeded map, whatever `--map` opened.
-            map_hash: match heightmap.seed {
-                Some(_) => gc_map::map_hash(&nav, &heightmap.ground()),
-                None => Map::generate(opts.seed, MAP_TILES).hash(),
-            },
+            map_hash: battle_map_hash,
         });
         let mut menu = Menu::new(lan, settings, settings_path, &online::version());
         menu.set_roster(roster);
+        menu.set_host_map_seed(opts.seed);
         let show_menu = opts
             .menu
             .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
@@ -1075,6 +1084,7 @@ impl App {
             renderer,
             camera,
             heightmap,
+            map_key: opts.map.is_none().then_some(first_key),
             world,
             drill,
             minds,
@@ -1157,6 +1167,7 @@ impl App {
             quit: false,
             sounds,
             replay_list: None,
+            map_previews: map_preview::MapPreviews::new(),
         });
         if let Some(r) = self.running.as_mut() {
             r.menu.set_in_match(r.match_started);
@@ -1166,7 +1177,10 @@ impl App {
                     Some(addr) => r.menu.net().join(&me, addr, &opts.password),
                     None => r.menu.net().host(
                         &me,
-                        gc_ui::lobby::LobbySettings::default(),
+                        gc_ui::lobby::LobbySettings {
+                            map_seed: opts.seed,
+                            ..Default::default()
+                        },
                         &opts.password,
                     ),
                 };
@@ -1176,7 +1190,7 @@ impl App {
                 }
             }
             if let Some(level) = opts.battle {
-                let setup = battle::quick_battle(level, r.menu.settings());
+                let setup = battle::quick_battle(level, r.menu.settings(), opts.seed);
                 r.start_match(MatchKind::Battle(setup));
             }
         }
@@ -2607,6 +2621,7 @@ impl Running {
         }
         self.ui.begin_frame(input, screen);
         let action = self.menu.frame(&mut self.ui);
+        self.map_previews.poll(&mut self.menu);
         self.ui.end_frame();
         hud::upload_ui(&mut self.renderer, &mut self.ui_quads, &self.ui.draw, scale);
         match action {
@@ -2695,37 +2710,40 @@ impl Running {
         let mut stats_before = Vec::new();
         // A network match plays on the host's map, with the game data as
         // built (whatever the sandbox tuned stays in the sandbox).
-        let net_seed = match &kind {
-            MatchKind::Battle(setup) => setup.seed,
-            MatchKind::Sandbox | MatchKind::Replay(_) => None,
-        };
-        if net_seed.is_none() && self.menu.net().in_match() {
+        let networked = matches!(&kind, MatchKind::Battle(setup) if setup.seed.is_some());
+        if !networked && self.menu.net().in_match() {
             // Starting something else leaves the network match.
             self.menu.net().leave();
         }
-        if net_seed.is_some() {
+        if networked {
             self.unit_stats.clone_from(&self.data_stats);
         }
-        // Field Battles play on the seeded map (a network match on the
-        // host's seed), and a replay is shown on the map made from its seed
+        // A Field Battle plays on the map the lobby picked, its world seeded
+        // with the map's seed (the same on every machine). A replay is shown
+        // on the map it was played on, made again from its choice and seed,
         // and plays on the map it stored. A described map opened with
         // `--map` is for looking round in the sandbox; the first battle or
         // replay leaves it.
-        let seeded = match &kind {
-            MatchKind::Battle(_) => Some(net_seed.unwrap_or(self.seed)),
-            MatchKind::Replay(r) => Some(r.seed),
+        let key = match &kind {
+            MatchKind::Battle(setup) => Some(battle_map(&setup.settings, setup.players.len())),
+            MatchKind::Replay(r) => Some(FieldMap {
+                choice: r.header.map.map_or(0, usize::from),
+                tiles: r.map_tiles,
+                seed: r.seed,
+            }),
             MatchKind::Sandbox => None,
         };
-        if let Some(seed) = seeded
-            && self.heightmap.seed != Some(seed)
-        {
-            self.use_map(seed);
+        if let Some(key) = key {
+            self.seed = key.seed;
+            if self.map_key != Some(key) {
+                self.use_map(key);
+            }
         }
         let mut map_note = None;
         if let MatchKind::Replay(r) = &kind {
             stats_before = std::mem::replace(&mut self.unit_stats, r.units.clone());
         }
-        self.online = net_seed.map(|_| online::Online::new(self.menu.net().is_host()));
+        self.online = networked.then(|| online::Online::new(self.menu.net().is_host()));
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
         if let MatchKind::Replay(r) = &kind {
             let (shown, stored) = (self.heightmap.ground(), r.setup().ground);
@@ -2767,7 +2785,7 @@ impl Running {
             replays::prune(&dir, replays::KEEP - 1);
             let mode = start.settings.mode.name();
             let map = gc_ui::lobby::MAPS[start.settings.map];
-            let place = if net_seed.is_some() {
+            let place = if networked {
                 "over the network"
             } else {
                 "on this machine"
@@ -2780,11 +2798,12 @@ impl Running {
             self.recording = Some(Recording {
                 // A network match hashes as often as the machines compare,
                 // and keeps each system's hashes for a desync report.
-                recorder: match net_seed {
-                    Some(_) => recorder
+                recorder: if networked {
+                    recorder
                         .checkpoint_every(gc_net::HASH_EVERY)
-                        .with_system_trail(),
-                    None => recorder,
+                        .with_system_trail()
+                } else {
+                    recorder
                 },
                 path: replays::new_path(&dir, replays::now(), mode),
                 saved_at: None,
@@ -2847,11 +2866,16 @@ impl Running {
         }
     }
 
-    /// Generate the seeded map for `seed` and put it on screen.
-    fn use_map(&mut self, seed: u64) {
-        logln!("grubcraft: switching to the map for seed {seed}");
-        self.seed = seed;
-        self.heightmap = tagged_alloc::scope(Tag::Map, || Map::generate(seed, MAP_TILES));
+    /// Make the Field Battle map `key` names and put it on screen.
+    fn use_map(&mut self, key: FieldMap) {
+        logln!(
+            "grubcraft: switching to {} (seed {:x}, {} tiles)",
+            gc_map::FIELD_MAPS.get(key.choice).unwrap_or(&"?"),
+            key.seed,
+            key.tiles
+        );
+        self.map_key = Some(key);
+        self.heightmap = make_map(key);
         let hm = &self.heightmap;
         tagged_alloc::scope(Tag::Render, || {
             self.renderer.set_terrain(&terrain_of(hm));
@@ -2861,7 +2885,7 @@ impl Running {
         let nav = hm.nav_costs();
         self.blocked_marks = blocked_marks(&nav, hm.tiles);
         self.scenery = tagged_alloc::scope(Tag::Render, || {
-            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, seed)
+            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, key.seed)
         });
     }
 
@@ -2898,6 +2922,7 @@ impl Running {
             header.data_hash = self.data_hash;
             header.players = replays::players(&self.parties);
             header.recorded_by = Some(set.me);
+            header.map = Some(setup.settings.map as u8);
         }
         // Look over your army towards the enemy.
         let focus = set.my_start + set.my_forward * 18.0;
@@ -3908,6 +3933,43 @@ impl Running {
     }
 }
 
+/// The map a lobby battle of `players` is played on.
+fn battle_map(settings: &gc_ui::lobby::LobbySettings, players: usize) -> FieldMap {
+    FieldMap {
+        choice: settings.map,
+        tiles: gc_ui::lobby::field_map_tiles(players),
+        seed: settings.map_seed,
+    }
+}
+
+/// The last Field Battle map made, so the lobby's preview, the host's
+/// fingerprint and the match itself make it once between them.
+static LAST_MAP: std::sync::Mutex<Option<(FieldMap, Arc<Map>)>> = std::sync::Mutex::new(None);
+
+/// Make the Field Battle map `key`, or share it if it was the last made.
+/// The lock is held while a map is made, so a second ask for the same map
+/// (the match starting while its picture is being made) waits for it
+/// instead of making it again.
+fn make_map(key: FieldMap) -> Arc<Map> {
+    let mut last = LAST_MAP
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((k, map)) = &*last
+        && *k == key
+    {
+        return Arc::clone(map);
+    }
+    let map = Arc::new(tagged_alloc::scope(Tag::Map, || key.make()));
+    *last = Some((key, Arc::clone(&map)));
+    map
+}
+
+/// The fingerprint of a lobby battle's map, which the host sends to every
+/// player when a network match starts ([`gc_net::Identity::map_hash`]).
+fn battle_map_hash(settings: &gc_ui::lobby::LobbySettings, players: usize) -> u64 {
+    make_map(battle_map(settings, players)).hash()
+}
+
 /// The scripted opponents of the sandbox.
 fn make_drill(seed: u64, map_tiles: u32) -> Drill {
     let mut drill = Drill::new(seed);
@@ -4170,6 +4232,21 @@ mod tests {
         index: 3,
         generation: 1,
     };
+
+    /// The lobby lists the maps gc_map makes, in its order: a lobby's map
+    /// index picks the same map on every machine.
+    #[test]
+    fn the_lobby_offers_the_maps_gc_map_makes() {
+        assert_eq!(gc_ui::lobby::MAPS, gc_map::FIELD_MAPS);
+    }
+
+    /// A new lobby's battle is on the Proving Ground every battle was
+    /// played on before maps could be picked.
+    #[test]
+    fn a_new_lobby_plays_on_the_old_map() {
+        let key = battle_map(&gc_ui::lobby::LobbySettings::default(), 2);
+        assert_eq!(key.make().hash(), Map::generate(0x6772_7562, 256).hash());
+    }
 
     #[test]
     fn a_regiment_is_aimed_at_where_it_is_drawn() {

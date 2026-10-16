@@ -94,3 +94,11 @@ strip = "none"
 # Fast dev builds of our code, optimised dependencies (wgpu is slow unoptimised).
 [profile.dev.package."*"]
 opt-level = 2
+
+# Map making and the map checker run in tests and the dev game; unoptimised,
+# a 320-tile map takes seconds.
+[profile.dev.package.gc_map]
+opt-level = 2
+
+[profile.dev.package.gc_mapcheck]
+opt-level = 2
