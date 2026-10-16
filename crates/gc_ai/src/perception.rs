@@ -202,11 +202,13 @@ pub struct Perception {
     pub champions: Option<[PlayerId; 2]>,
     /// Index into `regiments` by pool index, for handle lookups.
     by_index: Vec<u32>,
-    /// Every enemy seen lately, as last seen, and the tick it was.
+    /// Every enemy seen and still on the field, as last seen, and the tick
+    /// it was.
     memory: Vec<(Seen, u32)>,
 }
 
-/// How long a mind remembers an enemy it has lost sight of, in ticks.
+/// How long a mind counts an enemy it has lost sight of, in ticks
+/// ([`Perception::remembered`]); where it was last seen is kept for longer.
 pub const REMEMBER_TICKS: u32 = 60 * TICKS_PER_SECOND;
 
 const NONE: u32 = u32::MAX;
@@ -286,15 +288,25 @@ impl Perception {
     /// Enemies seen in the last [`REMEMBER_TICKS`] but out of sight now,
     /// as they were last seen ([`Perception::capture_for`] only).
     pub fn remembered(&self) -> impl Iterator<Item = &Seen> {
+        self.out_of_sight(REMEMBER_TICKS)
+    }
+
+    /// Every enemy still on the field that is out of sight now, as it was
+    /// last seen however long ago: where to go and look for it.
+    pub fn last_seen(&self) -> impl Iterator<Item = &Seen> {
+        self.out_of_sight(u32::MAX)
+    }
+
+    fn out_of_sight(&self, within: u32) -> impl Iterator<Item = &Seen> {
         let now = self.tick;
         self.memory
             .iter()
-            .filter(move |(_, seen)| *seen != now)
+            .filter(move |(_, seen)| *seen != now && now - seen <= within)
             .map(|(m, _)| m)
     }
 
-    /// Note the enemies `party` sees now. One unseen for
-    /// [`REMEMBER_TICKS`], or gone from the field, is forgotten.
+    /// Note the enemies `party` sees now. One gone from the field is
+    /// forgotten.
     fn remember(&mut self, world: &World, party: PlayerId) {
         let now = self.tick;
         for r in &self.regiments {
@@ -306,9 +318,8 @@ impl Perception {
                 None => self.memory.push((*r, now)),
             }
         }
-        self.memory.retain(|(m, seen)| {
-            *seen <= now && now - seen <= REMEMBER_TICKS && world.regiments.get(m.handle).is_some()
-        });
+        self.memory
+            .retain(|(m, seen)| *seen <= now && world.regiments.get(m.handle).is_some());
     }
 
     /// The regiment a handle refers to, if it is still on the field.

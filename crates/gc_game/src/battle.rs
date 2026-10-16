@@ -441,6 +441,17 @@ mod tests {
         }
     }
 
+    /// The AI level called `name`, or the Veteran for no name.
+    fn level(name: &str) -> Difficulty {
+        if name.is_empty() {
+            return Difficulty::Veteran;
+        }
+        Difficulty::ALL
+            .into_iter()
+            .find(|d| d.name() == name)
+            .unwrap_or_else(|| panic!("no AI level called {name:?}"))
+    }
+
     /// The real game data's unit stats, factions and points, as `set_out`
     /// takes them.
     fn tables(data: &gc_data::GameData) -> (Vec<UnitStats>, Vec<Faction>, Vec<u32>) {
@@ -723,14 +734,19 @@ mod tests {
                 for r in world.regiments.iter() {
                     let p = crate::from_fx_vec(r.position);
                     println!(
-                        "  {} u{} ({:5.1},{:5.1}) {:>2} {:?}{}",
+                        "  {} u{} ({:5.1},{:5.1}) {:>2} {:?}{}{}",
                         r.owner,
                         r.unit,
                         p.x,
                         p.y,
                         r.models,
                         r.morale,
-                        if r.engaged { " ENG" } else { "" }
+                        if r.engaged { " ENG" } else { "" },
+                        if world.hidden(r.handle) {
+                            " HIDDEN"
+                        } else {
+                            ""
+                        }
                     );
                 }
             }
@@ -769,32 +785,63 @@ mod tests {
         );
     }
 
-    /// Each faction's Veteran against each faction standing still.
+    /// Each faction's Veteran against each faction standing still, four
+    /// battles a pair: how many the AI wins and loses, and which it leaves
+    /// undecided after eight minutes (it never found the last survivors).
+    /// `AI_LEVEL=General` (or any level's name) plays that level instead.
+    /// `cargo test -p gc_game --release matchups -- --ignored --nocapture`
     #[test]
     #[ignore = "slow: 64 full battles, run by hand"]
     fn matchups() {
         use gc_ui::lobby::Faction as F;
+        let ai_level = level(&std::env::var("AI_LEVEL").unwrap_or_default());
+        let mut pairs = Vec::new();
         for ai in F::ALL {
             for idle in F::ALL {
-                let mut setup = lobby(&[None, Some(Difficulty::Veteran)], &[0, 1]);
-                setup.players[0].faction = idle;
-                setup.players[1].faction = ai;
-                let mut won = 0;
-                let mut sizes = Vec::new();
-                for seed in 1..=4 {
-                    let played = play(&setup, seed, 8);
-                    won += u32::from(played.battle.won == Some(false));
-                    sizes = played.fielded;
-                }
-                println!(
-                    "{:>15} AI ({}) v {:>15} ({}) standing still: AI won {won} of 4",
-                    ai.name(),
-                    sizes[1],
-                    idle.name(),
-                    sizes[0]
-                );
+                pairs.push((ai, idle));
             }
         }
+        println!("{} against armies standing still", ai_level.name());
+        let rows: Vec<(u32, u32, Vec<String>)> = std::thread::scope(|s| {
+            let jobs: Vec<_> = pairs
+                .iter()
+                .map(|&(ai, idle)| {
+                    s.spawn(move || {
+                        let mut setup = lobby(&[None, Some(ai_level)], &[0, 1]);
+                        setup.players[0].faction = idle;
+                        setup.players[1].faction = ai;
+                        let (mut won, mut lost, mut open) = (0, 0, Vec::new());
+                        for seed in 1..=4 {
+                            match play(&setup, seed, 8).battle.won {
+                                Some(false) => won += 1,
+                                Some(true) => lost += 1,
+                                None => open.push(format!(
+                                    "{} v {} seed {seed}",
+                                    ai.name(),
+                                    idle.name()
+                                )),
+                            }
+                        }
+                        (won, lost, open)
+                    })
+                })
+                .collect();
+            jobs.into_iter().map(|j| j.join().unwrap()).collect()
+        });
+        for (&(ai, idle), (won, ..)) in pairs.iter().zip(&rows) {
+            println!(
+                "{:>15} AI v {:>15} standing still: AI won {won} of 4",
+                ai.name(),
+                idle.name()
+            );
+        }
+        let won: u32 = rows.iter().map(|r| r.0).sum();
+        let lost: u32 = rows.iter().map(|r| r.1).sum();
+        let open: Vec<&String> = rows.iter().flat_map(|r| &r.2).collect();
+        println!(
+            "AI won {won}, lost {lost}, undecided {}: {open:?}",
+            open.len()
+        );
     }
 
     /// The balance table (docs/17-unit-rosters.md, "Field Battle balance"): each pair of
@@ -918,12 +965,6 @@ mod tests {
     #[test]
     #[ignore = "opens a window to watch a battle"]
     fn watch() {
-        let level = |v: &str| match v {
-            "Recruit" => Difficulty::Recruit,
-            "General" => Difficulty::General,
-            "Warlord" => Difficulty::Warlord,
-            _ => Difficulty::Veteran,
-        };
         let a = std::env::var("AI_A").map_or(None, |v| Some(level(&v)));
         let b = level(&std::env::var("AI_B").unwrap_or_default());
         let from = std::env::var("AI_FROM").map_or(1, |v| v.parse().unwrap());

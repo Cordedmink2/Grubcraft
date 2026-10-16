@@ -153,6 +153,14 @@ impl Posture {
 /// Seconds a side expecting to lose waits for an enemy that doesn't come
 /// before going to fetch it.
 const TIRED_OF_WAITING: f32 = 30.0;
+/// Seconds an advancing line stands at the enemy with nobody coming to
+/// blows before it gives up on the line and goes to fetch them.
+const NOBODY_FIGHTS: f32 = 15.0;
+/// Tiles between regiments sweeping for an enemy lost from sight, and how
+/// near the place it vanished one of them must come to have searched it
+/// (near enough to spot a regiment hiding there).
+const SWEEP: f32 = 8.0;
+const SEARCHED: f32 = 4.0;
 
 /// Whether the army waits for the enemy or goes to meet it, when a plan
 /// says (see [`Plan`]).
@@ -407,9 +415,13 @@ pub struct Captain {
     standoff_since: u32,
     /// Tick it began watching its side's champion fight, while it does.
     watching_since: Option<u32>,
-    /// Since when it has been waiting, expecting to lose, with the enemy
-    /// not coming and nobody fighting.
+    /// Since when it has been waiting, expecting to lose or holding, or
+    /// stood at the enemy, with the enemy not coming and nobody fighting.
     waiting_since: Option<u32>,
+    /// With nothing standing in sight: the enemy regiment it is looking
+    /// for and where it vanished, and the places it has looked already.
+    search: Option<(RegimentHandle, Vec2)>,
+    searched: Vec<(RegimentHandle, Vec2)>,
     /// Tick the posture last changed.
     posture_since: u32,
     /// Where the enemy army was a while ago, to tell whether it is coming:
@@ -494,6 +506,8 @@ impl Captain {
             standoff_since: 0,
             watching_since: None,
             waiting_since: None,
+            search: None,
+            searched: Vec::new(),
             posture_since: 0,
             distance_then: None,
             closing: 0.0,
@@ -581,6 +595,8 @@ impl Captain {
             self.mop_up(ctx, &ours, &foes, wants);
             return;
         }
+        self.search = None;
+        self.searched.clear();
         self.update_frame(ctx, &ours, &fighting);
         let now = view.tick;
         if now >= self.next_estimate {
@@ -1134,14 +1150,17 @@ impl Captain {
 
     /// Where a slot is on the map, nudged onto ground a regiment can stand on.
     fn place(&self, ctx: &Ctx, slot: Vec2) -> Vec2 {
-        let right = right_of(self.forward);
-        let p = ctx
-            .terrain
-            .clamp(self.anchor + right * slot.x - self.forward * slot.y, 3.0);
-        if ctx.terrain.walkable(p) {
-            p
-        } else {
-            ctx.terrain.nearest_walkable(p, 8.0).unwrap_or(p)
+        place_at(ctx, self.anchor, self.forward, slot)
+    }
+
+    /// Goes to fetch an enemy that neither comes nor fights once that has
+    /// gone on for `seconds` (since `was`, if it had already begun).
+    fn fetch_after(&mut self, ctx: &mut Ctx, was: Option<u32>, seconds: f32, why: &str) {
+        let now = ctx.view.tick;
+        let since = *self.waiting_since.insert(was.unwrap_or(now));
+        if (now - since) as f32 / TICKS > seconds {
+            self.fetching = true;
+            ctx.journal.note(now, format!("{why}: going to fetch them"));
         }
     }
 
@@ -1324,6 +1343,7 @@ impl Captain {
         let before = self.posture;
         // Only kept while it goes on waiting, below.
         let was_waiting = self.waiting_since.take();
+        let engaged = ours.iter().any(|r| r.engaged);
         // How far the enemy is from where the line stands now (the anchor
         // is where it is going, which while advancing is near the enemy).
         let line_now = line_centre(&self.members, ours, centroid(ours));
@@ -1452,13 +1472,8 @@ impl Captain {
                 // enemy that never comes has to be fetched in the end, or
                 // the battle never ends. Only time with nobody coming and
                 // nobody fighting counts.
-                if !ours.iter().any(|r| r.engaged) {
-                    let since = *self.waiting_since.insert(was_waiting.unwrap_or(now));
-                    if (now - since) as f32 / TICKS > TIRED_OF_WAITING {
-                        self.fetching = true;
-                        ctx.journal
-                            .note(now, "Tired of waiting: going to fetch them".to_string());
-                    }
+                if !engaged {
+                    self.fetch_after(ctx, was_waiting, TIRED_OF_WAITING, "Tired of waiting");
                 }
                 outshot && self.withdrawals >= WITHDRAWALS
             } else {
@@ -1473,14 +1488,14 @@ impl Captain {
                     // or the battle never ends: once nobody has come on or
                     // fought for longer than anyone waits before going to
                     // fetch an enemy, so it never gives up a standoff first.
-                    let quiet = self.closing <= 1.0 && !ours.iter().any(|r| r.engaged);
+                    let quiet = self.closing <= 1.0 && !engaged;
                     if !halted && !only_archers && quiet && !self.fetching {
-                        let since = *self.waiting_since.insert(was_waiting.unwrap_or(now));
-                        if (now - since) as f32 / TICKS > 2.0 * TIRED_OF_WAITING {
-                            self.fetching = true;
-                            ctx.journal
-                                .note(now, "Tired of waiting: going to fetch them".to_string());
-                        }
+                        self.fetch_after(
+                            ctx,
+                            was_waiting,
+                            2.0 * TIRED_OF_WAITING,
+                            "Tired of waiting",
+                        );
                     }
                     !halted && only_archers
                 }
@@ -1535,6 +1550,16 @@ impl Captain {
                 if goal.distance(self.anchor) >= ANCHOR_SLACK || step < ANCHOR_SLACK {
                     self.anchor = goal;
                 }
+                // The line is at the enemy, as it sees it, yet nobody comes
+                // to blows: the survivors of an army it broke have rallied
+                // here and there (some even behind it), too scattered for a
+                // line to march on. Go and fetch them one by one.
+                let arrived = !shoot
+                    && step < ANCHOR_SLACK
+                    && line_now.distance(self.anchor) < 2.0 * ANCHOR_SLACK;
+                if arrived && !coming && !engaged && margin >= LOSING && !self.fetching {
+                    self.fetch_after(ctx, was_waiting, NOBODY_FIGHTS, "Nobody stands to fight");
+                }
             }
         }
         if self.posture != before {
@@ -1566,7 +1591,11 @@ impl Captain {
         if self.relayout && self.started {
             self.layout(ctx);
         }
+        // Time spent here isn't time spent waiting for an enemy in sight.
+        self.waiting_since = None;
         let our_c = centroid(ours);
+        let sweep = self.search_for(ctx, ours, our_c);
+        let mut sweepers: u16 = 0;
         for k in 0..self.members.len() {
             let m = self.members[k];
             let Some(r) = ctx.view.get(m.handle) else {
@@ -1583,11 +1612,65 @@ impl Captain {
                 && self.hunt(ctx, &mut m, r, our_c, foes, wants);
             if !hunts && self.started {
                 m.target = None;
-                let to = self.place(ctx, m.slot);
-                wants.push(slot_move(m.handle, to, self.forward, 0.0));
+                let (to, facing) = match sweep {
+                    // Abreast across the place, so whoever comes nearest
+                    // the hiding place spots it: the first on it, then one
+                    // gap right, one left, two right, ...
+                    Some((spot, dir)) => {
+                        let side = if sweepers % 2 == 1 { 1.0 } else { -1.0 };
+                        let across = side * SWEEP * f32::from(sweepers.div_ceil(2));
+                        sweepers += 1;
+                        (place_at(ctx, spot, dir, Vec2::new(across, 0.0)), dir)
+                    }
+                    None => (self.place(ctx, m.slot), self.forward),
+                };
+                wants.push(slot_move(m.handle, to, facing, 0.0));
             }
             self.members[k] = m;
         }
+    }
+
+    /// With nothing standing in sight: an enemy it lost sight of may have
+    /// rallied where it vanished (in a wood, as often as not), and the
+    /// battle isn't over until it is found. Where to look, and which way
+    /// to sweep, if there is anyone to look for. Only for what is left of
+    /// a beaten army, or one it has gone to fetch: a whole army that steps
+    /// into a wood is waiting there for it to walk in.
+    fn search_for(&mut self, ctx: &mut Ctx, ours: &[&Seen], our_c: Vec2) -> Option<(Vec2, Vec2)> {
+        let view = ctx.view;
+        let unseen = || {
+            view.last_seen()
+                .filter(|f| f.morale != MoraleState::Shattered)
+        };
+        let mine = Force::of(view, ours.iter().copied()).soldiers;
+        if !self.fetching && Force::of(view, unseen()).soldiers > mine * FINISH_SHARE {
+            self.search = None;
+            return None;
+        }
+        // Seen again since, or gone from the field: nothing to look for there.
+        self.search
+            .take_if(|&mut (h, at)| !unseen().any(|f| f.handle == h && f.pos == at));
+        if let Some(looked) = self.search.take_if(|&mut (_, at)| {
+            let there = place_at(ctx, at, self.forward, Vec2::ZERO);
+            ours.iter().any(|r| r.pos.distance(there) < SEARCHED)
+        }) {
+            self.searched.push(looked);
+        }
+        if self.search.is_none() {
+            let searched = &self.searched;
+            self.search = unseen()
+                .filter(|f| !searched.contains(&(f.handle, f.pos)))
+                .min_by(|a, b| a.pos.distance(our_c).total_cmp(&b.pos.distance(our_c)))
+                .map(|f| (f.handle, f.pos));
+            if self.search.is_some() {
+                ctx.journal.note(
+                    view.tick,
+                    "Looking for them where they were last seen".to_string(),
+                );
+            }
+        }
+        let (_, spot) = self.search?;
+        Some((spot, (spot - our_c).normalize_or(self.forward)))
     }
 
     /// Chase the nearest router within the leash. Returns whether it hunts.
@@ -2494,6 +2577,19 @@ fn nearest_army(_party: PlayerId, from: Vec2, fighting: &[&Seen]) -> Vec2 {
         }
     }
     best.map_or(from, |(_, c)| c)
+}
+
+/// Where `slot` of a line standing at `anchor` facing `forward` is on the
+/// map, nudged onto ground a regiment can stand on.
+fn place_at(ctx: &Ctx, anchor: Vec2, forward: Vec2, slot: Vec2) -> Vec2 {
+    let p = ctx
+        .terrain
+        .clamp(anchor + right_of(forward) * slot.x - forward * slot.y, 3.0);
+    if ctx.terrain.walkable(p) {
+        p
+    } else {
+        ctx.terrain.nearest_walkable(p, 8.0).unwrap_or(p)
+    }
 }
 
 /// The middle of the line as it stands (its line regiments, or everyone).
