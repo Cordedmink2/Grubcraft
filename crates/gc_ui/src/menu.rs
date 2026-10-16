@@ -152,6 +152,9 @@ impl<N: Network> Menu<N> {
     /// The list is on its way: the Replays screen says so instead of
     /// "No replays yet" until [`Menu::set_replays`].
     pub fn replays_loading(&mut self) {
+        // The old list would be stale, and a click on it could land on a
+        // different replay once the new one arrives.
+        self.replays.clear();
         self.replays_loading = true;
     }
 

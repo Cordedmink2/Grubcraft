@@ -2475,8 +2475,11 @@ impl Running {
         if let Some(listing) = &self.replay_list {
             let arrived = match listing.try_recv() {
                 Ok(list) => Some(list),
-                // The thread never started or died: show an empty list.
-                Err(mpsc::TryRecvError::Disconnected) => Some(Vec::new()),
+                // The thread never started or died (the log says which).
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    logln!("grubcraft: the replay list did not arrive");
+                    Some(Vec::new())
+                }
                 Err(mpsc::TryRecvError::Empty) => None,
             };
             if let Some(list) = arrived {
@@ -2503,12 +2506,15 @@ impl Running {
                 // A replay being saved now belongs in the list.
                 self.save_recording();
                 self.menu.replays_loading();
-                self.replay_list = Some(replays::list_in_background(
-                    replays::folder(),
-                    self.data_stats.len(),
-                    self.capacities,
-                    self.data_hash,
-                ));
+                // One read at a time: asking again waits for the one under way.
+                if self.replay_list.is_none() {
+                    self.replay_list = Some(replays::list_in_background(
+                        replays::folder(),
+                        self.data_stats.len(),
+                        self.capacities,
+                        self.data_hash,
+                    ));
+                }
             }
             MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
                 Ok(r) => match replays::unplayable(&r, self.data_stats.len(), self.capacities) {

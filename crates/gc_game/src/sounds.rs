@@ -338,6 +338,10 @@ impl Sounds {
 
     /// The Master and Music sliders moved (0..=100): applies at once.
     pub fn set_volumes(&mut self, master: u8, music: u8) {
+        // Any settings change comes here, a typed name included.
+        if (master, music) == (self.master, self.music) {
+            return;
+        }
         self.master = master;
         self.music = music;
         self.apply_state();
