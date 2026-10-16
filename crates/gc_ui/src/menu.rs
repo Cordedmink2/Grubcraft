@@ -1155,14 +1155,14 @@ impl<N: Network> Menu<N> {
             note_y,
             1,
             theme::MUTED,
-            "Name, colour, faction and UI scale work now. Audio, graphics and accessibility",
+            "Name, colour, faction, UI scale and the Master and Music volume work now. The",
         );
         ui.label(
             panel.x + 24,
             note_y + 18,
             1,
             theme::MUTED,
-            "choices are saved and take effect as those features arrive.",
+            "other audio, graphics and accessibility choices are saved and take effect later.",
         );
         let back = Rect::new(panel.x + 24, panel.bottom() - 52, 140, 44);
         let done = ui.button(back, "Back", ButtonStyle::Primary, true);

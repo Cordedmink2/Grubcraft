@@ -943,6 +943,7 @@ impl App {
         let settings = settings_path
             .as_deref()
             .map_or_else(Settings::default, Settings::load);
+        let volumes = (settings.volume_master, settings.volume_music);
         let lan = Lan::new(gc_net::Identity {
             version: online::version(),
             data_hash: game_data.short_hash(),
@@ -956,7 +957,7 @@ impl App {
             .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
         let sounds = if opts.audio {
             tagged_alloc::scope(Tag::Audio, || {
-                sounds::Sounds::start(capacities.regiments as usize)
+                sounds::Sounds::start(capacities.regiments as usize, volumes.0, volumes.1)
             })
         } else {
             None
@@ -2473,7 +2474,13 @@ impl Running {
         self.ui.end_frame();
         hud::upload_ui(&mut self.renderer, &mut self.ui_quads, &self.ui.draw, scale);
         match action {
-            MenuAction::None | MenuAction::SettingsChanged => {}
+            MenuAction::None => {}
+            MenuAction::SettingsChanged => {
+                let s = self.menu.settings();
+                if let Some(sounds) = &mut self.sounds {
+                    sounds.set_volumes(s.volume_master, s.volume_music);
+                }
+            }
             MenuAction::Resume => self.close_menu(),
             MenuAction::Quit => self.quit = true,
             MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox),
