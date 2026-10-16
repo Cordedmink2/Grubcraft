@@ -69,7 +69,7 @@ const DISCOVERED_FOR: Duration = Duration::from_secs(3);
 /// packets are ignored until some are dropped.
 const MAX_WAITING: usize = 8;
 /// Wrong-password answers one address gets per GUESS_WINDOW; past that
-/// its guesses go unanswered.
+/// its guesses go unanswered and it gets no new key exchange.
 const MAX_GUESSES: usize = 5;
 const GUESS_WINDOW: Duration = Duration::from_secs(60);
 /// Commands per turn bundle are capped so a bundle fits a packet; the rest
@@ -683,8 +683,11 @@ impl Lan {
                 }
             }
             k if k == Kind::WrongProtocol as u8 => {
+                // Plain and unsigned, so only heeded before the host has
+                // answered our key: after that it has spoken our protocol.
                 if let Role::Client(c) = &self.role
                     && c.host == from
+                    && !c.link.is_secure()
                 {
                     let theirs = r.str().unwrap_or_default();
                     let why = format!(
@@ -724,6 +727,13 @@ impl Lan {
             return;
         };
         let known = h.peers.iter().position(|p| p.addr == from);
+        // An address out of wrong-password guesses gets no key exchange to
+        // guess with, unless it holds a place in the match (a player whose
+        // game restarted, rejoining).
+        let has_place = known.is_some_and(|i| h.peers[i].player.is_some());
+        if !has_place && h.out_of_guesses(from.ip(), now) {
+            return;
+        }
         let reply_key = match known {
             Some(i) if h.peers[i].their_key == theirs => h.peers[i].host_key,
             // A new key from someone already in: a restarted game on the
@@ -787,12 +797,14 @@ impl Lan {
                     }
                     peer.gone = true;
                     peer.drop_at = Some(now + Duration::from_secs(2));
-                    h.guesses.retain(|&(_, at)| now < at + GUESS_WINDOW);
                     let ip = from.ip();
-                    if h.guesses.iter().filter(|&&(g, _)| g == ip).count() >= MAX_GUESSES {
+                    if h.out_of_guesses(ip, now) {
                         return;
                     }
-                    h.guesses.push((ip, now));
+                    // Without a password there is nothing to guess.
+                    if !h.password.is_empty() {
+                        h.guesses.push((ip, now));
+                    }
                     let mut w = Writer::new();
                     header(&mut w, Kind::WrongPassword);
                     w.bool(!h.password.is_empty());
@@ -1472,6 +1484,15 @@ fn start_turns(h: &mut Host, now: Instant) {
     g.go_at = Some(now);
     for turn in 0..g.delay {
         close_turn(h, turn);
+    }
+}
+
+impl Host {
+    /// Whether `ip` has used up its wrong passwords for now: its guesses go
+    /// unanswered, and it gets no key exchange to guess with.
+    fn out_of_guesses(&mut self, ip: IpAddr, now: Instant) -> bool {
+        self.guesses.retain(|&(_, at)| now < at + GUESS_WINDOW);
+        self.guesses.iter().filter(|&&(g, _)| g == ip).count() >= MAX_GUESSES
     }
 }
 

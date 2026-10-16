@@ -60,6 +60,17 @@ pub struct Capacities {
     pub regiments: u32,
 }
 
+impl Capacities {
+    /// The most regiments a match may reserve room for: far past any
+    /// battle, and what anything reading a match from outside (a replay
+    /// file) refuses beyond.
+    pub const MAX_REGIMENTS: u32 = 1 << 16;
+}
+
+/// The largest map a match may be on, in tiles a side: far past any battle
+/// map, small enough that its grids' sizes can't overflow.
+pub const MAX_MAP_TILES: u32 = 4096;
+
 impl Default for Capacities {
     fn default() -> Self {
         // Warfield sizing from docs/10-architecture.md.

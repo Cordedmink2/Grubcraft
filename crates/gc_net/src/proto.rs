@@ -7,7 +7,7 @@
 
 use gc_sim::PlayerCommand;
 use gc_ui::lobby::{
-    Budget, Faction, GameMode, LobbySettings, MAX_ARMY, MAX_PLAYERS, OnDrop, Slot, SlotEdit,
+    Budget, Faction, GameMode, LobbySettings, MAPS, MAX_ARMY, MAX_PLAYERS, OnDrop, Slot, SlotEdit,
     SlotKind, Tempo,
 };
 
@@ -214,7 +214,7 @@ fn read_slot(r: &mut Reader) -> Option<Slot> {
         name: r.str()?,
         faction: read_faction(r)?,
         color: r.u8()?,
-        team: r.u8()?,
+        team: r.u8().filter(|&t| usize::from(t) < MAX_PLAYERS)?,
         ready: r.bool()?,
         version: r.str()?,
         ai_level: r.u8()?,
@@ -417,7 +417,9 @@ impl Msg {
                 faction: read_faction(&mut r)?,
                 color: r.u8()?,
             },
-            1 => Msg::Welcome { slot: r.u8()? },
+            1 => Msg::Welcome {
+                slot: r.u8().filter(|&s| usize::from(s) < MAX_PLAYERS)?,
+            },
             2 => Msg::Refuse { reason: r.str()? },
             3 => Msg::Lobby(Box::new(LobbyWire {
                 slots: [
@@ -436,7 +438,9 @@ impl Msg {
             5 => {
                 let seed = r.u64()?;
                 let map_hash = r.u64()?;
-                let settings = read_settings(&mut r)?;
+                // A lobby may list a map another build lacks (the version
+                // line stops it starting); a match must be on one we have.
+                let settings = read_settings(&mut r).filter(|s| s.map < MAPS.len())?;
                 let n = r.var_as::<usize>()?;
                 if n > MAX_PLAYERS {
                     return None;
@@ -449,8 +453,8 @@ impl Msg {
                     seed,
                     map_hash,
                     settings,
+                    you: r.u8().filter(|&you| usize::from(you) < players.len())?,
                     players,
-                    you: r.u8()?,
                     input_delay: r.u8()?,
                 }
             }
@@ -505,6 +509,33 @@ mod tests {
         if !bytes.is_empty() {
             assert_eq!(Msg::decode(&bytes[..bytes.len() - 1]), None, "{m:?}");
         }
+        // Damaged anywhere, it never panics (it may still read as
+        // something: links check what arrives, not this).
+        for i in 0..bytes.len() {
+            for flip in [0x01, 0x80, 0xff] {
+                let mut bad = bytes.clone();
+                bad[i] ^= flip;
+                let _ = Msg::decode(&bad);
+            }
+        }
+    }
+
+    #[test]
+    fn garbage_never_panics() {
+        let mut seed = 0x9e37_79b9u32;
+        for len in 0..400 {
+            let bytes: Vec<u8> = (0..len)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    seed as u8
+                })
+                .collect();
+            let _ = Msg::decode(&bytes);
+            let _ = Beacon::read(&mut Reader::new(&bytes));
+            let _ = read_header(&mut Reader::new(&bytes));
+        }
     }
 
     #[test]
@@ -554,6 +585,35 @@ mod tests {
             let bytes = Msg::Edit { slot: 1, edit }.encode();
             // SlotEdit has no PartialEq; compare the bytes.
             assert_eq!(Msg::decode(&bytes).map(|m| m.encode()), Some(bytes));
+        }
+        // Places and maps out of range are refused, so a bad host can't
+        // send a joiner indexing past the lobby's lists.
+        let refused = [
+            Msg::Welcome {
+                slot: MAX_PLAYERS as u8,
+            },
+            Msg::Start {
+                seed: 7,
+                map_hash: 0,
+                settings: grand.clone(),
+                players: slots[..2].to_vec(),
+                you: 2,
+                input_delay: 2,
+            },
+            Msg::Start {
+                seed: 7,
+                map_hash: 0,
+                settings: LobbySettings {
+                    map: MAPS.len(),
+                    ..grand.clone()
+                },
+                players: slots.to_vec(),
+                you: 1,
+                input_delay: 2,
+            },
+        ];
+        for m in refused {
+            assert_eq!(Msg::decode(&m.encode()), None, "{m:?}");
         }
         round_trip(Msg::Start {
             seed: 7,

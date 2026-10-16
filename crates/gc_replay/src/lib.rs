@@ -372,8 +372,11 @@ impl Replay {
             Header::default()
         };
         let seed = r.u64()?;
-        let regiments = r.var_as()?;
+        let regiments: u32 = r.var_as()?;
         let map_tiles: u32 = r.var_as()?;
+        if regiments > Capacities::MAX_REGIMENTS || map_tiles > gc_sim::MAX_MAP_TILES {
+            return None;
+        }
         let n: usize = r.var_as()?;
         let mut units = Vec::with_capacity(n.min(r.remaining()));
         for _ in 0..n {
@@ -670,6 +673,35 @@ mod tests {
             rec.tick(&mut world, &commands);
         }
         rec.finish()
+    }
+
+    /// A damaged file is refused or read as something, never a panic,
+    /// however its body is damaged (damage to the compressed bytes mostly
+    /// fails decompression, so the body is damaged before compressing).
+    #[test]
+    fn damaged_files_never_panic() {
+        let bytes = record().encode();
+        let body = lz4_flex::decompress_size_prepended(&bytes[6..]).unwrap();
+        let file = |body: &[u8]| {
+            let mut out = bytes[..6].to_vec();
+            out.extend_from_slice(&lz4_flex::compress_prepend_size(body));
+            out
+        };
+        assert!(Replay::decode(&file(&body)).is_ok());
+        // Every byte of the header and counts, a sample of the rest.
+        let positions = (0..body.len().min(256)).chain((256..body.len()).step_by(1021));
+        for i in positions {
+            for flip in [0x01, 0xff] {
+                let mut bad = body.clone();
+                bad[i] ^= flip;
+                let _ = Replay::decode(&file(&bad));
+            }
+        }
+        // A map too big to hold is refused, not allocated.
+        let mut big = record();
+        big.map_tiles = u32::MAX;
+        (big.nav, big.heights, big.cover) = (Vec::new(), Vec::new(), Vec::new());
+        assert!(Replay::decode(&big.encode()).is_err());
     }
 
     #[test]

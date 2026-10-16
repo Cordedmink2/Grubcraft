@@ -732,6 +732,21 @@ fn a_password_keeps_strangers_out() {
     let target = address(&open);
     let err = join_with(&mut late, "Late", &target, "moles", &mut open).unwrap_err();
     assert!(err.to_string().contains("no password"), "{err}");
+
+    // Five wrong guesses from one address in a minute, and it gets no more
+    // tries, not even with the right password.
+    drop(host);
+    let mut host = lan();
+    host.host(&profile("Mario"), LobbySettings::default(), "moles")
+        .unwrap();
+    let mut guesser = lan();
+    let target = address(&host);
+    for _ in 0..5 {
+        let err = join_with(&mut guesser, "Guess", &target, "voles", &mut host).unwrap_err();
+        assert_eq!(err, NetError::Refused("Wrong password.".into()));
+    }
+    let err = join_with(&mut guesser, "Guess", &target, "moles", &mut host).unwrap_err();
+    assert!(err.to_string().starts_with("No answer"), "{err}");
 }
 
 #[test]

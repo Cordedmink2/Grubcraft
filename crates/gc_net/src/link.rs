@@ -194,17 +194,21 @@ impl Link {
         let their_received = r.var()?;
         let first = r.var()?;
         let count = r.u8()?;
+        // Nothing counts as received until the whole packet reads, so a
+        // bad one can't eat the messages before the fault.
         let mut msgs = Vec::new();
+        let mut received = self.received;
         for number in (first..).take(count as usize) {
             let bytes = r.bytes()?;
-            if number == self.received {
+            if number == received {
                 msgs.push(Msg::decode(bytes)?);
-                self.received += 1;
+                received += 1;
             }
         }
         if !r.is_empty() {
             return None;
         }
+        self.received = received;
         // Acknowledged messages leave the queue.
         if their_received > self.acked {
             let n = (their_received - self.acked).min(self.out.len() as u64);
@@ -303,6 +307,21 @@ mod tests {
         let want: Vec<Msg> = (0..next).map(notice).collect();
         assert_eq!(got, want);
         assert_eq!(a.backlog(), 0);
+    }
+
+    #[test]
+    fn a_bad_packet_loses_no_messages() {
+        let t0 = Instant::now();
+        let mut a = Link::new(t0);
+        let mut b = Link::new(t0);
+        a.send(&notice(0));
+        a.send(&notice(1));
+        // Readable messages, then a stray byte: the packet is refused...
+        let mut bad = a.packet(t0);
+        bad.push(0);
+        assert_eq!(b.receive(&bad, t0), None);
+        // ...and the next one still brings both.
+        assert_eq!(deliver(&a.packet(t0), &mut b, t0), [notice(0), notice(1)]);
     }
 
     #[test]
