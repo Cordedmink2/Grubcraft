@@ -603,6 +603,7 @@ impl World {
             &mut self.regiments,
             &self.stances,
             &self.terrain,
+            &self.units,
             &self.nav,
             self.map_tiles,
         );

@@ -1,11 +1,12 @@
-//! What the ground does in a fight: high ground and fords
+//! What the ground does in a fight: high ground, fords and woods
 //! (docs/05-combat.md, "Terrain").
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::terrain::HEIGHT_UNITS;
 use gc_sim::{
-    Capacities, Command, Ground, MatchSetup, PlayerCommand, RegimentHandle, UnitStats, World,
+    Capacities, Command, Cover, Ground, Mass, MatchSetup, PlayerCommand, RegimentHandle, UnitStats,
+    World,
 };
 
 const SOUTH: Angle = Angle(0x4000);
@@ -37,7 +38,24 @@ fn hill(edge: u32, rise: u16) -> Vec<u16> {
     heights(|_, y| if y < edge { LAND + rise } else { LAND })
 }
 
+/// Open ground with a wood over rows `y0..y1`.
+fn wood(y0: u32, y1: u32) -> Vec<u8> {
+    (0..MAP * MAP)
+        .map(|i| {
+            if (y0..y1).contains(&(i / MAP)) {
+                Cover::Wood as u8
+            } else {
+                0
+            }
+        })
+        .collect()
+}
+
 fn world_on(seed: u64, units: &[UnitStats], heights: &[u16]) -> World {
+    world_with(seed, units, heights, &[])
+}
+
+fn world_with(seed: u64, units: &[UnitStats], heights: &[u16], cover: &[u8]) -> World {
     World::new(&MatchSetup {
         seed,
         capacities: Capacities::default(),
@@ -48,7 +66,7 @@ fn world_on(seed: u64, units: &[UnitStats], heights: &[u16]) -> World {
         ground: Ground {
             heights,
             water_level: WATER_LEVEL,
-            cover: &[],
+            cover,
         },
         champions: false,
     })
@@ -133,6 +151,78 @@ fn wading_is_slow() {
         wet * 10 <= dry * 7 && wet * 10 >= dry * 5,
         "wet {wet:?} vs dry {dry:?}"
     );
+}
+
+#[test]
+fn woods_slow_the_march_and_heavy_troops_most() {
+    // How far a regiment marches north in two seconds, starting in the
+    // open and starting in a wood.
+    let walked = |units: &[UnitStats], unit: u16, start_y: i32| {
+        let mut w = world_with(1, units, &[], &wood(20, 40));
+        let r = spawn(&mut w, 0, unit, tile(32), tile(start_y), NORTH);
+        move_to(&mut w, 0, r, tile(32), tile(start_y - 20));
+        run(&mut w, 40);
+        tile(start_y) - w.regiments.get(r).unwrap().position.y
+    };
+    let units = fearless();
+    let (open, woods) = (walked(&units, SPEARS, 60), walked(&units, SPEARS, 38));
+    // 85% of the pace on foot.
+    assert!(
+        woods * 100 <= open * 88 && woods * 100 >= open * 80,
+        "on foot: woods {woods:?} vs open {open:?}"
+    );
+    let heavy = units.map(|u| UnitStats {
+        mass: Mass::Heavy,
+        ..u
+    });
+    let (open, woods) = (walked(&heavy, CAVALRY, 60), walked(&heavy, CAVALRY, 38));
+    // 70% for cavalry and monsters.
+    assert!(
+        woods * 100 <= open * 74 && woods * 100 >= open * 65,
+        "heavy: woods {woods:?} vs open {open:?}"
+    );
+}
+
+#[test]
+fn trees_catch_arrows_shot_into_and_out_of_woods() {
+    // Hit points a spear block loses to archers 20 tiles away in thirty
+    // seconds, summed over seeds so the dice even out. A friend of the
+    // archers stands just outside the wood to spot for them, and they are
+    // told to shoot (hidden archers otherwise hold their fire).
+    let wounds = |cover: &[u8]| -> u32 {
+        (1..=6)
+            .map(|seed| {
+                let mut w = world_with(seed, &fearless(), &[], cover);
+                let archers = spawn(&mut w, 0, ARCHERS, tile(32), tile(20), SOUTH);
+                let target = spawn(&mut w, 1, SPEARS, tile(32), tile(40), NORTH);
+                let _spotter = spawn(&mut w, 0, SPEARS, tile(32), tile(45), NORTH);
+                w.tick(&[PlayerCommand {
+                    player: 0,
+                    command: Command::Attack {
+                        regiment: archers,
+                        target,
+                    },
+                }]);
+                let before = hp(&w, target);
+                run(&mut w, 20 * 30);
+                before - hp(&w, target)
+            })
+            .sum()
+    };
+    let open = wounds(&[]);
+    assert!(open > 0, "the archers hit nothing in the open");
+    // 70% get through at each wooded end: 49% through both.
+    for (what, cover, percent) in [
+        ("into", wood(36, 44), 70),
+        ("out of", wood(16, 24), 70),
+        ("both", wood(16, 44), 49),
+    ] {
+        let (got, want) = (wounds(&cover), open * percent / 100);
+        assert!(
+            got * 100 >= want * 85 && got * 100 <= want * 115,
+            "{what} the woods: {got} wounds, want about {want} ({open} in the open)"
+        );
+    }
 }
 
 /// Hit points a spear block standing at row `defender_y` loses in ten

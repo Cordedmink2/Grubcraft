@@ -926,6 +926,7 @@ impl Combat {
         regs: &mut Regiments,
         stances: &Stances,
         terrain: &Terrain,
+        units: &[UnitStats],
         nav: &Nav,
         map_tiles: u32,
     ) {
@@ -956,7 +957,8 @@ impl Combat {
                 axis
             };
             let pace = Fx::from_raw((GIVE_GROUND.raw() * i32::from(regs.giving[i]) / 100).max(1));
-            let give = away * terrain.wading(pace, me.centre);
+            let mass = units[regs.unit[i] as usize].mass;
+            let give = away * terrain.going(pace, me.centre, mass);
             if nav.blocks(foe, foe + give) {
                 // Its foe can't follow, so nobody is pushing.
                 continue;
@@ -1247,8 +1249,11 @@ impl Combat {
                 / area.max(1))
             .clamp(25, 125) as u64;
             let side = block.side_facing(vs.from[v]);
-            // Arrows from the front mostly glance off a shield wall.
+            // Arrows from the front mostly glance off a shield wall, and
+            // trees catch some of those loosed into or out of a wood.
             let shields = regs.formation[j].arrow_percent(side == Side::Front);
+            // Judged where the arrows were aimed, as the arrows on screen are.
+            let trees = terrain.through_trees(vs.from[v], vs.aim[v]);
             let expected = u64::from(vs.shots[v])
                 * u64::from(vs.accuracy[v])
                 * density
@@ -1257,7 +1262,8 @@ impl Combat {
                 * 256
                 / (100 * 100 * 100)
                 * shields
-                / 100;
+                * trees
+                / (100 * 100);
             deal(regs, units, j, expected, side, rng);
         }
 

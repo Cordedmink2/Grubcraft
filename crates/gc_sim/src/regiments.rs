@@ -590,7 +590,7 @@ impl Regiments {
                     }
                     pace
                 };
-                let step = terrain.wading(step, self.position[i]);
+                let step = terrain.going(step, self.position[i], units[self.unit[i] as usize].mass);
                 let step = crate::combat::pushing(step, self.crowd[i]);
                 debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
                 let here = self.position[i];

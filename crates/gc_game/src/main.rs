@@ -210,6 +210,9 @@ const ARROW_SPREAD: f32 = 1.6;
 const ARROW_HEIGHT: f32 = 0.9;
 /// Peak of an arrow's arc as a fraction of the distance it flies.
 const ARROW_ARC: f32 = 0.22;
+/// How far, in tiles, from its archers or from where it was aimed an arrow
+/// caught by the trees stops.
+const ARROW_CAUGHT_TILES: f32 = 1.0;
 
 /// Game speeds the sandbox steps through with - and =, and the normal one.
 const SPEEDS: [f32; 6] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0];
@@ -2950,18 +2953,41 @@ impl Running {
 
     /// Volleys in flight: a few arrows each, arcing from the archers to where
     /// they aimed, at `now` (the simulation's time in ticks, interpolated).
-    /// Only a picture; the simulation decides what they hit.
+    /// Arrows loosed out of a wood or into one stick in the branches as often
+    /// as the simulation's trees catch them. Only a picture; the simulation
+    /// decides what they hit.
     fn push_arrows(&mut self, now: f32) {
+        let terrain = self.world.terrain();
+        let catch = gc_sim::terrain::TREES_CATCH_PERCENT as f32 / 100.0;
         for v in self.world.volleys() {
             let flight = (v.impact_tick - v.launch_tick).max(1) as f32;
-            let t = ((now - v.launch_tick as f32) / flight).clamp(0.0, 1.0);
+            let flown = ((now - v.launch_tick as f32) / flight).clamp(0.0, 1.0);
             let (from, aim) = (from_fx_vec(v.from), from_fx_vec(v.aim));
             let travel = aim - from;
             let length = travel.length();
             let dir = travel.normalize_or(Vec2::X);
-            let arc = (t * std::f32::consts::PI).sin() * length * ARROW_ARC;
+            let arc_at = |t: f32| (t * std::f32::consts::PI).sin() * length * ARROW_ARC;
+            let arc_flown = arc_at(flown);
             let seed = v.launch_tick.wrapping_mul(0x9E37_79B9) ^ v.from.x.raw() as u32;
+            let out_of = terrain.cover(v.from) == gc_sim::Cover::Wood;
+            let into = terrain.cover(v.aim) == gc_sim::Cover::Wood;
             for k in 0..ARROWS_PER_VOLLEY.min(v.shots as usize) {
+                // A caught arrow stops in the branches over the archers or
+                // over its target, and hangs there until the volley lands.
+                let caught = |axis| (spread_hash(seed, k, axis) + 1.0) * 0.5 < catch;
+                let short = (ARROW_CAUGHT_TILES / length.max(f32::EPSILON)).min(0.5);
+                let stop = if out_of && caught(2) {
+                    short
+                } else if into && caught(3) {
+                    1.0 - short
+                } else {
+                    1.0
+                };
+                let (t, arc) = if flown > stop {
+                    (stop, arc_at(stop))
+                } else {
+                    (flown, arc_flown)
+                };
                 let spread = Vec2::new(spread_hash(seed, k, 0), spread_hash(seed, k, 1));
                 let pos = from.lerp(aim, t) + spread * ARROW_SPREAD;
                 self.instances.push(BoxInstance {

@@ -12,6 +12,11 @@
 //!   melee damage, and can't charge.
 //!
 //! - **Cover:** each tile is open, tall grass or wood ([`Cover`]).
+//! - **Woods:** a regiment whose centre is in a wood marches at
+//!   [`WOODS_SPEED_PERCENT`] of its pace ([`WOODS_HEAVY_SPEED_PERCENT`] for
+//!   heavy troops: cavalry and monsters), and the trees catch
+//!   [`TREES_CATCH_PERCENT`] of the arrows shot out of a wood, and as many
+//!   again of those shot at a regiment standing in one.
 //!
 //! Heights are integers ([`HEIGHT_UNITS`] per tile), so every machine
 //! agrees. A match with no heights is flat, dry ground; one with no cover
@@ -20,6 +25,8 @@
 use alloc::vec::Vec;
 
 use gc_fixed::{Fx, FxVec2};
+
+use crate::Mass;
 
 /// Height units per tile of height.
 pub const HEIGHT_UNITS: u32 = 256;
@@ -34,6 +41,14 @@ pub const DOWNHILL_RANGE_PERCENT: i32 = 115;
 pub const WADING_SPEED_PERCENT: i32 = 60;
 /// Melee damage taken standing in water, percent.
 pub const WADING_DAMAGE_PERCENT: u64 = 120;
+/// Marching pace in woods, percent, for soldiers on foot and swarms.
+pub const WOODS_SPEED_PERCENT: i32 = 85;
+/// Marching pace in woods, percent, for heavy troops (cavalry and
+/// monsters), who have to pick their way between the trunks.
+pub const WOODS_HEAVY_SPEED_PERCENT: i32 = 70;
+/// Arrows the trees catch, percent, at each end of a volley's flight that
+/// lies in a wood (both ends: about half the volley).
+pub const TREES_CATCH_PERCENT: u64 = 30;
 
 /// What covers a tile, for hiding (see [`crate::vision`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,12 +202,37 @@ impl Terrain {
         percent
     }
 
-    /// `step` slowed if `p` is in water.
-    pub fn wading(&self, step: Fx, p: FxVec2) -> Fx {
-        if self.wet(p) {
-            Fx::from_raw((step.raw() * WADING_SPEED_PERCENT / 100).max(1))
+    /// `step` slowed by the ground at `p` for troops of `mass`: water,
+    /// then woods.
+    pub fn going(&self, step: Fx, p: FxVec2, mass: Mass) -> Fx {
+        let wading = if self.wet(p) {
+            WADING_SPEED_PERCENT
         } else {
+            100
+        };
+        let woods = match (self.cover(p), mass) {
+            (Cover::Wood, Mass::Heavy) => WOODS_HEAVY_SPEED_PERCENT,
+            (Cover::Wood, _) => WOODS_SPEED_PERCENT,
+            _ => 100,
+        };
+        if wading * woods == 100 * 100 {
             step
+        } else {
+            let raw = i64::from(step.raw()) * i64::from(wading * woods) / (100 * 100);
+            Fx::from_raw((raw as i32).max(1))
         }
+    }
+
+    /// Percent of a volley's arrows that get through the trees, loosed from
+    /// `from` at `aim`.
+    pub fn through_trees(&self, from: FxVec2, aim: FxVec2) -> u64 {
+        let through = |p| {
+            if self.cover(p) == Cover::Wood {
+                100 - TREES_CATCH_PERCENT
+            } else {
+                100
+            }
+        };
+        through(from) * through(aim) / 100
     }
 }
