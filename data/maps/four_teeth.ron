@@ -1,0 +1,82 @@
+// The Four Teeth: a Warfield map (256 × 256 tiles, 4 players, free for all or 2v2).
+//
+// Four bases on four great fangs, one in each corner region, each a high
+// plateau with cliffs all round and two ramps down (one towards each
+// neighbour). Between the fangs runs the jawline: rivers you can wade, hills
+// beside the roads, hamlets, and the contested seeps and veins. In the middle
+// the tongue is a shallow bowl with the Titan's Heart on a raised rise,
+// the Old Mouth beside it and the Bazaar a little to the north.
+//
+// Only player 0's quarter is written out (the north-west fang); the map is
+// turned a quarter circle three times to make the other three, so the four
+// starts are exactly alike. The three objects in the middle are placed once,
+// a few tiles off the exact centre, since a tile can't sit on it.
+// Heights are sixteenths of a tile.
+MapDef(
+    name: "The Four Teeth",
+    size: Warfield,
+    symmetry: Rot4,
+    players: 4,
+    base: 40,
+    water: 24,
+    terrain: [
+        // The tongue: a wide shallow bowl, with a raised tongue in its middle.
+        (shape: Disc(at: (128, 128), r: 24), mode: Lower, height: 30, edge: 20),
+        (shape: Disc(at: (128, 128), r: 10), mode: Set, height: 50, edge: 6),
+        // The fangs: high plateaus with cliff edges.
+        (shape: Disc(at: (48, 48), r: 20), mode: Set, height: 96, edge: 1),
+        // Their ramps, east and south.
+        (shape: Disc(at: (68, 48), r: 5), mode: Set, height: 56, edge: 5),
+        (shape: Disc(at: (48, 68), r: 5), mode: Set, height: 56, edge: 5),
+        // Hills beside the roads, for a defending line.
+        (shape: Disc(at: (100, 100), r: 8), mode: Raise, height: 70, edge: 6),
+        (shape: Disc(at: (128, 36), r: 7), mode: Raise, height: 68, edge: 6),
+        // Rock spines that split the open ground into lanes.
+        (shape: Line(a: (64, 96), b: (64, 120), half_width: 2), mode: Raise, height: 120, edge: 2),
+        (shape: Line(a: (96, 56), b: (112, 56), half_width: 2), mode: Raise, height: 120, edge: 2),
+        // A river between each pair of fangs, shallow enough to wade.
+        (shape: Line(a: (128, 60), b: (128, 100), half_width: 3), mode: Lower, height: 20, edge: 3),
+    ],
+    cover: [
+        (shape: Disc(at: (96, 128), r: 9), kind: Wood),
+        (shape: Disc(at: (84, 84), r: 7), kind: Wood),
+        (shape: Disc(at: (110, 36), r: 8), kind: Grass),
+        (shape: Disc(at: (150, 80), r: 7), kind: Grass),
+    ],
+    objects: [
+        // Player 0's fang.
+        (kind: Start, at: (48, 48), owner: Some(0)),
+        (kind: GrubSeep, at: (38, 60), owner: Some(0)),
+        (kind: GrubSeep, at: (60, 36), owner: Some(0)),
+        (kind: MarrowVein, at: (40, 38), owner: Some(0)),
+        // Its natural expansion, below the east ramp.
+        (kind: GrubSeep, at: (82, 42), owner: Some(0)),
+        (kind: GrubSeep, at: (86, 54), owner: Some(0)),
+        // The ring road's hamlets: one at each side, and a town in each corner of the ring.
+        (kind: Village, at: (128, 48)),
+        (kind: Town, at: (96, 76)),
+        // Contested ground.
+        (kind: GrubSeep, at: (100, 66)),
+        (kind: GrubSeep, at: (74, 100)),
+        (kind: MarrowVein, at: (88, 112)),
+        (kind: MarrowVein, at: (112, 90)),
+        (kind: CreepCamp, at: (92, 116), label: "Marrow Golems"),
+        (kind: CreepCamp, at: (116, 94), label: "Marrow Golems"),
+        (kind: CreepCamp, at: (128, 80), label: "Bile Toads at the ford"),
+        (kind: CreepCamp, at: (72, 120), label: "Rib Harpies"),
+        (kind: Shrine, at: (92, 92)),
+        (kind: Shrine, at: (150, 56)),
+        (kind: Bloodseep, at: (112, 120)),
+        (kind: FrontierSlot, at: (20, 100)),
+        (kind: FrontierSlot, at: (84, 20)),
+        // The middle, placed once.
+        (kind: Heart, at: (127, 127), once: true),
+        (kind: OldMouth, at: (132, 127), once: true),
+        (kind: Bazaar, at: (128, 116), once: true),
+    ],
+    set_pieces: [
+        (kind: Ford, at: (128, 78), label: "The Wading Place"),
+        (kind: High, at: (100, 100), label: "Hill of the Back Molar"),
+        (kind: High, at: (128, 36), label: "Jawbone Hill"),
+    ],
+)

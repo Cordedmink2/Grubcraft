@@ -51,6 +51,8 @@ jobs:
         run: cargo test --release -p gc_sim --test determinism
       - name: Golden replays in release mode
         run: cargo run --release -p gc_replay -- verify replays
+      - name: Maps are valid and fair
+        run: cargo run --release -p gc_mapcheck -- check
       # The Warlord rehearses each plan in copies of the battle, which takes
       # minutes in a debug build, so its tests only run here.
       - name: Warlord in release mode

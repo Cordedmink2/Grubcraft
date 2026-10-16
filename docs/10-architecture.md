@@ -76,8 +76,8 @@ grubcraft/
 │  ├─ gc_sfx/        generates the prototype sound set
 │  ├─ gc_replay/     replay file, recorder, headless runner, golden checks
 │  ├─ gc_bench/      performance benchmarks with budget gates
-│  ├─ gc_arena/      headless AI-against-AI ladders and tactical drills      (later)
-│  └─ gc_mapcheck/   map validator                                          (later)
+│  ├─ gc_mapcheck/   map validator and map builder: RON map to heights, cover, objects
+│  └─ gc_arena/      headless AI-against-AI ladders and tactical drills      (later)
 ├─ data/             RON definitions (factions, units, abilities, maps)
 ├─ assets/           baked packs embedded in the game (models.pak, audio)
 ├─ assets-src/       model list for gc_artbake and small CC0 sources; big packs live in the shared project folder
@@ -290,6 +290,7 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 
 ## Maps
 - Heightmap (`u16`), tile types (`u8`), water depth layer (reserved for naval), object list, Bloodseep sites and a small event-script block.
+- **Built so far (2026-10-15):** the source form is a RON description under `data/maps/`, read and built by `tools/gc_mapcheck` (see [07](07-world-and-maps.md#map-format-and-tooling)). `gc_mapcheck::Map` hands out exactly what `gc_sim::Ground` takes (one `u16` height per tile, the water line, a cover byte per tile) plus the placed objects, built with integer arithmetic only so every machine gets the same bytes, and a map hash. Nothing in the game reads it yet; Conquest loading comes with M3. (M2 step 4 generates Field Battle maps from a seed with integer maths instead of shipping baked files.)
 - A Warfield map is under 2 MB on disk. The baked terrain lighting and nav sector graph are generated at load (in well under a second) rather than stored.
 
 ## UI framework
@@ -330,7 +331,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 |---|---|
 | `gc_replay` | Run a replay headless at maximum speed and verify its state hashes: `cargo run --release -p gc_replay -- verify` (all of `replays/`), `bless FILE` (store the hashes the sim produces now), `info FILE` (with who played and which build recorded it), `compare A B` (where two machines' recordings of one match, such as desync reports, first disagree). Dumping state at a tick is still to come |
 | `gc_bench` | Fixed benchmark scenarios; reports tick time, frame time, memory by tag; enforces budgets |
-| `gc_mapcheck` *(later)* | Map fairness and validity checks |
+| `gc_mapcheck` | `cargo run -p gc_mapcheck -- check [FILE\|DIR]` (default `data/maps`) builds each map and reports errors (exit code 1) and the numbers behind them; `png FILE OUT.png` draws a map with its objects. Runs in CI. See [07 · Map format and tooling](07-world-and-maps.md#map-format-and-tooling) |
 | `gc_bake` | Data baker |
 | `gc_artbake` | Model baker: `cargo run -p gc_artbake --release` re-bakes `assets/models.pak` from `assets-src/models.ron`; `--report` prints each model's colours to help pick team-colour parts |
 | Dev overlay (`` ` `` or `F11`) | Frame and tick timings, memory by tag, draw calls, network stats |

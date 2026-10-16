@@ -1,0 +1,24 @@
+[package]
+name = "gc_mapcheck"
+description = "Grubcraft map validator: builds a map from its RON description and checks that it is valid and fair"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "gc_mapcheck"
+path = "src/main.rs"
+
+[dependencies]
+blake3.workspace = true
+gc_sim.workspace = true
+ron.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

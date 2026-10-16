@@ -1,0 +1,73 @@
+// Ribcage Pass: a Duel map (128 × 128 tiles, 2 players).
+//
+// Two bases in opposite corners with the Titan's ribs between them: a wall of
+// cliffs across the middle with three ways through, a shallow ford at the
+// centre (with the Titan's Heart on an island in it) and a narrow pass a
+// little way to each side. The wall stops short of the map's edge, so the
+// open flanks at both ends are the wide way round.
+//
+// Only player 0's half is written out; the map is turned half a circle to
+// make player 1's. Heights are sixteenths of a tile.
+MapDef(
+    name: "Ribcage Pass",
+    size: Duel,
+    symmetry: Rot2,
+    players: 2,
+    base: 40,
+    water: 24,
+    terrain: [
+        // Rolling ground.
+        (shape: Disc(at: (64, 30), r: 14), mode: Raise, height: 52, edge: 10),
+        (shape: Disc(at: (30, 96), r: 12), mode: Lower, height: 33, edge: 10),
+        // Player 0's base plateau, in the north-west.
+        (shape: Disc(at: (22, 22), r: 14), mode: Set, height: 44, edge: 8),
+        // The ribs: a wall of cliffs along the line from south-west to north-east.
+        // The pieces leave gaps at the centre (the ford) and 26 steps out (the passes).
+        (shape: Line(a: (69, 59), b: (88, 40), half_width: 3), mode: Raise, height: 120, edge: 2),
+        (shape: Line(a: (92, 36), b: (108, 20), half_width: 3), mode: Raise, height: 120, edge: 2),
+        // The ford.
+        (shape: Disc(at: (64, 64), r: 7), mode: Set, height: 21, edge: 4),
+        // The Heart's island.
+        (shape: Disc(at: (64, 64), r: 2), mode: Set, height: 44, edge: 2),
+        // Cliffs around each base, with a gate to the south and one to the east:
+        // the way out is a funnel that is easy to hold and hard to seal for good.
+        (shape: Line(a: (4, 42), b: (16, 42), half_width: 2), mode: Raise, height: 110, edge: 2),
+        (shape: Line(a: (28, 42), b: (42, 42), half_width: 2), mode: Raise, height: 110, edge: 2),
+        (shape: Line(a: (42, 42), b: (42, 28), half_width: 2), mode: Raise, height: 110, edge: 2),
+        (shape: Line(a: (42, 14), b: (42, 4), half_width: 2), mode: Raise, height: 110, edge: 2),
+        // A hill beside the road, for a defending line.
+        (shape: Disc(at: (46, 82), r: 7), mode: Raise, height: 68, edge: 5),
+    ],
+    cover: [
+        (shape: Disc(at: (60, 18), r: 8), kind: Wood),
+        (shape: Disc(at: (32, 60), r: 7), kind: Wood),
+        (shape: Disc(at: (84, 26), r: 6), kind: Grass),
+    ],
+    objects: [
+        // Player 0's base.
+        (kind: Start, at: (22, 22), owner: Some(0)),
+        (kind: GrubSeep, at: (13, 30), owner: Some(0)),
+        (kind: GrubSeep, at: (31, 12), owner: Some(0)),
+        (kind: MarrowVein, at: (31, 32), owner: Some(0)),
+        // Its natural expansion.
+        (kind: GrubSeep, at: (54, 20), owner: Some(0)),
+        (kind: GrubSeep, at: (52, 32), owner: Some(0)),
+        // The middle.
+        (kind: Heart, at: (64, 64), once: true),
+        // Between the bases.
+        (kind: Village, at: (40, 56)),
+        (kind: GrubSeep, at: (84, 32)),
+        (kind: MarrowVein, at: (64, 40)),
+        (kind: CreepCamp, at: (69, 44), label: "Gutworms guard the vein"),
+        (kind: CreepCamp, at: (84, 40), label: "Rib Harpies"),
+        (kind: Shrine, at: (18, 66)),
+        (kind: Bloodseep, at: (96, 44)),
+        (kind: Bloodseep, at: (50, 66)),
+        (kind: FrontierSlot, at: (100, 12)),
+        (kind: FrontierSlot, at: (60, 100)),
+    ],
+    set_pieces: [
+        (kind: Ford, at: (64, 66), label: "The Ford"),
+        (kind: High, at: (46, 82), label: "Hill of the Third Rib"),
+    ],
+)

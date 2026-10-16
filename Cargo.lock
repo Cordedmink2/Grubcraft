@@ -815,6 +815,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gc_mapcheck"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "gc_sim",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "gc_net"
 version = "0.1.0"
 dependencies = [
