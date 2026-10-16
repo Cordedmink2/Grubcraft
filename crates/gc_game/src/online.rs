@@ -7,7 +7,6 @@
 //! switching sides, placing, tuning) are off because they would change one
 //! machine's game and not the others'.
 
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// How long a notice ("Alex lost connection") stays on screen.
@@ -34,31 +33,6 @@ pub fn fnv1a(bytes: impl IntoIterator<Item = u8>) -> u64 {
     bytes.into_iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     })
-}
-
-/// Save a desync report beside the settings file (or in the working
-/// folder), returning a line saying where.
-pub fn save_report(report: &gc_net::Report) -> String {
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    let dir = gc_ui::settings::settings_path()
-        .and_then(|p| p.parent().map(|d| d.join("desync-reports")))
-        .unwrap_or_else(|| PathBuf::from("desync-reports"));
-    let path = dir.join(format!(
-        "desync-{stamp}-player{}.gcdesync",
-        u32::from(report.me) + 1
-    ));
-    let saved = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, report.encode()));
-    let line = match saved {
-        Ok(()) => format!(
-            "Saved a desync report for the developers: {}",
-            path.display()
-        ),
-        Err(e) => format!("Could not save the desync report ({e})"),
-    };
-    eprintln!("grubcraft: {line}");
-    line
 }
 
 /// A networked match under way.

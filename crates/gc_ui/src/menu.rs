@@ -1,4 +1,4 @@
-//! The main menu, Play (host or join), lobby and settings screens.
+//! The main menu, Play (host or join), lobby, replays and settings screens.
 //! See docs/08-ui-ux.md#menus-and-lobby.
 
 use std::path::PathBuf;
@@ -19,7 +19,21 @@ pub enum Screen {
     Lobby,
     /// The army builder, from the lobby.
     Army,
+    /// The saved replays, to watch.
+    Replays,
     Settings,
+}
+
+/// A saved replay, as the Replays screen lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayEntry {
+    /// "Field Battle: Red (Mario) v Blue (AI 2)".
+    pub title: String,
+    /// "2026-10-15 21:50 UTC, 4:12 long".
+    pub detail: String,
+    pub path: PathBuf,
+    /// Why this build can't play it, if it can't.
+    pub unplayable: Option<String>,
 }
 
 /// What the game should do after a frame of menu.
@@ -34,6 +48,11 @@ pub enum MenuAction {
     StartMatch(MatchStart),
     /// Settings changed; the game should re-read `Menu::settings`.
     SettingsChanged,
+    /// The Replays screen opened: the game should look for saved replays
+    /// and hand them over with [`Menu::set_replays`].
+    ListReplays,
+    /// Watch the replay saved at this path.
+    WatchReplay(PathBuf),
     Quit,
 }
 
@@ -56,6 +75,9 @@ pub struct Menu<N: Network = LocalNetwork> {
     roster: Vec<RosterUnit>,
     /// The Army screen's copy of your army while it is open.
     army_draft: Option<Vec<u16>>,
+    /// The saved replays, newest first, and the page of them on screen.
+    replays: Vec<ReplayEntry>,
+    replay_page: usize,
 }
 
 /// Vertical flow of equally wide rows.
@@ -106,6 +128,8 @@ impl<N: Network> Menu<N> {
             in_match: false,
             roster: Vec::new(),
             army_draft: None,
+            replays: Vec::new(),
+            replay_page: 0,
         }
     }
 
@@ -113,6 +137,18 @@ impl<N: Network> Menu<N> {
     /// in its order (an army names them by index).
     pub fn set_roster(&mut self, roster: Vec<RosterUnit>) {
         self.roster = roster;
+    }
+
+    /// The saved replays for the Replays screen, newest first.
+    pub fn set_replays(&mut self, replays: Vec<ReplayEntry>) {
+        self.replays = replays;
+        self.replay_page = 0;
+    }
+
+    /// Show a problem on the current screen (the Replays screen shows why
+    /// a replay wouldn't open).
+    pub fn tell(&mut self, text: String) {
+        self.message = Some((text, true));
     }
 
     /// The network the menus talk to.
@@ -196,6 +232,7 @@ impl<N: Network> Menu<N> {
             Screen::Play => self.play_screen(ui, escape),
             Screen::Lobby => self.lobby_screen(ui, escape),
             Screen::Army => self.army_screen(ui, escape),
+            Screen::Replays => self.replays_screen(ui, escape),
             Screen::Settings => self.settings_screen(ui, escape),
         }
     }
@@ -203,7 +240,7 @@ impl<N: Network> Menu<N> {
     fn main_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
         let (w, h) = ui.screen;
         let button_h = 52;
-        let count = if self.in_match { 5 } else { 4 };
+        let count = if self.in_match { 6 } else { 5 };
         let total = 120 + count * (button_h + 14);
         let area = centered(ui.screen, 360, total);
         let title = "GRUBCRAFT";
@@ -240,6 +277,10 @@ impl<N: Network> Menu<N> {
         };
         if ui.button(stack.next(button_h), sandbox, ButtonStyle::Normal, true) {
             action = MenuAction::StartSandbox;
+        }
+        if ui.button(stack.next(button_h), "Replays", ButtonStyle::Normal, true) {
+            self.go(ui, Screen::Replays);
+            action = MenuAction::ListReplays;
         }
         if ui.button(stack.next(button_h), "Settings", ButtonStyle::Normal, true) {
             self.go(ui, Screen::Settings);
@@ -366,11 +407,12 @@ impl<N: Network> Menu<N> {
                 self.selected_game = Some(i);
             }
             let text = format!(
-                "{}  {}  {}/{}{}",
+                "{}  {}  {}/{}{}{}",
                 g.host,
                 g.map,
                 g.players,
                 g.max_players,
+                if g.playing { "  (in progress)" } else { "" },
                 if g.locked { "  (password)" } else { "" }
             );
             let ty = row.y + (row.h - 16) / 2;
@@ -890,6 +932,112 @@ impl<N: Network> Menu<N> {
         MenuAction::None
     }
 
+    /// The saved replays, newest first, a page at a time, each with Watch.
+    fn replays_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
+        let k = (ui.screen.1 as f32 / 720.0).clamp(0.72, 1.0);
+        let sp = |n: i32| (n as f32 * k).round() as i32;
+        let panel = centered(ui.screen, 760, sp(560));
+        ui.panel(panel);
+        ui.label(panel.x + 24, panel.y + 16, 2, theme::TEXT, "Replays");
+        ui.label_right(
+            panel.right() - 24,
+            panel.y + 24,
+            1,
+            theme::MUTED,
+            "Every battle is saved here",
+        );
+        let row_h = sp(56);
+        let top = panel.y + sp(64);
+        let bottom = panel.bottom() - 64;
+        let per_page = (((bottom - top) / (row_h + sp(8))).max(1)) as usize;
+        let pages = self.replays.len().div_ceil(per_page).max(1);
+        self.replay_page = self.replay_page.min(pages - 1);
+        let mut action = MenuAction::None;
+        if self.replays.is_empty() {
+            ui.label(
+                panel.x + 24,
+                top,
+                1,
+                theme::MUTED,
+                "No replays yet. Play a battle and it will be here to watch.",
+            );
+        }
+        let first = self.replay_page * per_page;
+        let mut y = top;
+        for entry in self.replays.iter().skip(first).take(per_page) {
+            let row = Rect::new(panel.x + 24, y, panel.w - 48, row_h);
+            ui.draw.rect(row, [30, 35, 46, 255]);
+            let chars = ((row.w - 160) / 8).max(8) as usize;
+            ui.label(
+                row.x + 12,
+                row.y + 10,
+                1,
+                theme::TEXT,
+                &fit(&entry.title, chars),
+            );
+            let (color, detail) = match &entry.unplayable {
+                Some(why) => (theme::BAD, why.as_str()),
+                None => (theme::MUTED, entry.detail.as_str()),
+            };
+            ui.label(
+                row.x + 12,
+                row.y + row_h - 26,
+                1,
+                color,
+                &fit(detail, chars),
+            );
+            let watch = Rect::new(row.right() - 128, row.y + 8, 116, row_h - 16);
+            if ui.button(
+                watch,
+                "Watch",
+                ButtonStyle::Normal,
+                entry.unplayable.is_none(),
+            ) {
+                action = MenuAction::WatchReplay(entry.path.clone());
+            }
+            y += row_h + sp(8);
+        }
+        let btn_y = panel.bottom() - 52;
+        if let Some((text, _)) = &self.message {
+            let chars = ((panel.w - 48) / 8).max(8) as usize;
+            ui.label(panel.x + 24, btn_y - 26, 1, theme::BAD, &fit(text, chars));
+        }
+        if pages > 1 {
+            if ui.button(
+                Rect::new(panel.x + 24, btn_y, 120, 44),
+                "Newer",
+                ButtonStyle::Normal,
+                self.replay_page > 0,
+            ) {
+                self.replay_page -= 1;
+            }
+            ui.label_centered(
+                Rect::new(panel.x + 152, btn_y, 120, 44),
+                1,
+                theme::MUTED,
+                &format!("{} of {pages}", self.replay_page + 1),
+            );
+            if ui.button(
+                Rect::new(panel.x + 280, btn_y, 120, 44),
+                "Older",
+                ButtonStyle::Normal,
+                self.replay_page + 1 < pages,
+            ) {
+                self.replay_page += 1;
+            }
+        }
+        let back = ui.button(
+            Rect::new(panel.right() - 24 - 160, btn_y - 4, 160, 48),
+            "Back",
+            ButtonStyle::Primary,
+            true,
+        );
+        if back || escape {
+            self.go(ui, Screen::Main);
+        }
+        action
+    }
+
     fn settings_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
         let k = (ui.screen.1 as f32 / 720.0).clamp(0.62, 1.0);
         let sp = |n: i32| (n as f32 * k).round() as i32;
@@ -1161,6 +1309,50 @@ mod tests {
             assert!(h.has(t) || h.has("Quit"), "{t}");
         }
         assert!(!h.has("Resume"));
+    }
+
+    #[test]
+    fn the_replays_screen_lists_replays_to_watch() {
+        let mut h = Harness::new();
+        let (x, y) = h.text_pos("Replays");
+        h.frame(UiInput {
+            mouse: (x, y),
+            pressed: true,
+            released: true,
+            ..Default::default()
+        });
+        assert!(matches!(h.last, MenuAction::ListReplays));
+        h.frame(UiInput::default());
+        assert!(h.has("No replays yet"));
+        let entry = |n: usize, unplayable: Option<&str>| ReplayEntry {
+            title: format!("Battle {n}"),
+            detail: format!("detail {n}"),
+            path: PathBuf::from(format!("{n}.gcr")),
+            unplayable: unplayable.map(str::to_string),
+        };
+        let mut list: Vec<ReplayEntry> = (1..=12).map(|n| entry(n, None)).collect();
+        list[1] = entry(2, Some("Made with other game data"));
+        h.menu.set_replays(list);
+        h.frame(UiInput::default());
+        assert!(h.has("Battle 1") && h.has("detail 1") && h.has("Made with other game data"));
+        // One page at a time.
+        assert!(!h.has("Battle 12"));
+        h.click("Older");
+        assert!(h.has("Battle 12") && !h.has("Battle 3"));
+        h.click("Newer");
+        let (x, y) = *find_all(&h.ui.draw, "Watch").first().unwrap();
+        h.frame(UiInput {
+            mouse: (x, y),
+            pressed: true,
+            released: true,
+            ..Default::default()
+        });
+        assert!(matches!(&h.last, MenuAction::WatchReplay(p) if p == &PathBuf::from("1.gcr")));
+        h.menu.tell("Can't open that replay".into());
+        h.frame(UiInput::default());
+        assert!(h.has("Can't open that replay"));
+        h.key(|i| i.escape = true);
+        assert_eq!(h.menu.screen(), Screen::Main);
     }
 
     #[test]

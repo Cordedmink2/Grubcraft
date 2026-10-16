@@ -8,7 +8,7 @@
 //! camera moves, selections and orders. Map positions are in tiles, with
 //! north (smaller z) at the top of the minimap.
 
-use crate::draw::{Color, DrawList, Rect, fit, text_width};
+use crate::draw::{CELL_W, Color, DrawList, Rect, fit, text_width};
 use crate::ui::theme;
 
 /// Height of the bottom bar, in UI pixels.
@@ -128,6 +128,17 @@ pub struct HudData<'a> {
     pub cards: &'a [Card],
     /// Shown above the cards, e.g. "Selected" or "Group 2".
     pub tray_title: &'a str,
+    /// While the armies deploy (docs/06-game-modes.md).
+    pub deployment: Option<DeployStatus>,
+}
+
+/// The deployment phase, as this player sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeployStatus {
+    /// Until the battle starts whatever happens.
+    pub seconds_left: u32,
+    /// This player has pressed Ready.
+    pub ready: bool,
 }
 
 /// What the mouse did since the last frame, in UI pixels.
@@ -153,6 +164,8 @@ pub enum HudEvent {
     Select { id: u32, add: bool },
     /// Move the camera to this regiment.
     Centre(u32),
+    /// Done deploying.
+    Ready,
 }
 
 #[derive(Default)]
@@ -192,6 +205,9 @@ impl Hud {
         );
         self.minimap(draw, &layout, input, &data.minimap, events);
         self.tray(draw, &layout, input, data, events);
+        if let Some(deploy) = data.deployment {
+            deploy_panel(draw, layout.grid, input, deploy, events);
+        }
     }
 
     fn minimap(
@@ -328,6 +344,63 @@ impl Hud {
             let x = row.right() - text_width(&more, 1);
             draw.text(x.max(inner.x), inner.y, 1, theme::ACCENT, &more);
         }
+    }
+}
+
+/// The deployment phase, where the command grid will be: time left, what
+/// to do, and the Ready button.
+fn deploy_panel(
+    draw: &mut DrawList,
+    r: Rect,
+    input: HudInput,
+    deploy: DeployStatus,
+    events: &mut Vec<HudEvent>,
+) {
+    let inner = r.inset(6);
+    // The Ready button shows on any screen; the words only where they fit.
+    if inner.w < CELL_W * 6 {
+        return;
+    }
+    draw.border(r, 2, theme::ACCENT);
+    let left = format!(
+        "{}:{:02} left",
+        deploy.seconds_left / 60,
+        deploy.seconds_left % 60
+    );
+    let chars = (inner.w / CELL_W).max(1) as usize;
+    draw.text(
+        inner.x,
+        inner.y,
+        1,
+        theme::ACCENT,
+        &fit("DEPLOYMENT", chars),
+    );
+    draw.text(inner.x, inner.y + 20, 1, theme::TEXT, &fit(&left, chars));
+    let hint = if deploy.ready {
+        "Waiting for the others."
+    } else {
+        "Right-drag to place."
+    };
+    draw.text(inner.x, inner.y + 40, 1, theme::MUTED, &fit(hint, chars));
+    let button = Rect::new(inner.x, inner.bottom() - 44, inner.w, 44);
+    if deploy.ready {
+        draw.rect(button, theme::BUTTON_DOWN);
+        draw.text_centered(button, 1, theme::GOOD, "Ready");
+        return;
+    }
+    let hot = button.contains(input.mouse.0, input.mouse.1);
+    draw.rect(
+        button,
+        if hot {
+            theme::PRIMARY_HOT
+        } else {
+            theme::PRIMARY
+        },
+    );
+    let scale = if inner.w >= CELL_W * 2 * 6 { 2 } else { 1 };
+    draw.text_centered(button, scale, theme::TEXT, "Ready");
+    if hot && input.left_pressed {
+        events.push(HudEvent::Ready);
     }
 }
 
@@ -470,11 +543,46 @@ mod tests {
             },
             cards,
             tray_title: "Selected",
+            deployment: None,
         };
         let mut draw = DrawList::default();
         let mut events = Vec::new();
         hud.frame(&mut draw, SCREEN, input, &data, &mut events);
         (events, draw)
+    }
+
+    #[test]
+    fn the_ready_button_ends_your_deployment() {
+        let l = HudLayout::new(SCREEN);
+        let button = (l.grid.x + l.grid.w / 2, l.grid.bottom() - 20);
+        let t = terrain();
+        let frame = |ready, input| {
+            let data = HudData {
+                minimap: MinimapData {
+                    map_tiles: 256.0,
+                    terrain: &t,
+                    dots: &[],
+                    view: &[],
+                },
+                cards: &[],
+                tray_title: "",
+                deployment: Some(DeployStatus {
+                    seconds_left: 87,
+                    ready,
+                }),
+            };
+            let (mut draw, mut events) = (DrawList::default(), Vec::new());
+            Hud::default().frame(&mut draw, SCREEN, input, &data, &mut events);
+            events
+        };
+        let click = HudInput {
+            mouse: button,
+            left_pressed: true,
+            ..HudInput::default()
+        };
+        assert_eq!(frame(false, click), vec![HudEvent::Ready]);
+        assert!(frame(true, click).is_empty(), "already ready");
+        assert!(Hud::default().wants(SCREEN, button));
     }
 
     #[test]

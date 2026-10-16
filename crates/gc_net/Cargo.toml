@@ -16,5 +16,8 @@ gc_fixed.workspace = true
 gc_sim.workspace = true
 gc_ui.workspace = true
 
+[dev-dependencies]
+gc_replay.workspace = true
+
 [lints]
 workspace = true

@@ -19,6 +19,6 @@ pub mod ui;
 
 pub use draw::{Color, DrawList, Quad, Rect};
 pub use lobby::{LocalNetwork, MatchStart, Network};
-pub use menu::{Menu, MenuAction, Screen};
+pub use menu::{Menu, MenuAction, ReplayEntry, Screen};
 pub use settings::Settings;
 pub use ui::{Ui, UiInput};

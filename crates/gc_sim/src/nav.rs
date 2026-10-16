@@ -807,6 +807,13 @@ impl Nav {
         })
     }
 
+    /// Whether `p` is on blocked ground (never with no map).
+    pub(crate) fn blocked(&self, p: FxVec2) -> bool {
+        self.grid
+            .as_ref()
+            .is_some_and(|g| g.cost[g.cell_at(p) as usize] == BLOCKED)
+    }
+
     /// Regiment slot `i` was stopped by blocked ground: find a new route.
     pub(crate) fn lost(&mut self, i: usize) {
         self.route[i] = Route::Idle;

@@ -5,8 +5,10 @@
 //! `morale` stat. Once a second (staggered by pool index, like melee blows)
 //! it is checked:
 //! - it falls with casualties taken since the last check, while the regiment
-//!   is below half strength and fighting, when hit in the flank or rear, and
-//!   when fighting while badly outnumbered nearby;
+//!   is below half strength and fighting, when hit in the flank or rear,
+//!   while pinned with nowhere to give ground (see
+//!   [`crate::combat::Combat::push_lines`]), and when fighting while badly
+//!   outnumbered nearby;
 //! - it recovers when the regiment is out of the fight and losing nobody, up
 //!   to the unit's stat scaled by how much of the regiment is left (half the
 //!   stat for a regiment that has lost almost everyone), raised or lowered
@@ -43,9 +45,13 @@ const HALF_STRENGTH_DRAIN: i16 = 2;
 /// Points lost in a second with hits on the flank, or on the rear.
 const FLANK_SHOCK: i16 = 3;
 const REAR_SHOCK: i16 = 6;
+/// Points lost in a second spent pinned: driven back against a friend, an
+/// enemy, a river bank or a cliff with nowhere to give ground.
+const PINNED_SHOCK: i16 = 3;
 /// Bits in `Regiments::shock`.
 pub(crate) const SHOCK_FLANK: u8 = 1;
 pub(crate) const SHOCK_REAR: u8 = 2;
+pub(crate) const SHOCK_PINNED: u8 = 4;
 /// Enemies and friends within this many tiles count toward being outnumbered.
 const LOCAL_TILES: i32 = 12;
 /// Points lost each second in melee when nearby enemies outnumber nearby
@@ -144,6 +150,9 @@ fn check(
         tenths -= i32::from(REAR_SHOCK * SCALE);
     } else if regs.shock[i] & SHOCK_FLANK != 0 {
         tenths -= i32::from(FLANK_SHOCK * SCALE);
+    }
+    if regs.shock[i] & SHOCK_PINNED != 0 {
+        tenths -= i32::from(PINNED_SHOCK * SCALE);
     }
     if regs.engaged[i].is_some() {
         if i32::from(regs.models[i]) * 2 < full {

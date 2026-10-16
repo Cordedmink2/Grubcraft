@@ -1,5 +1,6 @@
-//! Join codes: a host's address on the local network as eight letters and
-//! digits a friend can type ("K7QD-M2XA"), with a check that catches typos.
+//! Join codes: a host's address (on the local network, or on Tailscale for
+//! friends over the internet) as eight letters and digits a friend can
+//! type ("K7QD-M2XA"), with a check that catches typos.
 //!
 //! A code holds the host's IPv4 address, which of the four game ports it
 //! is on, and six check bits: 40 bits, eight characters of Crockford's
@@ -65,9 +66,51 @@ pub fn decode(code: &str) -> Option<SocketAddr> {
 /// This machine's address on the local network: the one it would send
 /// from to reach beyond it (nothing is sent to find out).
 pub fn local_ip() -> Option<Ipv4Addr> {
+    ip_toward(Ipv4Addr::new(192, 0, 2, 1))
+}
+
+/// This machine's Tailscale address, when Tailscale is running: friends
+/// anywhere on the same tailnet reach the game there.
+pub fn tailscale_ip() -> Option<Ipv4Addr> {
+    // Tailscale's own service address; only Tailscale routes to it.
+    ip_toward(Ipv4Addr::new(100, 100, 100, 100)).filter(|&ip| is_tailscale(ip))
+}
+
+/// Tailscale gives out addresses in 100.64.0.0/10.
+fn is_tailscale(ip: Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    a == 100 && (64..128).contains(&b)
+}
+
+/// What the host's lobby shows: a code and address for friends over the
+/// internet on Tailscale, and one for people on this Wi-Fi. An address
+/// Tailscale doesn't route apart from everything else (no Tailscale on a
+/// carrier-grade NAT network, or all traffic through Tailscale) is one
+/// plain join code.
+pub fn invite(port: u16, tailscale: Option<Ipv4Addr>, local: Option<Ipv4Addr>) -> Option<String> {
+    let line = |label: &str, ip: Ipv4Addr| {
+        let code = encode(ip, port)?;
+        Some(if port == DEFAULT_PORT {
+            format!("{label} {code} ({ip})")
+        } else {
+            format!("{label} {code} ({ip}:{port})")
+        })
+    };
+    let lines: Vec<String> = match (tailscale, local) {
+        (Some(t), Some(l)) if t != l => [line("Tailscale code", t), line("Wi-Fi code", l)]
+            .into_iter()
+            .flatten()
+            .collect(),
+        (Some(ip), _) | (None, Some(ip)) => line("Join code", ip).into_iter().collect(),
+        (None, None) => Vec::new(),
+    };
+    (!lines.is_empty()).then(|| lines.join(" - "))
+}
+
+/// The address this machine would send from to reach `target`.
+fn ip_toward(target: Ipv4Addr) -> Option<Ipv4Addr> {
     let s = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).ok()?;
-    s.connect(SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 9))
-        .ok()?;
+    s.connect(SocketAddrV4::new(target, 9)).ok()?;
     match s.local_addr().ok()? {
         SocketAddr::V4(a) if !a.ip().is_unspecified() && !a.ip().is_loopback() => Some(*a.ip()),
         _ => None,
@@ -77,6 +120,38 @@ pub fn local_ip() -> Option<Ipv4Addr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_lobby_names_each_code() {
+        let ts = Ipv4Addr::new(100, 101, 7, 3);
+        let wifi = Ipv4Addr::new(192, 168, 1, 20);
+        let both = invite(DEFAULT_PORT, Some(ts), Some(wifi)).unwrap();
+        let (net, home) = both.split_once(" - ").unwrap();
+        assert!(net.starts_with("Tailscale code ") && net.ends_with("(100.101.7.3)"));
+        assert!(home.starts_with("Wi-Fi code ") && home.ends_with("(192.168.1.20)"));
+        assert!(both.is_ascii(), "the UI font is ASCII: {both}");
+        // The same address twice (CGNAT without Tailscale, or everything
+        // through Tailscale) is one code.
+        let one = invite(DEFAULT_PORT + 1, Some(ts), Some(ts)).unwrap();
+        assert!(
+            one.starts_with("Join code ")
+                && one.ends_with(&format!("(100.101.7.3:{})", DEFAULT_PORT + 1))
+        );
+        assert!(
+            invite(DEFAULT_PORT, None, Some(wifi))
+                .unwrap()
+                .starts_with("Join code ")
+        );
+        assert_eq!(invite(DEFAULT_PORT, None, None), None);
+    }
+
+    #[test]
+    fn tailscale_addresses_are_recognised() {
+        assert!(is_tailscale(Ipv4Addr::new(100, 101, 7, 3)));
+        assert!(is_tailscale(Ipv4Addr::new(100, 64, 0, 1)));
+        assert!(!is_tailscale(Ipv4Addr::new(100, 128, 0, 1)));
+        assert!(!is_tailscale(Ipv4Addr::new(192, 168, 1, 20)));
+    }
 
     #[test]
     fn codes_round_trip() {

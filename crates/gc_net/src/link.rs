@@ -107,6 +107,31 @@ impl Link {
     /// The next packet to send: header, timing, acknowledgement and as many
     /// unacknowledged messages as fit.
     pub fn packet(&mut self, now: Instant) -> Vec<u8> {
+        self.packet_from(now, 0).0
+    }
+
+    /// Up to `most` packets, each carrying the unacknowledged messages after
+    /// the previous one's, for a backlog too long for one packet (a player
+    /// catching up on a whole match). The first is [`Link::packet`]; the
+    /// others arrive in order on a local network, and a lost one is made up
+    /// by the next round like any packet.
+    pub fn packets(&mut self, now: Instant, most: usize) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        let mut skip = 0;
+        while out.len() < most.max(1) {
+            let (packet, count) = self.packet_from(now, skip);
+            out.push(packet);
+            skip += count;
+            if count == 0 || skip >= self.out.len() {
+                break;
+            }
+        }
+        out
+    }
+
+    /// A packet carrying the unacknowledged messages from the `skip`th on,
+    /// and how many it carries.
+    fn packet_from(&mut self, now: Instant, skip: usize) -> (Vec<u8>, usize) {
         let mut w = Writer::new();
         header(&mut w, Kind::Link);
         w.var(u64::from(self.millis(now)));
@@ -118,14 +143,14 @@ impl Link {
             None => w.var(0),
         }
         w.var(self.received);
-        w.var(self.acked);
+        w.var(self.acked + skip as u64);
         let count_at = w.buf.len();
-        // Room for the count byte; fewer than 128 messages ever fit.
+        // Room for the count byte: at most 255 messages a packet.
         w.u8(0);
         let mut count = 0u8;
-        for m in &self.out {
+        for m in self.out.iter().skip(skip) {
             // Room is left for sealing the packet.
-            if w.buf.len() + m.len() + 2 > MAX_PACKET - OVERHEAD {
+            if count == u8::MAX || w.buf.len() + m.len() + 2 > MAX_PACKET - OVERHEAD {
                 break;
             }
             w.bytes(m);
@@ -134,7 +159,7 @@ impl Link {
         w.buf[count_at] = count;
         self.last_sent = now;
         self.fresh = false;
-        match &mut self.cipher {
+        let packet = match &mut self.cipher {
             Some(c) => {
                 let (head, body) = w.buf.split_at(HEADER_LEN);
                 let mut sealed = head.to_vec();
@@ -142,7 +167,8 @@ impl Link {
                 sealed
             }
             None => w.buf,
-        }
+        };
+        (packet, usize::from(count))
     }
 
     /// Take in a whole link packet, returning the new messages in order.
@@ -277,6 +303,59 @@ mod tests {
         let want: Vec<Msg> = (0..next).map(notice).collect();
         assert_eq!(got, want);
         assert_eq!(a.backlog(), 0);
+    }
+
+    #[test]
+    fn a_burst_carries_a_long_backlog_at_once() {
+        let t0 = Instant::now();
+        let mut a = Link::new(t0);
+        let mut b = Link::new(t0);
+        for i in 0..1000 {
+            a.send(&notice(i));
+        }
+        let burst = a.packets(t0, 64);
+        assert!(burst.len() > 10 && burst.len() < 64, "{}", burst.len());
+        // In order, the burst delivers everything; a lost packet's messages
+        // and every one after it come in the next round.
+        let mut got = Vec::new();
+        for (k, p) in burst.iter().enumerate() {
+            if k != 3 {
+                got.extend(deliver(p, &mut b, t0));
+            }
+        }
+        assert!(got.len() < 1000);
+        deliver(&b.packet(t0), &mut a, t0);
+        for p in a.packets(t0, 64) {
+            got.extend(deliver(&p, &mut b, t0));
+        }
+        let want: Vec<Msg> = (0..1000).map(notice).collect();
+        assert_eq!(got, want);
+        deliver(&b.packet(t0), &mut a, t0);
+        assert_eq!(a.backlog(), 0);
+        // With nothing waiting, a burst is the one keepalive packet.
+        assert_eq!(a.packets(t0, 64).len(), 1);
+    }
+
+    #[test]
+    fn a_packet_holds_at_most_255_tiny_messages() {
+        // A rejoin's history is mostly empty turns, a few bytes each.
+        let t0 = Instant::now();
+        let mut a = Link::new(t0);
+        let mut b = Link::new(t0);
+        let turns: Vec<Msg> = (0..2000)
+            .map(|turn| Msg::Bundle {
+                turn,
+                commands: Vec::new(),
+            })
+            .collect();
+        for m in &turns {
+            a.send(m);
+        }
+        let mut got = Vec::new();
+        for p in a.packets(t0, 64) {
+            got.extend(deliver(&p, &mut b, t0));
+        }
+        assert_eq!(got, turns);
     }
 
     #[test]

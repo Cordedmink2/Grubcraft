@@ -66,7 +66,8 @@ impl Standing {
 
 impl World {
     /// An empty world on the same map as this one, sharing its walkable
-    /// grid, with the same regiment types and stances (and no champions),
+    /// grid, with the same regiment types and stances (and no champions or
+    /// deployment),
     /// its clock at this
     /// world's tick (so staggered checks fall on the same ticks), room for
     /// `capacity` regiments and its own random streams from `seed`.
@@ -83,6 +84,8 @@ impl World {
             stances: self.stances.clone(),
             terrain: self.terrain.clone(),
             vision: Vision::new(n as usize, &self.terrain, &self.stances),
+            // A rehearsal is all battle.
+            deploy: crate::deploy::Deployment::default(),
             champions: None,
             regiments: Regiments::with_capacity(n),
         }

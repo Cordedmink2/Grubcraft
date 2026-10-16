@@ -396,7 +396,9 @@ impl Minds {
     /// Look at `world` and append every mind's orders for its next tick
     /// to `out`.
     pub fn tick(&mut self, world: &World, out: &mut Vec<PlayerCommand>) {
-        if self.minds.is_empty() {
+        // The computer players keep the standard deployment and are ready
+        // from the start; they think once the battle begins.
+        if self.minds.is_empty() || world.deploying() {
             return;
         }
         self.view.capture(world);

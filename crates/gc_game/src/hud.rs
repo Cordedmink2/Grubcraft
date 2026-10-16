@@ -5,7 +5,8 @@ use gc_sim::MoraleState;
 use gc_sim::formation::GroupOrder;
 use gc_ui::DrawList;
 use gc_ui::hud::{
-    Card, CardState, Dot, Hud, HudData, HudEvent, HudInput, MinimapData, MinimapTerrain,
+    Card, CardState, DeployStatus, Dot, Hud, HudData, HudEvent, HudInput, MinimapData,
+    MinimapTerrain,
 };
 use glam::{Vec2, Vec3};
 
@@ -241,6 +242,18 @@ impl Running {
             },
             cards: &hud.cards,
             tray_title: &title,
+            // Nobody deploys in a replay.
+            deployment: self
+                .world
+                .deploy_zone(side)
+                .filter(|_| self.watching.is_none())
+                .map(|_| DeployStatus {
+                    seconds_left: self
+                        .world
+                        .deploy_ticks_left()
+                        .div_ceil(gc_sim::TICKS_PER_SECOND),
+                    ready: self.world.deploy_ready(side),
+                }),
         };
         hud.hud
             .frame(&mut hud.draw, screen, input, &data, &mut hud.events);
@@ -280,6 +293,13 @@ impl Running {
                     self.selected.clear();
                     self.selected.push(h);
                 }
+                self.ui_sound(sounds::UiSound::Select);
+            }
+            HudEvent::Ready => {
+                self.human_orders.push(gc_sim::PlayerCommand {
+                    player: self.sandbox.side,
+                    command: gc_sim::Command::Ready,
+                });
                 self.ui_sound(sounds::UiSound::Select);
             }
             HudEvent::Order([x, z]) => {
