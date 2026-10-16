@@ -186,6 +186,9 @@ pub fn list(
                     if r.header.data_hash != 0 && r.header.data_hash != data_hash {
                         detail.push_str(", older game data");
                     }
+                    if r.header.sim_version != Some(gc_sim::SIM_VERSION) {
+                        detail.push_str(", other rules: may play differently");
+                    }
                     ReplayEntry {
                         title: title(&r),
                         detail,

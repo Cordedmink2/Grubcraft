@@ -15,9 +15,16 @@ use gc_platform::logln;
 const NOTICE_TIME: Duration = Duration::from_secs(8);
 
 /// The build, as players compare it in the lobby: the version and the
-/// commit it was built from.
+/// simulation's rules version, which must match to play together (see
+/// [`gc_ui::lobby::plays_with`]), then the commit it was built from
+/// ("-dirty" with uncommitted changes), for people only.
 pub fn version() -> String {
-    format!("{} {}", env!("CARGO_PKG_VERSION"), env!("GRUBCRAFT_COMMIT"))
+    format!(
+        "{} sim {} ({})",
+        env!("CARGO_PKG_VERSION"),
+        gc_sim::SIM_VERSION,
+        env!("GRUBCRAFT_COMMIT")
+    )
 }
 
 /// A fingerprint of a map's walkable ground, hills, water and cover (FNV-1a), so a joiner whose

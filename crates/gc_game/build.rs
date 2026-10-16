@@ -20,7 +20,7 @@ fn main() {
         }
     };
     // The build's commit, so players can tell builds apart in the lobby
-    // (the version gate compares it).
+    // (the version gate compares the sim version instead).
     let commit = std::process::Command::new("git")
         .args(["rev-parse", "--short=7", "HEAD"])
         .current_dir(&manifest_dir)

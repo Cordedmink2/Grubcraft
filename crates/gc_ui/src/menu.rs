@@ -423,7 +423,9 @@ impl<N: Network> Menu<N> {
                 theme::TEXT,
                 &fit(&text, (row.w / 8 - 12) as usize),
             );
-            let bad = games.get(i).is_some_and(|g| g.version != self.version);
+            let bad = games
+                .get(i)
+                .is_some_and(|g| !crate::lobby::plays_with(&g.version, &self.version));
             if bad {
                 ui.label_right(row.right() - 8, ty, 1, theme::BAD, &g.version);
             }

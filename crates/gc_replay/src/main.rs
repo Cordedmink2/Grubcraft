@@ -196,6 +196,11 @@ fn info(file: &Path) -> bool {
     if !h.build.is_empty() {
         println!("  recorded on {} (data {:016x})", h.build, h.data_hash);
     }
+    match h.sim_version {
+        Some(v) if v == gc_sim::SIM_VERSION => println!("  sim version {v}"),
+        Some(v) => println!("  sim version {v}; this build is {}", gc_sim::SIM_VERSION),
+        None => println!("  sim version unknown (before format 7)"),
+    }
     if let Some(tick) = h.desync_tick {
         println!("  desync report: out of sync with the host from tick {tick}");
     }

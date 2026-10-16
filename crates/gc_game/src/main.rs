@@ -704,6 +704,9 @@ struct Watching {
     title: String,
     /// The unit stats to go back to afterwards.
     stats_before: Vec<UnitStats>,
+    /// The first tick whose state differs from the recording's, if any:
+    /// the replay was made with other rules (docs/10-replays.md).
+    diverged_at: Option<u32>,
 }
 
 /// Process memory recorded at startup milestones, to see what each costs.
@@ -1824,6 +1827,7 @@ impl Running {
                 self.pending.extend_from_slice(w.replay.commands_at(tick));
                 self.human_orders.clear();
                 self.step();
+                self.check_replay_divergence();
                 continue;
             }
             if let Some(drill) = &mut self.drill {
@@ -2770,7 +2774,34 @@ impl Running {
             title: replays::title(&replay),
             replay,
             stats_before,
+            diverged_at: None,
         });
+    }
+
+    /// After a replay tick: if it was a checkpoint and the state no longer
+    /// matches the recording, pause and say so once. A replay from older
+    /// rules plays on, but it is no longer the battle that was fought.
+    fn check_replay_divergence(&mut self) {
+        let tick = self.world.tick_count();
+        let Some(w) = &mut self.watching else {
+            return;
+        };
+        if w.diverged_at.is_some() {
+            return;
+        }
+        if w.replay
+            .checkpoint_at(tick)
+            .is_none_or(|h| h == self.world.state_hash())
+        {
+            return;
+        }
+        w.diverged_at = Some(tick);
+        self.paused = true;
+        self.sim_clock = Duration::ZERO;
+        self.say(format!(
+            "This replay plays differently from {}: it was made with other rules. P carries on.",
+            gc_ai::lens::clock(tick)
+        ));
     }
 
     /// Once a frame: reopen a lost sound output, log what the GPU driver
@@ -3494,6 +3525,12 @@ impl Running {
                     gc_ai::lens::clock(w.replay.ticks)
                 )
             });
+            if let Some(at) = w.diverged_at {
+                lines.push(format!(
+                    "plays differently from {} on: made with other rules",
+                    gc_ai::lens::clock(at)
+                ));
+            }
             lines.push(format!(
                 "following {} (player {})   Tab: next side   H: hide",
                 party_name(&self.parties, sb.side),

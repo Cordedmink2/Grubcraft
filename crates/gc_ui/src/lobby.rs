@@ -266,12 +266,20 @@ pub struct LobbyState {
     pub host_version: String,
 }
 
+/// Whether builds named `a` and `b` can play together. A build's name is
+/// "VERSION sim N (COMMIT)": the part before the commit says how it plays
+/// (the simulation's rules version), and the commit is only for people,
+/// so builds that differ only in it (a docs change, say) match.
+pub fn plays_with(a: &str, b: &str) -> bool {
+    a.split(" (").next() == b.split(" (").next()
+}
+
 impl LobbyState {
-    /// Humans whose build differs from the host's, as `(name, version)`.
+    /// Humans whose build can't play with the host's, as `(name, version)`.
     pub fn version_mismatches(&self) -> Vec<(&str, &str)> {
         self.slots
             .iter()
-            .filter(|s| s.kind == SlotKind::Human && s.version != self.host_version)
+            .filter(|s| s.kind == SlotKind::Human && !plays_with(&s.version, &self.host_version))
             .map(|s| (s.name.as_str(), s.version.as_str()))
             .collect()
     }
@@ -742,6 +750,13 @@ mod tests {
         let e = n.join(&me(), "192.168.1.5:7777", "").unwrap_err();
         assert!(matches!(e, NetError::Unavailable(_)));
         assert!(n.lobby().is_none());
+    }
+
+    #[test]
+    fn builds_play_together_when_only_the_commit_differs() {
+        assert!(plays_with("0.1.0 sim 1 (abc123)", "0.1.0 sim 1 (def456)"));
+        assert!(!plays_with("0.1.0 sim 1 (abc123)", "0.1.0 sim 2 (abc123)"));
+        assert!(!plays_with("0.1.0 sim 1 (abc123)", "0.1.1 sim 1 (abc123)"));
     }
 
     #[test]

@@ -617,6 +617,14 @@ fn joiners_are_refused_when_full_or_on_different_data() {
     });
     let err = join(&mut odd, "Odd", &mut host).unwrap_err();
     assert!(err.to_string().contains("game data differs"), "{err}");
+    // Builds that differ only in commit play by the same rules, so their
+    // data must match too.
+    let mut retuned = Lan::new(Identity {
+        data_hash: 1,
+        ..id("test (other commit)")
+    });
+    let err = join(&mut retuned, "Retuned", &mut host).unwrap_err();
+    assert!(err.to_string().contains("game data differs"), "{err}");
 
     // A different build is let in, and the lobby says who differs.
     let mut old = Lan::new(id("0.0.9"));

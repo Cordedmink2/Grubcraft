@@ -10,6 +10,7 @@ use gc_sim::{PlayerCommand, PlayerId};
 use gc_ui::lobby::{
     DEFAULT_AI_LEVEL, DiscoveredGame, LobbySettings, LobbyState, MAPS, MAX_ARMY, MAX_PLAYERS,
     MatchStart, NetError, NetEvent, Network, OnDrop, Profile, Slot, SlotEdit, SlotKind, apply_edit,
+    plays_with,
 };
 
 use crate::crypt::{Cipher, KeyPair};
@@ -854,7 +855,7 @@ impl Lan {
                 if h.peers[index].slot.is_some() {
                     return;
                 }
-                if h.game.is_some() && theirs == version && their_data == data_hash {
+                if h.game.is_some() && plays_with(&theirs, &version) && their_data == data_hash {
                     let name = short_name(name.trim());
                     if self.rejoin(index, &name, now) {
                         return;
@@ -865,7 +866,10 @@ impl Lan {
                 };
                 let refuse = if h.game.is_some() {
                     Some("That game has already started.".to_string())
-                } else if their_data != data_hash && theirs == version {
+                } else if their_data != data_hash && plays_with(&theirs, &version) {
+                    // Different rules are let in and held at the lobby's
+                    // version line; the same rules with different data would
+                    // start and desync at once.
                     Some("Your game data differs from the host's. Use the same build.".into())
                 } else {
                     None
