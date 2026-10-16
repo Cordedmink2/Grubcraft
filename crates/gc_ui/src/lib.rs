@@ -19,6 +19,7 @@ pub mod lobby;
 pub mod menu;
 pub mod settings;
 pub mod ui;
+pub mod viewer;
 
 pub use draw::{Color, DrawList, Quad, Rect};
 pub use lobby::{LocalNetwork, MatchStart, Network};

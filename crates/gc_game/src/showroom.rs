@@ -28,7 +28,7 @@ const FURTHEST: f32 = 150.0;
 const CLIP_SECONDS: f32 = 4.0;
 /// The way the models face: towards the camera, which sits south of the
 /// focus when the view is not turned.
-const FACING: Vec2 = Vec2::Y;
+pub(crate) const FACING: Vec2 = Vec2::Y;
 
 const _: () = assert!(FURTHEST < crate::COMMANDER_OUT);
 const _: () = assert!(NEAREST < MIN_DISTANCE);
@@ -77,7 +77,12 @@ fn at(hold: Option<Clip>, time: f32) -> (Clip, f32) {
 
 /// The pose of `model` `time` seconds into the show, and whether to lay it
 /// flat (a fall on a model with no death clip).
-fn pose(clips: &Clips, model: usize, hold: Option<Clip>, time: f32) -> Option<(Pose, bool)> {
+pub(crate) fn pose(
+    clips: &Clips,
+    model: usize,
+    hold: Option<Clip>,
+    time: f32,
+) -> Option<(Pose, bool)> {
     match at(hold, time) {
         (Clip::Die, t) => clips.death(model, t),
         (Clip::Play(action), t) => clips.pose(model, action, t).map(|p| (p, false)),
@@ -230,22 +235,35 @@ impl Showroom {
         color: [u8; 3],
     ) {
         for (&model, &pos) in self.models.iter().zip(&self.layout.positions) {
-            let Some((pose, flat)) = pose(&art.clips, model, self.hold, time) else {
-                continue;
-            };
-            let at = Vec3::new(pos.x, ground(pos), pos.y);
-            let lod = art.view.lod(art.heights[model], at);
-            art.buckets[model * gc_assets::model::LODS + lod].push(gc_render::SoldierInstance {
-                pos: pos.to_array(),
-                facing: FACING.to_array(),
-                frames: pose.rows,
-                flags: pose_flags(pose, 0, flat),
-                color: [color[0], color[1], color[2], 255],
-                lift: 0.0,
-                scale: 1.0,
-            });
+            if let Some((pose, flat)) = pose(&art.clips, model, self.hold, time) {
+                stand(art, model, pos, ground(pos), 0.0, (pose, flat), color);
+            }
         }
     }
+}
+
+/// Stand `model` at `pos` on ground `ground` high, raised by `lift`, facing
+/// the camera in the `pose` (which may lie flat), in this frame's drawing.
+pub(crate) fn stand(
+    art: &mut crate::Art,
+    model: usize,
+    pos: Vec2,
+    ground: f32,
+    lift: f32,
+    (pose, flat): (Pose, bool),
+    color: [u8; 3],
+) {
+    let at = Vec3::new(pos.x, ground + lift, pos.y);
+    let lod = art.view.lod(art.heights[model], at);
+    art.buckets[model * gc_assets::model::LODS + lod].push(gc_render::SoldierInstance {
+        pos: pos.to_array(),
+        facing: FACING.to_array(),
+        frames: pose.rows,
+        flags: pose_flags(pose, 0, flat),
+        color: [color[0], color[1], color[2], 255],
+        lift,
+        scale: 1.0,
+    });
 }
 
 #[cfg(test)]
