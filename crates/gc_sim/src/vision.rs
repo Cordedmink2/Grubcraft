@@ -191,7 +191,7 @@ impl Vision {
 
         // Ambushes, judged on what each side saw before this tick: volleys
         // loosed from hiding, then charges out of it.
-        for &(shooter, target) in combat.loosed() {
+        for &(_, shooter, target) in combat.loosed() {
             let Some(i) = regs.resolve(shooter) else {
                 continue;
             };

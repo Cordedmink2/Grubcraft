@@ -860,6 +860,7 @@ name = "gc_replay"
 version = "0.1.0"
 dependencies = [
  "gc_fixed",
+ "gc_platform",
  "gc_sim",
  "lz4_flex",
 ]

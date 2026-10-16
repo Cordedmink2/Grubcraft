@@ -1,8 +1,9 @@
 //! The battle HUD's glue: describe the match to `gc_ui::hud`, and carry out
 //! what it reports. Docs: docs/08-ui-ux.md#screen-layout-1080p-reference.
 
+use gc_sim::events::Event;
 use gc_sim::formation::GroupOrder;
-use gc_sim::{MoraleState, PlayerId, RegimentHandle};
+use gc_sim::{MoraleState, PlayerId};
 use gc_ui::DrawList;
 use gc_ui::alerts::{Alert, AlertData, AlertKind};
 use gc_ui::hero::{HeroAbility, HeroPanel};
@@ -68,14 +69,6 @@ struct Note {
     last: u32,
 }
 
-/// What a regiment of yours looked like last frame.
-#[derive(Clone, Copy, Debug)]
-struct Seen {
-    handle: RegimentHandle,
-    models: u16,
-    routing: bool,
-}
-
 /// Everything the HUD keeps between frames.
 #[derive(Default)]
 pub struct HudState {
@@ -100,11 +93,9 @@ pub struct HudState {
     events: Vec<HudEvent>,
     notes: Vec<Note>,
     next_note: u32,
-    /// By regiment index; your side's regiments as of the last frame.
-    seen: Vec<Option<Seen>>,
-    /// Whose regiments `seen` and `notes` are about.
+    /// Whose regiments `notes` are about.
     watched_side: Option<PlayerId>,
-    /// The tick the regiments were last compared at.
+    /// The tick the events were last read at.
     watched_tick: u32,
     alerts: Vec<Alert>,
     /// Dev preview of the hero panel (Shift+H); there are no heroes yet.
@@ -202,39 +193,34 @@ impl HudState {
         });
     }
 
-    /// Notice your regiments losing men or breaking since the last frame.
-    /// Called once a sim tick.
-    pub fn watch(&mut self, world: &gc_sim::World, side: PlayerId) {
+    /// Notice your regiments losing men or breaking, from what the
+    /// simulation told of the last tick (`events`). Called once a sim tick.
+    pub fn watch(&mut self, world: &gc_sim::World, side: PlayerId, events: &[Event]) {
         let tick = world.tick_count();
         // A new side, or a new world (its clock starts over): forget the old.
         if self.watched_side != Some(side) || tick < self.watched_tick {
             self.watched_side = Some(side);
             self.notes.clear();
-            self.seen.clear();
         }
         self.watched_tick = tick;
         self.notes
             .retain(|n| tick.saturating_sub(n.last) <= NOTE_LIFE);
-        for r in world.regiments.iter().filter(|r| r.owner == side) {
-            let routing = r.morale.broken();
-            let i = r.handle.index as usize;
-            if self.seen.len() <= i {
-                self.seen.resize(i + 1, None);
-            }
-            if let Some(was) = self.seen[i].filter(|w| w.handle == r.handle) {
-                // A regiment already running has its own alert.
-                if r.models < was.models && !routing {
-                    self.note(AlertKind::Attack, from_fx_vec(r.position), tick);
+        for e in events {
+            let (regiment, kind) = match *e {
+                Event::Losses { regiment, .. } => (regiment, AlertKind::Attack),
+                Event::Morale { regiment, from, to } if to.broken() && !from.broken() => {
+                    (regiment, AlertKind::Rout)
                 }
-                if routing && !was.routing {
-                    self.note(AlertKind::Rout, from_fx_vec(r.position), tick);
-                }
+                _ => continue,
+            };
+            let Some(r) = world.regiments.get(regiment).filter(|r| r.owner == side) else {
+                continue;
+            };
+            // A regiment already running has its own alert.
+            if kind == AlertKind::Attack && r.morale.broken() {
+                continue;
             }
-            self.seen[i] = Some(Seen {
-                handle: r.handle,
-                models: r.models,
-                routing,
-            });
+            self.note(kind, from_fx_vec(r.position), tick);
         }
     }
 

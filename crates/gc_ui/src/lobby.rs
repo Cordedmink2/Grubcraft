@@ -9,15 +9,21 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-pub const MAX_PLAYERS: usize = 4;
+pub const MAX_PLAYERS: usize = 6;
 
 /// Player colours, matching the team colours in the game.
-pub const PLAYER_COLORS: [(&str, [u8; 3]); 4] = [
+/// One for each lobby slot.
+pub const PLAYER_COLORS: [(&str, [u8; 3]); MAX_PLAYERS] = [
     ("Red", [178, 38, 30]),
     ("Violet", [104, 52, 140]),
     ("Cyan", [52, 160, 186]),
     ("Bone", [214, 204, 170]),
+    ("Amber", [226, 152, 38]),
+    ("Jade", [56, 150, 96]),
 ];
+
+/// How many colours there are; colour indices wrap round [`PLAYER_COLORS`].
+pub const COLORS: u8 = PLAYER_COLORS.len() as u8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Faction {
@@ -241,8 +247,8 @@ impl Slot {
         Slot {
             kind: SlotKind::Open,
             name: String::new(),
-            faction: Faction::ALL[index % 4],
-            color: index as u8 % 4,
+            faction: Faction::ALL[index % Faction::ALL.len()],
+            color: index as u8 % COLORS,
             team: index as u8,
             ready: false,
             version: String::new(),
@@ -478,7 +484,7 @@ pub fn apply_edit(lobby: &mut LobbyState, editor: usize, host: bool, slot: usize
             lobby.slots[slot].army = army;
         }
         SlotEdit::Color(c) => {
-            let c = c % 4;
+            let c = c % COLORS;
             // Colours are unique: swapping with whoever has it.
             if let Some(other) = (0..MAX_PLAYERS)
                 .find(|&i| i != slot && lobby.slots[i].occupied() && lobby.slots[i].color == c)
@@ -514,7 +520,7 @@ pub fn apply_edit(lobby: &mut LobbyState, editor: usize, host: bool, slot: usize
         .collect();
     if lobby.slots[slot].occupied()
         && taken.contains(&lobby.slots[slot].color)
-        && let Some(free) = (0..4u8).find(|c| !taken.contains(c))
+        && let Some(free) = (0..COLORS).find(|c| !taken.contains(c))
     {
         lobby.slots[slot].color = free;
     }
@@ -542,12 +548,12 @@ impl Network for LocalNetwork {
         settings: LobbySettings,
         _password: &str,
     ) -> Result<(), NetError> {
-        let mut slots = [Slot::open(0), Slot::open(1), Slot::open(2), Slot::open(3)];
+        let mut slots = std::array::from_fn(Slot::open);
         slots[0] = Slot {
             kind: SlotKind::Human,
             name: me.name.clone(),
             faction: me.faction,
-            color: me.color % 4,
+            color: me.color % COLORS,
             team: 0,
             ready: true,
             version: me.version.clone(),

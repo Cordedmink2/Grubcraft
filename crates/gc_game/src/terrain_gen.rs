@@ -17,11 +17,18 @@
 
 use gc_fixed::{Angle, isqrt_u64};
 
-/// Centres of the four start plateaus in whole tiles, for map making
-/// (`terrain_view::start_positions` is the float version for drawing).
-pub(crate) fn start_tiles(tiles: u32) -> [(i64, i64); 4] {
-    let (q1, q3) = (i64::from(tiles) / 4, i64::from(tiles) * 3 / 4);
-    [(q1, q1), (q3, q1), (q1, q3), (q3, q3)]
+/// How many start plateaus a map has: one for each lobby slot.
+pub const START_PLATEAUS: usize = 6;
+
+/// Centres of the six start plateaus in whole tiles, for map making
+/// (`terrain_view::start_positions` is the float version for drawing):
+/// north-west, north-east, south-west, south-east, then north and south in
+/// the middle of their edges. The first four keep their places; the last
+/// two were added for six-player battles.
+pub(crate) fn start_tiles(tiles: u32) -> [(i64, i64); START_PLATEAUS] {
+    let n = i64::from(tiles);
+    let (q1, q2, q3) = (n / 4, n / 2, n * 3 / 4);
+    [(q1, q1), (q3, q1), (q1, q3), (q3, q3), (q2, q1), (q2, q3)]
 }
 
 pub struct Heightmap {
@@ -81,7 +88,7 @@ impl Heightmap {
                     h -= (ONE - smoothstep(0, ONE, dc)) / 10;
                 }
 
-                // Flat, buildable plateaus at the four start positions.
+                // Flat, buildable plateaus at the six start positions.
                 for (x, z) in starts {
                     let d2 = dist2(sx - x, sz - z);
                     if d2 < plateau_reach2 {
@@ -366,10 +373,28 @@ mod tests {
         let hm = Heightmap::generate(1, 64);
         assert_eq!(hm.size, 257);
         assert_eq!(hm.heights.len(), 257 * 257);
-        // Start plateaus are flat.
-        let a = hm.height_at(16.0, 16.0);
-        let b = hm.height_at(18.0, 17.0);
-        assert!((a - b).abs() < 0.05, "{a} vs {b}");
+        // Start plateaus are flat, all six of them.
+        for (x, y) in start_tiles(64) {
+            let (x, y) = (x as f32, y as f32);
+            let a = hm.height_at(x, y);
+            let b = hm.height_at(x + 2.0, y + 1.0);
+            assert!((a - b).abs() < 0.05, "{x},{y}: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn the_first_four_plateaus_keep_their_places() {
+        assert_eq!(
+            start_tiles(256),
+            [
+                (64, 64),
+                (192, 64),
+                (64, 192),
+                (192, 192),
+                (128, 64),
+                (128, 192)
+            ]
+        );
     }
 
     #[test]
@@ -399,8 +424,8 @@ mod tests {
             assert!((4.0..18.0).contains(&wood), "seed {seed}: {wood}% wood");
             assert!((3.0..14.0).contains(&grass), "seed {seed}: {grass}% grass");
             // The start plateaus are open.
-            for (x, y) in [(64, 64), (192, 64), (64, 192), (192, 192)] {
-                assert_eq!(cover[y * 256 + x], gc_sim::Cover::Open as u8);
+            for (x, y) in start_tiles(256) {
+                assert_eq!(cover[(y * 256 + x) as usize], gc_sim::Cover::Open as u8);
             }
         }
     }
@@ -423,16 +448,16 @@ mod tests {
         };
         assert_eq!(
             fingerprint(1, 256),
-            (0xfa16_1374_5be8_6d96, 0x10dc_5a39_1b6e_0613)
+            (0x7dca_be37_90bd_1f7b, 0x74c0_f127_3369_0296)
         );
         assert_eq!(
             fingerprint(42, 256),
-            (0xed6f_3282_3a3d_1a97, 0xebdd_c7ee_8ab8_9d84)
+            (0x8f2d_3f4f_0515_4bee, 0x2f45_a429_cb5c_bc85)
         );
         // The size the field-8000pt-2v2 golden replay plays on.
         assert_eq!(
             fingerprint(1, 384),
-            (0x4647_1d38_f01b_6aa0, 0x9aa2_1cd9_d4b3_0bc7)
+            (0x276a_c467_503d_c5b9, 0x705a_6793_4b4a_d292)
         );
     }
 
@@ -447,7 +472,9 @@ mod tests {
         // Most of the map is walkable, the edges are not.
         assert!(open > 50, "{open}% open");
         assert_eq!(nav[0], 0);
-        // Start plateaus are open ground.
-        assert_eq!(nav[(128 * 512 + 128) as usize], OPEN);
+        // Start plateaus are open ground (two nav cells to a tile).
+        for (x, y) in start_tiles(256) {
+            assert_eq!(nav[(y * 2 * 512 + x * 2) as usize], OPEN, "{x},{y}");
+        }
     }
 }

@@ -5,12 +5,16 @@ use std::path::PathBuf;
 
 use crate::draw::{Rect, fit};
 use crate::lobby::{
-    AI_LEVELS, Budget, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MAX_ARMY, MatchStart,
-    NetEvent, Network, OnDrop, PLAYER_COLORS, Profile, RosterUnit, SlotEdit, SlotKind, Tempo,
-    army_points, thousands,
+    AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MAX_ARMY,
+    MAX_PLAYERS, MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile, RosterUnit,
+    SlotEdit, SlotKind, Tempo, army_points, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
+
+/// One team for each lobby slot.
+const TEAM_NAMES: [&str; MAX_PLAYERS] =
+    ["Team 1", "Team 2", "Team 3", "Team 4", "Team 5", "Team 6"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
@@ -520,7 +524,12 @@ impl<N: Network> Menu<N> {
         };
         let k = (ui.screen.1 as f32 / 720.0).clamp(0.72, 1.0);
         let sp = |n: i32| (n as f32 * k).round() as i32;
-        let panel = centered(ui.screen, 880, sp(560));
+        // Header and settings, one row per lobby slot, then the footer (three
+        // lines of text and the buttons, which keep a fixed pixel size).
+        let row_h = sp(56);
+        let row_gap = sp(6);
+        let rows_h = MAX_PLAYERS as i32 * (row_h + row_gap);
+        let panel = centered(ui.screen, 880, sp(64 + 36 + 20 + 4) + rows_h + 124);
         ui.panel(panel);
         ui.label(panel.x + 24, panel.y + 16, 2, theme::TEXT, "Lobby");
         let host_name = lobby
@@ -629,12 +638,11 @@ impl<N: Network> Menu<N> {
         }
 
         // Player rows.
-        let row_h = sp(56);
         let rows_top = y + sp(36) + sp(20);
         for (i, slot) in lobby.slots.iter().enumerate() {
             let row = Rect::new(
                 panel.x + 24,
-                rows_top + i as i32 * (row_h + sp(8)),
+                rows_top + i as i32 * (row_h + row_gap),
                 panel.w - 48,
                 row_h,
             );
@@ -642,7 +650,7 @@ impl<N: Network> Menu<N> {
             let is_me = i == lobby.local_slot;
             let swatch_sz = row_h - 16;
             let swatch = Rect::new(row.x + 8, row.y + 8, swatch_sz, swatch_sz);
-            let [r, g, b] = PLAYER_COLORS[slot.color as usize % 4].1;
+            let [r, g, b] = PLAYER_COLORS[usize::from(slot.color % COLORS)].1;
             let editable =
                 slot.occupied() && (is_me || (lobby.is_host && slot.kind == SlotKind::Ai));
             if !slot.occupied() {
@@ -689,14 +697,14 @@ impl<N: Network> Menu<N> {
                 if ui.stepper(faction_r, "", &mut fi, &names) {
                     self.net.edit_slot(i, SlotEdit::Faction(Faction::ALL[fi]));
                 }
-                let team_names = ["Team 1", "Team 2", "Team 3", "Team 4"];
                 let mut ti = slot.team as usize;
-                if ui.stepper(team_r, "", &mut ti, &team_names) {
+                if ui.stepper(team_r, "", &mut ti, &TEAM_NAMES) {
                     self.net.edit_slot(i, SlotEdit::Team(ti as u8));
                 }
             } else {
                 ui.label_centered(faction_r, 1, theme::TEXT, slot.faction.name());
-                ui.label_centered(team_r, 1, theme::TEXT, &format!("Team {}", slot.team + 1));
+                let team = TEAM_NAMES[usize::from(slot.team) % MAX_PLAYERS];
+                ui.label_centered(team_r, 1, theme::TEXT, team);
             }
             match slot.kind {
                 SlotKind::Ai if lobby.is_host => {
@@ -762,7 +770,7 @@ impl<N: Network> Menu<N> {
                 format!("   Army: {}.", army_summary(me.army.len(), spent, budget))
             };
         }
-        let footer_y = rows_top + 4 * (row_h + sp(8)) + sp(4);
+        let footer_y = rows_top + rows_h + sp(4);
         ui.label(panel.x + 24, footer_y, 1, hint_color, &hint);
         let blocker = lobby.start_blocker();
         let mismatch = !lobby.version_mismatches().is_empty();
@@ -1555,6 +1563,36 @@ mod tests {
         }
         // 8,000 buys five at 1,500; the sixth doesn't fit.
         assert!(h.has("5 regiments, 7,500 of 8,000 points"));
+    }
+
+    #[test]
+    fn a_six_player_lobby_fits_all_rows_above_the_footer() {
+        for screen in [(1280, 720), (1280, 760), (960, 540)] {
+            let mut h = Harness::new();
+            h.click("Play");
+            h.click_last("Host");
+            for _ in 0..MAX_PLAYERS - 1 {
+                h.click("Add AI");
+            }
+            assert!(
+                h.menu
+                    .net
+                    .lobby()
+                    .unwrap()
+                    .slots
+                    .iter()
+                    .all(crate::lobby::Slot::occupied)
+            );
+            h.ui.begin_frame(UiInput::default(), screen);
+            h.menu.frame(&mut h.ui);
+            h.ui.end_frame();
+            assert!(h.has("AI 6"));
+            let (_, last_row) = h.text_pos("AI 6");
+            let (_, leave) = h.text_pos("Leave");
+            let (_, hint) = h.text_pos("Everyone is ready.");
+            assert!(last_row < hint && hint < leave, "{screen:?}");
+            assert!(leave + 22 <= screen.1, "{screen:?}");
+        }
     }
 
     #[test]

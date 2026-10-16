@@ -15,7 +15,7 @@ use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 7;
+pub const PROTOCOL: u8 = 8;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -422,12 +422,11 @@ impl Msg {
             },
             2 => Msg::Refuse { reason: r.str()? },
             3 => Msg::Lobby(Box::new(LobbyWire {
-                slots: [
-                    read_slot(&mut r)?,
-                    read_slot(&mut r)?,
-                    read_slot(&mut r)?,
-                    read_slot(&mut r)?,
-                ],
+                slots: (0..MAX_PLAYERS)
+                    .map(|_| read_slot(&mut r))
+                    .collect::<Option<Vec<_>>>()?
+                    .try_into()
+                    .ok()?,
                 settings: read_settings(&mut r)?,
                 host_version: r.str()?,
             })),
@@ -540,7 +539,7 @@ mod tests {
 
     #[test]
     fn every_message_round_trips() {
-        let mut slots = [Slot::open(0), Slot::open(1), Slot::open(2), Slot::open(3)];
+        let mut slots: [Slot; MAX_PLAYERS] = std::array::from_fn(Slot::open);
         slots[0] = Slot {
             kind: SlotKind::Human,
             name: "Mario".into(),
@@ -549,9 +548,12 @@ mod tests {
             ..Slot::open(0)
         };
         slots[2].kind = SlotKind::Ai;
-        // The biggest armies, every slot full: still one message.
+        // The biggest armies, the longest names and builds, all six slots
+        // full: still one message.
         for (i, s) in slots.iter_mut().enumerate() {
             s.army = (0..MAX_ARMY as u16).map(|u| u * 300 + i as u16).collect();
+            s.name = "é".repeat(MAX_NAME / 2);
+            s.version = "v".repeat(MAX_NAME);
         }
         let grand = LobbySettings {
             budget: Budget::GrandBattle,

@@ -111,7 +111,7 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
 /// Regiments face north (up the map) when spawned by the drill.
 pub const NORTH: Angle = Angle(0xC000);
 
-/// Four players each spawn a block of regiments, then keep ordering them about
+/// Each player (four by default) spawns a block of regiments, then keep ordering them about
 /// the map: a plain move, a move with a new facing and frontage, and a group
 /// move of three regiments. Player `p` fields unit type `p % units` from the
 /// world's unit table.
@@ -163,12 +163,15 @@ impl Drill {
             let quarter = self.map_tiles / 4;
             let unit_types = world.units().len().max(1);
             for player in 0..self.players {
-                let cx = if player & 1 == 0 {
+                // Players past four take the middles of the north and south.
+                let cx = if player >= 4 {
+                    self.map_tiles / 2
+                } else if player & 1 == 0 {
                     quarter
                 } else {
                     self.map_tiles - quarter
                 };
-                let cy = if player & 2 == 0 {
+                let cy = if (player >= 4 && player & 1 == 0) || (player < 4 && player & 2 == 0) {
                     quarter
                 } else {
                     self.map_tiles - quarter

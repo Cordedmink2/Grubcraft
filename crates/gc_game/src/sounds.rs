@@ -1,10 +1,9 @@
 //! Turns what happens in the match into sound.
 //!
 //! The simulation knows nothing about audio. After each tick this module
-//! reads the same public views the renderer reads (regiments and volleys in
-//! flight), compares them with the previous tick, and plays a sound for each
-//! change: volleys leaving and landing, blows in melee, a regiment wavering,
-//! breaking, shattering or rallying. Sounds are placed relative to the
+//! reads what the simulation says the tick did (`World::events`) and plays a
+//! sound for each: volleys leaving and landing, blows in melee, a regiment
+//! wavering, breaking, shattering or rallying. Sounds are placed relative to the
 //! camera's ground point: quieter with distance (less so when zoomed out)
 //! and panned left or right.
 
@@ -12,6 +11,7 @@ use crate::camera::RtsCamera;
 use crate::from_fx_vec;
 use gc_audio::{Audio, Bank, SoundId};
 use gc_platform::logln;
+use gc_sim::events::{Event, VolleyId};
 use gc_sim::{MoraleState, RegimentHandle, World};
 use glam::Vec2;
 use std::time::{Duration, Instant};
@@ -23,9 +23,6 @@ static BANK: &[u8] = include_bytes!("../../../assets/audio/sounds.gcsnd");
 /// camera distance, in tiles.
 const HEAR_BASE: f32 = 50.0;
 const HEAR_PER_ZOOM: f32 = 0.8;
-/// How near a visible regiment must stand to a volley's launch point for its
-/// twang to be heard: archers loose from the middle of their ranks.
-const SHOOTER_NEAR: f32 = 6.0;
 /// Engaged regiments near the camera that bring the battle music to full.
 const FULL_BATTLE: f32 = 4.0;
 /// Ticks between blows heard from one regiment.
@@ -57,26 +54,18 @@ pub enum UiSound {
 #[derive(Clone, Copy)]
 struct Seen {
     handle: RegimentHandle,
-    morale: MoraleState,
-    models: u16,
-    engaged: bool,
     /// Tick before which no further blow is played for it.
     quiet_until: u32,
 }
 
-/// A volley in the air, remembered so its landing can be heard.
-#[derive(Clone, Copy)]
-struct Flight {
-    key: (u32, u32, i32, i32),
-    aim: Vec2,
-    shots: u16,
-    in_view: bool,
-}
+/// How many arrows a volley in the air carries (`Landed` doesn't say), so
+/// the loudness of its landing can follow.
+type Shots = (VolleyId, u16);
 
 pub struct Sounds {
     audio: Audio,
     seen: Vec<Option<Seen>>,
-    flights: Vec<Flight>,
+    flights: Vec<Shots>,
     focus: Vec2,
     right: Vec2,
     hearing: f32,
@@ -94,7 +83,7 @@ pub struct Sounds {
     reopen: Option<(Instant, Duration)>,
 }
 
-fn forget_match(seen: &mut [Option<Seen>], flights: &mut Vec<Flight>) {
+fn forget_match(seen: &mut [Option<Seen>], flights: &mut Vec<Shots>) {
     seen.fill(None);
     flights.clear();
 }
@@ -225,41 +214,22 @@ impl Sounds {
         self.hearing = HEAR_BASE + camera.distance * HEAR_PER_ZOOM;
         let tick = world.tick_count();
 
-        self.hushed = !heard;
-        self.volleys(world, &shown);
+        self.volleys(world, heard, &shown);
+        self.regiments_told(world, heard, &shown);
 
         let mut fighting = 0.0f32;
         for r in world.regiments.iter() {
             let i = r.handle.index as usize;
             let at = from_fx_vec(r.position);
             self.hushed = !heard || !shown(r.handle);
-            let prev = self.seen[i].filter(|s| s.handle == r.handle);
-            let mut quiet_until = prev.map_or(0, |s| s.quiet_until);
-            if let Some(p) = prev {
-                if p.morale != r.morale {
-                    self.morale_change(p.morale, r.morale, at);
-                }
-                if r.engaged && !p.engaged {
-                    self.play_at(SoundId::Charge, at, 1.0, 1.4, PRI_CHARGE);
-                }
-                if r.engaged && tick >= quiet_until {
-                    if r.models < p.models {
-                        let losses = f32::from(p.models - r.models);
-                        let gain = 0.55 + 0.15 * losses.min(3.0);
-                        self.play_at(SoundId::Clash, at, gain, 1.0, PRI_BLOWS);
-                        quiet_until = tick + BLOW_COOLDOWN;
-                    } else if (tick + i as u32 * 7).is_multiple_of(AMBIENT_EVERY) {
-                        self.play_at(SoundId::Clash, at, 0.4, 1.0, PRI_BLOWS);
-                    }
-                }
+            let quiet_until = self.seen_mut(r.handle).quiet_until;
+            // Even a regiment losing nobody is heard now and then.
+            if r.engaged
+                && tick >= quiet_until
+                && (tick + i as u32 * 7).is_multiple_of(AMBIENT_EVERY)
+            {
+                self.play_at(SoundId::Clash, at, 0.4, 1.0, PRI_BLOWS);
             }
-            self.seen[i] = Some(Seen {
-                handle: r.handle,
-                morale: r.morale,
-                models: r.models,
-                engaged: r.engaged,
-                quiet_until,
-            });
             if self.hushed {
                 continue;
             }
@@ -277,47 +247,110 @@ impl Sounds {
         }
     }
 
-    /// Volleys launched this tick sound a twang; volleys that were in flight
-    /// last tick and are gone now have landed.
-    /// A twang is heard only from a launch with a regiment the player can see
-    /// standing near it (the volley doesn't say who shot it).
-    fn volleys(&mut self, world: &World, shown: &impl Fn(RegimentHandle) -> bool) {
-        for f in &mut self.flights {
-            f.in_view = false;
-        }
-        let mut launches = Vec::new();
-        for v in world.volleys() {
-            let key = (v.launch_tick, v.impact_tick, v.from.x.raw(), v.from.y.raw());
-            match self.flights.iter_mut().find(|f| f.key == key) {
-                Some(f) => f.in_view = true,
-                None => launches.push((from_fx_vec(v.from), key, from_fx_vec(v.aim), v.shots)),
-            }
-        }
-        let landed: Vec<Flight> = self
-            .flights
-            .iter()
-            .filter(|f| !f.in_view)
-            .copied()
-            .collect();
-        self.flights.retain(|f| f.in_view);
-        for (from, key, aim, shots) in launches {
-            let hidden = !world.regiments.iter().any(|r| {
-                shown(r.handle) && (from_fx_vec(r.position) - from).length() < SHOOTER_NEAR
-            });
-            if !hidden {
-                self.play_at(SoundId::ArrowRelease, from, 0.8, 1.0, PRI_ARROWS);
-            }
-            self.flights.push(Flight {
-                key,
-                aim,
-                shots,
-                in_view: true,
+    /// The slot noting `handle`'s cool-down: a new one when a regiment has
+    /// taken the slot of another.
+    fn seen_mut(&mut self, handle: RegimentHandle) -> &mut Seen {
+        let slot = &mut self.seen[handle.index as usize];
+        if slot.is_none_or(|s| s.handle != handle) {
+            *slot = Some(Seen {
+                handle,
+                quiet_until: 0,
             });
         }
-        for f in landed {
-            let gain = 0.5 + 0.5 * (f32::from(f.shots) / 16.0).min(1.0);
-            self.play_at(SoundId::ArrowImpact, f.aim, gain, 1.0, PRI_ARROWS);
+        slot.as_mut().expect("just filled")
+    }
+
+    /// What the tick did to regiments: first contact charges, wavering,
+    /// routing and rallying horns, and blows (heard at most once in
+    /// [`BLOW_COOLDOWN`] ticks from a regiment). A regiment that is gone (it
+    /// was wiped out) makes no sound.
+    fn regiments_told(
+        &mut self,
+        world: &World,
+        heard: bool,
+        shown: &impl Fn(RegimentHandle) -> bool,
+    ) {
+        let tick = world.tick_count();
+        for e in world.events() {
+            match *e {
+                Event::Contact { regiment, .. } => {
+                    if let Some(r) = world.regiments.get(regiment) {
+                        self.hushed = !heard || !shown(regiment);
+                        self.play_at(
+                            SoundId::Charge,
+                            from_fx_vec(r.position),
+                            1.0,
+                            1.4,
+                            PRI_CHARGE,
+                        );
+                    }
+                }
+                Event::Morale { regiment, from, to } => {
+                    if let Some(r) = world.regiments.get(regiment) {
+                        self.hushed = !heard || !shown(regiment);
+                        self.morale_change(from, to, from_fx_vec(r.position));
+                    }
+                }
+                Event::Losses { regiment, lost } => {
+                    let Some(r) = world.regiments.get(regiment).filter(|r| r.engaged) else {
+                        continue;
+                    };
+                    let seen = self.seen_mut(regiment);
+                    if tick < seen.quiet_until {
+                        continue;
+                    }
+                    seen.quiet_until = tick + BLOW_COOLDOWN;
+                    self.hushed = !heard || !shown(regiment);
+                    let gain = 0.55 + 0.15 * f32::from(lost).min(3.0);
+                    self.play_at(
+                        SoundId::Clash,
+                        from_fx_vec(r.position),
+                        gain,
+                        1.0,
+                        PRI_BLOWS,
+                    );
+                }
+                _ => {}
+            }
         }
+        self.hushed = false;
+    }
+
+    /// A volley loosed this tick sounds a twang, if its shooter can be seen
+    /// (archers loose from the middle of their ranks); one that came down
+    /// sounds its impact, louder for more arrows, wherever it fell.
+    fn volleys(&mut self, world: &World, heard: bool, shown: &impl Fn(RegimentHandle) -> bool) {
+        for e in world.events() {
+            match *e {
+                Event::Loosed {
+                    volley, shooter, ..
+                } => {
+                    let flying = world.volleys().find(|v| v.id == volley);
+                    self.flights.push((volley, flying.map_or(0, |v| v.shots)));
+                    self.hushed = !heard || !shown(shooter);
+                    let from = flying.map(|v| from_fx_vec(v.from)).or_else(|| {
+                        world
+                            .regiments
+                            .get(shooter)
+                            .map(|r| from_fx_vec(r.position))
+                    });
+                    if let Some(from) = from {
+                        self.play_at(SoundId::ArrowRelease, from, 0.8, 1.0, PRI_ARROWS);
+                    }
+                }
+                Event::Landed { volley, at, .. } => {
+                    let shots = match self.flights.iter().position(|f| f.0 == volley) {
+                        Some(k) => self.flights.swap_remove(k).1,
+                        None => 0,
+                    };
+                    self.hushed = !heard;
+                    let gain = 0.5 + 0.5 * (f32::from(shots) / 16.0).min(1.0);
+                    self.play_at(SoundId::ArrowImpact, from_fx_vec(at), gain, 1.0, PRI_ARROWS);
+                }
+                _ => {}
+            }
+        }
+        self.hushed = false;
     }
 
     fn morale_change(&self, from: MoraleState, to: MoraleState, at: Vec2) {
@@ -423,19 +456,17 @@ mod tests {
         let mut seen = vec![
             Some(Seen {
                 handle,
-                morale: MoraleState::Steady,
-                models: 10,
-                engaged: true,
                 quiet_until: 900,
             });
             4
         ];
-        let mut flights = vec![Flight {
-            key: (1, 2, 3, 4),
-            aim: Vec2::ZERO,
-            shots: 8,
-            in_view: true,
-        }];
+        let mut flights = vec![(
+            VolleyId {
+                slot: 1,
+                launch_tick: 2,
+            },
+            8,
+        )];
         forget_match(&mut seen, &mut flights);
         assert!(seen.iter().all(Option::is_none));
         assert_eq!(seen.len(), 4, "one slot per regiment stays");

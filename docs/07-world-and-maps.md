@@ -118,3 +118,5 @@ Path costs count ten per open tile, 14 for steep ground and 20 for fords. `gc_ma
 Launch maps treat water as terrain: shallow fords are walkable and slow, deep water is impassable except to air. Naval play (ships, coastal raids, sea seeps) comes with the naval expansion. The map format reserves a water-depth layer from day one so old maps upgrade cleanly.
 
 **Built so far (M1 step 6):** the placeholder map's walkable ground comes from its heights: ground rising more than 1.2 tiles per tile and water deeper than 0.35 tiles are blocked; slopes over half that and shallow fords are walkable but routes avoid them. Since the terrain rules landed, fords also slow the march to 60% and leave waders open to heavier blows, and high ground hits harder (see [05 · Combat](05-combat.md#terrain)); steep slopes don't slow anyone yet.
+
+**Built so far (six-player lobbies, 2026-10-16):** the generated map has six flat start plateaus: the four corners (north-west, north-east, south-west and south-east, at the quarter points) plus north-centre and south-centre, in the middle of the map's north and south quarter lines. Generated maps changed as a result.

@@ -4,11 +4,12 @@
 
 use glam::Vec2;
 
-use crate::terrain_gen::{Heightmap, MAX_HEIGHT, WATER, start_tiles};
+use crate::terrain_gen::{Heightmap, MAX_HEIGHT, START_PLATEAUS, WATER, start_tiles};
 
-/// Centres of the four start plateaus: north-west, north-east, south-west,
-/// south-east (north is towards smaller z, where the camera looks).
-pub fn start_positions(tiles: u32) -> [Vec2; 4] {
+/// Centres of the six start plateaus: north-west, north-east, south-west,
+/// south-east, north and south (north is towards smaller z, where the
+/// camera looks).
+pub fn start_positions(tiles: u32) -> [Vec2; START_PLATEAUS] {
     start_tiles(tiles).map(|(x, y)| Vec2::new(x as f32, y as f32))
 }
 
