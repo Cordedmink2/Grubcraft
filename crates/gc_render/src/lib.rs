@@ -711,6 +711,14 @@ impl Renderer {
                 models.bone_rows()
             ));
         }
+        // One batch per model and level of detail is one skinning job.
+        if models.models.len() * gc_assets::model::LODS > soldiers::MAX_JOBS {
+            return Err(format!(
+                "{} models, more than the {} the soldier skinning pass takes",
+                models.models.len(),
+                soldiers::MAX_JOBS / gc_assets::model::LODS
+            ));
+        }
         self.soldiers.models = Some(soldiers::upload(
             &self.device,
             &self.queue,

@@ -32,7 +32,7 @@ const SKIN_START: usize = 256 << 10;
 /// Threads in a workgroup of `cs_skin`.
 const SKIN_GROUP: u32 = 128;
 /// Runs of soldiers one skinning pass can be told of (`Jobs` in world.wgsl).
-const MAX_JOBS: usize = 256;
+pub(crate) const MAX_JOBS: usize = 256;
 // One dispatch must cover every vertex, whatever the GPU.
 const _: () = assert!(SKIN_VERTICES.div_ceil(SKIN_GROUP as usize) <= 65_535);
 
@@ -544,8 +544,10 @@ impl SoldiersGpu {
     /// Plan the frame's soldiers: the first `count` uploaded instances by
     /// `batches`, each at its level of detail. Gives every soldier a place
     /// for its skinned vertices and uploads where they are. A frame that
-    /// would pose more than [`SKIN_VERTICES`] draws the later batches at
-    /// coarser levels, then fewer soldiers. Returns how many were left out.
+    /// would pose more than [`SKIN_VERTICES`] first draws the finest levels
+    /// (wherever they are) at the next coarser level, and only when all are
+    /// at the coarsest cuts soldiers, from the last batch back. Returns how
+    /// many were left out.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -561,50 +563,99 @@ impl SoldiersGpu {
         };
         self.origins.clear();
         self.origins.resize(count, 0);
-        let (mut slots, mut left_out, mut top) = (0, 0, 0);
+        // The runs to draw, in the batches' order (which keeps the pipeline
+        // switches the caller chose).
+        struct Run {
+            first: u32,
+            n: usize,
+            lod: usize,
+            levels: [Level; LODS],
+            textured: bool,
+        }
+        let mut runs = Vec::with_capacity(batches.len());
         for b in batches {
             let Some(&(levels, textured)) = models.levels.get(b.model as usize) else {
                 continue;
             };
             let end = (b.first + b.count).min(count as u32);
-            if b.first >= end {
+            // A level with no vertices is nothing to pose or draw.
+            if b.first >= end || levels.iter().any(|l| l.len == 0) {
                 continue;
             }
-            let mut n = (end - b.first) as usize;
-            let mut lod = (b.lod as usize).min(LODS - 1);
-            while lod + 1 < LODS && levels[lod].len as usize * n > SKIN_VERTICES - slots {
-                lod += 1;
+            runs.push(Run {
+                first: b.first,
+                n: (end - b.first) as usize,
+                lod: (b.lod as usize).min(LODS - 1),
+                levels,
+                textured,
+            });
+        }
+        // Each instance has one origin, so runs must not share instances.
+        debug_assert!(
+            {
+                let mut spans: Vec<_> = runs.iter().map(|r| (r.first, r.n)).collect();
+                spans.sort_unstable();
+                spans
+                    .windows(2)
+                    .all(|w| w[0].0 as usize + w[0].1 <= w[1].0 as usize)
+            },
+            "soldier batches overlap"
+        );
+        let need = |r: &Run| r.levels[r.lod].len as usize * r.n;
+        let mut total: usize = runs.iter().map(need).sum();
+        for lod in 0..LODS - 1 {
+            for r in runs.iter_mut().filter(|r| r.lod == lod) {
+                if total <= SKIN_VERTICES {
+                    break;
+                }
+                total -= need(r);
+                r.lod += 1;
+                total += need(r);
             }
-            let level = levels[lod];
-            let room = if self.jobs.len() < MAX_JOBS {
-                (SKIN_VERTICES - slots) / level.len as usize
-            } else {
-                0
-            };
-            left_out += n.saturating_sub(room);
-            n = n.min(room);
-            if n == 0 {
+        }
+        let mut left_out = 0;
+        for r in runs.iter_mut().rev() {
+            if total <= SKIN_VERTICES {
+                break;
+            }
+            let len = r.levels[r.lod].len as usize;
+            let cut = (total - SKIN_VERTICES).div_ceil(len).min(r.n);
+            r.n -= cut;
+            total -= cut * len;
+            left_out += cut;
+        }
+        // A job per run, as many as the pack's models and levels can make
+        // (`set_models` checks that the shader's table holds them).
+        debug_assert!(runs.len() <= MAX_JOBS, "more soldier batches than jobs");
+        let (mut slots, mut top) = (0, 0);
+        for (k, r) in runs.iter().enumerate() {
+            if k >= MAX_JOBS {
+                left_out += r.n;
                 continue;
             }
-            // Soldier `i` of the run has its vertices from `slots + (i -
-            // first) * len`, in the order of the level's. The shaders find
-            // them by adding the vertex index, which counts from the start
-            // of the shared vertex buffer.
-            for i in 0..n {
-                self.origins[b.first as usize + i] =
+            if r.n == 0 {
+                continue;
+            }
+            let level = r.levels[r.lod];
+            // Soldier `i` of the run has its vertices from `slots + i *
+            // len`, in the order of the level's. The shaders find them by
+            // adding the vertex index, which counts from the start of the
+            // shared vertex buffer.
+            for i in 0..r.n {
+                self.origins[r.first as usize + i] =
                     (slots as u32 + i as u32 * level.len).wrapping_sub(level.first);
             }
             self.jobs
-                .push([b.first, level.first, level.len, slots as u32]);
+                .push([r.first, level.first, level.len, slots as u32]);
             self.draws.push(Draw {
-                first: b.first,
-                end: b.first + n as u32,
+                first: r.first,
+                end: r.first + r.n as u32,
                 mesh: level.mesh,
                 shadow_mesh: level.shadow_mesh,
-                textured,
+                textured: r.textured,
             });
-            slots += n * level.len as usize;
-            top = top.max(b.first as usize + n);
+            slots += r.n * level.len as usize;
+            top = top.max(r.first as usize + r.n);
         }
         self.threads = slots as u32;
         if slots > 0 {

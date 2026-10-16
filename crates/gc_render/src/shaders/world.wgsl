@@ -500,11 +500,20 @@ struct Posed {
     tangent: vec3<f32>,
 };
 
+// Where `cs_skin` kept the vertex this invocation draws.
+fn skin_slot(instance: u32, index: u32) -> u32 {
+    return skin_origin[instance] + index;
+}
+
+fn skinned_world(slot: u32) -> vec3<f32> {
+    return vec3<f32>(skin_pos[slot * 3u], skin_pos[slot * 3u + 1u], skin_pos[slot * 3u + 2u]);
+}
+
 // The vertex `cs_skin` kept for this invocation.
 fn skinned(v: SoldierIn) -> Posed {
-    let slot = skin_origin[v.instance] + v.index;
+    let slot = skin_slot(v.instance, v.index);
     var out: Posed;
-    out.world = vec3<f32>(skin_pos[slot * 3u], skin_pos[slot * 3u + 1u], skin_pos[slot * 3u + 2u]);
+    out.world = skinned_world(slot);
     out.clip = g.view_proj * vec4<f32>(out.world, 1.0);
     let a = unpack2x16snorm(skin_shade[slot * 3u]);
     let b = unpack2x16snorm(skin_shade[slot * 3u + 1u]);
@@ -536,9 +545,7 @@ fn vs_soldier_depth(
     @builtin(vertex_index) index: u32,
     @builtin(instance_index) instance: u32,
 ) -> @builtin(position) vec4<f32> {
-    let slot = skin_origin[instance] + index;
-    let world = vec3<f32>(skin_pos[slot * 3u], skin_pos[slot * 3u + 1u], skin_pos[slot * 3u + 2u]);
-    return g.view_proj * vec4<f32>(world, 1.0);
+    return g.view_proj * vec4<f32>(skinned_world(skin_slot(instance, index)), 1.0);
 }
 
 @fragment
