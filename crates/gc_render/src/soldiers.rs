@@ -31,8 +31,11 @@ pub const SKIN_VERTICES: usize = 4 << 20;
 const SKIN_START: usize = 256 << 10;
 /// Threads in a workgroup of `cs_skin`.
 const SKIN_GROUP: u32 = 128;
-/// Runs of soldiers one skinning pass can be told of (`Jobs` in world.wgsl).
-pub(crate) const MAX_JOBS: usize = 256;
+/// Runs of soldiers one skinning pass can be told of (`Jobs` in world.wgsl):
+/// one per model and level of detail, buildings included. 1023 fills the
+/// 16 KB uniform buffer every GPU must allow.
+pub(crate) const MAX_JOBS: usize = 1023;
+const _: () = assert!(16 + MAX_JOBS * 16 <= 16 << 10);
 // One dispatch must cover every vertex, whatever the GPU.
 const _: () = assert!(SKIN_VERTICES.div_ceil(SKIN_GROUP as usize) <= 65_535);
 
