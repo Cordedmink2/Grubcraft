@@ -27,6 +27,7 @@ pub mod events;
 pub mod fork;
 pub mod formation;
 mod hash;
+pub mod honor;
 pub mod larvae;
 pub mod morale;
 pub mod nav;
@@ -50,7 +51,7 @@ pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource};
 pub use fork::Standing;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
-pub use powers::{PowerEffect, PowerStats, PowerTarget};
+pub use powers::{Meter, PowerEffect, PowerStats, PowerTarget};
 pub use production::Production;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
@@ -97,7 +98,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 18;
+pub const SIM_VERSION: u32 = 19;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -1075,6 +1076,9 @@ impl World {
             conquest.update(&mut self.regiments, &self.units, &mut self.nav);
             self.raise_trained();
         }
+        // What powers left on regiments wears off in any world, a copy of
+        // one for a forecast too.
+        self.regiments.wear_powers();
         morale::update(
             &mut self.regiments,
             &self.combat,
@@ -1084,6 +1088,10 @@ impl World {
             self.tick,
             self.map_tiles,
         );
+        if let Some(c) = &mut self.conquest {
+            c.honor
+                .earn(&c.meters, &c.structures, &self.regiments, self.tick);
+        }
         if let Some(champions) = &mut self.champions {
             champions.update(
                 &mut self.regiments,
@@ -1405,8 +1413,7 @@ impl World {
         let Some(c) = &mut self.conquest else {
             return false;
         };
-        let used = c.powers.use_power(
-            &mut c.structures,
+        let used = c.use_power(
             &mut self.regiments,
             &self.nav,
             player,
@@ -1433,9 +1440,7 @@ impl World {
     /// why: the check [`Command::UsePower`] makes before its target.
     pub fn can_use_power(&self, player: PlayerId, power: u8) -> Result<(), Refusal> {
         let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
-        c.powers
-            .can_use(&c.structures, player, power, self.tick)
-            .map(|_| ())
+        c.can_use_power(player, power, self.tick).map(|_| ())
     }
 
     /// Ticks until `player` can use faction power `power` again: 0 when it
@@ -1458,12 +1463,27 @@ impl World {
         self.regiments.haste_left(h)
     }
 
+    /// Ticks left of regiment `h`'s march (see [`powers`]).
+    pub fn regiment_march(&self, h: RegimentHandle) -> u16 {
+        self.regiments.march_left(h)
+    }
+
+    /// Ticks left that regiment `h` can't rout (see [`powers`]).
+    pub fn regiment_steadfast(&self, h: RegimentHandle) -> u16 {
+        self.regiments.steadfast_left(h)
+    }
+
+    /// `player`'s faction meter in this Conquest match.
+    pub fn meter(&self, player: PlayerId) -> Meter {
+        (self.conquest.as_ref())
+            .and_then(|c| c.meters.get(usize::from(player)).copied())
+            .unwrap_or_default()
+    }
+
     /// The slot of `player`'s regiment `h`, if it is theirs and not
     /// broken: one they can set to work.
     fn worker_of(&self, player: PlayerId, h: RegimentHandle) -> Option<usize> {
-        self.regiments.resolve(h).filter(|&r| {
-            self.regiments.owner[r] == player && !self.regiments.morale_state[r].broken()
-        })
+        self.regiments.standing(h, player)
     }
 
     /// Put the regiments that finished training this tick on the field,

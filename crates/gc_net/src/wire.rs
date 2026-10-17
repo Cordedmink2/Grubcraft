@@ -378,6 +378,11 @@ pub fn write_command(w: &mut Writer, c: &Command) {
                     w.handle(regiment);
                     w.structure(to);
                 }
+                PowerTarget::Caster => w.u8(3),
+                PowerTarget::Point(at) => {
+                    w.u8(4);
+                    w.vec(at);
+                }
             }
         }
     }
@@ -478,6 +483,8 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
                     regiment: r.handle()?,
                     to: r.structure()?,
                 },
+                3 => PowerTarget::Caster,
+                4 => PowerTarget::Point(r.vec()?),
                 _ => return None,
             },
         },
@@ -688,6 +695,14 @@ mod tests {
             Command::UsePower {
                 power: 0,
                 target: PowerTarget::Regiment(h(1, 0)),
+            },
+            Command::UsePower {
+                power: 4,
+                target: PowerTarget::Caster,
+            },
+            Command::UsePower {
+                power: 6,
+                target: PowerTarget::Point(FxVec2::new(Fx::from_int(-3), Fx::from_raw(77))),
             },
         ];
         let pcs: Vec<PlayerCommand> = cmds

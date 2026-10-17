@@ -12,8 +12,9 @@ use alloc::vec::Vec;
 use gc_fixed::FxVec2;
 
 use crate::economy::{Bank, Economy, NodeSetup};
+use crate::honor::Honor;
 use crate::nav::Nav;
-use crate::powers::{PowerStats, Powers};
+use crate::powers::{Meter, PowerStats, Powers};
 use crate::production::Production;
 use crate::regiments::Regiments;
 use crate::structures::{
@@ -112,6 +113,9 @@ pub struct ConquestSetup<'a> {
     /// The faction meters' powers (see [`crate::powers`]), indexed by
     /// [`crate::Command::UsePower`]'s `power`.
     pub powers: &'a [PowerStats],
+    /// Each player's faction meter: what they earn, and the only meter
+    /// whose powers they may use.
+    pub meters: [Meter; MAX_PARTIES],
 }
 
 impl ConquestSetup<'_> {
@@ -134,6 +138,7 @@ impl Default for ConquestSetup<'_> {
             victories: Victories::default(),
             heart: None,
             powers: &[],
+            meters: [Meter::NotBuilt; MAX_PARTIES],
         }
     }
 }
@@ -147,6 +152,8 @@ pub(crate) struct Conquest {
     pub(crate) economy: Economy,
     pub(crate) production: Production,
     pub(crate) powers: Powers,
+    pub(crate) meters: [Meter; MAX_PARTIES],
+    pub(crate) honor: Honor,
 }
 
 impl Conquest {
@@ -162,6 +169,8 @@ impl Conquest {
             economy: Economy::new(setup, regiments),
             production: Production::new(setup.structures as usize, setup.build_percent),
             powers: Powers::new(setup.powers),
+            meters: setup.meters,
+            honor: Honor::default(),
         }
     }
 
@@ -191,7 +200,6 @@ impl Conquest {
         });
         // Last, so every part of the tick saw the same haste.
         self.structures.wear_haste();
-        regs.wear_haste();
     }
 
     /// Player `p`'s store and supply. Supply in use counts the regiments in
@@ -211,6 +219,7 @@ impl Conquest {
             larva_room,
             resonance: self.structures.resonance(p),
             chords: (self.structures.chord_count.get(usize::from(p))).map_or(0, |&c| u32::from(c)),
+            honor: self.honor.points(p),
         }
     }
 
@@ -509,5 +518,9 @@ impl Conquest {
         }
         self.structures.hash_into(regs, h);
         self.powers.hash_into(h);
+        for m in self.meters {
+            m.hash_into(h);
+        }
+        self.honor.hash_into(h);
     }
 }

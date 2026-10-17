@@ -26,6 +26,7 @@ const _: () = assert!(
         && record::BUILDING_LARVAE == gc_sim::structures::LARVAE
         && record::BUILDING_VEINS == gc_sim::structures::VEINS
         && record::BUILDING_NEEDS_POWER == gc_sim::structures::NEEDS_POWER
+        && record::BUILDING_HONOR == gc_sim::structures::HONOR
         && record::MAX_REACH_TILES == gc_sim::structures::MAX_REACH
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );
@@ -827,13 +828,13 @@ pub fn push_fields(
     }
 }
 
-/// The glow on whatever a power hastes: a cyan ribbon, as wide as a
-/// chord's edge, round a hasted building's footprint or a hasted regiment's
-/// block. How far outside it stands, in tiles.
+/// The glow on whatever a power works on: a ribbon, as wide as a chord's
+/// edge, round a building's footprint or a regiment's block (cyan for a
+/// haste). How far outside it stands, in tiles.
 const HASTE_COLOR: [u8; 3] = [90, 230, 255];
-const HASTE_WIDTH: f32 = 0.2;
-const HASTE_REACH: f32 = 0.6;
-const HASTE_LIFT: f32 = RING_LIFT + 0.02;
+const AURA_WIDTH: f32 = 0.2;
+const AURA_REACH: f32 = 0.6;
+const AURA_LIFT: f32 = RING_LIFT + 0.02;
 
 /// Ring each building that `shown` allows and a power has hasted (Conquest)
 /// with a cyan ribbon `glow` bright.
@@ -849,27 +850,64 @@ pub fn push_haste(
     let hasted = |s: &StructureView| world.structure_haste(s.handle) > 0 && shown(s);
     for s in structures.iter().filter(hasted) {
         let foot = [s.tile.0, s.tile.1, i32::from(s.width), i32::from(s.depth)];
-        let look = (HASTE_WIDTH, HASTE_COLOR, glow);
-        push_ring(foot.map(|v| v as f32), HASTE_REACH, look, HASTE_LIFT, out);
+        let look = (AURA_WIDTH, HASTE_COLOR, glow);
+        push_ring(foot.map(|v| v as f32), AURA_REACH, look, AURA_LIFT, out);
     }
 }
 
-/// Outline a hasted regiment's block (`width` across its `facing`, `depth`
-/// along it, round `centre`) with a cyan ribbon `glow` bright.
-pub fn push_regiment_haste(
+/// What a power has done to a regiment, drawn as a ribbon round its block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Aura {
+    /// Hasted: cyan.
+    Haste,
+    /// Forced march: amber, a little further out.
+    March,
+    /// Steadfast: pale gold, furthest out, so all three show at once.
+    Steadfast,
+}
+
+impl Aura {
+    /// Its ribbon's colour and how far outside the block it stands.
+    fn look(self) -> ([u8; 3], f32) {
+        match self {
+            Aura::Haste => (HASTE_COLOR, AURA_REACH),
+            Aura::March => (MARCH_COLOR, AURA_REACH + AURA_STEP),
+            Aura::Steadfast => (STEADFAST_COLOR, AURA_REACH + 2.0 * AURA_STEP),
+        }
+    }
+}
+
+/// The colours of the other regiment auras, and how much further out each
+/// stands than the one before.
+const MARCH_COLOR: [u8; 3] = [255, 165, 50];
+const STEADFAST_COLOR: [u8; 3] = [255, 225, 130];
+const AURA_STEP: f32 = 0.35;
+
+/// Outline a regiment's block (`width` across its `facing`, `depth` along
+/// it, round `centre`) with the ribbon of `aura`, `glow` bright.
+pub fn push_regiment_aura(
+    aura: Aura,
     centre: Vec2,
     facing: Vec2,
     (width, depth): (f32, f32),
     glow: u8,
     out: &mut Vec<BoxInstance>,
 ) {
-    let half = (width / 2.0 + HASTE_REACH, depth / 2.0 + HASTE_REACH);
+    let (colour, reach) = aura.look();
+    let half = (width / 2.0 + reach, depth / 2.0 + reach);
     let corners = block_corners(centre, facing, half);
     for (i, &from) in corners.iter().enumerate() {
         let to = corners[(i + 1) % corners.len()];
-        let width = (HASTE_WIDTH, HASTE_WIDTH);
-        push_ribbon(from, to, width, HASTE_COLOR, HASTE_LIFT, |_| glow, out);
+        let width = (AURA_WIDTH, AURA_WIDTH);
+        push_ribbon(from, to, width, colour, AURA_LIFT, |_| glow, out);
     }
+}
+
+/// The ring a Banner of the Ancestors would cover: `tiles` round `at`, in
+/// the steadfast colour, `glow` bright.
+pub fn push_aim_ring(at: Vec2, tiles: f32, glow: u8, out: &mut Vec<BoxInstance>) {
+    let look = (RING_LIT_WIDTH, STEADFAST_COLOR, glow);
+    push_ring([at.x, at.y, 0.0, 0.0], tiles, look, AURA_LIFT, out);
 }
 
 /// The corners of a regiment's block round `centre`, `half` its width
@@ -1110,6 +1148,7 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::Larva => "No larvae are ready.",
         Refusal::Unpowered => "It must stand inside a field of power.",
         Refusal::Cooling => "That power isn't ready again yet.",
+        Refusal::NoShrine => "Edicts are cast from a finished Ancestor Shrine.",
     }
 }
 
@@ -1417,7 +1456,14 @@ mod tests {
     fn a_hasted_regiment_is_outlined_round_its_block_whichever_way_it_faces() {
         let draw = |facing: Vec2| {
             let mut out = Vec::new();
-            push_regiment_haste(Vec2::new(50.0, 40.0), facing, (10.0, 4.0), 180, &mut out);
+            push_regiment_aura(
+                Aura::Haste,
+                Vec2::new(50.0, 40.0),
+                facing,
+                (10.0, 4.0),
+                180,
+                &mut out,
+            );
             out
         };
         let north = draw(Vec2::NEG_Y);
@@ -1440,7 +1486,41 @@ mod tests {
         assert!(reach(&east, 1) >= 5.0 && reach(&east, 0) < 4.0);
         // A full list draws nothing more.
         let mut full = vec![BoxInstance::default(); MAX_BOX_INSTANCES];
-        push_regiment_haste(Vec2::ZERO, Vec2::X, (4.0, 4.0), 100, &mut full);
+        push_regiment_aura(Aura::Haste, Vec2::ZERO, Vec2::X, (4.0, 4.0), 100, &mut full);
+        assert_eq!(full.len(), MAX_BOX_INSTANCES);
+    }
+
+    #[test]
+    fn each_aura_has_its_own_colour_and_stands_further_out() {
+        let outline = |aura| {
+            let mut out = Vec::new();
+            push_regiment_aura(aura, Vec2::ZERO, Vec2::NEG_Y, (6.0, 2.0), 150, &mut out);
+            out
+        };
+        let reach = |out: &[BoxInstance]| out.iter().map(|b| b.pos[0].abs()).fold(0.0f32, f32::max);
+        let (haste, march, steady) = (
+            outline(Aura::Haste),
+            outline(Aura::March),
+            outline(Aura::Steadfast),
+        );
+        assert!(reach(&haste) < reach(&march) && reach(&march) < reach(&steady));
+        let colour = |out: &[BoxInstance]| out[0].color;
+        assert_ne!(colour(&haste), colour(&march));
+        assert_ne!(colour(&march), colour(&steady));
+        assert_ne!(colour(&haste), colour(&steady));
+    }
+
+    #[test]
+    fn the_aim_ring_circles_the_point_at_the_radius() {
+        let mut out = Vec::new();
+        push_aim_ring(Vec2::new(30.0, 20.0), 12.0, 140, &mut out);
+        assert!(out.len() >= 16);
+        for b in &out {
+            let d = (Vec2::from(b.pos) - Vec2::new(30.0, 20.0)).length();
+            assert!((d - 12.0).abs() < 0.5, "{d}");
+        }
+        let mut full = vec![BoxInstance::default(); MAX_BOX_INSTANCES];
+        push_aim_ring(Vec2::ZERO, 12.0, 140, &mut full);
         assert_eq!(full.len(), MAX_BOX_INSTANCES);
     }
 }

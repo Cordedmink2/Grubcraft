@@ -176,6 +176,9 @@ pub struct Bank {
     /// chords charging it (both 0 for a player with none).
     pub resonance: u32,
     pub chords: u32,
+    /// Clans: Honor, 0 to [`crate::honor::MAX_HONOR`] (0 for a player whose
+    /// meter isn't Honor).
+    pub honor: u32,
 }
 
 impl Bank {

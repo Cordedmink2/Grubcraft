@@ -47,6 +47,9 @@ pub struct TopBar {
     /// Shown only while either is above 0.
     pub resonance: u32,
     pub chords: u32,
+    /// Clans: the Honor meter (0 to 100), shown whenever there is one: a
+    /// side whose meter is Honor shows it even at 0.
+    pub honor: Option<u32>,
     /// Match time.
     pub clock_secs: u32,
 }
@@ -146,6 +149,8 @@ impl Tuning {
 
 /// The Resonance meter's top (the simulation's `MAX_RESONANCE`).
 pub const RESONANCE_FULL: u32 = 100;
+/// The Honor meter's top (the simulation's `MAX_HONOR`).
+pub const HONOR_FULL: u32 = 100;
 
 /// A building that needs power, with none.
 const UNPOWERED: &str = "Unpowered: stopped until a field of power reaches it";
@@ -158,6 +163,16 @@ pub(crate) fn clock(secs: u32) -> String {
     } else {
         format!("{m}:{s:02}")
     }
+}
+
+/// A faction meter's item: its points out of `full`, green once full.
+fn meter_item(draw: &mut DrawList, x: i32, y: i32, label: &str, points: u32, full: u32) -> i32 {
+    let color = if points >= full {
+        theme::GOOD
+    } else {
+        theme::TEXT
+    };
+    top_item(draw, x, y, label, &format!("{points}/{full}"), color)
 }
 
 /// A label in grey and its value after it. Returns where the next item goes.
@@ -196,16 +211,13 @@ pub(crate) fn draw_top_bar(draw: &mut DrawList, bar: Rect, t: &TopBar) {
         x = top_item(draw, x, y, "Larvae", &larvae, color);
     }
     if t.resonance > 0 || t.chords > 0 {
-        let color = if t.resonance >= RESONANCE_FULL {
-            theme::GOOD
-        } else {
-            theme::TEXT
-        };
-        let meter = format!("{}/{RESONANCE_FULL}", t.resonance);
-        x = top_item(draw, x, y, "Resonance", &meter, color);
+        x = meter_item(draw, x, y, "Resonance", t.resonance, RESONANCE_FULL);
         if t.chords > 0 {
             x = top_item(draw, x, y, "Chords", &t.chords.to_string(), theme::TEXT);
         }
+    }
+    if let Some(honor) = t.honor {
+        x = meter_item(draw, x, y, "Honor", honor, HONOR_FULL);
     }
     if t.upkeep_percent < 100 {
         top_item(

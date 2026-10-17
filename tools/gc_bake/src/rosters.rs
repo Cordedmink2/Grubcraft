@@ -112,6 +112,8 @@ pub enum BuildingFlag {
     Veins,
     /// Choir: works only inside a `PowersField` building's field.
     NeedsPower,
+    /// Clans: earns its owner Honor while it stands (docs/03, "Honor").
+    Honor,
 }
 
 #[derive(Deserialize)]
@@ -190,13 +192,26 @@ pub struct Ability {
     #[serde(default)]
     pub tier: u8,
     /// Faction-meter abilities the game has built: what the simulation does.
-    /// A building or regiment works this many percent faster for the
-    /// duration.
     #[serde(default)]
-    pub haste: u8,
+    pub built: Option<Built>,
+}
+
+/// What a faction-meter ability the game has built does.
+#[derive(Deserialize, Clone, PartialEq, Eq, Debug)]
+pub enum Built {
+    /// A building or regiment works, reloads and strikes this many percent
+    /// faster for the duration.
+    Haste(u8),
     /// Regiments step to one of the caster's buildings of this name.
-    #[serde(default)]
-    pub shift_to: Option<String>,
+    Shift(String),
+    /// The caster gains this much Grub at once.
+    Grant(u16),
+    /// The chosen regiments march this many percent faster for the
+    /// duration.
+    March(u8),
+    /// The caster's regiments within the ability's radius of the chosen
+    /// point can't rout for the duration.
+    Steadfast,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]

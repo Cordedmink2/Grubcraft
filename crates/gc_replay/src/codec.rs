@@ -9,8 +9,8 @@
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::structures::{Armour, Breaker, Role, TowerAttack, VEINS};
 use gc_sim::{
-    BuildingStats, Command, ConquestUnit, Formation, Mass, NodeSetup, PlayerCommand, PowerEffect,
-    PowerStats, PowerTarget, RegimentHandle, Resource, StructureHandle, UnitStats,
+    BuildingStats, Command, ConquestUnit, Formation, Mass, Meter, NodeSetup, PlayerCommand,
+    PowerEffect, PowerStats, PowerTarget, RegimentHandle, Resource, StructureHandle, UnitStats,
 };
 
 #[derive(Default)]
@@ -128,6 +128,7 @@ impl Writer {
     pub fn power(&mut self, p: &PowerStats) {
         self.u8(p.tier);
         self.u8(p.cost);
+        self.meter(p.meter);
         self.var(u64::from(p.cooldown_ticks));
         self.var(u64::from(p.duration_ticks));
         match p.effect {
@@ -140,7 +141,24 @@ impl Writer {
                 self.u8(2);
                 self.var(u64::from(to));
             }
+            PowerEffect::Grant { grub } => {
+                self.u8(3);
+                self.var(u64::from(grub));
+            }
+            PowerEffect::March { percent } => {
+                self.u8(4);
+                self.u8(percent);
+            }
+            PowerEffect::Steadfast { tiles } => {
+                self.u8(5);
+                self.var(u64::from(tiles));
+            }
         }
+    }
+
+    /// A faction meter (format 22 on).
+    pub fn meter(&mut self, m: Meter) {
+        self.u8(m as u8);
     }
 
     pub fn conquest_unit(&mut self, u: &ConquestUnit) {
@@ -313,6 +331,11 @@ impl Writer {
                         self.u8(2);
                         self.handle(regiment);
                         self.structure(to);
+                    }
+                    PowerTarget::Caster => self.u8(3),
+                    PowerTarget::Point(at) => {
+                        self.u8(4);
+                        self.vec(at);
                     }
                 }
             }
@@ -487,11 +510,17 @@ impl<'a> Reader<'a> {
         Some(b)
     }
 
-    /// A faction power (format 21 on).
-    pub fn power(&mut self) -> Option<PowerStats> {
+    /// A faction power as file format `format` (21 on) wrote it: before 22,
+    /// every power was paid from Resonance.
+    pub fn power(&mut self, format: u16) -> Option<PowerStats> {
         Some(PowerStats {
             tier: self.u8()?,
             cost: self.u8()?,
+            meter: if format >= 22 {
+                self.meter()?
+            } else {
+                Meter::Resonance
+            },
             cooldown_ticks: self.var_as()?,
             duration_ticks: self.var_as()?,
             effect: match self.u8()? {
@@ -500,9 +529,23 @@ impl<'a> Reader<'a> {
                     percent: self.u8()?,
                 },
                 2 => PowerEffect::Shift { to: self.var_as()? },
+                3 => PowerEffect::Grant {
+                    grub: self.var_as()?,
+                },
+                4 => PowerEffect::March {
+                    percent: self.u8()?,
+                },
+                5 => PowerEffect::Steadfast {
+                    tiles: self.var_as()?,
+                },
                 _ => return None,
             },
         })
+    }
+
+    /// A faction meter (format 22 on).
+    pub fn meter(&mut self) -> Option<Meter> {
+        Meter::from_u8(self.u8()?)
     }
 
     /// A Conquest unit as file format `format` wrote it.
@@ -635,6 +678,8 @@ impl<'a> Reader<'a> {
                         regiment: self.handle()?,
                         to: self.structure()?,
                     },
+                    3 => PowerTarget::Caster,
+                    4 => PowerTarget::Point(self.vec()?),
                     _ => return None,
                 },
             },

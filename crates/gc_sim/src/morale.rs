@@ -173,6 +173,12 @@ fn check(
     let cap = i32::from(fresh(stats)) * (full + i32::from(regs.models[i])) / (2 * full)
         + i32::from(regs.party_morale[regs.owner[i] as usize]);
     let morale = (i32::from(regs.morale[i]) + tenths).clamp(0, cap.max(1)) as i16;
+    // Steadfast (see [`crate::powers`]), it holds at the edge of breaking.
+    let morale = if regs.steadfast_left[i] > 0 {
+        morale.max(1)
+    } else {
+        morale
+    };
     regs.morale[i] = morale;
     if morale > 0 {
         regs.morale_state[i] = steady_or_wavering(morale);
@@ -280,6 +286,8 @@ fn rout(
     // Running men keep no ranks.
     regs.formation[i] = Formation::Line;
     regs.pace[i] = Fx::from_raw(regs.speed[i].raw() * ROUT_PACE_PERCENT / 100);
+    // A march is for regiments that take orders.
+    regs.march_left[i] = 0;
 
     // Friends nearby are shaken; the enemies who broke them take heart. The
     // friends' own checks decide whether they break in turn.

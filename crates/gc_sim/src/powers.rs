@@ -1,9 +1,11 @@
 //! Faction powers (docs/17-unit-rosters.md, the faction meters' abilities):
 //! what a player spends their faction meter on.
 //!
-//! A power costs meter points, needs its caster's tier, and can't be used
-//! again until its cooldown has passed. Only the Choir's Resonance pays for
-//! powers so far (see [`crate::chords`]):
+//! A power costs points of its meter, needs its caster's tier, and can't be
+//! used again until its cooldown has passed. Each player spends only their
+//! own faction's meter ([`crate::ConquestSetup::meters`]): the Choir's
+//! Resonance (see [`crate::chords`]) or the Clans' Honor (see
+//! [`crate::honor`]).
 //!
 //! - **Haste** (Overclock): one of the caster's buildings or regiments works
 //!   [`PowerEffect::Haste`]'s percent faster for the power's duration: a
@@ -16,25 +18,36 @@
 //!   shifting a regiment to the same building within [`RIDE_TICKS`] of the
 //!   payment rides on it, so a group order is one use even when the network
 //!   carries it over a few turns.
+//! - **Grant** (Rice Tax): the caster gains Grub at once.
+//! - **March** (Forced March): the caster's chosen regiments march
+//!   [`PowerEffect::March`]'s percent faster for the duration; like a
+//!   shift, a group order is one use.
+//! - **Steadfast** (Banner of the Ancestors): the caster's regiments within
+//!   [`PowerEffect::Steadfast`]'s tiles of the chosen point can't rout for
+//!   the duration (their morale bottoms out instead).
 //!
-//! The powers table and when each player last used each power are in the
-//! state hash; a haste's ticks left are, with the building or regiment.
+//! The powers table, when each player last used each power and the group
+//! order being paid for are in the state hash; what a power left on a
+//! building or regiment is, with it.
 
 use alloc::vec;
 use alloc::vec::Vec;
 
 use gc_fixed::{Fx, FxVec2};
 
+use crate::conquest::Conquest;
 use crate::hash::StateHasher;
 use crate::nav::Nav;
 use crate::regiments::Regiments;
-use crate::structures::{BuildingId, Refusal, StructureHandle, Structures};
+use crate::structures::{BuildingId, HONOR, Refusal, StructureHandle, Structures};
 use crate::{MAX_PARTIES, PlayerId, RegimentHandle};
 
-/// The longest a power's cooldown or haste lasts, in ticks (10 minutes).
+/// The longest a power's cooldown or effect lasts, in ticks (10 minutes).
 pub const MAX_POWER_TICKS: u32 = 10 * 60 * crate::TICKS_PER_SECOND;
-/// The most percent faster a haste makes anything.
+/// The most percent faster a haste or a march makes anything.
 pub const MAX_HASTE: u8 = 100;
+/// The widest a steadfast power reaches, in tiles.
+pub const MAX_STEADFAST_TILES: u16 = 64;
 /// The most powers a match's table holds.
 pub const MAX_POWERS: usize = 64;
 /// How far from the edge of the building a shifted regiment stands, in
@@ -43,9 +56,35 @@ const SHIFT_OUT: i32 = 3;
 const SHIFT_RING: i32 = 4;
 /// Rings of eight spots round the building a shift fills, nearest first.
 const SHIFT_RINGS: i32 = 5;
-/// How long after a shift is paid for more regiments shifted to the same
-/// building ride on it, in ticks (a second).
+/// How long after a group order (a shift or a march) is paid for more
+/// regiments in it ride on the payment, in ticks (a second).
 pub const RIDE_TICKS: u32 = crate::TICKS_PER_SECOND;
+
+/// A faction meter: what a player earns and spends on powers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Meter {
+    /// None the game has built (the player has no powers).
+    #[default]
+    NotBuilt,
+    /// The Choir's, charged by chords.
+    Resonance,
+    /// The Clans', earned by fighting well and by Shrines.
+    Honor,
+}
+
+impl Meter {
+    /// The meter numbered `n` (as `self as u8` numbers them, the baked
+    /// tables' `METER_*` too), if there is one.
+    pub fn from_u8(n: u8) -> Option<Meter> {
+        [Meter::NotBuilt, Meter::Resonance, Meter::Honor]
+            .get(usize::from(n))
+            .copied()
+    }
+
+    pub(crate) fn hash_into(self, h: &mut StateHasher) {
+        h.u8(self as u8);
+    }
+}
 
 /// What a power does.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -57,6 +96,23 @@ pub enum PowerEffect {
     Haste { percent: u8 },
     /// Regiments step to one of the caster's buildings of this type.
     Shift { to: BuildingId },
+    /// The caster gains this much Grub.
+    Grant { grub: u16 },
+    /// Regiments march this many percent faster.
+    March { percent: u8 },
+    /// The caster's regiments this many tiles from the chosen point can't
+    /// rout.
+    Steadfast { tiles: u16 },
+}
+
+impl PowerEffect {
+    /// Whether it lasts a while (its power's duration).
+    pub fn lasts(self) -> bool {
+        matches!(
+            self,
+            PowerEffect::Haste { .. } | PowerEffect::March { .. } | PowerEffect::Steadfast { .. }
+        )
+    }
 }
 
 /// What the simulation needs from a power. The game builds these from the
@@ -65,28 +121,37 @@ pub enum PowerEffect {
 pub struct PowerStats {
     /// Main-building tier needed to use it.
     pub tier: u8,
-    /// Resonance points it costs.
+    /// Points of `meter` it costs.
     pub cost: u8,
+    pub meter: Meter,
     pub cooldown_ticks: u32,
-    /// How long a haste lasts.
+    /// How long its effect lasts (0 for one that doesn't).
     pub duration_ticks: u32,
     pub effect: PowerEffect,
 }
 
 impl PowerStats {
     /// The same power, with every value in the range the simulation works
-    /// with: times up to [`MAX_POWER_TICKS`], a haste of 1 to
-    /// [`MAX_HASTE`] percent lasting at least a tick.
+    /// with: times up to [`MAX_POWER_TICKS`], a haste or march of 1 to
+    /// [`MAX_HASTE`] percent and a steadfast of 1 to
+    /// [`MAX_STEADFAST_TILES`] tiles, each lasting at least a tick.
     pub fn sanitized(self) -> PowerStats {
         let effect = match self.effect {
             PowerEffect::Haste { percent } => PowerEffect::Haste {
                 percent: percent.clamp(1, MAX_HASTE),
             },
+            PowerEffect::March { percent } => PowerEffect::March {
+                percent: percent.clamp(1, MAX_HASTE),
+            },
+            PowerEffect::Steadfast { tiles } => PowerEffect::Steadfast {
+                tiles: tiles.clamp(1, MAX_STEADFAST_TILES),
+            },
             other => other,
         };
-        let duration = match effect {
-            PowerEffect::Haste { .. } => self.duration_ticks.clamp(1, MAX_POWER_TICKS),
-            _ => 0,
+        let duration = if effect.lasts() {
+            self.duration_ticks.clamp(1, MAX_POWER_TICKS)
+        } else {
+            0
         };
         PowerStats {
             cooldown_ticks: self.cooldown_ticks.min(MAX_POWER_TICKS),
@@ -99,6 +164,7 @@ impl PowerStats {
     fn hash_into(&self, h: &mut StateHasher) {
         h.u8(self.tier);
         h.u8(self.cost);
+        self.meter.hash_into(h);
         h.u32(self.cooldown_ticks);
         h.u32(self.duration_ticks);
         match self.effect {
@@ -111,6 +177,18 @@ impl PowerStats {
                 h.u8(2);
                 h.u16(to);
             }
+            PowerEffect::Grant { grub } => {
+                h.u8(3);
+                h.u16(grub);
+            }
+            PowerEffect::March { percent } => {
+                h.u8(4);
+                h.u8(percent);
+            }
+            PowerEffect::Steadfast { tiles } => {
+                h.u8(5);
+                h.u16(tiles);
+            }
         }
     }
 }
@@ -118,9 +196,11 @@ impl PowerStats {
 /// What a [`Command::UsePower`](crate::Command::UsePower) is used on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PowerTarget {
+    /// Nothing but the caster (a grant).
+    Caster,
     /// One of the caster's buildings (a haste).
     Structure(StructureHandle),
-    /// One of the caster's regiments (a haste).
+    /// One of the caster's regiments (a haste or a march).
     Regiment(RegimentHandle),
     /// One of the caster's regiments, to step to their building `to` (a
     /// shift).
@@ -128,6 +208,8 @@ pub enum PowerTarget {
         regiment: RegimentHandle,
         to: StructureHandle,
     },
+    /// A point on the field, in tiles (a steadfast power).
+    Point(FxVec2),
 }
 
 /// The powers table and each player's use of it.
@@ -136,11 +218,11 @@ pub(crate) struct Powers {
     stats: Vec<PowerStats>,
     /// By player, then power: the tick it was last used, if ever.
     used_at: Vec<Option<u32>>,
-    /// By player: the building their last paid shift went to, and how
-    /// many regiments have gone there on that payment, to spread them
-    /// round it.
-    shift_to: [Option<StructureHandle>; MAX_PARTIES],
-    shifted: [u8; MAX_PARTIES],
+    /// By player: the group order (power, and building for a shift) their
+    /// last group payment was for, and how many regiments have joined it,
+    /// to spread a shift's round its building.
+    group: [Option<(u8, Option<StructureHandle>)>; MAX_PARTIES],
+    grouped: [u8; MAX_PARTIES],
 }
 
 impl Powers {
@@ -151,8 +233,8 @@ impl Powers {
         Powers {
             used_at: vec![None; stats.len() * MAX_PARTIES],
             stats,
-            shift_to: [None; MAX_PARTIES],
-            shifted: [0; MAX_PARTIES],
+            group: [None; MAX_PARTIES],
+            grouped: [0; MAX_PARTIES],
         }
     }
 
@@ -176,103 +258,41 @@ impl Powers {
         self.used_at[slot].map_or(0, |at| (at + stats.cooldown_ticks).saturating_sub(now))
     }
 
-    /// Whether `player` could use `power` at `now`, and if not, why: built,
-    /// their tier, its cooldown and its price.
+    /// Whether `player`, whose meter is `meter` with `points` in it and
+    /// whose main building is tier `tier`, could use `power` at `now`, and
+    /// if not, why: built and paid from their meter, their tier, its
+    /// cooldown and its price.
     pub(crate) fn can_use(
         &self,
-        structures: &Structures,
         player: PlayerId,
         power: u8,
         now: u32,
+        (meter, points, tier): (Meter, u32, u8),
     ) -> Result<PowerStats, Refusal> {
         let stats = *self
             .stats
             .get(usize::from(power))
-            .filter(|s| s.effect != PowerEffect::NotBuilt)
+            .filter(|s| s.effect != PowerEffect::NotBuilt && s.meter == meter)
             .ok_or(Refusal::Unknown)?;
         self.slot(player, power).ok_or(Refusal::Unknown)?;
-        if structures.tier_of(player) < stats.tier {
+        if tier < stats.tier {
             return Err(Refusal::Tier);
         }
         if self.cooling(player, power, now) > 0 {
             return Err(Refusal::Cooling);
         }
-        if structures.resonance(player) < u32::from(stats.cost) {
+        if points < u32::from(stats.cost) {
             return Err(Refusal::Price);
         }
         Ok(stats)
     }
 
-    /// Whether a shift of `player`'s to `to` with `power` at `now` rides on
-    /// one they paid for: to the same building, within [`RIDE_TICKS`].
-    fn rides(&self, player: PlayerId, power: u8, to: StructureHandle, now: u32) -> bool {
+    /// Whether `player`'s use of `power` in group `key` at `now` rides on
+    /// one they paid for: the same group order, within [`RIDE_TICKS`].
+    fn rides(&self, player: PlayerId, power: u8, key: Option<StructureHandle>, now: u32) -> bool {
         let paid = self.slot(player, power).and_then(|slot| self.used_at[slot]);
         paid.is_some_and(|at| now.wrapping_sub(at) < RIDE_TICKS)
-            && self.shift_to.get(usize::from(player)) == Some(&Some(to))
-    }
-
-    /// `player` uses `power` on `target` at `now`; false (and nothing
-    /// spent) if they can't.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn use_power(
-        &mut self,
-        structures: &mut Structures,
-        regs: &mut Regiments,
-        nav: &Nav,
-        player: PlayerId,
-        power: u8,
-        target: PowerTarget,
-        now: u32,
-    ) -> bool {
-        let riding = match target {
-            PowerTarget::Shift { to, .. } => self.rides(player, power, to, now),
-            _ => false,
-        };
-        let stats = match self.stats.get(usize::from(power)) {
-            Some(&s) if riding => s,
-            _ => match self.can_use(structures, player, power, now) {
-                Ok(s) => s,
-                Err(_) => return false,
-            },
-        };
-        let done = match (stats.effect, target) {
-            (PowerEffect::Haste { percent }, PowerTarget::Structure(h)) => {
-                let ticks = haste_ticks(stats.duration_ticks);
-                structures
-                    .resolve(h)
-                    .filter(|&i| structures.owner_of(i) == player)
-                    .map(|i| structures.haste(i, percent, ticks))
-                    .is_some()
-            }
-            (PowerEffect::Haste { percent }, PowerTarget::Regiment(h)) => regs
-                .resolve(h)
-                .filter(|&r| regs.owner[r] == player && regs.alive[r])
-                .map(|r| {
-                    regs.haste_left[r] = haste_ticks(stats.duration_ticks);
-                    regs.haste[r] = percent;
-                })
-                .is_some(),
-            (PowerEffect::Shift { to: building }, PowerTarget::Shift { regiment, to }) => {
-                let p = usize::from(player);
-                let before = if riding { self.shifted[p] } else { 0 };
-                let moved = shift(
-                    structures, regs, nav, player, regiment, building, to, before,
-                );
-                if moved {
-                    self.shift_to[p] = Some(to);
-                    self.shifted[p] = before.saturating_add(1);
-                }
-                moved
-            }
-            _ => false,
-        };
-        if done && !riding {
-            structures.spend_resonance(player, u32::from(stats.cost));
-            if let Some(slot) = self.slot(player, power) {
-                self.used_at[slot] = Some(now);
-            }
-        }
-        done
+            && self.group.get(usize::from(player)) == Some(&Some((power, key)))
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
@@ -283,11 +303,157 @@ impl Powers {
         for at in &self.used_at {
             h.u32(at.map_or(u32::MAX, |t| t));
         }
-        for (to, &n) in self.shift_to.iter().zip(&self.shifted) {
+        for (group, &n) in self.group.iter().zip(&self.grouped) {
+            let (power, to) = group.map_or((u8::MAX, None), |(p, to)| (p, to));
+            h.u8(power);
             h.u32(to.map_or(u32::MAX, |t| t.index));
             h.u32(to.map_or(u32::MAX, |t| u32::from(t.generation)));
             h.u8(n);
         }
+    }
+}
+
+/// The group order a use of a power of `effect` on `target` joins (the
+/// shift's building, if a shift), if it is one.
+fn group_of(effect: PowerEffect, target: PowerTarget) -> Option<Option<StructureHandle>> {
+    match (effect, target) {
+        (PowerEffect::Shift { .. }, PowerTarget::Shift { to, .. }) => Some(Some(to)),
+        (PowerEffect::March { .. }, PowerTarget::Regiment(_)) => Some(None),
+        _ => None,
+    }
+}
+
+impl Conquest {
+    /// The points in `player`'s meter, and which meter it is.
+    fn meter_of(&self, player: PlayerId) -> (Meter, u32) {
+        let meter = self
+            .meters
+            .get(usize::from(player))
+            .copied()
+            .unwrap_or_default();
+        let points = match meter {
+            Meter::NotBuilt => 0,
+            Meter::Resonance => self.structures.resonance(player),
+            Meter::Honor => self.honor.points(player),
+        };
+        (meter, points)
+    }
+
+    /// Whether `player` could use `power` at `now`, and if not, why (see
+    /// [`Powers::can_use`]).
+    pub(crate) fn can_use_power(
+        &self,
+        player: PlayerId,
+        power: u8,
+        now: u32,
+    ) -> Result<PowerStats, Refusal> {
+        let (meter, points) = self.meter_of(player);
+        let tier = self.structures.tier_of(player);
+        let stats = self
+            .powers
+            .can_use(player, power, now, (meter, points, tier))?;
+        // Edicts are cast from a Shrine.
+        let shrine = || self.structures.finished_with(player, HONOR).next();
+        if meter == Meter::Honor && shrine().is_none() {
+            return Err(Refusal::NoShrine);
+        }
+        Ok(stats)
+    }
+
+    /// `player` uses `power` on `target` at `now`; false (and nothing
+    /// spent) if they can't.
+    pub(crate) fn use_power(
+        &mut self,
+        regs: &mut Regiments,
+        nav: &Nav,
+        player: PlayerId,
+        power: u8,
+        target: PowerTarget,
+        now: u32,
+    ) -> bool {
+        let Some(&stats) = self.powers.stats.get(usize::from(power)) else {
+            return false;
+        };
+        let group = group_of(stats.effect, target);
+        let riding = group.is_some_and(|key| self.powers.rides(player, power, key, now));
+        if !riding && self.can_use_power(player, power, now).is_err() {
+            return false;
+        }
+        let p = usize::from(player);
+        let joined = if riding { self.powers.grouped[p] } else { 0 };
+        let lasts = effect_ticks(stats.duration_ticks);
+        let done = match (stats.effect, target) {
+            (PowerEffect::Haste { percent }, PowerTarget::Structure(h)) => {
+                let structures = &mut self.structures;
+                structures
+                    .owned(h, player)
+                    .map(|i| structures.haste(i, percent, lasts))
+                    .is_some()
+            }
+            (PowerEffect::Haste { percent }, PowerTarget::Regiment(h)) => regs
+                .owned(h, player)
+                .map(|r| {
+                    regs.haste_left[r] = lasts;
+                    regs.haste[r] = percent;
+                })
+                .is_some(),
+            (PowerEffect::Shift { to: building }, PowerTarget::Shift { regiment, to }) => shift(
+                &self.structures,
+                regs,
+                nav,
+                player,
+                regiment,
+                building,
+                to,
+                joined,
+            ),
+            (PowerEffect::Grant { grub }, PowerTarget::Caster) => {
+                self.economy.refund(player, u32::from(grub), 0);
+                true
+            }
+            (PowerEffect::March { percent }, PowerTarget::Regiment(h)) => regs
+                .standing(h, player)
+                .map(|r| {
+                    regs.march_left[r] = lasts;
+                    regs.march[r] = percent;
+                })
+                .is_some(),
+            (PowerEffect::Steadfast { tiles }, PowerTarget::Point(at)) => {
+                // Only paid for when it steadies one of theirs.
+                let reach = u64::from(Fx::from_int(i32::from(tiles)).raw().unsigned_abs());
+                let mut steadied = false;
+                for r in 0..regs.alive.len() {
+                    if regs.alive[r]
+                        && regs.owner[r] == player
+                        && (regs.position[r] - at).length_sq_raw() <= reach * reach
+                    {
+                        regs.steadfast_left[r] = lasts;
+                        steadied = true;
+                    }
+                }
+                steadied
+            }
+            _ => false,
+        };
+        if !done {
+            return false;
+        }
+        if let Some(key) = group {
+            self.powers.group[p] = Some((power, key));
+            self.powers.grouped[p] = joined.saturating_add(1);
+        }
+        if !riding {
+            let cost = u32::from(stats.cost);
+            match stats.meter {
+                Meter::Resonance => self.structures.spend_resonance(player, cost),
+                Meter::Honor => self.honor.spend(player, cost),
+                Meter::NotBuilt => {}
+            }
+            if let Some(slot) = self.powers.slot(player, power) {
+                self.powers.used_at[slot] = Some(now);
+            }
+        }
+        true
     }
 }
 
@@ -348,8 +514,8 @@ fn shift(
     })
 }
 
-/// A haste's ticks, as a building's or regiment's count of them.
-fn haste_ticks(duration: u32) -> u16 {
+/// A lasting effect's ticks, as a building's or regiment's count of them.
+fn effect_ticks(duration: u32) -> u16 {
     u16::try_from(duration).unwrap_or(u16::MAX)
 }
 
@@ -415,11 +581,34 @@ impl Regiments {
         self.haste_left[i] > 0 && extra_turn(u64::from(tick) + i as u64, self.haste[i])
     }
 
-    /// A tick of every regiment's haste goes by.
-    pub(crate) fn wear_haste(&mut self) {
-        for left in &mut self.haste_left {
+    /// A tick of every regiment's haste, march and steadfastness goes by.
+    pub(crate) fn wear_powers(&mut self) {
+        for left in (self.haste_left.iter_mut())
+            .chain(&mut self.march_left)
+            .chain(&mut self.steadfast_left)
+        {
             *left = left.saturating_sub(1);
         }
+    }
+
+    /// How far regiment slot `i` goes at `pace` this tick: further on a
+    /// march (see [`PowerEffect::March`]).
+    pub(crate) fn marched(&self, i: usize, pace: Fx) -> Fx {
+        if self.march_left[i] == 0 {
+            return pace;
+        }
+        let percent = i64::from(self.march[i].min(MAX_HASTE));
+        Fx::from_raw((i64::from(pace.raw()) * (100 + percent) / 100) as i32)
+    }
+
+    /// Regiment `h`'s march: ticks left, 0 for none.
+    pub fn march_left(&self, h: RegimentHandle) -> u16 {
+        self.resolve(h).map_or(0, |i| self.march_left[i])
+    }
+
+    /// Regiment `h`'s steadfastness: ticks left, 0 for none.
+    pub fn steadfast_left(&self, h: RegimentHandle) -> u16 {
+        self.resolve(h).map_or(0, |i| self.steadfast_left[i])
     }
 
     /// Regiment `h`'s haste: ticks left, 0 for none.
@@ -457,6 +646,7 @@ mod tests {
         let s = PowerStats {
             tier: 1,
             cost: 20,
+            meter: Meter::Resonance,
             cooldown_ticks: u32::MAX,
             duration_ticks: 0,
             effect: PowerEffect::Haste { percent: 250 },

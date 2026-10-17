@@ -10,8 +10,8 @@ use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::structures::{Armour, DROP_OFF_GRUB, DROP_OFF_MARROW, NEEDS_POWER, POWERS_FIELD, Role};
 use gc_sim::{
     BuildingStats, Capacities, Command, ConquestSetup, ConquestUnit, MAX_PARTIES, MatchSetup,
-    PlayerCommand, PowerEffect, PowerStats, PowerTarget, Refusal, RegimentHandle, StructureHandle,
-    TICKS_PER_SECOND, TickStats, UnitStats, World,
+    Meter, PlayerCommand, PowerEffect, PowerStats, PowerTarget, Refusal, RegimentHandle,
+    StructureHandle, TICKS_PER_SECOND, TickStats, UnitStats, World,
 };
 
 const HALL: u16 = 0;
@@ -38,6 +38,7 @@ const POWERS: [PowerStats; 3] = [
     PowerStats {
         tier: 1,
         cost: 20,
+        meter: Meter::Resonance,
         cooldown_ticks: 400,
         duration_ticks: 400,
         effect: PowerEffect::Haste { percent: 50 },
@@ -45,6 +46,7 @@ const POWERS: [PowerStats; 3] = [
     PowerStats {
         tier: 2,
         cost: 60,
+        meter: Meter::Resonance,
         cooldown_ticks: 1800,
         duration_ticks: 0,
         effect: PowerEffect::Shift { to: RESONATOR },
@@ -52,6 +54,7 @@ const POWERS: [PowerStats; 3] = [
     PowerStats {
         tier: 3,
         cost: 80,
+        meter: Meter::Resonance,
         cooldown_ticks: 3000,
         duration_ticks: 0,
         effect: PowerEffect::NotBuilt,
@@ -183,6 +186,7 @@ fn conquest(nodes: &[NodeSetup]) -> World {
         nodes,
         start,
         powers: &POWERS,
+        meters: [Meter::Resonance; MAX_PARTIES],
         ..ConquestSetup::default()
     }));
     w

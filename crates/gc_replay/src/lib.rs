@@ -35,7 +35,7 @@ use std::path::Path;
 use gc_fixed::FxVec2;
 use gc_sim::powers::MAX_POWERS;
 use gc_sim::{
-    BuildingStats, Capacities, ConquestSetup, ConquestUnit, Ground, MAX_PARTIES, MatchSetup,
+    BuildingStats, Capacities, ConquestSetup, ConquestUnit, Ground, MAX_PARTIES, MatchSetup, Meter,
     NodeSetup, PlayerCommand, PowerStats, TICKS_PER_SECOND, TickStats, UnitStats, Verdict,
     Victories, Win, World,
 };
@@ -45,6 +45,9 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 22: each power's meter, each player's meter, and the Edicts' powers
+///   and targets (21's powers read as paid from Resonance, and its players
+///   as all on Resonance);
 /// - 21: the faction powers and the orders that use them (read as none);
 /// - 20: the buildings' chord links (read as none);
 /// - 19: the buildings' fields and tuning (root-veins read as reaching 15
@@ -70,7 +73,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 21;
+pub const FORMAT: u16 = 22;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -172,6 +175,7 @@ pub struct ConquestRecord {
     pub victories: Victories,
     pub heart: Option<FxVec2>,
     pub powers: Vec<PowerStats>,
+    pub meters: [Meter; MAX_PARTIES],
 }
 
 impl ConquestRecord {
@@ -189,6 +193,7 @@ impl ConquestRecord {
             // The simulation keeps no more than this, and reading takes no
             // more.
             powers: setup.powers.iter().take(MAX_POWERS).copied().collect(),
+            meters: setup.meters,
         }
     }
 
@@ -204,6 +209,7 @@ impl ConquestRecord {
             victories: self.victories,
             heart: self.heart,
             powers: &self.powers,
+            meters: self.meters,
         }
     }
 
@@ -236,6 +242,9 @@ impl ConquestRecord {
         w.var(self.powers.len() as u64);
         for p in &self.powers {
             w.power(p);
+        }
+        for &m in &self.meters {
+            w.meter(m);
         }
     }
 
@@ -274,12 +283,18 @@ impl ConquestRecord {
         let powers = if format >= 21 {
             let n: usize = r.var_as().filter(|&n| n <= MAX_POWERS)?;
             (0..n.min(r.remaining()))
-                .map(|_| r.power().map(PowerStats::sanitized))
+                .map(|_| r.power(format).map(PowerStats::sanitized))
                 .collect::<Option<Vec<_>>>()
                 .filter(|p| p.len() == n)?
         } else {
             Vec::new()
         };
+        let mut meters = [Meter::Resonance; MAX_PARTIES];
+        if format >= 22 {
+            for m in &mut meters {
+                *m = r.meter()?;
+            }
+        }
         Some(ConquestRecord {
             buildings,
             units,
@@ -291,6 +306,7 @@ impl ConquestRecord {
             victories,
             heart,
             powers,
+            meters,
         })
     }
 }
@@ -1373,6 +1389,7 @@ mod tests {
             gc_sim::PowerStats {
                 tier: 1,
                 cost: 20,
+                meter: Meter::Resonance,
                 cooldown_ticks: 400,
                 duration_ticks: 400,
                 effect: gc_sim::PowerEffect::Haste { percent: 50 },
@@ -1380,12 +1397,40 @@ mod tests {
             gc_sim::PowerStats {
                 tier: 2,
                 cost: 60,
+                meter: Meter::Resonance,
                 cooldown_ticks: 1800,
                 duration_ticks: 0,
                 effect: gc_sim::PowerEffect::Shift { to: 0 },
             },
             gc_sim::PowerStats::default(),
+            gc_sim::PowerStats {
+                tier: 1,
+                cost: 25,
+                meter: Meter::Honor,
+                cooldown_ticks: 1200,
+                duration_ticks: 0,
+                effect: gc_sim::PowerEffect::Grant { grub: 300 },
+            },
+            gc_sim::PowerStats {
+                tier: 1,
+                cost: 20,
+                meter: Meter::Honor,
+                cooldown_ticks: 900,
+                duration_ticks: 600,
+                effect: gc_sim::PowerEffect::March { percent: 30 },
+            },
+            gc_sim::PowerStats {
+                tier: 2,
+                cost: 35,
+                meter: Meter::Honor,
+                cooldown_ticks: 1800,
+                duration_ticks: 400,
+                effect: gc_sim::PowerEffect::Steadfast { tiles: 12 },
+            },
         ];
+        let mut meters = [Meter::NotBuilt; MAX_PARTIES];
+        meters[0] = Meter::Resonance;
+        meters[1] = Meter::Honor;
         let conquest = ConquestSetup {
             buildings: &buildings,
             units: &units,
@@ -1397,6 +1442,7 @@ mod tests {
             victories: Victories::BOTH,
             heart: Some(FxVec2::from_ints(32, 32)),
             powers: &powers,
+            meters,
         };
         let mut world = World::new(&setup);
         assert!(world.conquest(&conquest));

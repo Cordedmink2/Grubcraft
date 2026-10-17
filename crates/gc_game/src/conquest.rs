@@ -14,7 +14,7 @@ use gc_replay::ConquestRecord;
 use gc_sim::economy::{SEEP_GRUB, VEIN_MARROW};
 use gc_sim::structures::Breaker;
 use gc_sim::{
-    Command, ConquestSetup, ConquestUnit, MAX_PARTIES, NodeSetup, PlayerCommand, PlayerId,
+    Command, ConquestSetup, ConquestUnit, MAX_PARTIES, Meter, NodeSetup, PlayerCommand, PlayerId,
     Resource, Victories, World,
 };
 use gc_ui::Settings;
@@ -85,18 +85,39 @@ pub fn choice_of(file: &str) -> Option<usize> {
 
 /// What a faction power record is to the simulation.
 pub fn power_of(p: &gc_data::PowerRecord) -> gc_sim::PowerStats {
-    use gc_data::conquest::{POWER_HASTE, POWER_SHIFT};
+    use gc_data::conquest as cq;
+    use gc_sim::PowerEffect;
+    // Loading checked each argument's range for its effect.
+    let small = u8::try_from(p.arg).unwrap_or(u8::MAX);
     gc_sim::PowerStats {
         tier: p.tier,
         cost: p.cost,
+        meter: meter_of(p.meter),
         cooldown_ticks: p.cooldown_ticks,
         duration_ticks: p.duration_ticks,
         effect: match p.effect {
-            POWER_HASTE => gc_sim::PowerEffect::Haste { percent: p.percent },
-            POWER_SHIFT => gc_sim::PowerEffect::Shift { to: p.to_building },
-            _ => gc_sim::PowerEffect::NotBuilt,
+            cq::POWER_HASTE => PowerEffect::Haste { percent: small },
+            cq::POWER_SHIFT => PowerEffect::Shift { to: p.arg },
+            cq::POWER_GRANT => PowerEffect::Grant { grub: p.arg },
+            cq::POWER_MARCH => PowerEffect::March { percent: small },
+            cq::POWER_STEADFAST => PowerEffect::Steadfast { tiles: p.arg },
+            _ => PowerEffect::NotBuilt,
         },
     }
+}
+
+/// What a baked `METER_*` is to the simulation (the two number them
+/// alike).
+fn meter_of(meter: u8) -> Meter {
+    Meter::from_u8(meter).unwrap_or_default()
+}
+
+/// Faction `f`'s meter: the one its built powers are paid from (none
+/// before the game builds one).
+pub fn faction_meter(data: &GameData, f: Faction) -> Meter {
+    (data.powers.iter())
+        .find(|p| p.built() && p.faction() == f)
+        .map_or(Meter::NotBuilt, |p| meter_of(p.meter))
 }
 
 /// What a Conquest unit record is to the simulation.
@@ -197,8 +218,10 @@ pub fn plan(
     victories: Victories,
 ) -> ConquestRecord {
     let mut start = [(0, 0); MAX_PARTIES];
-    for (s, &f) in start.iter_mut().zip(factions) {
+    let mut meters = [Meter::NotBuilt; MAX_PARTIES];
+    for ((s, m), &f) in start.iter_mut().zip(&mut meters).zip(factions) {
         *s = start_stores(f);
+        *m = faction_meter(data, f);
     }
     ConquestRecord {
         buildings: table.stats.clone(),
@@ -214,6 +237,7 @@ pub fn plan(
             .next()
             .map(|o| tile_centre(o.at)),
         powers: data.powers.iter().map(power_of).collect(),
+        meters,
     }
 }
 
@@ -1306,11 +1330,25 @@ mod tests {
 
     /// The baker and the simulation cap power times alike.
     #[test]
-    fn power_times_have_one_limit() {
-        assert_eq!(
-            gc_data::conquest::MAX_POWER_TICKS,
-            gc_sim::powers::MAX_POWER_TICKS
-        );
+    fn power_limits_are_one_limit() {
+        use gc_data::conquest as cq;
+        use gc_sim::powers as sim;
+        assert_eq!(cq::MAX_POWER_TICKS, sim::MAX_POWER_TICKS);
+        assert_eq!(cq::MAX_POWER_PERCENT, u16::from(sim::MAX_HASTE));
+        assert_eq!(cq::MAX_POWER_TILES, sim::MAX_STEADFAST_TILES);
+        for (n, name) in cq::METER_NAMES.iter().enumerate() {
+            let meter = Meter::from_u8(n as u8).expect(name);
+            assert_eq!(meter_of(n as u8), meter, "{name}");
+        }
+        assert_eq!(Meter::from_u8(cq::METER_NAMES.len() as u8), None);
+        for effect in 0..=cq::POWER_STEADFAST {
+            let p = gc_data::PowerRecord {
+                effect,
+                arg: 1,
+                ..bytemuck::Zeroable::zeroed()
+            };
+            assert_eq!(power_of(&p).effect.lasts(), cq::power_lasts(effect));
+        }
     }
 
     /// A building a power has hasted glows cyan for the side that may see

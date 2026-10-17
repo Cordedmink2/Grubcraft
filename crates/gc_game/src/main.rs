@@ -2555,6 +2555,7 @@ impl Running {
         if !viewing {
             self.push_placement_ghost();
             self.push_building_ghost();
+            self.push_power_aim();
             self.push_buildings();
         }
         self.puppets.advance(game_dt.as_secs_f32());
@@ -2660,9 +2661,21 @@ impl Running {
                     r.handle.index,
                 );
             }
-            // A hasted regiment glows cyan round its block.
-            if self.world.regiment_haste(r.handle) > 0 {
-                buildings::push_regiment_haste(
+            // A hasted, marching or steadfast regiment glows round its block.
+            let auras = [
+                (buildings::Aura::Haste, self.world.regiment_haste(r.handle)),
+                (buildings::Aura::March, self.world.regiment_march(r.handle)),
+                (
+                    buildings::Aura::Steadfast,
+                    self.world.regiment_steadfast(r.handle),
+                ),
+            ];
+            for (aura, left) in auras {
+                if left == 0 {
+                    continue;
+                }
+                buildings::push_regiment_aura(
+                    aura,
                     pos,
                     facing,
                     (width, depth),

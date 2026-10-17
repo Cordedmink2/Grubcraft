@@ -67,6 +67,8 @@ Spent on **Edicts**, global abilities cast from the Ancestor Shrine:
 | Banner of the Ancestors | 35 | Regiments in an area cannot rout for 20 s |
 | Ancestral Return (tier 3) | 80 | Summon a spectral samurai regiment for 60 s |
 
+*Built (2026-10-17, faction depth stage 5a): the Honor meter, the points above and the three Edicts that are built ([17 · Unit rosters](17-unit-rosters.md#honor-edicts-meter-0-to-100)). Honor is earned after morale each tick, and only by a player whose meter is Honor. The outnumbered bonus applies when the soldiers of yours engaged with the routed regiment were fewer than its own. A finished Ancestor Shrine earns a point every 30 seconds. Rice Tax grants 300 Grub at once; Forced March makes the chosen regiments 30% faster for 30 s (regiments picked within a second of each other share one payment); Banner of the Ancestors (tier 2) stops regiments within 12 tiles of the chosen point from routing for 20 s. An Edict needs a finished Ancestor Shrine to cast it from, a Banner planted where it steadies none of yours is refused (and costs nothing), and a marched regiment that routs loses its march. Ancestral Return and formation discipline come in stage 5b.*
+
 Honor makes the Clans *want* to take fair fights and win them, which is exactly Shogun's spirit.
 
 ### Signature rule: **Formation discipline**

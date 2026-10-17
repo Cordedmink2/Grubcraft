@@ -173,6 +173,8 @@ pub enum Refusal {
     Unpowered,
     /// A power used too lately to use again yet (see [`crate::powers`]).
     Cooling,
+    /// An Edict, and its owner has no finished Shrine to cast it from.
+    NoShrine,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -188,6 +190,8 @@ pub const LARVAE: u8 = 16;
 pub const VEINS: u8 = 32;
 /// Choir: works only inside a field of power (see [`crate::power`]).
 pub const NEEDS_POWER: u8 = 64;
+/// Clans: earns its owner Honor while it stands (see [`crate::honor`]).
+pub const HONOR: u8 = 128;
 /// The furthest a field or tuning reaches, in tiles.
 pub const MAX_REACH: u8 = 30;
 

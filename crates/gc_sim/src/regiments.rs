@@ -271,6 +271,12 @@ regiment_fields! {
     /// many percent faster it reloads, strikes and builds.
     haste_left: u16 = 0,
     haste: u8 = 0,
+    /// Ticks left of a march (see [`crate::powers`]) and how many percent
+    /// faster it goes.
+    march_left: u16 = 0,
+    march: u8 = 0,
+    /// Ticks left that it can't rout (see [`crate::powers`]).
+    steadfast_left: u16 = 0,
 }
 
 impl Regiments {
@@ -502,6 +508,18 @@ impl Regiments {
     pub(crate) fn resolve(&self, h: RegimentHandle) -> Option<usize> {
         let i = h.index as usize;
         (i < self.alive.len() && self.alive[i] && self.generation[i] == h.generation).then_some(i)
+    }
+
+    /// Regiment `h`'s slot, if it is alive and `player`'s.
+    pub(crate) fn owned(&self, h: RegimentHandle, player: PlayerId) -> Option<usize> {
+        self.resolve(h).filter(|&i| self.owner[i] == player)
+    }
+
+    /// Regiment `h`'s slot, if it is alive, `player`'s and not routing: one
+    /// that takes their orders.
+    pub(crate) fn standing(&self, h: RegimentHandle, player: PlayerId) -> Option<usize> {
+        self.owned(h, player)
+            .filter(|&i| !self.morale_state[i].broken())
     }
 
     /// The live regiment `i` is locked in melee with, if any.
@@ -876,6 +894,8 @@ impl Regiments {
                     100 => self.pace[i],
                     p => self.pace[i].min(Fx::from_raw((self.speed[i].raw() * p / 100).max(1))),
                 };
+                // On a march (see [`crate::powers`]), further.
+                let pace = self.marched(i, pace);
                 // Falling back, it backs away all the way, facing its foe.
                 let shuffle = ((last && dist <= SHUFFLE_DISTANCE) || self.falling_back[i] > 0)
                     && self.target_facing[i].is_some();
