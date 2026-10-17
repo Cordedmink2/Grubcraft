@@ -1,6 +1,6 @@
 # 25 · Scenery models
 
-Scenery is the trees, bushes, grass and rocks that dress the field. This document covers its 26 3D models: what they are, the lands they grow on, how they are made and packed, and what they do not do. The look itself is described in [09 · Art and Audio](09-art-and-audio.md).
+Scenery is the trees, bushes, grass and rocks that dress the field. This document covers its 28 3D models (26 placed by land, and the two gathering spots of Conquest): what they are, the lands they grow on, how they are made and packed, and what they do not do. The look itself is described in [09 · Art and Audio](09-art-and-audio.md).
 
 ## What it is
 
@@ -43,6 +43,8 @@ Lands are the land sets in `crates/gc_game/src/scenery.rs`. Height is the `heigh
 | `crag` | rock | Highland | 2.41 | 800 | 260 | 80 | 39 |
 | `slab` | rock | Highland, Waste | 0.53 | 210 | 140 | 48 | 39 |
 | `bone-ribs` | rock | Waste | 1.74 | 538 | 338 | 116 | 34 |
+| `grub-seep` | rock | Conquest gathering spot, not placed by land | 0.36 | 942 | 339 | 80 | 39 |
+| `marrow-vein` | rock | Conquest gathering spot, not placed by land | 1.10 | 755 | 301 | 90 | 40 |
 
 Sway (how far the top moves in a gust, at scale 1) is 0.12 tiles for trees, 0.05 for bushes, 0.10 for grass and none for rocks.
 
@@ -60,9 +62,18 @@ Woods are the cover tiles marked as woods. On about 55 in 100 of them a tree sta
 
 Bushes, rocks and lone trees keep off near sites. The radius depends on the site: 24 tiles round a start, 9 round the Heart, 8 round a village, town or bazaar, and 3 to 7 for the smaller sites. Grass and pebbles grow right up to them.
 
+## Gathering spots
+
+Conquest's gathering spots (the economy's nodes, see [04 · Economy](04-economy.md)) are drawn with two of these models, one per node, where the simulation says the node is:
+
+- **`grub-seep`:** a Grub seep. A domed pool of honey-gold ooze in a dark earth crater, with bubbles, burst rings, drips over the lip and a few curled grubs on the rim.
+- **`marrow-vein`:** a Marrow vein. Three broken bone shafts burst from a flat earth mound, with pinkish-cream marrow cores at the breaks, bone chips and marrow nodules round them.
+
+A full spot is drawn at 1.2 times its baked size, about 2.5 tiles across (workers gather within 2 tiles of its centre). It shrinks to 40% of that as it runs down, is drawn a little brighter than baked while it holds, and is dark once only dregs are left. Each spot is turned by where it lies, so no two look the same way. They are culled and given levels of detail like big rocks, but they are always drawn first and at any distance. `gc_game::scenery::Scenery::set_nodes` takes them each frame. If the pack lacks either model, the game falls back to the old glowing boxes. Their Blender scripts are `seep.py` and `vein.py`, and their brief is `/mnt/project-files/design/scenery/NODES-BRIEF.md`.
+
 ## Pipeline
 
-1. **Blender scripts.** The models are built in Blender from code, using Blender's Python module (`bpy`), in the shared folder `/mnt/project-files/design/scenery/source/`. `skit.py` is the shared kit. `trees.py`, `trees_more.py`, `bushes.py`, `grass.py` and `rocks.py` build the models of each family. Each script takes `--only <name>` to rebuild a single model.
+1. **Blender scripts.** The models are built in Blender from code, using Blender's Python module (`bpy`), in the shared folder `/mnt/project-files/design/scenery/source/`. `skit.py` is the shared kit. `trees.py`, `trees_more.py`, `bushes.py`, `grass.py` and `rocks.py` build the models of each family, and `seep.py` and `vein.py` the gathering spots. Each script takes `--only <name>` to rebuild a single model.
 2. **The glb.** Each model is written to `/mnt/project-files/assets-src/grubcraft/scenery/<name>/<name>.glb`. The file holds four joined meshes, `<name>_LOD0` to `<name>_LOD3`, with the origin at the base and vertex colours only. Beside it sit `facts.json` (name, family, height, radius and triangles per level) and `review.png`, which shows the four levels at one scale.
 3. **The model list.** `assets-src/scenery.ron` lists every model in pack order: its name, its glb (`shared:grubcraft/scenery/<name>/<name>.glb`), its family and its sway.
 4. **The bake.** `cargo run --release -p gc_scenebake` reads the list and the glbs and writes `assets/scenery.pak` and `assets/scenery.manifest`. It refuses a level over its family's triangle budget (tree 2,500 / 900 / 300 / 80, bush 700 / 250 / 90 / 30, grass 160 / 60 / 24 / 8, rock 1,000 / 350 / 120 / 40, pebbles 300 / 120 / 40 / 12). It also refuses a level with more triangles than the one before it, and a model that reaches past 8 tiles from its origin. `--allow-missing` skips glbs that are not made yet, for development.

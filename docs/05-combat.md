@@ -136,7 +136,7 @@ It rises from:
 | State | Effect |
 |---|---|
 | **Steady** | Normal |
-| **Wavering** | −15% damage; banner flickers |
+| **Wavering** | −15% damage; banner flickers (not over Conquest workers, whose nerve is low by design) |
 | **Routing** | Flees toward its home, ignores orders. Can **rally** after 10 s if no enemy is nearby |
 | **Shattered** | Routed twice in a short time; flees to the nearest structure and only recovers there |
 

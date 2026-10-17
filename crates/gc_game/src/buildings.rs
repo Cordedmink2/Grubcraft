@@ -14,6 +14,7 @@ use gc_sim::{
 };
 
 use crate::Party;
+use crate::scenery::NodeLook;
 use gc_ui::conquest::node_color;
 use glam::{Vec2, Vec3};
 
@@ -57,6 +58,16 @@ const NODE_WIDTH: f32 = 1.8;
 const NODE_LEAST: f32 = 40.0;
 /// Seeps and veins glow in their minimap colours; dry ones don't.
 const NODE_GLOW: u8 = 90;
+/// As models, a full or part-used spot is drawn this bright (128 as
+/// baked) and a dry one this dark.
+const NODE_SHADE: u8 = 140;
+const NODE_DRY_SHADE: u8 = 62;
+/// A full spot's model is this much bigger than baked (about 2.5 tiles
+/// across), so it reads from the RTS camera; workers gather within 2.
+const NODE_MODEL_SCALE: f32 = 1.2;
+/// The red cross on a spot the veins do not reach floats this high, above
+/// the seep's pool and through the vein's bones.
+const CUT_MARK_LIFT: f32 = 0.6;
 /// The Titan's Heart: its stone and the plinth under it, in tiles.
 const HEART_WIDTH: f32 = 1.6;
 const HEART_HEIGHT: f32 = 3.2;
@@ -479,8 +490,7 @@ pub fn push_nodes(world: &World, out: &mut Vec<BoxInstance>) {
             return;
         }
         let [r, g, b] = node_color(n.resource == Resource::Marrow, n.left == 0);
-        let left = n.left as f32 / n.full.max(1) as f32;
-        let width = NODE_WIDTH * (NODE_LEAST + (100.0 - NODE_LEAST) * left) / 100.0;
+        let width = NODE_WIDTH * node_fill(&n);
         let glow = if n.left == 0 { 0 } else { NODE_GLOW };
         out.push(BoxInstance {
             pos: crate::from_fx_vec(n.at).to_array(),
@@ -489,6 +499,30 @@ pub fn push_nodes(world: &World, out: &mut Vec<BoxInstance>) {
             color: [r, g, b, glow],
             lift: 0.0,
         });
+    }
+}
+
+/// A gathering spot's size as a share of full: 1 while full, down to
+/// `NODE_LEAST` percent as it runs down.
+fn node_fill(n: &gc_sim::NodeView) -> f32 {
+    let left = n.left as f32 / n.full.max(1) as f32;
+    (NODE_LEAST + (100.0 - NODE_LEAST) * left) / 100.0
+}
+
+/// How a gathering spot looks as a scenery model ([`crate::scenery`]):
+/// shrunk from `NODE_MODEL_SCALE` to `NODE_LEAST` percent of it as it runs down, a touch
+/// bright while it holds (so it stands out on any land), dim when dry.
+pub fn node_look(n: &gc_sim::NodeView, ground: impl Fn(Vec2) -> f32) -> NodeLook {
+    let at = crate::from_fx_vec(n.at);
+    NodeLook {
+        marrow: n.resource == Resource::Marrow,
+        at: Vec3::new(at.x, ground(at), at.y),
+        scale: NODE_MODEL_SCALE * node_fill(n),
+        shade: if n.left == 0 {
+            NODE_DRY_SHADE
+        } else {
+            NODE_SHADE
+        },
     }
 }
 
@@ -709,7 +743,7 @@ pub fn push_veins(
                 facing: facing.normalize().to_array(),
                 size: [0.25, 0.1, 1.5],
                 color: [r, g, b, CUT_GLOW],
-                lift: NODE_HEIGHT + 0.1,
+                lift: CUT_MARK_LIFT,
             });
         }
     }

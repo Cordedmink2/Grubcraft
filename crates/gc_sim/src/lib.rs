@@ -831,6 +831,14 @@ impl World {
         s.regrows(i).then(|| s.rooted(i))
     }
 
+    /// Whether regiment `h` is a worker (Conquest only).
+    pub fn is_worker(&self, h: RegimentHandle) -> bool {
+        let Some(c) = &self.conquest else {
+            return false;
+        };
+        self.regiments.get(h).is_some_and(|r| c.unit(r.unit).worker)
+    }
+
     /// Whether regiment `h` is a worker that burrows in where it gathers
     /// (see [`ConquestUnit::burrows`]).
     pub fn burrows(&self, h: RegimentHandle) -> bool {
