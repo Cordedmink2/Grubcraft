@@ -168,8 +168,10 @@ pub fn check(opts: &Options) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "{} is stale:\n  {}\nRe-bake with `cargo run -p gc_artbake --release` (it needs the shared sources) and commit assets/models.pak and assets/models.manifest together.",
+        "{} is stale:\n  {}\nRe-bake with `cargo run -p gc_artbake --release -- --config {} --out {}` (it needs the shared sources) and commit the pack and its manifest together.",
         opts.out.display(),
-        stale.join("\n  ")
+        stale.join("\n  "),
+        opts.config.display(),
+        opts.out.display(),
     ))
 }

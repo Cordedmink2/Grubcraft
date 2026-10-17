@@ -44,6 +44,8 @@ fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     std::fs::write(out_dir.join("grubcraft.pak"), &baked.pack).expect("write baked pack");
 
+    join_models(&manifest_dir.join("../../assets"), &out_dir);
+
     // The unit viewer's catalog (units and heroes of every roster, in words).
     let catalog = gc_bake::viewer::catalog(&data_dir).expect("unit viewer catalog");
     std::fs::write(
@@ -51,4 +53,49 @@ fn main() {
         gc_bake::viewer::catalog_source(&catalog),
     )
     .expect("write viewer catalog");
+}
+
+/// Extra model packs joined after the soldiers, each directory's `*.pak`
+/// files in name order: building packs, then scenery packs.
+const EXTRA_PACKS: [&str; 2] = ["buildings", "scenery"];
+
+/// Join the soldier pack (`assets/models.pak`) and every extra pack
+/// (`assets/<dir>/*.pak` for each of [`EXTRA_PACKS`]) into the one model
+/// pack the game embeds. They are kept apart in the repository because
+/// GitHub refuses files over 100 MB, and so each set bakes on its own.
+fn join_models(assets: &std::path::Path, out_dir: &std::path::Path) {
+    use gc_assets::model::{ModelTables, Models};
+    let mut packs = vec![assets.join("models.pak")];
+    for dir in EXTRA_PACKS {
+        let dir = assets.join(dir);
+        println!("cargo:rerun-if-changed={}", dir.display());
+        let mut more: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "pak"))
+            .collect();
+        more.sort();
+        packs.extend(more);
+    }
+    let mut joined = ModelTables::default();
+    for path in &packs {
+        println!("cargo:rerun-if-changed={}", path.display());
+        let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        // Tables are read in place, so the bytes must sit 16-byte aligned.
+        let mut store = vec![0u128; bytes.len().div_ceil(16)];
+        bytemuck::cast_slice_mut::<u128, u8>(&mut store)[..bytes.len()].copy_from_slice(&bytes);
+        let view = &bytemuck::cast_slice::<u128, u8>(&store)[..bytes.len()];
+        let models = gc_assets::Pack::parse(view)
+            .map_err(|e| e.to_string())
+            .and_then(|p| Models::from_pack(&p).map_err(|e| e.to_string()))
+            .and_then(|m| joined.append(&m).map_err(|e| e.to_string()));
+        if let Err(e) = models {
+            eprintln!("error: {}: {e}", path.display());
+            std::process::exit(1);
+        }
+    }
+    let mut pack = gc_assets::PackWriter::new();
+    joined.write(&mut pack);
+    std::fs::write(out_dir.join("models.pak"), pack.finish()).expect("write joined model pack");
 }

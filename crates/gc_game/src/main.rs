@@ -103,8 +103,9 @@
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
 //! parts of the frame off to measure what they cost; `--lod 0..3` draws
 //! every soldier at one level of detail, to inspect it;
-//! `--showroom all|NAME[,NAME...]` stands the named soldier models (names as in
-//! `assets-src/models.ron`) in a row on an empty field under a fixed camera,
+//! `--showroom all|buildings|NAME[,NAME...]` stands the named models (names as in
+//! `assets-src/models.ron` and `assets-src/buildings/*.ron`; `all` is every
+//! soldier, `buildings` every building stage) in a row on an empty field under a fixed camera,
 //! cycling through idle, walk, attack and death, and `--showroom-clip
 //! idle|walk|attack|shoot|cheer|die` holds one clip instead;
 //! `--viewer NAME|start` opens the Unit viewer (main menu) on the named unit,
@@ -540,7 +541,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--showroom all|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start]"
     );
     std::process::exit(2);
 }
@@ -729,6 +730,8 @@ struct Ride {
 /// Soldier models and the lists that draw them, rebuilt every frame.
 struct Art {
     clips: models::Clips,
+    /// Which models dress the buildings, stage by stage.
+    looks: buildings::Looks,
     /// Each model's height, in tiles.
     heights: Vec<f32>,
     /// This frame's camera, for choosing levels of detail.
@@ -1081,6 +1084,7 @@ impl App {
         );
         let art = models.map(|models| Art {
             clips: models::Clips::new(&models),
+            looks: buildings::Looks::new(&buildings::Table::new(&game_data), &models),
             heights: models.models.iter().map(|m| m.height).collect(),
             view: LodView {
                 eye: glam::Vec3::ZERO,
@@ -2534,6 +2538,9 @@ impl Running {
         if let Some(art) = &mut self.art {
             art.begin(eye, forward, pixel_scale, cull);
         }
+        if !viewing {
+            self.push_building_models();
+        }
         self.mark_shooting();
         if !viewing {
             self.scenery.push(
@@ -2701,6 +2708,12 @@ impl Running {
                 let shooting = self.shooting[r.handle.index as usize];
                 let time = self.puppets.time();
                 let highlight = if selected { 70 } else { 0 };
+                // Builders at a building going up (or being mended) turn
+                // to it and swing their tools.
+                let site = (self.world.building_target(r.handle))
+                    .and_then(|h| self.world.structures()?.get(h))
+                    .filter(|b| !b.finished() || b.hp < b.max_hp)
+                    .map(|b| buildings::centre_of(b.tile, b.width, b.depth));
                 self.puppets
                     .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
                         let ground = heightmap.height_at(s.pos.x, s.pos.y);
@@ -2709,8 +2722,19 @@ impl Running {
                             return;
                         };
                         let seconds = time + s.phase * 4.0;
+                        let working = site.filter(|_| s.fight.is_none() && s.speed <= 0.25);
+                        let facing =
+                            working.map_or(s.facing, |c| (c - s.pos).normalize_or(s.facing));
                         let pose = match s.fight {
                             Some(fight) => clips.fight(model, fight, seconds),
+                            None if working.is_some() => {
+                                let action = if s.phase < 0.5 {
+                                    Action::Attack
+                                } else {
+                                    Action::Attack2
+                                };
+                                clips.pose(model, action, seconds).map(|p| (p, false))
+                            }
                             None => {
                                 let action = soldier_action(&s, &block, shooting);
                                 // Giving ground: the walk played backwards.
@@ -2727,7 +2751,7 @@ impl Running {
                         };
                         buckets[model * LODS + lod].push(SoldierInstance {
                             pos: s.pos.to_array(),
-                            facing: s.facing.to_array(),
+                            facing: facing.to_array(),
                             frames: pose.rows,
                             flags: models::pose_flags(pose, highlight, flat),
                             color: [cr, cg, cb, 255],
@@ -4582,7 +4606,7 @@ impl Running {
     fn push_buildings(&mut self) {
         let look = self.active_camera().forward();
         let across = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
-        let (hm, parties) = (&self.heightmap, &self.parties);
+        let (hm, parties, art) = (&self.heightmap, &self.parties, &self.art);
         let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
         buildings::push(
             &self.world,
@@ -4590,6 +4614,10 @@ impl Running {
             ground,
             |p| color_of(parties, p),
             buildings::shown_to(self.sandbox.side, self.reveal_all),
+            |s| {
+                let art = art.as_ref()?;
+                Some(art.heights[art.looks.model_of(s)?])
+            },
             across,
             &mut self.instances,
         );
@@ -4600,6 +4628,70 @@ impl Running {
         }
         buildings::push_nodes(&self.world, &mut self.instances);
         buildings::push_heart(&self.world, parties, &mut self.instances);
+    }
+
+    /// Every standing building that has models, at its construction
+    /// stage, and the crews on tier upgrades (after `Art::begin`).
+    fn push_building_models(&mut self) {
+        let picked = self.picked_structure();
+        let (Some(art), Some(structures)) = (&mut self.art, self.world.structures()) else {
+            return;
+        };
+        let hm = &self.heightmap;
+        let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
+        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
+        let time = self.puppets.time();
+        for s in structures.iter().filter(|s| shown(s)) {
+            let [r, g, b] = color_of(&self.parties, s.owner);
+            if let Some(model) = art.looks.model_of(&s) {
+                let (centre, lift) = buildings::model_spot(&s, &ground);
+                let at = Vec3::new(centre.x, ground(centre.x, centre.y) + lift, centre.y);
+                let still = art.clips.pose(model, Action::Idle, time);
+                if let (Some(lod), Some(pose)) = (art.view.place(art.heights[model], at), still) {
+                    let highlight = if picked == Some(s.handle) { 40 } else { 0 };
+                    art.buckets[model * LODS + lod].push(SoldierInstance {
+                        pos: centre.to_array(),
+                        // The door, on the model's +z, faces south.
+                        facing: [0.0, 1.0],
+                        frames: pose.rows,
+                        flags: models::pose_flags(pose, highlight, false),
+                        color: [r, g, b, 255],
+                        lift,
+                        scale: 1.0,
+                    });
+                }
+            }
+            let Some(worker) = art.looks.crew_of(&s) else {
+                continue;
+            };
+            let centre = buildings::centre_of(s.tile, s.width, s.depth);
+            for (k, (at, facing)) in buildings::crew_spots(centre, s.width, s.depth)
+                .into_iter()
+                .enumerate()
+            {
+                let foot = Vec3::new(at.x, ground(at.x, at.y), at.y);
+                let Some(lod) = art.view.place(art.heights[worker], foot) else {
+                    continue;
+                };
+                let action = if k % 2 == 0 {
+                    Action::Attack
+                } else {
+                    Action::Attack2
+                };
+                let Some(pose) = art.clips.pose(worker, action, time + k as f32 * 0.37) else {
+                    continue;
+                };
+                art.buckets[worker * LODS + lod].push(SoldierInstance {
+                    pos: at.to_array(),
+                    facing: facing.to_array(),
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [r, g, b, 255],
+                    lift: 0.0,
+                    scale: 1.0,
+                });
+            }
+        }
     }
 
     /// A plate under the cursor the size of the regiment B would place.

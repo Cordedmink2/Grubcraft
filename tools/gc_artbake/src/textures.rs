@@ -13,7 +13,7 @@ use crate::Image;
 
 /// PNGs painted on the model's UV atlas, as `shared:` or `repo:` paths.
 /// Every map must be square, [`TEXTURE_SIZE`] or a power of two larger.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct TextureConfig {
     /// Base colour (sRGB).
     pub albedo: String,

@@ -65,8 +65,11 @@ pub const TEXTURE_MIPS: u32 = TEXTURE_SIZE.ilog2() - BLOCK_SIDE.ilog2() + 1;
 pub const BLOCKS_PER_LAYER: usize = (4 * ((TEXTURE_SIZE / BLOCK_SIDE) as usize).pow(2) - 1) / 3;
 pub const LAYERS_PER_MATERIAL: usize = 3;
 pub const BLOCKS_PER_MATERIAL: usize = BLOCKS_PER_LAYER * LAYERS_PER_MATERIAL;
-/// Most materials a pack may hold: GPUs promise 256 texture array layers.
-pub const MAX_MATERIALS: usize = 256 / LAYERS_PER_MATERIAL;
+/// Most materials a pack may hold: a vertex names its material plus one in
+/// a byte. Three layers each, that is 765 texture array layers: every
+/// desktop GPU we target allows 2,048, and the renderer falls back to vertex
+/// colours on one that allows fewer.
+pub const MAX_MATERIALS: usize = u8::MAX as usize;
 
 /// The layers of one material, in order. Normals use the OpenGL convention
 /// (green points along +v's bitangent), as glTF does.
@@ -344,6 +347,49 @@ pub struct ModelTables {
 }
 
 impl ModelTables {
+    /// Add every model of `m` after the ones already here, with its clips,
+    /// bone rows and materials (used to join the soldier pack and the
+    /// building packs into the one the game embeds).
+    pub fn append(&mut self, m: &Models<'_>) -> Result<(), ModelError> {
+        if self.materials() + m.materials() > MAX_MATERIALS {
+            return Err(ModelError::BadTextures);
+        }
+        let (vertices, indices, clips) = (
+            self.vertices.len() as u32,
+            self.indices.len() as u32,
+            self.clips.len() as u32,
+        );
+        let (rows, materials) = (
+            (self.bones.len() / BONE_TEXELS_PER_ROW as usize) as u32,
+            self.materials() as u8,
+        );
+        self.models.extend(m.models.iter().map(|r| {
+            let mut r = *r;
+            r.first_vertex += vertices;
+            r.first_clip += clips;
+            for lod in &mut r.lods {
+                lod[0] += indices;
+            }
+            r
+        }));
+        self.vertices.extend(m.vertices.iter().map(|v| {
+            let mut v = *v;
+            if v.material > 0 {
+                v.material += materials;
+            }
+            v
+        }));
+        self.indices.extend_from_slice(m.indices);
+        self.clips.extend(m.clips.iter().map(|c| {
+            let mut c = *c;
+            c.first_row += rows;
+            c
+        }));
+        self.bones.extend_from_slice(m.bones);
+        self.textures.extend_from_slice(m.textures);
+        Ok(())
+    }
+
     /// Materials in the texture table.
     pub fn materials(&self) -> usize {
         self.textures.len() / BLOCKS_PER_MATERIAL
@@ -500,6 +546,29 @@ mod tests {
             bones: alloc::vec![[0; 4]; 2 * BONE_TEXELS_PER_ROW as usize],
             textures: Vec::new(),
         }
+    }
+
+    #[test]
+    fn packs_join_with_their_tables_moved_up() {
+        let mut textured = one_model();
+        for v in &mut textured.vertices {
+            v.material = 1;
+        }
+        textured.textures = alloc::vec![[7; 16]; BLOCKS_PER_MATERIAL];
+        let mut joined = ModelTables::default();
+        for part in [&textured, &one_model(), &textured] {
+            parsed(part, |m| joined.append(&m.unwrap()).unwrap());
+        }
+        parsed(&joined, |m| {
+            let m = m.unwrap();
+            assert_eq!((m.models.len(), m.materials(), m.bone_rows()), (3, 2, 6));
+            let last = m.models[2];
+            assert_eq!((last.first_vertex, last.first_clip), (6, 2));
+            assert_eq!(last.lods[0], [6, 3]);
+            assert_eq!(m.clips[2].first_row, 4);
+            let material = |k: usize| m.vertices[m.models[k].first_vertex as usize].material;
+            assert_eq!([material(0), material(1), material(2)], [1, 0, 2]);
+        });
     }
 
     fn parsed<R>(tables: &ModelTables, f: impl FnOnce(Result<Models<'_>, ModelError>) -> R) -> R {

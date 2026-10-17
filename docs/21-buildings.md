@@ -4,6 +4,8 @@ Every faction's buildings with first-pass numbers for Conquest (M3): cost, build
 
 `gc_bake` bakes these buildings into the pack's building table (`data/buildings`, with the starting count of each). **Built (2026-10-16, M3 step 1):** the simulation has buildings: footprints that block walking, hit points, armour and the damage table below, and regiments ordered to attack a building close in and knock it down. The sandbox lets you put buildings down and knock them over (`K`, see [06 · Game Modes](06-game-modes.md)). Construction, training, supply and towers follow in later steps ([15 · Staffing Plan](15-staffing-plan.md#m3--first-harvest-the-first-agent-team)). **Built (2026-10-16, M3 step 3):** workers lay foundations (`Command::Build`, paid for when laid) that give nothing until they are finished, with up to four builders at once (the first at full speed, each further one at half). A building queues up to five regiments, which wait for supply before training. Calling off a building or an upgrade refunds 75%. Main buildings upgrade on their own, with no builders, and keep working meanwhile. An upgrade keeps its building's footprint (the bake and the simulation refuse one that doesn't). A unit's tier is checked when it is queued, so a regiment queued before its owner's keep falls still trains. A regiment comes out of the south side, or another side if that is blocked. The lobby and HUD for these come in step 4.
 
+**Built (2026-10-17, buildings brought to life):** Conquest buildings have 3D models with visible construction stages. The game picks the look from the simulation's percent built, and the simulation is unchanged. A building with no model is still drawn as the old placeholder box, with its hit bar. Looks, upgrades, workers, packs and budgets are in [Models and construction stages](#models-and-construction-stages) below.
+
 ## Shared rules
 
 - **Times** are seconds at Standard tempo. The lobby's tempo setting scales them like research ([04 · Economy](04-economy.md#tempo-setting)).
@@ -21,6 +23,28 @@ Every faction's buildings with first-pass numbers for Conquest (M3): cost, build
 - **Brood:** every structure is grown by using up the Gnawer that starts it, so its real price is the listed Grub plus a worker (50 Grub and a larva). Upgrading the Hive uses no Gnawer. All Brood structures are Living. Nothing repairs them, but they regrow 2 hit points a second while on root-veins.
 - **Choir:** every building except the Spire, Resonators and Siphons needs power. It must stand inside the field of a Spire (8 tiles) or a Resonator or Siphon (6 tiles). An unpowered building stops training, researching and shooting until power returns.
 - **Carrion Concord:** the Counting House and Tollgate are Fortified, and everything else is Structure, including the Waystation. The Reliquary (75 Grub, 2×2) is small and cheap, made to be planted beside other players' fights.
+
+## Models and construction stages
+
+Each building has four models, and the game shows one of them from the building's percent built (`StructureView::built_percent`):
+
+| Look | Shown at | Model |
+|---|---|---|
+| Foundation | 0 to 24% built | `<Name> #1` |
+| Frame with scaffolding | 25 to 59% | `<Name> #2` |
+| Nearly done | 60 to 99% | `<Name> #3` |
+| Finished | 100% | `<Name>` |
+
+- **Upgrades** of a main building have only `#3` and the finished look. For the first half of an upgrade the game shows the old tier, and for the second half the upgrade's `#3`.
+- **Workers** on a building going up, or being mended, turn to face it and play their attack clips as work. An upgrade has no builders, so three of that faction's workers (Ember Hands, Concord Ledger Clerks, Choir Tuners or Brood Gnawers) are drawn working at the walls. This is drawing only.
+- **Packs.** Each faction's buildings are baked into `assets/buildings/<faction>.pak` from `assets-src/buildings/<faction>.ron`. GitHub refuses files over 100 MB and the soldier pack is 86 MB, so they are separate. The build script joins the soldier pack and every building pack into one pack in the build directory, which the executable embeds. CI checks each building pack against its manifest, as it does the soldier pack.
+- **Budgets** (finished look, full detail, in triangles): main buildings and upgrades 18,000; outposts 14,000; 3×3 to 5×5 buildings 10,000; 2×2 towers and small pieces 6,000; walls and gates 2,500. Each has three smaller levels of detail. All four looks of a building share one 512 × 512 material, baked at 1024.
+- **How each faction builds:**
+  - **Ember Clans:** raw-timber pole scaffolding, and stone and log piles.
+  - **Carrion Concord:** bone-and-iron scaffolding, coffins and ledger crates.
+  - **Shard Choir:** a floating pewter lattice, with hovering shards singing the building into shape.
+  - **Brood:** no scaffolding. The building is grown: a root-vein web and resin mound, then a chitin ribcage in a membrane cocoon, then a hardening shell.
+- **Status.** The first model is the Ember Clans' Clan Hall. The other main buildings and their upgrades follow in this batch, and the other 46 buildings in later batches. `--showroom buildings` stands every look in a row (`--showroom-clip idle` holds one clip).
 
 ## Damage against buildings
 

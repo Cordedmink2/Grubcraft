@@ -93,8 +93,13 @@ pub(crate) fn pose(
 /// without regard to case (blank entries are skipped). An unknown name, or
 /// none at all, comes back in `Err`.
 pub fn choose(spec: &str, models: &gc_assets::model::Models) -> Result<Vec<usize>, String> {
+    // Soldiers are rigged; buildings stand still on the one still bone.
+    let still = |m: &usize| models.models[*m].bones == 1;
     if spec.trim().eq_ignore_ascii_case("all") {
-        return Ok((0..models.models.len()).collect());
+        return Ok((0..models.models.len()).filter(|m| !still(m)).collect());
+    }
+    if spec.trim().eq_ignore_ascii_case("buildings") {
+        return Ok((0..models.models.len()).filter(still).collect());
     }
     let names: Vec<&str> = spec
         .split(',')
@@ -284,9 +289,18 @@ mod tests {
     fn names_match_without_case_or_spaces() {
         let models = crate::models::load().unwrap();
         let (a, b) = (models.models[0].name(), models.models[1].name());
-        let n = models.models.len();
-        assert_eq!(choose("all", &models), Ok((0..n).collect()));
-        assert_eq!(choose(" ALL ", &models), Ok((0..n).collect()));
+        // `all` is every soldier, `buildings` every building look.
+        let soldiers: Vec<usize> = (0..models.models.len())
+            .filter(|&m| models.models[m].bones > 1)
+            .collect();
+        let buildings: Vec<usize> = (0..models.models.len())
+            .filter(|&m| models.models[m].bones == 1)
+            .collect();
+        assert!(!soldiers.is_empty() && !buildings.is_empty());
+        assert_eq!(soldiers.len() + buildings.len(), models.models.len());
+        assert_eq!(choose("all", &models), Ok(soldiers.clone()));
+        assert_eq!(choose(" ALL ", &models), Ok(soldiers));
+        assert_eq!(choose("Buildings", &models), Ok(buildings));
         let both = format!(" {} , {}", b.to_lowercase(), a.to_uppercase());
         assert_eq!(choose(&both, &models), Ok(vec![1, 0]));
         assert_eq!(

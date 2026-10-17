@@ -813,11 +813,13 @@ pub(crate) fn upload(
         size,
     );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    // Without BC7 the textured models draw in their vertex colours.
+    // Without BC7, or room for every material's layers, the textured
+    // models draw in their vertex colours.
     let textures = device
         .features()
         .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
-        && m.materials() > 0;
+        && m.materials() > 0
+        && m.materials() * LAYERS_PER_MATERIAL <= device.limits().max_texture_array_layers as usize;
     let materials = upload_materials(device, queue, m, textures);
     let array_view = |format: wgpu::TextureFormat| {
         materials.create_view(&wgpu::TextureViewDescriptor {
