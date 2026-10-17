@@ -307,6 +307,8 @@ impl Raider {
             self.avoid.push((mid, s.now + AVOID));
         }
         self.target = None;
+        // Workers that go from now on were not its doing.
+        self.watching.clear();
         self.phase = Phase::Falling(s.now + HOME_LIMIT);
     }
 
@@ -356,11 +358,7 @@ impl Raider {
 
     /// Soldiers in the party now.
     fn soldiers(&self, s: &Sense) -> u32 {
-        self.regiments
-            .iter()
-            .filter_map(|h| s.view.get(*h))
-            .map(|r| u32::from(r.models))
-            .sum()
+        self.members(s).map(|r| u32::from(r.models)).sum()
     }
 
     /// The middle of the party.

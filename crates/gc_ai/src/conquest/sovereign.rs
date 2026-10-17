@@ -123,6 +123,8 @@ impl Sovereign {
             Some(t) if s.now >= t + PUSH_WINDOW => t + PUSH_EVERY,
             Some(_) => return,
         };
+        // A mind that takes over late plans its first push from now.
+        let next = next.max(s.now + PUSH_LEAD);
         self.push = Some(next);
         notes.push(format!(
             "Planning a timing push at {}",

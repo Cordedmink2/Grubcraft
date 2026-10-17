@@ -119,6 +119,9 @@ const FOLLOW_SECONDS: f32 = 45.0;
 /// How far a lost regiment may have strayed from where it guesses, as a
 /// share of the ground it could have covered since.
 const STRAY: f32 = 0.5;
+/// The farthest it reckons a lost regiment may have strayed, tiles: past
+/// it, the guess says nothing.
+const MOST_STRAY: f32 = 25.0;
 
 /// Where it guesses a regiment it has lost sight of is now, and how far
 /// off that guess may be, tiles: where it was going, at its pace, for a
@@ -135,7 +138,8 @@ pub fn guess(s: &Sense, r: &Seen) -> (Vec2, f32) {
     } else {
         Vec2::ZERO
     };
-    (s.terrain.clamp(r.pos + ahead, 0.0), pace * seconds * STRAY)
+    let off = (pace * seconds * STRAY).min(MOST_STRAY);
+    (s.terrain.clamp(r.pos + ahead, 0.0), off)
 }
 
 /// The part of `owner`'s army it expects to meet attacking its building

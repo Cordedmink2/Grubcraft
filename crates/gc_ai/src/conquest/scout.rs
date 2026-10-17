@@ -41,8 +41,11 @@ const CLUSTER: f32 = 14.0;
 const START_SEEPS: f32 = 24.0;
 /// Ticks before a level that scouts all game sends another after losing one.
 const REPLACE: u32 = 60 * TICKS_PER_SECOND;
-/// The longest an early scout stays out, from the tick it was taken.
+/// The longest an early scout stays out, from the tick it was taken, and
+/// the longest its way home may take before it gives its regiment back
+/// wherever it is.
 const EARLY_LIMIT: u32 = 6 * 60 * TICKS_PER_SECOND;
+const HOME_LIMIT: u32 = 90 * TICKS_PER_SECOND;
 /// It is back at the rally point within this many tiles.
 const HOME: f32 = 9.0;
 /// A place seen within this many seconds is not worth another look.
@@ -87,6 +90,8 @@ pub struct Scout {
     done: bool,
     /// An early scout has seen what it was for and is coming back.
     returning: bool,
+    /// Since when it has been coming back.
+    returning_since: Option<u32>,
     home: Option<Vec2>,
     /// The tick its regiment first came to look at a start an enemy might
     /// hold.
@@ -147,6 +152,7 @@ impl Scout {
         // An early scout has a limit on how long it stays out.
         if early && !self.returning && self.taken.is_some_and(|t| s.now >= t + EARLY_LIMIT) {
             self.returning = true;
+            self.returning_since = Some(s.now);
             self.target = None;
         }
         // Enemy fighters near: fall back, and leave the place it was going
@@ -184,7 +190,10 @@ impl Scout {
         }
         if self.returning {
             // Back at the rally point it gives the regiment back, for good.
-            if rally.is_none_or(|r| r.distance(pos) <= HOME) {
+            let late = self
+                .returning_since
+                .is_some_and(|t| s.now >= t + HOME_LIMIT);
+            if late || rally.is_none_or(|r| r.distance(pos) <= HOME) {
                 self.regiment = None;
                 self.returning = false;
                 self.done = true;
@@ -200,6 +209,7 @@ impl Scout {
             } else if early && self.starts_left() == 0 {
                 // It has seen what it was sent for.
                 self.returning = true;
+                self.returning_since = Some(s.now);
             }
         }
     }
@@ -240,12 +250,10 @@ impl Scout {
         // Enemy buildings it has seen: a start with one by it is looked at
         // (a scout sees a base from further than it can safely go), and the
         // scout's regiment has found it if it is in sight of it.
-        let theirs: Vec<Vec2> = s.world.structures().map_or(Vec::new(), |st| {
-            st.iter()
-                .filter(|v| s.view.hostile(s.party, v.owner) && v.seen_by(s.party))
-                .map(|v| v2(v.centre()))
-                .collect()
-        });
+        let theirs: Vec<Vec2> = spymaster::enemy_buildings(s)
+            .into_iter()
+            .map(|b| b.at)
+            .collect();
         for p in &mut self.places {
             if p.start && theirs.iter().any(|b| b.distance(p.at) <= HELD) {
                 p.seen.get_or_insert(s.now);

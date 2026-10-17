@@ -31,8 +31,8 @@ const SERVE: f32 = 22.0;
 const LAY_TICKS: u32 = 3 * TICKS_PER_SECOND;
 /// Ticks a worker sent somewhere is left alone before it counts as idle.
 const SENT_TICKS: u32 = 2 * TICKS_PER_SECOND;
-/// How long an opening's early expansion comes before arming.
-const OPENING_EXPAND_TICKS: u32 = 120 * TICKS_PER_SECOND;
+/// The longest an opening's building still to go up comes before arming.
+const OPENING_HOLD: u32 = 120 * TICKS_PER_SECOND;
 /// Regiments queued per production building.
 const QUEUE: usize = 2;
 /// Most workers it keeps.
@@ -100,6 +100,8 @@ pub struct Steward {
     pub ledger: Ledger,
     /// The middle of its first main building: home.
     pub home: Option<Vec2>,
+    /// Since when an opening's building has come before arming.
+    opening_since: Option<u32>,
     /// When a Marrow gatherer may next move to Grub.
     next_rebalance: u32,
     /// When it may next look for a spot, after finding none.
@@ -222,7 +224,13 @@ impl Steward {
         // Short of an army, soldiers come before more workers, and the
         // money it has goes on them first; but an opening's building still
         // due comes first, or arming would spend what it saves for it.
-        let soldiers_first = self.arming && !self.opening_due(s, &look);
+        // One it can't get up stops holding up the army after a while.
+        let due = self.arming && self.opening_due(s, &look);
+        let since = *self.opening_since.get_or_insert(s.now);
+        if !due {
+            self.opening_since = None;
+        }
+        let soldiers_first = self.arming && !(due && s.now < since + OPENING_HOLD);
         if soldiers_first {
             self.train_army(s, clicks, &look);
         }
@@ -850,11 +858,7 @@ impl Steward {
         let towers = count(&|m| m.stats.role == Role::Defence);
         let production =
             count(&|m| m.stats.role != Role::Main && trains_fighters(s, m.view.building));
-        // An expansion it cannot place stops holding up the army after a while.
-        let expanding = early
-            .expand_at
-            .is_some_and(|t| s.now >= t && s.now < t + OPENING_EXPAND_TICKS)
-            && self.hubs_at_home(s, look);
+        let expanding = early.expand_at.is_some_and(|t| s.now >= t) && self.hubs_at_home(s, look);
         towers < usize::from(early.towers)
             || (production > 0 && production < usize::from(early.producers))
             || expanding
