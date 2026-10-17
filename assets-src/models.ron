@@ -726,6 +726,86 @@
         // Brood roster (docs/24-brood-models.md): made for Grubcraft in Blender, real-insect creatures
         // on their own rigs with clips made in their scripts.
         (
+            name: "Chitin Guard",
+            source: "shared:grubcraft/brood/chitinguard/chitinguard.glb",
+            height: 1.358,
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Block": "Block",
+            },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((
+                albedo: "shared:grubcraft/brood/chitinguard/albedo.png",
+                team: Some("shared:grubcraft/brood/chitinguard/team.png"),
+                normal: Some("shared:grubcraft/brood/chitinguard/normal.png"),
+                orm: Some("shared:grubcraft/brood/chitinguard/orm.png"),
+                emissive: Some("shared:grubcraft/brood/chitinguard/emissive.png"),
+            )),
+        ),
+        (
+            name: "Broodmother Bulk",
+            source: "shared:grubcraft/brood/bulk/bulk.glb",
+            height: 2.144,
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Shoot": "Shoot",
+            },
+            lod_triangles: (20000, 7000, 2400, 800),
+            textures: Some((
+                albedo: "shared:grubcraft/brood/bulk/albedo.png",
+                team: Some("shared:grubcraft/brood/bulk/team.png"),
+                normal: Some("shared:grubcraft/brood/bulk/normal.png"),
+                orm: Some("shared:grubcraft/brood/bulk/orm.png"),
+                emissive: Some("shared:grubcraft/brood/bulk/emissive.png"),
+            )),
+        ),
+        (
+            name: "Colossus Maw",
+            source: "shared:grubcraft/brood/maw/maw.glb",
+            height: 3.258,
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
+            },
+            lod_triangles: (20000, 7000, 2400, 800),
+            textures: Some((
+                albedo: "shared:grubcraft/brood/maw/albedo.png",
+                team: Some("shared:grubcraft/brood/maw/team.png"),
+                normal: Some("shared:grubcraft/brood/maw/normal.png"),
+                orm: Some("shared:grubcraft/brood/maw/orm.png"),
+                emissive: Some("shared:grubcraft/brood/maw/emissive.png"),
+            )),
+        ),
+        (
+            name: "The Devourer",
+            source: "shared:grubcraft/brood/devourer/devourer.glb",
+            height: 1.163,
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
+            },
+            lod_triangles: (12000, 4000, 1400, 450),
+            textures: Some((
+                albedo: "shared:grubcraft/brood/devourer/albedo.png",
+                team: Some("shared:grubcraft/brood/devourer/team.png"),
+                normal: Some("shared:grubcraft/brood/devourer/normal.png"),
+                orm: Some("shared:grubcraft/brood/devourer/orm.png"),
+                emissive: Some("shared:grubcraft/brood/devourer/emissive.png"),
+            )),
+        ),
+        (
+            name: "The Whisperer",
+            source: "shared:grubcraft/brood/whisperer/whisperer.glb",
+            height: 2.231,
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
+            },
+            lod_triangles: (12000, 4000, 1400, 450),
+            textures: Some((
+                albedo: "shared:grubcraft/brood/whisperer/albedo.png",
+                team: Some("shared:grubcraft/brood/whisperer/team.png"),
+                normal: Some("shared:grubcraft/brood/whisperer/normal.png"),
+                orm: Some("shared:grubcraft/brood/whisperer/orm.png"),
+                emissive: Some("shared:grubcraft/brood/whisperer/emissive.png"),
+            )),
+        ),
+        (
             name: "Gnawer",
             source: "shared:grubcraft/brood/gnawer/gnawer.glb",
             height: 0.532,
@@ -755,22 +835,6 @@
                 normal: Some("shared:grubcraft/brood/skitterlings/normal.png"),
                 orm: Some("shared:grubcraft/brood/skitterlings/orm.png"),
                 emissive: Some("shared:grubcraft/brood/skitterlings/emissive.png"),
-            )),
-        ),
-        (
-            name: "Chitin Guard",
-            source: "shared:grubcraft/brood/chitinguard/chitinguard.glb",
-            height: 1.491,
-            clips: {
-                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Block": "Block",
-            },
-            lod_triangles: (8400, 3000, 1000, 350),
-            textures: Some((
-                albedo: "shared:grubcraft/brood/chitinguard/albedo.png",
-                team: Some("shared:grubcraft/brood/chitinguard/team.png"),
-                normal: Some("shared:grubcraft/brood/chitinguard/normal.png"),
-                orm: Some("shared:grubcraft/brood/chitinguard/orm.png"),
-                emissive: Some("shared:grubcraft/brood/chitinguard/emissive.png"),
             )),
         ),
         (
@@ -870,38 +934,6 @@
             )),
         ),
         (
-            name: "Broodmother Bulk",
-            source: "shared:grubcraft/brood/bulk/bulk.glb",
-            height: 2.144,
-            clips: {
-                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Shoot": "Shoot",
-            },
-            lod_triangles: (20000, 7000, 2400, 800),
-            textures: Some((
-                albedo: "shared:grubcraft/brood/bulk/albedo.png",
-                team: Some("shared:grubcraft/brood/bulk/team.png"),
-                normal: Some("shared:grubcraft/brood/bulk/normal.png"),
-                orm: Some("shared:grubcraft/brood/bulk/orm.png"),
-                emissive: Some("shared:grubcraft/brood/bulk/emissive.png"),
-            )),
-        ),
-        (
-            name: "Colossus Maw",
-            source: "shared:grubcraft/brood/maw/maw.glb",
-            height: 3.258,
-            clips: {
-                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
-            },
-            lod_triangles: (20000, 7000, 2400, 800),
-            textures: Some((
-                albedo: "shared:grubcraft/brood/maw/albedo.png",
-                team: Some("shared:grubcraft/brood/maw/team.png"),
-                normal: Some("shared:grubcraft/brood/maw/normal.png"),
-                orm: Some("shared:grubcraft/brood/maw/orm.png"),
-                emissive: Some("shared:grubcraft/brood/maw/emissive.png"),
-            )),
-        ),
-        (
             name: "Spawnlings",
             source: "shared:grubcraft/brood/spawnlings/spawnlings.glb",
             height: 0.383,
@@ -931,38 +963,6 @@
                 normal: Some("shared:grubcraft/brood/queen/normal.png"),
                 orm: Some("shared:grubcraft/brood/queen/orm.png"),
                 emissive: Some("shared:grubcraft/brood/queen/emissive.png"),
-            )),
-        ),
-        (
-            name: "The Devourer",
-            source: "shared:grubcraft/brood/devourer/devourer.glb",
-            height: 1.163,
-            clips: {
-                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
-            },
-            lod_triangles: (12000, 4000, 1400, 450),
-            textures: Some((
-                albedo: "shared:grubcraft/brood/devourer/albedo.png",
-                team: Some("shared:grubcraft/brood/devourer/team.png"),
-                normal: Some("shared:grubcraft/brood/devourer/normal.png"),
-                orm: Some("shared:grubcraft/brood/devourer/orm.png"),
-                emissive: Some("shared:grubcraft/brood/devourer/emissive.png"),
-            )),
-        ),
-        (
-            name: "The Whisperer",
-            source: "shared:grubcraft/brood/whisperer/whisperer.glb",
-            height: 2.145,
-            clips: {
-                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
-            },
-            lod_triangles: (12000, 4000, 1400, 450),
-            textures: Some((
-                albedo: "shared:grubcraft/brood/whisperer/albedo.png",
-                team: Some("shared:grubcraft/brood/whisperer/team.png"),
-                normal: Some("shared:grubcraft/brood/whisperer/normal.png"),
-                orm: Some("shared:grubcraft/brood/whisperer/orm.png"),
-                emissive: Some("shared:grubcraft/brood/whisperer/emissive.png"),
             )),
         ),
     ],
