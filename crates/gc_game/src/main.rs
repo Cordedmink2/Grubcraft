@@ -867,6 +867,15 @@ fn fighter_of(stats: &UnitStats, r: &gc_sim::RegimentView) -> Fighter {
     }
 }
 
+/// One of the two strikes, so neighbours swing out of step.
+fn swing(first: bool) -> Action {
+    if first {
+        Action::Attack
+    } else {
+        Action::Attack2
+    }
+}
+
 /// What a soldier is doing out of a duel, from his puppet and his regiment.
 fn soldier_action(s: &Soldier, block: &Block, shooting: bool) -> Action {
     if block.routing {
@@ -875,11 +884,7 @@ fn soldier_action(s: &Soldier, block: &Block, shooting: bool) -> Action {
         // Behind the fighting line, some wait their turn.
         Action::Idle
     } else if s.striking {
-        if s.phase < 0.5 {
-            Action::Attack
-        } else {
-            Action::Attack2
-        }
+        swing(s.phase < 0.5)
     } else if s.speed > block.speed * 1.25 + 0.3 {
         Action::Run
     } else if s.speed > 0.25 {
@@ -2727,14 +2732,9 @@ impl Running {
                             working.map_or(s.facing, |c| (c - s.pos).normalize_or(s.facing));
                         let pose = match s.fight {
                             Some(fight) => clips.fight(model, fight, seconds),
-                            None if working.is_some() => {
-                                let action = if s.phase < 0.5 {
-                                    Action::Attack
-                                } else {
-                                    Action::Attack2
-                                };
-                                clips.pose(model, action, seconds).map(|p| (p, false))
-                            }
+                            None if working.is_some() => clips
+                                .pose(model, swing(s.phase < 0.5), seconds)
+                                .map(|p| (p, false)),
                             None => {
                                 let action = soldier_action(&s, &block, shooting);
                                 // Giving ground: the walk played backwards.
@@ -4644,8 +4644,8 @@ impl Running {
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
             if let Some(model) = art.looks.model_of(&s) {
-                let (centre, lift) = buildings::model_spot(&s, &ground);
-                let at = Vec3::new(centre.x, ground(centre.x, centre.y) + lift, centre.y);
+                let (centre, top, lift) = buildings::model_spot(&s, &ground);
+                let at = Vec3::new(centre.x, top, centre.y);
                 let still = art.clips.pose(model, Action::Idle, time);
                 if let (Some(lod), Some(pose)) = (art.view.place(art.heights[model], at), still) {
                     let highlight = if picked == Some(s.handle) { 40 } else { 0 };
@@ -4673,12 +4673,10 @@ impl Running {
                 let Some(lod) = art.view.place(art.heights[worker], foot) else {
                     continue;
                 };
-                let action = if k % 2 == 0 {
-                    Action::Attack
-                } else {
-                    Action::Attack2
-                };
-                let Some(pose) = art.clips.pose(worker, action, time + k as f32 * 0.37) else {
+                let Some(pose) = art
+                    .clips
+                    .pose(worker, swing(k % 2 == 0), time + k as f32 * 0.37)
+                else {
                     continue;
                 };
                 art.buckets[worker * LODS + lod].push(SoldierInstance {

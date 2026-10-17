@@ -143,6 +143,11 @@ pub struct ModelRecord {
 }
 
 impl ModelRecord {
+    /// A model with one bone and no animation: a building, not a soldier.
+    pub fn is_still(&self) -> bool {
+        self.bones == 1
+    }
+
     pub fn name(&self) -> &str {
         let len = self.name.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
         core::str::from_utf8(&self.name[..len]).unwrap_or("?")

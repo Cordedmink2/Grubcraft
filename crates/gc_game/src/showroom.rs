@@ -94,7 +94,7 @@ pub(crate) fn pose(
 /// none at all, comes back in `Err`.
 pub fn choose(spec: &str, models: &gc_assets::model::Models) -> Result<Vec<usize>, String> {
     // Soldiers are rigged; buildings stand still on the one still bone.
-    let still = |m: &usize| models.models[*m].bones == 1;
+    let still = |m: &usize| models.models[*m].is_still();
     if spec.trim().eq_ignore_ascii_case("all") {
         return Ok((0..models.models.len()).filter(|m| !still(m)).collect());
     }
@@ -291,10 +291,10 @@ mod tests {
         let (a, b) = (models.models[0].name(), models.models[1].name());
         // `all` is every soldier, `buildings` every building look.
         let soldiers: Vec<usize> = (0..models.models.len())
-            .filter(|&m| models.models[m].bones > 1)
+            .filter(|&m| !models.models[m].is_still())
             .collect();
         let buildings: Vec<usize> = (0..models.models.len())
-            .filter(|&m| models.models[m].bones == 1)
+            .filter(|&m| models.models[m].is_still())
             .collect();
         assert!(!soldiers.is_empty() && !buildings.is_empty());
         assert_eq!(soldiers.len() + buildings.len(), models.models.len());

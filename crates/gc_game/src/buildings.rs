@@ -317,13 +317,13 @@ fn ground_range(ground: &impl Fn(f32, f32) -> f32, s: &StructureView) -> (f32, f
         .fold((f32::MAX, f32::MIN), |(lo, hi), g| (lo.min(g), hi.max(g)))
 }
 
-/// Where a building's model stands: the middle of its footprint, and how
-/// far above the ground there its floor is. It stands on the highest ground
+/// Where a building's model stands: the middle of its footprint, the
+/// height of its floor, and how far that is above the ground there. It stands on the highest ground
 /// under it; the plinth every model has below its floor hides the slope.
-pub fn model_spot(s: &StructureView, ground: &impl Fn(f32, f32) -> f32) -> (Vec2, f32) {
+pub fn model_spot(s: &StructureView, ground: &impl Fn(f32, f32) -> f32) -> (Vec2, f32, f32) {
     let centre = centre_of(s.tile, s.width, s.depth);
     let (_, hi) = ground_range(ground, s);
-    (centre, hi - ground(centre.x, centre.y))
+    (centre, hi, hi - ground(centre.x, centre.y))
 }
 
 /// Whether a building of `world` that `shown` allows stands over `p`
@@ -400,14 +400,12 @@ pub fn push(
         };
         // A building with a model is drawn with the soldiers (its bar
         // floats over the model's roof).
-        let height = match modelled(&s) {
-            Some(height) => height,
-            None => {
-                let [r, g, b] = shade(team(s.owner), s.hp, s.max_hp);
-                out.push(block(&s, height_of(stats.role), [r, g, b, 0], &ground));
-                height_of(stats.role)
-            }
-        };
+        let height = modelled(&s).unwrap_or_else(|| {
+            let [r, g, b] = shade(team(s.owner), s.hp, s.max_hp);
+            let height = height_of(stats.role);
+            out.push(block(&s, height, [r, g, b, 0], &ground));
+            height
+        });
         if s.hp >= s.max_hp {
             continue;
         }
@@ -732,7 +730,7 @@ mod tests {
                 );
             }
         }
-        let still = models.models.iter().filter(|m| m.bones == 1).count();
+        let still = models.models.iter().filter(|m| m.is_still()).count();
         assert_eq!(
             dressed, still,
             "a building model's name matches no building"
