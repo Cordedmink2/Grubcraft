@@ -4,10 +4,11 @@
 //! reads what the simulation says the tick did (`World::events`) and plays a
 //! sound for each: volleys leaving and landing, blows in melee, a regiment
 //! wavering, breaking, shattering or rallying. Sounds are placed relative to the
-//! camera's ground point: quieter with distance (less so when zoomed out)
+//! listener (the bird's-eye camera's ground point, or the eye when riding with a regiment):
+//! quieter with distance (less so when zoomed out)
 //! and panned left or right.
 
-use crate::camera::RtsCamera;
+use crate::camera::Listener;
 use crate::from_fx_vec;
 use gc_audio::{Audio, Bank, SoundId};
 use gc_platform::logln;
@@ -205,13 +206,13 @@ impl Sounds {
     pub fn observe(
         &mut self,
         world: &World,
-        camera: &RtsCamera,
+        listener: Listener,
         heard: bool,
         shown: impl Fn(RegimentHandle) -> bool,
     ) {
-        self.focus = camera.focus;
-        self.right = Vec2::new(camera.yaw.cos(), -camera.yaw.sin());
-        self.hearing = HEAR_BASE + camera.distance * HEAR_PER_ZOOM;
+        self.focus = listener.position;
+        self.right = listener.right;
+        self.hearing = HEAR_BASE + listener.distance * HEAR_PER_ZOOM;
         let tick = world.tick_count();
 
         self.volleys(world, heard, &shown);

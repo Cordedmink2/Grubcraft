@@ -74,6 +74,14 @@
 //! pinch zooms; Alt + middle-drag, two-finger rotate, or `,` and `.` turn the view;
 //! middle-click or Home resets the rotation; ` (backquote) or F11 toggles the
 //! dev overlay and prints memory by subsystem;
+//! Y, with a regiment selected, rides with it: the camera hangs just above
+//! head height behind its rear ranks, looking where it faces, so you feel
+//! you are in the line, and selecting and ordering work as usual (in a
+//! replay too). Y or Esc again, or any pan, zoom or rotate (arrow keys,
+//! screen edges, scrolling, the wheel, a pinch or twist, middle-drag, a click
+//! on the minimap), brings back the bird's-eye view over that regiment. A
+//! regiment that shatters or is destroyed hands the view back by itself; a
+//! routing one is still followed;
 //! Esc leaves placing, the stats panel or the credits, and otherwise opens
 //! the menu.
 //!
@@ -154,7 +162,7 @@ use gc_sim::{
 use gc_ui::lobby::{GameMode, MatchStart};
 use gc_ui::menu::MapPreviewKey;
 use gc_ui::{Menu, MenuAction, Network, Screen, Settings, Ui, UiInput};
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -162,7 +170,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use camera::RtsCamera;
+use camera::{ActiveCamera, FollowCamera, RideTarget, RtsCamera};
 use gc_map::{FieldMap, Map};
 use models::Action;
 use puppets::{Block, Fighter, Puppets, Soldier};
@@ -195,6 +203,18 @@ const COMMANDER_POLE: [f32; 3] = [0.3, 5.0, 0.3];
 const COMMANDER_FLAG: [f32; 3] = [2.6, 1.8, 0.25];
 /// A regiment whose volley left this many ticks ago or less is shooting.
 const SHOOTING_TICKS: u32 = 24;
+/// Ground height for the cameras: the terrain, or the water's surface where
+/// it is deeper than the bed.
+fn ground_of(map: &Map, p: Vec2) -> f32 {
+    map.height_at(p.x, p.y).max(map.water_level())
+}
+
+/// While riding, a ray picks a block of soldiers this far outside its edges,
+/// and from the ground up to this height (soldiers are up to 1.6 tall, and
+/// their banners rise above them), in tiles: from a low camera a ground
+/// point is a poor guide.
+const RIDE_PICK_MARGIN: f32 = 0.5;
+const RIDE_PICK_HEIGHT: f32 = 3.0;
 /// Thickness of the ground plate drawn under a selected regiment.
 const PLATE_HEIGHT: f32 = 0.05;
 /// The command grid's keys, slot by slot (`gc_ui::hud::GRID_KEYS`).
@@ -527,6 +547,8 @@ struct Running {
     window: Arc<Window>,
     renderer: Renderer,
     camera: RtsCamera,
+    /// Set while riding with a regiment; that camera is then the one in use.
+    ride: Option<Ride>,
     heightmap: Arc<Map>,
     /// Which lobby map `heightmap` is; `None` for one opened with `--map`.
     map_key: Option<MapKey>,
@@ -691,6 +713,12 @@ impl UnitTable {
     }
 }
 
+/// Riding with one regiment: which one, and the close camera following it.
+struct Ride {
+    regiment: RegimentHandle,
+    camera: FollowCamera,
+}
+
 /// Soldier models and the lists that draw them, rebuilt every frame.
 struct Art {
     clips: models::Clips,
@@ -743,16 +771,17 @@ impl LodView {
 }
 
 impl Art {
-    /// Empty the buckets for a frame seen from `camera` on a viewport
-    /// `height` pixels tall.
-    fn begin(&mut self, camera: &RtsCamera, height: f32, cull: gc_render::Cull) {
+    /// Empty the buckets for a frame seen from `eye` looking along `forward`,
+    /// where `pixel_scale` is the camera's (`RtsCamera::pixel_scale` for a
+    /// viewport of the window's height).
+    fn begin(&mut self, eye: Vec3, forward: Vec3, pixel_scale: f32, cull: gc_render::Cull) {
         for b in &mut self.buckets {
             b.clear();
         }
         self.view = LodView {
-            eye: camera.eye(),
-            forward: camera.forward(),
-            pixel_scale: camera.pixel_scale(height),
+            eye,
+            forward,
+            pixel_scale,
             cull,
             force: self.view.force,
         };
@@ -1191,6 +1220,7 @@ impl App {
             window,
             renderer,
             camera,
+            ride: None,
             heightmap,
             map_key: opts.map.is_none().then_some(first_key),
             world,
@@ -1390,9 +1420,9 @@ impl ApplicationHandler for App {
                     let dx = (position.x - prev.x) as f32 / size.width as f32;
                     let dy = (position.y - prev.y) as f32 / size.height as f32;
                     if r.input.alt {
-                        r.camera.rotate(dx * 3.0);
+                        r.camera_mut().rotate(dx * 3.0);
                     } else {
-                        r.camera.pan(-dx, dy);
+                        r.camera_mut().pan(-dx, dy);
                     }
                     r.input.middle_dragged = true;
                 }
@@ -1400,20 +1430,26 @@ impl ApplicationHandler for App {
             }
             // Over the bar the wheel is not the camera's.
             WindowEvent::MouseWheel { .. } if r.hud_wants_mouse() => {}
-            WindowEvent::MouseWheel { delta, .. } => match delta {
-                MouseScrollDelta::LineDelta(_, y) => r.camera.zoom(0.88f32.powf(y)),
-                // Trackpads send pixel deltas: two-finger scroll pans, as in
-                // every Mac map app.
-                MouseScrollDelta::PixelDelta(p) => {
-                    let size = r.window.inner_size();
-                    r.camera.pan(
-                        -p.x as f32 / size.width as f32,
-                        p.y as f32 / size.height as f32,
-                    );
+            WindowEvent::MouseWheel { delta, .. } => {
+                match delta {
+                    MouseScrollDelta::LineDelta(_, y) => r.camera_mut().zoom(0.88f32.powf(y)),
+                    // Trackpads send pixel deltas: two-finger scroll pans, as in
+                    // every Mac map app.
+                    MouseScrollDelta::PixelDelta(p) => {
+                        let size = r.window.inner_size();
+                        r.camera_mut().pan(
+                            -p.x as f32 / size.width as f32,
+                            p.y as f32 / size.height as f32,
+                        );
+                    }
                 }
-            },
-            WindowEvent::PinchGesture { delta, .. } => r.camera.zoom(1.0 - delta as f32),
-            WindowEvent::RotationGesture { delta, .. } => r.camera.rotate(delta.to_radians()),
+            }
+            WindowEvent::PinchGesture { delta, .. } => {
+                r.camera_mut().zoom(1.0 - delta as f32);
+            }
+            WindowEvent::RotationGesture { delta, .. } => {
+                r.camera_mut().rotate(delta.to_radians());
+            }
             WindowEvent::MouseInput { state, button, .. } => r.mouse_button(state, button),
             WindowEvent::KeyboardInput { event, .. } => {
                 let down = event.state == ElementState::Pressed;
@@ -1487,7 +1523,10 @@ impl ApplicationHandler for App {
                         KeyCode::ArrowRight => r.input.arrows[3] = down,
                         KeyCode::Comma => r.input.turn[0] = down && !r.input.command,
                         KeyCode::Period => r.input.turn[1] = down && !r.input.command,
-                        KeyCode::Home if down => r.camera.reset_rotation(),
+                        KeyCode::Home if down => r.camera_mut().reset_rotation(),
+                        // Ride with the banner. Chords with Ctrl, Cmd or Alt
+                        // are the system's.
+                        KeyCode::KeyY if grid_key => r.toggle_ride(),
                         KeyCode::F11 | KeyCode::Backquote if down && !event.repeat => {
                             r.overlay = !r.overlay;
                             r.refresh_overlay();
@@ -1539,8 +1578,8 @@ impl ApplicationHandler for App {
                         KeyCode::KeyR | KeyCode::KeyF if grid_key => {
                             r.battle_press(hud::SLOT_FORMATION);
                         }
-                        KeyCode::KeyZ if grid_key => r.grid_press(hud::SLOT_BRACE),
-                        KeyCode::KeyV if grid_key => r.grid_press(hud::SLOT_FALL_BACK),
+                        KeyCode::KeyZ if grid_key => r.battle_press(hud::SLOT_BRACE),
+                        KeyCode::KeyV if grid_key => r.battle_press(hud::SLOT_FALL_BACK),
                         KeyCode::Space if grid_key => r.jump_to_alert(),
                         KeyCode::F1 if down && !event.repeat => r.next_idle_worker(),
                         KeyCode::KeyC if down && !event.repeat => {
@@ -1587,6 +1626,8 @@ impl ApplicationHandler for App {
                         }
                         KeyCode::Escape if down && r.hud.armed.take().is_some() => {}
                         KeyCode::Escape if down && r.hud.build_menu => r.set_build_menu(false),
+                        // Esc first gets you out of a ride.
+                        KeyCode::Escape if down && r.ride.is_some() => r.leave_ride(),
                         KeyCode::Escape
                             if down
                                 && (r.sandbox.placing
@@ -1655,7 +1696,7 @@ impl Running {
             }
             (MouseButton::Middle, ElementState::Released) => {
                 if !self.input.middle_dragged {
-                    self.camera.reset_rotation();
+                    self.camera_mut().reset_rotation();
                 }
                 self.input.middle_down = None;
             }
@@ -1708,6 +1749,8 @@ impl Running {
                     // A click on one of your buildings picks it, unless one
                     // of your regiments stands right there (workers crowd
                     // round their hall); elsewhere the nearest regiment.
+                    // Riding, a soldier is picked by the ray through its
+                    // body, since the ground behind it is far away.
                     let side = self.sandbox.side;
                     let building = self
                         .selected
@@ -1715,10 +1758,10 @@ impl Running {
                         .then(|| self.building_under_cursor(|o| o == side))
                         .flatten();
                     let reach = if building.is_some() { 1.5 } else { 6.0 };
-                    match self
-                        .ground_under_cursor()
-                        .and_then(|p| self.nearest_own(p, reach))
-                    {
+                    match self.body_under_cursor(true).or_else(|| {
+                        self.ground_under_cursor()
+                            .and_then(|p| self.nearest_own(p, reach))
+                    }) {
                         Some(h) => self.toggle_selected(h),
                         None => self.selected_structure = building,
                     }
@@ -1736,11 +1779,18 @@ impl Running {
                 self.hud.armed = None;
                 let drag = self.drag_order();
                 let plain = drag.is_none().then(|| self.ground_under_cursor()).flatten();
-                if plain.is_some_and(|p| self.conquest_right_click(p)) {
+                // Riding, the ground point lies far behind a soldier clicked
+                // on, so a body the ray passes through comes first.
+                let body = drag
+                    .is_none()
+                    .then(|| self.body_under_cursor(false))
+                    .flatten();
+                if body.is_none() && plain.is_some_and(|p| self.conquest_right_click(p)) {
                     self.input.right_down = None;
                     return;
                 }
-                if let Some(target) = plain.and_then(|p| self.enemy_at(p)) {
+                let target = body.or_else(|| plain.and_then(|p| self.enemy_at(p)));
+                if let Some(target) = target {
                     self.issue_attack(target);
                 } else if let Some(building) = drag
                     .is_none()
@@ -1763,21 +1813,47 @@ impl Running {
         }
     }
 
-    /// The ray through the mouse: where it starts and which way it goes.
-    fn cursor_ray(&self) -> Option<(glam::Vec3, glam::Vec3)> {
+    /// The ray through the mouse, from whichever camera is in use.
+    fn cursor_ray(&self) -> Option<(Vec3, Vec3)> {
         let cursor = self.input.cursor?;
         let size = self.window.inner_size();
         let ndc = Vec2::new(
             (cursor.x as f32 / size.width as f32) * 2.0 - 1.0,
             1.0 - (cursor.y as f32 / size.height as f32) * 2.0,
         );
-        Some(self.camera.ray(ndc))
+        Some(self.active_camera().ray(ndc))
+    }
+
+    /// The camera in use: the ride camera while riding, else the bird's-eye
+    /// one.
+    fn active_camera(&self) -> ActiveCamera<'_> {
+        match &self.ride {
+            Some(ride) => ActiveCamera::Ride(&ride.camera, self.camera.aspect),
+            None => ActiveCamera::Rts(&self.camera),
+        }
+    }
+
+    /// The bird's-eye camera, for moving the view: any move of it hands the
+    /// view back from a ride first.
+    fn camera_mut(&mut self) -> &mut RtsCamera {
+        self.leave_ride();
+        &mut self.camera
     }
 
     /// The map point under the mouse, found by marching the camera ray over
     /// the CPU copy of the heightmap.
     fn ground_under_cursor(&self) -> Option<Vec2> {
         let (origin, dir) = self.cursor_ray()?;
+        let hit = origin + dir * self.ground_along(origin, dir)?;
+        let n = self.heightmap.tiles as f32;
+        let inside = (0.0..=n).contains(&hit.x) && (0.0..=n).contains(&hit.z);
+        inside.then(|| Vec2::new(hit.x, hit.z))
+    }
+
+    /// How far along the ray from `origin` (along `dir`) it meets the
+    /// ground or the water, found by marching over the CPU copy of the
+    /// heightmap; None if it never comes down within 2,000 tiles.
+    fn ground_along(&self, origin: Vec3, dir: Vec3) -> Option<f32> {
         let mut t = 0.0;
         let step = 0.5;
         let mut prev_t = 0.0;
@@ -1799,10 +1875,7 @@ impl Running {
                         .max(self.heightmap.water_level());
                     if q.y <= g { hi = mid } else { lo = mid }
                 }
-                let hit = origin + dir * hi;
-                let n = self.heightmap.tiles as f32;
-                let inside = (0.0..=n).contains(&hit.x) && (0.0..=n).contains(&hit.z);
-                return inside.then(|| Vec2::new(hit.x, hit.z));
+                return Some(hi);
             }
             prev_t = t;
             t += step;
@@ -1962,7 +2035,7 @@ impl Running {
     fn regiments_in_box(&mut self, (lo, hi): (Vec2, Vec2)) {
         self.boxed.clear();
         let size = self.window.inner_size();
-        let view_proj = self.camera.view_proj();
+        let view_proj = self.active_camera().view_proj();
         for r in self
             .world
             .regiments
@@ -2019,6 +2092,139 @@ impl Running {
             let centre = sum / self.control_groups[n].len() as f32;
             self.look_at(centre);
         }
+    }
+
+    /// Ground height for the cameras: the terrain, or the water's surface
+    /// where it is deeper than the bed.
+    fn ground_at(&self, p: Vec2) -> f32 {
+        ground_of(&self.heightmap, p)
+    }
+
+    /// Y: start riding with the first selected regiment still on the field,
+    /// or come back out if already riding. Does nothing with no selection.
+    fn toggle_ride(&mut self) {
+        if self.ride.is_some() {
+            self.leave_ride();
+            return;
+        }
+        if !self.match_started || self.menu_open || self.showroom.is_some() || self.viewer.is_some()
+        {
+            return;
+        }
+        let regiments = &self.world.regiments;
+        let Some(r) = self
+            .selected
+            .iter()
+            .filter_map(|&h| regiments.get(h))
+            .find(|r| r.morale != MoraleState::Shattered)
+        else {
+            return;
+        };
+        let target = self.ride_target(&r);
+        let camera = FollowCamera::new(target, |p| self.ground_at(p));
+        self.ride = Some(Ride {
+            regiment: r.handle,
+            camera,
+        });
+    }
+
+    /// Back to the bird's-eye camera, over the regiment we were riding with
+    /// (or where the view last was, if it is gone), at the normal distance.
+    /// Does nothing when not riding.
+    fn leave_ride(&mut self) {
+        let Some(ride) = self.ride.take() else {
+            return;
+        };
+        let focus = self
+            .world
+            .regiments
+            .position(ride.regiment)
+            .map_or(ride.camera.anchor(), from_fx_vec);
+        // The bird's-eye camera follows the land, not the water's surface.
+        let ground = self.heightmap.height_at(focus.x, focus.y);
+        self.camera
+            .resume_from_ride(focus, ground, ride.camera.forward_xz());
+    }
+
+    /// What the ride camera should follow: where the renderer draws the
+    /// regiment this frame.
+    fn ride_target(&self, r: &gc_sim::RegimentView) -> RideTarget {
+        let (centre, facing) = drawn_pose(&self.prev_positions, self.alpha, r);
+        let stats = &self.units.stats[r.unit as usize];
+        let (_, depth) = stats.block_size_in(r.formation, r.files, r.models);
+        RideTarget {
+            centre,
+            facing,
+            depth: fx_to_f32(depth),
+        }
+    }
+
+    /// Move the ride camera towards its regiment. Drops back to the normal
+    /// camera if the regiment is gone or has shattered; a routing one is
+    /// still followed.
+    fn update_ride(&mut self, dt: f32) {
+        let Some(handle) = self.ride.as_ref().map(|ride| ride.regiment) else {
+            return;
+        };
+        let target = self
+            .world
+            .regiments
+            .get(handle)
+            .filter(|r| r.morale != MoraleState::Shattered)
+            .map(|r| self.ride_target(&r));
+        let heightmap = &self.heightmap;
+        match (target, &mut self.ride) {
+            (Some(target), Some(ride)) => {
+                ride.camera.update(dt, target, |p| ground_of(heightmap, p));
+            }
+            _ => self.leave_ride(),
+        }
+    }
+
+    /// The regiment whose body the mouse ray passes through: one of your
+    /// side's (`own`) or one your side can see that is not. Only while
+    /// riding: from the low camera a click on a soldier lands on ground far
+    /// behind it, so the ground point is a poor guide.
+    fn body_under_cursor(&self, own: bool) -> Option<RegimentHandle> {
+        let ridden = self.ride.as_ref()?.regiment;
+        let (origin, dir) = self.cursor_ray()?;
+        // A block hidden behind a ridge is not under the mouse.
+        let reach = self.ground_along(origin, dir).unwrap_or(f32::INFINITY);
+        let side = self.sandbox.side;
+        self.world
+            .regiments
+            .iter()
+            // The eye is inside the ridden block's box: it would take every click.
+            .filter(|r| r.handle != ridden && (r.owner == side) == own)
+            // Orders can only name regiments your side can see.
+            .filter(|r| own || self.world.sees(side, r.handle))
+            .filter_map(|r| {
+                let stats = &self.units.stats[r.unit as usize];
+                let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
+                let (centre, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
+                let ground = self.ground_at(centre);
+                let half = Vec2::new(fx_to_f32(depth), fx_to_f32(width)) * 0.5
+                    + Vec2::splat(RIDE_PICK_MARGIN);
+                camera::ray_hits_block(
+                    origin,
+                    dir,
+                    centre,
+                    facing,
+                    half,
+                    (ground - 0.2, ground + RIDE_PICK_HEIGHT),
+                )
+                .filter(|&t| t <= reach + RIDE_PICK_MARGIN)
+                .map(|t| (r.handle, t))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(h, _)| h)
+    }
+
+    /// The enemy regiment under the mouse: the one the ray passes through
+    /// (riding), else the one nearest the ground point.
+    pub fn enemy_under_cursor(&self) -> Option<RegimentHandle> {
+        self.body_under_cursor(false)
+            .or_else(|| self.ground_under_cursor().and_then(|p| self.enemy_at(p)))
     }
 
     /// The enemy regiment whose block is under (or within a step of) `p`.
@@ -2275,6 +2481,17 @@ impl Running {
             None => self.sim_clock.as_secs_f32() / TICK.as_secs_f32(),
         };
         self.alpha = alpha;
+        // Riding with a regiment: its camera follows where it is drawn now.
+        self.update_ride(dt.as_secs_f32());
+        let camera = self.active_camera();
+        let (view_proj, eye, forward) = (camera.view_proj(), camera.eye(), camera.forward());
+        let (scene_focus, scene_distance) = camera.scenery_view();
+        let lens_zoom = camera.zoom_distance();
+        let pixel_scale = camera.pixel_scale(self.window.inner_size().height as f32);
+        // A low camera sees a long strip of ground: spend the shadow map's
+        // texels on what is near it.
+        self.renderer
+            .set_shadow_range(self.ride.is_some().then_some(camera::RIDE_SHADOW_RANGE));
 
         self.instances.clear();
         self.boxed.clear();
@@ -2304,14 +2521,14 @@ impl Running {
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
             .map(|(h, _)| h);
         if let Some(art) = &mut self.art {
-            let cull = self.renderer.cull(self.camera.view_proj());
-            art.begin(&self.camera, self.window.inner_size().height as f32, cull);
+            let cull = self.renderer.cull(view_proj);
+            art.begin(eye, forward, pixel_scale, cull);
         }
         self.mark_shooting();
         if !viewing {
             self.scenery.push(
-                self.camera.focus,
-                self.camera.distance,
+                scene_focus,
+                scene_distance,
                 !self.commander,
                 &mut self.instances,
             );
@@ -2331,6 +2548,7 @@ impl Running {
         } else {
             1.0
         };
+        let ridden = self.ride.as_ref().map(|ride| ride.regiment);
         for r in self.world.regiments.iter().take_while(|_| !viewing) {
             // Enemies hidden in woods and tall grass aren't drawn (their
             // soldiers keep marching out of sight, below).
@@ -2343,7 +2561,9 @@ impl Running {
             let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
             let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
             let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
-            if seen && (selected || marked == Some(r.handle)) {
+            // No plate under the regiment we ride with: the eye is inside it
+            // and the plate would fill the view.
+            if seen && (selected || marked == Some(r.handle)) && ridden != Some(r.handle) {
                 self.instances.push(BoxInstance {
                     pos: pos.to_array(),
                     facing: facing.to_array(),
@@ -2552,7 +2772,7 @@ impl Running {
             lens::push(
                 &lenses,
                 &self.minds,
-                lens::scale_for(self.camera.distance),
+                lens::scale_for(lens_zoom),
                 |p| color_of(parties, p),
                 |h| reveal || world.sees(viewer, h),
                 &mut self.instances,
@@ -2571,8 +2791,8 @@ impl Running {
         }
 
         let frame = FrameParams {
-            view_proj: self.camera.view_proj(),
-            camera_pos: self.camera.eye(),
+            view_proj,
+            camera_pos: eye,
             time_seconds: self.started.elapsed().as_secs_f32(),
         };
         {
@@ -2645,10 +2865,11 @@ impl Running {
         // A rejoining player replays the match: the sounds still note what
         // happened but stay quiet, and old ambushes raise no alert.
         let catching_up = self.online.is_some() && self.menu.net().catching_up();
+        let listener = self.active_camera().listener();
         if let Some(sounds) = &mut self.sounds {
             let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
             tagged_alloc::scope(Tag::Audio, || {
-                sounds.observe(world, &self.camera, !catching_up, |h| {
+                sounds.observe(world, listener, !catching_up, |h| {
                     reveal || world.sees(viewer, h)
                 });
             });
@@ -2853,6 +3074,7 @@ impl Running {
             return;
         }
         self.menu_open = true;
+        self.leave_ride();
         self.sandbox.dirty = true;
         self.menu.show(Screen::Main);
         self.menu.set_in_match(self.match_started);
@@ -2983,6 +3205,7 @@ impl Running {
                 return;
             }
         };
+        self.leave_ride();
         let heightmap = &self.heightmap;
         let mut viewer = viewer::Viewer::new(
             &models,
@@ -3108,6 +3331,8 @@ impl Running {
     }
 
     fn restart_match(&mut self, kind: MatchKind) {
+        // The regiment we rode with belongs to the last world.
+        self.leave_ride();
         // A match started from the showroom's menu leaves it, and the field
         // gets its trees back.
         if self.showroom.take().is_some() {
@@ -3847,8 +4072,11 @@ impl Running {
             self.input.turn = [false; 2];
         } else {
             let [l, r] = self.input.turn;
-            self.camera
-                .rotate((f32::from(u8::from(r)) - f32::from(u8::from(l))) * KEY_TURN_RATE * dt);
+            // Turning is a move of the view: back to the map.
+            if l != r {
+                self.camera_mut()
+                    .rotate((f32::from(u8::from(r)) - f32::from(u8::from(l))) * KEY_TURN_RATE * dt);
+            }
         }
         let mut dx = 0.0;
         let mut dy = 0.0;
@@ -3886,13 +4114,16 @@ impl Running {
             }
         }
         if dx != 0.0 || dy != 0.0 {
-            self.camera.pan(dx * dt * 1.2, dy * dt * 1.2);
+            self.camera_mut().pan(dx * dt * 1.2, dy * dt * 1.2);
         }
-        let commander = if self.commander {
-            self.camera.distance > COMMANDER_OUT
+        // Riding with a regiment is a close view whatever the bird's-eye
+        // camera's distance was: soldiers stay.
+        let limit = if self.commander {
+            COMMANDER_OUT
         } else {
-            self.camera.distance > COMMANDER_IN
+            COMMANDER_IN
         };
+        let commander = self.ride.is_none() && self.camera.distance > limit;
         if commander != self.commander {
             self.commander = commander;
             self.sandbox.dirty = true;
@@ -4021,6 +4252,8 @@ impl Running {
     fn switch_side(&mut self) {
         let sides = self.parties.len().max(1) as PlayerId;
         self.sandbox.side = (self.sandbox.side + 1) % sides;
+        // The ridden regiment may be one the new side can't see.
+        self.leave_ride();
         self.selected.clear();
         self.selected_structure = None;
         if let Some(drill) = &mut self.drill {
@@ -4110,8 +4343,9 @@ impl Running {
     /// cursor, facing away from the camera.
     fn placement(&self) -> Option<(Vec2, Vec2)> {
         let at = self.ground_under_cursor()?;
-        let eye = self.camera.eye();
-        let facing = (self.camera.focus - Vec2::new(eye.x, eye.z)).normalize_or(Vec2::NEG_Y);
+        // Facing away from the eye: the way the camera looks along the ground.
+        let look = self.active_camera().forward();
+        let facing = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
         Some((at, facing))
     }
 
@@ -4210,7 +4444,7 @@ impl Running {
     /// Every standing building as a box, the selected one with a rim, and
     /// every gathering spot.
     fn push_buildings(&mut self) {
-        let look = self.camera.forward();
+        let look = self.active_camera().forward();
         let across = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
         let (hm, parties) = (&self.heightmap, &self.parties);
         let ground = |x, z| hm.height_at(x, z).max(hm.water_level());

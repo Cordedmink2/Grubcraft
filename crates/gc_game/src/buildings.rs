@@ -426,7 +426,7 @@ pub fn pick(
 
 /// How far along the ray it enters the box (0 when it starts inside), if it
 /// does at all.
-fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
+pub(crate) fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     let (mut near, mut far) = (0.0f32, f32::MAX);
     for k in 0..3 {
         if dir[k].abs() < 1e-9 {

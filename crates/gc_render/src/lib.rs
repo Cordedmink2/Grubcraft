@@ -214,6 +214,8 @@ pub struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     options: RendererOptions,
+    /// How far from the camera the shadow map reaches, in tiles.
+    shadow_range: f32,
     depth_view: wgpu::TextureView,
     depth_bytes: u64,
     globals: wgpu::Buffer,
@@ -605,6 +607,7 @@ impl Renderer {
             queue,
             config,
             options,
+            shadow_range: shadows::SHADOW_RANGE,
             depth_view,
             depth_bytes,
             globals,
@@ -681,8 +684,17 @@ impl Renderer {
                 SUN.normalize(),
                 terrain.tiles as f32,
                 terrain.max_height,
+                self.shadow_range,
             )
         })
+    }
+
+    /// Reach the sun's shadow map out to `tiles` from the camera, or back to
+    /// the default (the bird's-eye camera's widest view) with `None`. A
+    /// low camera that sees a long strip of ground asks for less, so the
+    /// map's texels go to the soldiers near it.
+    pub fn set_shadow_range(&mut self, tiles: Option<f32>) {
+        self.shadow_range = tiles.unwrap_or(shadows::SHADOW_RANGE);
     }
 
     /// GPU memory allocated by the renderer itself, in bytes: the sizes of the
