@@ -190,3 +190,24 @@ impl Strategy {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_answers_a_rush_with_towers_and_a_fast_expansion_with_an_attack() {
+        let plan = Strategy::of(Difficulty::General);
+        assert_eq!(plan.answer(None, 100), plan);
+        let rush = plan.answer(Some(Read::Rush), 100).early;
+        assert!(rush.towers >= 1 && rush.producers >= 2 && rush.expand_at.is_none());
+        let greedy = plan.answer(Some(Read::Greedy), 100).early;
+        assert_eq!(greedy.first_wave, Some(PUNISH_WAVE));
+        let walls = plan.answer(Some(Read::Walls), 100).early;
+        assert_eq!(walls.expand_at, Some(100));
+        // An opening's own early expansion stays if it is sooner.
+        let mut early = plan;
+        early.early.expand_at = Some(50);
+        assert_eq!(early.answer(Some(Read::Walls), 100).early.expand_at, Some(50));
+    }
+}

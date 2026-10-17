@@ -31,6 +31,8 @@ const SERVE: f32 = 22.0;
 const LAY_TICKS: u32 = 3 * TICKS_PER_SECOND;
 /// Ticks a worker sent somewhere is left alone before it counts as idle.
 const SENT_TICKS: u32 = 2 * TICKS_PER_SECOND;
+/// How long an opening's early expansion comes before arming.
+const OPENING_EXPAND_TICKS: u32 = 120 * TICKS_PER_SECOND;
 /// Regiments queued per production building.
 const QUEUE: usize = 2;
 /// Most workers it keeps.
@@ -218,10 +220,9 @@ impl Steward {
         self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);
         // Short of an army, soldiers come before more workers, and the
-        // money it has goes on them first; but an opening's buildings come
-        // first while it lasts, or arming would spend what it saves for
-        // them.
-        let soldiers_first = self.arming && s.plan.early == Early::USUAL;
+        // money it has goes on them first; but an opening's building still
+        // due comes first, or arming would spend what it saves for it.
+        let soldiers_first = self.arming && !self.opening_due(s, &look);
         if soldiers_first {
             self.train_army(s, clicks, &look);
         }
@@ -840,6 +841,32 @@ impl Steward {
 
     /// Whether it is time to expand: its seeps are running out, or the
     /// time has come and they are full.
+    /// Whether a building the opening asks for is still to go up: its
+    /// towers, its production after the first, or its early expansion.
+    fn opening_due(&self, s: &Sense, look: &Look) -> bool {
+        let early = s.plan.early;
+        if early == Early::USUAL {
+            return false;
+        }
+        let count = |f: &dyn Fn(&Mine) -> bool| look.mine.iter().filter(|m| f(m)).count();
+        let towers = count(&|m| m.stats.role == Role::Defence);
+        let production =
+            count(&|m| m.stats.role != Role::Main && trains_fighters(s, m.view.building));
+        // An expansion it cannot place stops holding up the army after a while.
+        let expanding = early
+            .expand_at
+            .is_some_and(|t| s.now >= t && s.now < t + OPENING_EXPAND_TICKS)
+            && self.home.is_some_and(|home| {
+                look.mine
+                    .iter()
+                    .filter(|m| m.hub(s.kit.economy))
+                    .all(|m| m.at().distance(home) <= SERVE)
+            });
+        towers < usize::from(early.towers)
+            || (production > 0 && production < usize::from(early.producers))
+            || expanding
+    }
+
     fn time_to_expand(&self, s: &Sense, look: &Look) -> bool {
         let grub: Vec<_> = look
             .served
