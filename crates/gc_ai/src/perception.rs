@@ -324,6 +324,37 @@ impl Perception {
             .retain(|(m, seen)| *seen <= now && world.regiments.get(m.handle).is_some());
     }
 
+    /// Copy into `out` the part of this look that `keep` keeps: the
+    /// regiments and the remembered enemies it keeps, with the same units,
+    /// stances and tick. A Conquest army's battle is fought on such a copy,
+    /// holding only that army and the enemies about it.
+    pub fn subset(&self, out: &mut Perception, keep: impl Fn(&Seen) -> bool) {
+        out.tick = self.tick;
+        if out.units.len() != self.units.len()
+            || out
+                .units
+                .iter()
+                .zip(&self.units)
+                .any(|(a, b)| a.stats != b.stats)
+        {
+            out.units.clone_from(&self.units);
+        }
+        if out.stances != self.stances {
+            out.stances.clone_from(&self.stances);
+        }
+        out.champions = self.champions;
+        out.regiments.clear();
+        out.by_index.clear();
+        out.by_index.resize(self.by_index.len(), NONE);
+        for r in self.regiments.iter().filter(|r| keep(r)) {
+            out.by_index[r.handle.index as usize] = out.regiments.len() as u32;
+            out.regiments.push(*r);
+        }
+        out.memory.clear();
+        out.memory
+            .extend(self.memory.iter().filter(|(m, _)| keep(m)).copied());
+    }
+
     /// The regiment a handle refers to, if it is still on the field.
     pub fn get(&self, h: RegimentHandle) -> Option<&Seen> {
         let k = *self.by_index.get(h.index as usize)?;

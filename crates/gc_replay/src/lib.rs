@@ -44,6 +44,9 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 19: the buildings' fields and tuning (root-veins read as reaching 15
+///   tiles from a main building and 8 from any other) and the Conquest
+///   units' builds-only trait (read as none);
 /// - 18: the Conquest units' burrowing trait (read as none);
 /// - 17: the Conquest units' larva and used-up-worker traits (read as
 ///   neither);
@@ -64,7 +67,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 18;
+pub const FORMAT: u16 = 19;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -228,7 +231,7 @@ impl ConquestRecord {
         // Counts are checked against the bytes left before allocating.
         let n: usize = r.var_as()?;
         let buildings = (0..n.min(r.remaining()))
-            .map(|_| r.building().map(BuildingStats::sanitized))
+            .map(|_| r.building(format).map(BuildingStats::sanitized))
             .collect::<Option<Vec<_>>>()
             .filter(|b| b.len() == n)?;
         let n: usize = r.var_as()?;
@@ -1284,6 +1287,8 @@ mod tests {
             supply: 10,
             flags: DROP_OFF_GRUB,
             attack: None,
+            field: 0,
+            tunes: None,
         };
         let buildings = [
             hall,

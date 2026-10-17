@@ -13,9 +13,11 @@
 // Some(the building it upgrades), with the upgrade's cost and time), cost,
 // build_time (seconds at Standard tempo), hp, armour (Fortified, Structure,
 // Living), footprint (tiles across and deep), supply (cap it adds), flags
-// (DropOffGrub, DropOffMarrow, PowersField, AntiAir), attack (towers: range in
-// tiles, damage per shot, seconds between shots, shots per volley) and effect
-// (plain words). starting_buildings and starting_units (unit name and count)
+// (DropOffGrub, DropOffMarrow, PowersField, NeedsPower, AntiAir, Larvae,
+// Veins), field (tiles a PowersField's power or Veins' root-veins reach from
+// its edge), tunes (Choir: Some((node: Seeps or Veins, tiles))), attack
+// (towers: range in tiles, damage per shot, seconds between shots, shots per
+// volley) and effect (plain words). starting_buildings and starting_units (unit name and count)
 // are what a player starts Conquest with (docs/04-economy.md; Brood larvae are
 // a meter, not units). A unit's `from: Building("...")` names one of these
 // buildings.

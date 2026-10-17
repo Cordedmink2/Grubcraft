@@ -19,6 +19,7 @@ members = [
     "tools/gc_bake",
     "tools/gc_bench",
     "tools/gc_mapcheck",
+    "tools/gc_scenebake",
     "tools/gc_sfx",
 ]
 

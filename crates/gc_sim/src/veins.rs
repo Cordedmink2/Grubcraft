@@ -2,9 +2,9 @@
 //! carries what burrowed workers gather home, and that living buildings
 //! regrow on.
 //!
-//! - A finished building with the [`VEINS`] flag spreads root-veins
-//!   [`MAIN_VEIN_TILES`] from its edge if it is a main building (the Hive,
-//!   at every tier), else [`RELAY_VEIN_TILES`] (a Pustule).
+//! - A finished building with the [`VEINS`] flag spreads root-veins its
+//!   `field` of tiles from its edge (the Hive 15 at every tier, a Pustule
+//!   8, in the shipped rosters).
 //! - The network is what links back to a main building: a main building's
 //!   veins are linked, and so are the veins of any veins building standing
 //!   within reach of linked veins. Kill a relay and whatever was linked
@@ -25,10 +25,6 @@ use gc_fixed::{Fx, FxVec2};
 use crate::structures::{Armour, Role, StructureHandle, Structures, VEINS, nearest_point};
 use crate::{PlayerId, TICKS_PER_SECOND};
 
-/// How far root-veins spread from a main building's edge, in tiles.
-pub const MAIN_VEIN_TILES: i32 = 15;
-/// How far they spread from any other veins building's edge.
-pub const RELAY_VEIN_TILES: i32 = 8;
 /// What a burrowed worker's load adds to its time, flowing home through
 /// the veins, at Standard tempo: five Gnawers on a seep bring in about 200
 /// Grub a minute, as five walking workers do from seven tiles off.
@@ -60,16 +56,25 @@ fn gap_sq([ax, ay, aw, ad]: [i32; 4], [bx, by, bw, bd]: [i32; 4]) -> i64 {
     dx * dx + dy * dy
 }
 
+/// Whether footprints `a` and `b` lie within `tiles` of each other, edge
+/// to edge.
+pub(crate) fn foot_reaches(a: [i32; 4], b: [i32; 4], tiles: u8) -> bool {
+    let reach = i64::from(tiles);
+    gap_sq(a, b) <= reach * reach
+}
+
+/// Whether `point` lies within `tiles` of footprint `foot`'s edge.
+pub(crate) fn within(foot: [i32; 4], point: FxVec2, tiles: i32) -> bool {
+    let reach = u64::from(Fx::from_int(tiles).raw().unsigned_abs());
+    (nearest_point(foot, point) - point).length_sq_raw() <= reach * reach
+}
+
 impl Structures {
     /// How far building slot `i`'s veins reach, if it spreads them: a main
     /// building's further than a relay's.
-    fn vein_reach(&self, i: usize) -> Option<i32> {
+    fn vein_reach(&self, i: usize) -> Option<u8> {
         let b = self.stats_of(i);
-        (b.flags & VEINS != 0).then_some(if b.role == Role::Main {
-            MAIN_VEIN_TILES
-        } else {
-            RELAY_VEIN_TILES
-        })
+        (b.flags & VEINS != 0 && b.field > 0).then_some(b.field)
     }
 
     /// Work out which veins buildings link back to a main building: each
@@ -111,8 +116,7 @@ impl Structures {
 
     /// Whether linked veins building `v`'s veins reach footprint `foot`.
     fn reaches(&self, v: usize, foot: [i32; 4]) -> bool {
-        let reach = i64::from(self.vein_reach(v).unwrap_or(0));
-        gap_sq(self.footprint(v), foot) <= reach * reach
+        foot_reaches(self.footprint(v), foot, self.vein_reach(v).unwrap_or(0))
     }
 
     /// The slots of the linked veins buildings still standing (one may
@@ -137,7 +141,7 @@ impl Structures {
             parent: self.handle(parent),
             at: self.centre(i),
             from: self.centre(parent),
-            reach: self.vein_reach(i).unwrap_or(0),
+            reach: i32::from(self.vein_reach(i).unwrap_or(0)),
         }
     }
 
@@ -151,12 +155,11 @@ impl Structures {
     pub(crate) fn vein_home(&self, owner: PlayerId, point: FxVec2) -> Option<usize> {
         self.veins_of(owner)
             .filter(|&v| {
-                let reach = u64::from(
-                    Fx::from_int(self.vein_reach(v).unwrap_or(0))
-                        .raw()
-                        .unsigned_abs(),
-                );
-                (nearest_point(self.footprint(v), point) - point).length_sq_raw() <= reach * reach
+                within(
+                    self.footprint(v),
+                    point,
+                    i32::from(self.vein_reach(v).unwrap_or(0)),
+                )
             })
             .min_by_key(|&v| ((self.centre(v) - point).length_sq_raw(), v))
     }

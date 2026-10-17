@@ -16,10 +16,10 @@ pub const BUILDINGS_PATH: &str = "data/buildings";
 /// Pack path of the Conquest unit table.
 pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 3;
+pub const BUILDING_SCHEMA: u32 = 4;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
-pub const CONQUEST_UNIT_SCHEMA: u32 = 2;
+pub const CONQUEST_UNIT_SCHEMA: u32 = 3;
 /// An index field that names nothing.
 pub const NONE: u16 = u16::MAX;
 /// Largest footprint side, in tiles (docs/21: buildings are 2×2 to 5×5,
@@ -91,12 +91,22 @@ pub const BUILDING_ANTI_AIR: u8 = 8;
 pub const BUILDING_LARVAE: u8 = 16;
 /// Brood: spreads root-veins (schema 3).
 pub const BUILDING_VEINS: u8 = 32;
+/// Choir: works only inside a field of power (schema 4).
+pub const BUILDING_NEEDS_POWER: u8 = 64;
 const BUILDING_FLAGS: u8 = BUILDING_DROP_OFF_GRUB
     | BUILDING_DROP_OFF_MARROW
     | BUILDING_POWERS_FIELD
     | BUILDING_ANTI_AIR
     | BUILDING_LARVAE
-    | BUILDING_VEINS;
+    | BUILDING_VEINS
+    | BUILDING_NEEDS_POWER;
+
+/// [`BuildingRecord::tunes`]: the nodes a building tunes (schema 4).
+pub const TUNES_NOTHING: u8 = 0;
+pub const TUNES_SEEPS: u8 = 1;
+pub const TUNES_VEINS: u8 = 2;
+/// The furthest a field or tuning reaches, in tiles.
+pub const MAX_REACH_TILES: u8 = 30;
 
 /// One building. Times are simulation ticks at Standard tempo, lengths `Fx`
 /// raw values, so the simulation reads them without floating point.
@@ -140,6 +150,15 @@ pub struct BuildingRecord {
     pub attack_shots: u8,
     /// How many of these the faction starts Conquest with.
     pub start_count: u8,
+    /// How far its field of power or its root-veins reach from its edge,
+    /// in tiles; 0 for a building with neither (schema 4).
+    pub field_tiles: u8,
+    /// A `TUNES_*`: the nodes it works with no workers, and how far from
+    /// its edge, in tiles (0 for none).
+    pub tunes: u8,
+    pub tune_tiles: u8,
+    /// Zero.
+    pub reserved: u8,
 }
 
 impl BuildingRecord {
@@ -218,7 +237,9 @@ pub const UNIT_TERROR: u16 = 1 << 9;
 pub const UNIT_HATCHES: u16 = 1 << 10;
 /// Brood: a worker used up by the building it starts (schema 2).
 pub const UNIT_CONSUMED: u16 = 1 << 11;
-const UNIT_FLAGS: u16 = (1 << 12) - 1;
+/// Choir: a worker that builds and mends but does not gather (schema 3).
+pub const UNIT_BUILDS_ONLY: u16 = 1 << 12;
+const UNIT_FLAGS: u16 = (1 << 13) - 1;
 
 /// One unit a Conquest player can field: its battle stats exactly as a
 /// `data/units.ron` entry bakes, and how it is raised. Heroes are not in
@@ -295,6 +316,24 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     if b.flags & !BUILDING_FLAGS != 0 {
         return Err("unknown building flags");
     }
+    let fields = b.flags & (BUILDING_POWERS_FIELD | BUILDING_VEINS) != 0;
+    if fields != (b.field_tiles > 0) || b.field_tiles > MAX_REACH_TILES {
+        return Err(
+            "a building that powers a field or spreads veins reaches 1 to 30 tiles, and nothing else has a field",
+        );
+    }
+    if b.flags & BUILDING_NEEDS_POWER != 0 && fields {
+        return Err("a building that needs power doesn't give any or spread veins");
+    }
+    if b.tunes > TUNES_VEINS
+        || (b.tunes != TUNES_NOTHING) != (b.tune_tiles > 0)
+        || b.tune_tiles > MAX_REACH_TILES
+    {
+        return Err("a building tunes seeps or veins 1 to 30 tiles off, or nothing");
+    }
+    if b.reserved != 0 {
+        return Err("reserved bytes must be zero");
+    }
     if b.upgrades_from != NONE && usize::from(b.upgrades_from) >= count {
         return Err("upgrades_from is past the end of the table");
     }
@@ -366,7 +405,7 @@ mod tests {
     #[test]
     fn record_layouts_are_stable() {
         // Changing these means bumping the schemas.
-        assert_eq!(size_of::<BuildingRecord>(), 60);
+        assert_eq!(size_of::<BuildingRecord>(), 64);
         assert_eq!(align_of::<BuildingRecord>(), 4);
         assert_eq!(size_of::<ConquestUnitRecord>(), 92);
         assert_eq!(align_of::<ConquestUnitRecord>(), 4);

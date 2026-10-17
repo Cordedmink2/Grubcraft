@@ -31,6 +31,8 @@ fn buildings() -> [BuildingStats; 2] {
         supply: 10,
         flags: 0,
         attack: None,
+        field: 0,
+        tunes: None,
     };
     let house = BuildingStats {
         role: Role::Housing,

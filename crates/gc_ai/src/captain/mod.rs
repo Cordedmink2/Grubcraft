@@ -33,7 +33,7 @@
 
 mod ambush;
 mod doctrine;
-mod helpers;
+pub(crate) mod helpers;
 mod hunt;
 mod posture;
 mod roles;
@@ -420,6 +420,9 @@ pub struct Captain {
     /// Expecting to lose, it waited for an enemy that never came, and has
     /// gone to fetch it: every regiment after the nearest enemy.
     pub fetching: bool,
+    /// It is the one attacking (a Conquest army on the march): it goes on
+    /// to the enemy rather than wait for them. Set with [`Captain::press`].
+    pressing: bool,
     pub estimate: Option<Estimate>,
     /// What it expected when it first weighed the fight up.
     pub first_estimate: Option<Estimate>,
@@ -536,6 +539,7 @@ impl Captain {
             plan: None,
             finishing: false,
             fetching: false,
+            pressing: false,
             estimate: None,
             first_estimate: None,
             members: Vec::new(),
@@ -581,6 +585,15 @@ impl Captain {
             onlook_since: None,
             pouncing: false,
             shy: None,
+        }
+    }
+
+    /// Whether it is the one attacking: pressing on crosses water as if it
+    /// had decided to, and stopping waits behind it again.
+    pub fn press(&mut self, on: bool) {
+        if on != self.pressing {
+            self.pressing = on;
+            self.crossing = on;
         }
     }
 

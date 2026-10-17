@@ -1302,6 +1302,8 @@ mod tests {
                 queue,
                 larvae: None,
                 rooted: None,
+                powered: None,
+                tuning: None,
             }),
             ..Extras::default()
         }

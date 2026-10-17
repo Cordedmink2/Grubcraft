@@ -33,6 +33,10 @@ const APART: f32 = 35.0;
 const KEEP_CLEAR: f32 = 20.0;
 /// How far out past the end of the line it looks for one, tiles.
 const SEARCH_OUT: f32 = 32.0;
+/// How far in front of the line it looks for one at most, tiles: with no
+/// enemy it counts in front (a Conquest battle against a side it isn't
+/// facing) the gap is unbounded and the search would never end.
+const SEARCH_AHEAD: f32 = 60.0;
 /// Spacing of the places it tries, tiles.
 const SEARCH_STEP: f32 = 2.0;
 /// An ambusher must get there this many times sooner than any enemy.
@@ -245,7 +249,7 @@ impl Captain {
                 .take_while(move |&v| v <= to)
         };
         let mut best: Option<(f32, Vec2, bool)> = None;
-        for ahead in steps(-6.0, gap * 0.5) {
+        for ahead in steps(-6.0, (gap * 0.5).min(SEARCH_AHEAD)) {
             for across in steps(-reach, reach) {
                 // Off an end of the line, not in front of its middle.
                 if across.abs() < half_line * 0.5 {

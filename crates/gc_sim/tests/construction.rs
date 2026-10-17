@@ -84,6 +84,8 @@ fn buildings() -> [BuildingStats; 5] {
         supply: 10,
         flags: DROP_OFF_GRUB | DROP_OFF_MARROW,
         attack: None,
+        field: 0,
+        tunes: None,
     };
     let small = |role, tier, cost_grub, build_ticks, hp, side, supply| BuildingStats {
         role,

@@ -6,7 +6,7 @@ use gc_sim::formation::GroupOrder;
 use gc_sim::{MoraleState, PlayerId, StructureHandle};
 use gc_ui::DrawList;
 use gc_ui::alerts::{Alert, AlertData, AlertKind};
-use gc_ui::conquest::{Block, NodeDot, QUEUE_SLOTS, QueueItem, StructurePanel, TopBar};
+use gc_ui::conquest::{Block, NodeDot, QUEUE_SLOTS, QueueItem, StructurePanel, TopBar, Tuning};
 use gc_ui::hero::{HeroAbility, HeroPanel};
 use gc_ui::hud::{
     Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, Hud, HudData,
@@ -347,7 +347,31 @@ pub fn upload_ui(
     renderer.set_ui(buf, scale);
 }
 
+/// What building `s` tunes now, if it is a tuning building.
+fn tuning_of(
+    world: &gc_sim::World,
+    table: &crate::buildings::Table,
+    s: &gc_sim::StructureView,
+) -> Option<Tuning> {
+    let (resource, _) = table.stats.get(usize::from(s.building))?.tunes?;
+    let economy = world.economy()?;
+    let nodes = (economy.nodes())
+        .filter(|n| n.tuner == Some(s.handle))
+        .count();
+    Some(Tuning {
+        vein: resource == gc_sim::Resource::Marrow,
+        nodes: nodes.min(usize::from(u8::MAX)) as u8,
+        per_minute: economy.tuned_per_minute(s.handle),
+    })
+}
+
 impl Running {
+    /// `side`'s idle workers. A worker that only builds (the Choir's Tuner)
+    /// has nothing to gather, so standing about is not idling.
+    fn idle_workers(&self, side: PlayerId) -> impl Iterator<Item = gc_sim::RegimentHandle> + '_ {
+        (self.world.idle_workers(side)).filter(|&h| !self.world.builds_only(h))
+    }
+
     /// The screen in UI pixels, as the menus see it.
     pub fn ui_screen(&self) -> ((i32, i32), f32) {
         let scale = self.ui_scale();
@@ -403,7 +427,7 @@ impl Running {
                 tick,
                 side,
                 top,
-                idle_workers: workers.then(|| self.world.idle_workers(side).count() as u32),
+                idle_workers: workers.then(|| self.idle_workers(side).count() as u32),
             });
         }
 
@@ -626,26 +650,34 @@ impl Running {
         }
         let structure = picked_structure
             .and_then(|h| self.world.structures()?.get(h))
-            .map(|s| StructurePanel {
-                name: self.buildings.name(s.building),
-                color: crate::color_of(&self.parties, s.owner),
-                hp: s.hp,
-                max_hp: s.max_hp,
-                building: (!s.finished()).then_some(s.built_percent),
-                upgrading: s
-                    .upgrading
-                    .map(|(to, percent)| (self.buildings.name(to), percent)),
-                queue: &queue[..queued],
-                // Your own finished ones only: a foundation grows none, and
-                // an enemy's larvae are not yours to count.
-                larvae: (s.owner == self.sandbox.side && s.finished())
-                    .then(|| self.world.larvae_in(s.handle))
-                    .flatten()
-                    .map(|n| (n, gc_sim::larvae::LARVA_CAP)),
-                // Your own finished living buildings regrow on your veins.
-                rooted: (s.owner == self.sandbox.side)
-                    .then(|| self.world.rooted(s.handle))
-                    .flatten(),
+            .map(|s| {
+                let mine = s.owner == self.sandbox.side;
+                let mine_up = mine && s.finished();
+                StructurePanel {
+                    name: self.buildings.name(s.building),
+                    color: crate::color_of(&self.parties, s.owner),
+                    hp: s.hp,
+                    max_hp: s.max_hp,
+                    building: (!s.finished()).then_some(s.built_percent),
+                    upgrading: s
+                        .upgrading
+                        .map(|(to, percent)| (self.buildings.name(to), percent)),
+                    queue: &queue[..queued],
+                    // Your own finished ones only: a foundation grows none, and
+                    // an enemy's larvae are not yours to count.
+                    larvae: mine_up
+                        .then(|| self.world.larvae_in(s.handle))
+                        .flatten()
+                        .map(|n| (n, gc_sim::larvae::LARVA_CAP)),
+                    // Your own finished living buildings regrow on your veins.
+                    rooted: mine.then(|| self.world.rooted(s.handle)).flatten(),
+                    // Your own finished Choir buildings need a field of power.
+                    powered: mine_up.then(|| self.world.powered(s.handle)).flatten(),
+                    // Your own finished Resonators and Siphons tune nodes.
+                    tuning: mine_up
+                        .then(|| tuning_of(&self.world, &self.buildings, &s))
+                        .flatten(),
+                }
             });
 
         let mut input = std::mem::take(&mut hud.input);
@@ -859,8 +891,7 @@ impl Running {
         if !self.conquest_units || self.watching.is_some() {
             return;
         }
-        let idle: Vec<gc_sim::RegimentHandle> =
-            self.world.idle_workers(self.sandbox.side).collect();
+        let idle: Vec<gc_sim::RegimentHandle> = self.idle_workers(self.sandbox.side).collect();
         let Some(&h) = idle
             .iter()
             .find(|h| self.idle_from.is_some_and(|from| h.index > from))

@@ -16,8 +16,8 @@ use crate::nav::Nav;
 use crate::production::Production;
 use crate::regiments::Regiments;
 use crate::structures::{
-    Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, Refusal, Role, StructureHandle,
-    Structures, Work,
+    Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, NEEDS_POWER, Refusal, Role,
+    StructureHandle, Structures, Work,
 };
 use crate::verdict::Victories;
 use crate::{MAX_PARTIES, PlayerId, StateHasher, UnitId, UnitStats};
@@ -59,6 +59,9 @@ pub struct ConquestUnit {
     /// it stays at its node and sends each load home through its owner's
     /// root-veins instead of carrying it (see [`crate::veins`]).
     pub burrows: bool,
+    /// A worker that builds and mends but does not gather (the Choir's
+    /// Tuners: their nodes are tuned, see [`crate::power`]).
+    pub builds_only: bool,
 }
 
 impl ConquestUnit {
@@ -71,7 +74,10 @@ impl ConquestUnit {
         h.u16(self.train_ticks);
         h.u16(self.trained_at.unwrap_or(u16::MAX));
         h.u8(self.tier);
-        h.u8(u8::from(self.hatches) | u8::from(self.consumed) << 1 | u8::from(self.burrows) << 2);
+        h.u8(u8::from(self.hatches)
+            | u8::from(self.consumed) << 1
+            | u8::from(self.burrows) << 2
+            | u8::from(self.builds_only) << 3);
     }
 }
 
@@ -161,12 +167,13 @@ impl Conquest {
             .unwrap_or_default()
     }
 
-    /// One tick: sieges and builders, then root-veins and larvae, then
-    /// gathering, then training.
+    /// One tick: sieges and builders, then root-veins, power and larvae,
+    /// then gathering and tuning, then training.
     pub(crate) fn update(&mut self, regs: &mut Regiments, stats: &[UnitStats], nav: &mut Nav) {
         self.structures.update(regs, stats, &self.units, nav);
         self.structures.link_veins();
         self.structures.regrow();
+        self.structures.link_power();
         self.structures.grow_larvae();
         self.economy
             .update(regs, stats, &self.units, &self.structures);
@@ -196,7 +203,8 @@ impl Conquest {
 
     /// Whether regiment slot `r` could be sent to gather at `node`.
     pub(crate) fn can_gather(&self, regs: &Regiments, r: usize, node: u16) -> bool {
-        self.unit(regs.unit[r]).worker && self.economy.can_gather(node)
+        let unit = self.unit(regs.unit[r]);
+        unit.worker && !unit.builds_only && self.economy.can_gather(node)
     }
 
     /// Whether a building of type `building` may go up with its north-west
@@ -223,7 +231,13 @@ impl Conquest {
         regs: &Regiments,
     ) -> Result<(), Refusal> {
         self.check(building, tile, nav, regs)?;
-        self.may_lay(player, building)
+        self.may_lay(player, building)?;
+        let b = self.structures.buildings()[usize::from(building)];
+        let foot = [tile.0, tile.1, i32::from(b.width), i32::from(b.depth)];
+        if b.flags & NEEDS_POWER != 0 && !self.structures.power_reaches(player, foot) {
+            return Err(Refusal::Unpowered);
+        }
+        Ok(())
     }
 
     /// Whether `player` could lay a building of type `building` somewhere

@@ -129,7 +129,7 @@ impl Mind {
         text.push(format!(
             "  roles   {}   orders: {} sent, {} a minute at most",
             roles.join(", "),
-            self.orders().count,
+            self.orders().count(),
             self.knobs().orders_per_minute
         ));
         let entries: Vec<_> = self.journal().entries().rev().take(JOURNAL_LINES).collect();

@@ -226,7 +226,8 @@ impl Soak {
                 }
                 continue;
             }
-            if !idle.contains(&w) {
+            // A worker that only builds (the Choir's) can't gather.
+            if !idle.contains(&w) || self.world.builds_only(w) {
                 continue;
             }
             let node = if i % 5 == 4 {

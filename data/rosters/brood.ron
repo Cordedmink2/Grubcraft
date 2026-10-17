@@ -13,9 +13,11 @@
 // Some(the building it upgrades), with the upgrade's cost and time), cost,
 // build_time (seconds at Standard tempo), hp, armour (Fortified, Structure,
 // Living), footprint (tiles across and deep), supply (cap it adds), flags
-// (DropOffGrub, DropOffMarrow, PowersField, AntiAir), attack (towers: range in
-// tiles, damage per shot, seconds between shots, shots per volley) and effect
-// (plain words). starting_buildings and starting_units (unit name and count)
+// (DropOffGrub, DropOffMarrow, PowersField, NeedsPower, AntiAir, Larvae,
+// Veins), field (tiles a PowersField's power or Veins' root-veins reach from
+// its edge), tunes (Choir: Some((node: Seeps or Veins, tiles))), attack
+// (towers: range in tiles, damage per shot, seconds between shots, shots per
+// volley) and effect (plain words). starting_buildings and starting_units (unit name and count)
 // are what a player starts Conquest with (docs/04-economy.md; Brood larvae are
 // a meter, not units). A unit's `from: Building("...")` names one of these
 // buildings.
@@ -51,6 +53,7 @@
             footprint: (5, 5),
             supply: 12,
             flags: [Larvae, Veins],
+            field: 15,
             effect: "Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 15 tiles from its edge.",
         ),
         (
@@ -65,6 +68,7 @@
             footprint: (5, 5),
             supply: 22,
             flags: [Larvae, Veins],
+            field: 15,
             effect: "Tier 2: evolutions, Drone-Moths, the Broodmother Bulk and a second hero.",
         ),
         (
@@ -79,6 +83,7 @@
             footprint: (5, 5),
             supply: 32,
             flags: [Larvae, Veins],
+            field: 15,
             effect: "Tier 3: monsters, top upgrades and a third hero.",
         ),
         (
@@ -92,6 +97,7 @@
             footprint: (2, 2),
             supply: 8,
             flags: [Veins],
+            field: 8,
             effect: "Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering.",
         ),
         (

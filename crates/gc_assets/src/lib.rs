@@ -19,6 +19,7 @@ extern crate alloc;
 
 pub mod manifest;
 pub mod model;
+pub mod scenery;
 mod table;
 mod writer;
 
@@ -253,16 +254,22 @@ fn u64_at(b: &[u8], at: usize) -> u64 {
 #[repr(C, align(16))]
 pub struct Aligned<B: ?Sized>(pub B);
 
+/// `bytes` copied into 16-byte aligned storage, for parsing a pack read
+/// from a file or built in memory: view it with
+/// `&bytemuck::cast_slice::<u128, u8>(&store)[..bytes.len()]`.
+pub fn aligned_copy(bytes: &[u8]) -> alloc::vec::Vec<u128> {
+    let mut v = alloc::vec![0u128; bytes.len().div_ceil(16)];
+    bytemuck::cast_slice_mut::<u128, u8>(&mut v)[..bytes.len()].copy_from_slice(bytes);
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloc::vec::Vec;
 
     fn aligned(bytes: &[u8]) -> Vec<u128> {
-        // A Vec<u128> is 16-byte aligned; copy the pack into it.
-        let mut v = alloc::vec![0u128; bytes.len().div_ceil(16)];
-        bytemuck::cast_slice_mut::<u128, u8>(&mut v)[..bytes.len()].copy_from_slice(bytes);
-        v
+        aligned_copy(bytes)
     }
 
     fn view(v: &[u128], len: usize) -> &[u8] {

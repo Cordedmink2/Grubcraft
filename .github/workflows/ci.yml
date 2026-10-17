@@ -47,6 +47,7 @@ jobs:
         with:
           alsa: 'true'
       - run: cargo run --release -p gc_artbake -- --check
+      - run: cargo run --release -p gc_scenebake -- --check
       - name: Building packs (one per faction)
         shell: bash
         run: |
@@ -88,6 +89,10 @@ jobs:
       - name: Warlord in release mode
         if: runner.os == 'Linux'
         run: cargo test --release -p gc_ai --test versus warlord
+      # Whole AI-only Conquest games, which take minutes in a debug build.
+      - name: Conquest AI games in release mode
+        if: runner.os == 'Linux'
+        run: cargo test --release -p gc_game ai_only -- --ignored
       # macOS runner clocks are too noisy to gate tick time on (the same
       # code has timed 1.2 to 2.8 ms p99 there): it only warns. Linux and
       # Windows still gate it, and the instruction counts below (Linux)

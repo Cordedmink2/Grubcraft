@@ -214,6 +214,11 @@ impl Production {
                 self.clock[i] = [0; QUEUE];
                 continue;
             };
+            if !structures.powered(i) {
+                // Shut down until power returns (the Choir's, see
+                // [`crate::power`]).
+                continue;
+            }
             let mut k = 0;
             while k < usize::from(self.queued[i]) {
                 let unit = self.queue[i][k];

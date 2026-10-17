@@ -1,0 +1,19 @@
+[package]
+name = "gc_scenebake"
+description = "Grubcraft scenery baker: turns glTF trees, bushes, grass and rocks into the scenery pack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+gc_assets.workspace = true
+glam.workspace = true
+gltf = { version = "1.4", default-features = false, features = ["utils", "names"] }
+ron.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true
