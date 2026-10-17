@@ -26,6 +26,7 @@ Read in order the first time; afterwards each document stands alone.
 | 20 | [Ambushes](20-ambushes.md) | Hiding in woods and tall grass, spotting, springing an ambush and its morale shock, keeping it readable and fair, counterplay, faction leanings, the AI's Ambush doctrine, and the road to fog of war and campaign ambushes |
 | 21 | [Buildings](21-buildings.md) | Every faction's buildings with first-pass cost, build time, hit points, armour, size and supply; construction, repair and power rules; damage against buildings |
 | 22 | [Concord models](22-concord-models.md) | The fourteen Carrion Concord 3D models: how they are made, their triangle and bone counts, budgets, sources and how to rebuild one |
+| 23 | [Choir models](23-choir-models.md) | The eleven Shard Choir 3D models: crystal gems on bones with floating parts, their triangle and bone counts, budgets, sources and how to rebuild one |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |
