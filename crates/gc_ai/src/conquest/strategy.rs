@@ -55,9 +55,10 @@ const PUNISH_WAVE: u8 = 10;
 pub const ANSWER_UNTIL: u32 = (8.0 * 60.0 * TICKS) as u32;
 
 /// How a level scouts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Scouting {
     /// Never sends a scout: it learns what its army runs into.
+    #[default]
     Never,
     /// Sends one early look at the enemy starts, then stops.
     Early,
@@ -122,11 +123,11 @@ impl Strategy {
         }
     }
 
-    /// This plan answering `read`, an enemy's early build its scout has
-    /// seen, from tick `now`: towers and production against a coming
-    /// attack, an early attack against a fast expansion, an expansion of
-    /// its own against towers.
-    pub fn answer(self, read: Option<Read>, now: u32) -> Strategy {
+    /// This plan answering `read`, an enemy's early build its scout saw
+    /// at tick `since`: towers and production against a coming attack, an
+    /// early attack against a fast expansion, an expansion of its own
+    /// against towers.
+    pub fn answer(self, read: Option<Read>, since: u32) -> Strategy {
         let mut early = self.early;
         match read {
             None => return self,
@@ -143,7 +144,7 @@ impl Strategy {
                     Some(early.first_wave.map_or(PUNISH_WAVE, |w| w.min(PUNISH_WAVE)));
             }
             Some(Read::Walls) => {
-                early.expand_at = Some(early.expand_at.map_or(now, |t| t.min(now)));
+                early.expand_at = Some(early.expand_at.map_or(since, |t| t.min(since)));
                 early.first_wave = None;
             }
         }

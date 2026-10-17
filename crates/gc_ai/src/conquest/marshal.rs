@@ -10,13 +10,14 @@
 //! as they do in a Field Battle.
 
 use gc_sim::economy::SUPPLY_LIMIT;
-use gc_sim::structures::{Role, StructureHandle};
+use gc_sim::structures::Role;
 use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
 use super::raider::Raider;
 use super::scout::Scout;
-use super::sovereign::{PUSH_LEAD, PUSH_WINDOW};
+use super::sovereign::{self, PushPhase};
+use super::spymaster::{Sighted, enemy_buildings};
 use super::{Sense, spymaster};
 use crate::captain::{Captain, Ctx};
 use crate::difficulty::Knobs;
@@ -166,9 +167,6 @@ pub struct Marshal {
     /// is ready to set out (its wave gathered, or its supply full), as of
     /// its last think. Only for the AI lens to show.
     pub wave: Option<(u32, u32, bool)>,
-    /// The timing push it holds the army back for, as of its last think.
-    /// Only for the AI lens to show.
-    holding_for: Option<u32>,
 }
 
 impl Marshal {
@@ -190,12 +188,11 @@ impl Marshal {
             orders: Orders::new(party, reaction_ticks, orders_per_minute),
             wants: Vec::new(),
             battle_wants: Vec::new(),
-            scout: Scout::new(),
-            raider: Raider::new(),
+            scout: Scout::default(),
+            raider: Raider::default(),
             belief: Vec::new(),
             odds: Vec::new(),
             wave: None,
-            holding_for: None,
         }
     }
 
@@ -242,20 +239,17 @@ impl Marshal {
             self.scout.update(s, &fighters, &waiting, self.rally, home);
             // The raiders are called back to defend home, and for a timing
             // push (and not sent out as one nears).
-            let (holding, pushing) = push_phase(s);
-            let recall = matches!(self.goal, Goal::Defend(_)) || holding || pushing;
+            let recall = matches!(self.goal, Goal::Defend(_)) || s.push_phase() != PushPhase::None;
             let belief = &self.belief;
             let scout = self.scout.regiment();
-            let spare: Vec<&Seen> = waiting
-                .iter()
-                .copied()
+            let army = fighters.iter().filter(|r| Some(r.handle) != scout).count();
+            let waiting: Vec<&Seen> = waiting
+                .into_iter()
                 .filter(|r| Some(r.handle) != scout)
                 .collect();
-            let army =
-                fighters.len() - usize::from(fighters.iter().any(|r| Some(r.handle) == scout));
             for note in self
                 .raider
-                .update(s, army, &spare, self.rally, recall, |o| {
+                .update(s, army, &waiting, self.rally, recall, |o| {
                     super::enemy_name(belief, o)
                 })
             {
@@ -264,18 +258,17 @@ impl Marshal {
         }
         // Neither the scout nor the raiders are part of the army: no wave,
         // battle or attack counts them or sends them anywhere.
-        let scout = self.scout.regiment();
-        let raiders = self.raider.regiments();
+        let lent = self.lent();
         let army: Vec<&Seen> = fighters
             .iter()
             .copied()
-            .filter(|r| Some(r.handle) != scout && !raiders.contains(&r.handle))
+            .filter(|r| !lent.contains(&r.handle))
             .collect();
         self.out.retain(|h| army.iter().any(|r| r.handle == *h));
         if army.is_empty() {
             self.battle = None;
         } else {
-            self.battle(c, s, &army);
+            self.battle(c, s, &army, &lent);
         }
         if s.now >= self.next_think {
             self.next_think = s.now + THINK_TICKS;
@@ -293,8 +286,15 @@ impl Marshal {
         self.orders.release(s.now, out);
     }
 
+    /// The regiments it has lent out of the army: its scout and raiders.
+    fn lent(&self) -> Vec<RegimentHandle> {
+        let raiders = self.raider.regiments().iter().copied();
+        self.scout.regiment().into_iter().chain(raiders).collect()
+    }
+
     /// The fighters standing at the rally point with nothing to do: not
-    /// out on an attack, not holding the Heart, not in a battle.
+    /// out on an attack, not holding the Heart, not raiding, not in a
+    /// battle.
     fn waiting<'a>(&self, fighters: &[&'a Seen]) -> Vec<&'a Seen> {
         let Some(rally) = self.rally else {
             return Vec::new();
@@ -316,7 +316,7 @@ impl Marshal {
     }
 
     /// Start, run or end a battle where enemies come near the army.
-    fn battle(&mut self, c: &mut Ctx, s: &Sense, army: &[&Seen]) {
+    fn battle(&mut self, c: &mut Ctx, s: &Sense, army: &[&Seen], lent: &[RegimentHandle]) {
         let view = s.view;
         let party = s.party;
         let near = |p: Vec2| army.iter().any(|r| r.pos.distance(p) <= ENGAGE);
@@ -374,14 +374,11 @@ impl Marshal {
         // stands there; the rest of the army goes on as the Marshal says.
         let at = b.at;
         let holders = &self.holders;
-        let scout = self.scout.regiment();
-        let raiders = self.raider.regiments();
         view.subset(&mut b.view, |r| {
             let fights = if r.owner == party {
                 s.kit.is_fighter(r.unit)
                     && !holders.contains(&r.handle)
-                    && Some(r.handle) != scout
-                    && !raiders.contains(&r.handle)
+                    && !lent.contains(&r.handle)
             } else {
                 !s.kit.all_workers.contains(&r.unit)
             };
@@ -419,12 +416,12 @@ impl Marshal {
         let enough = have >= FIRST_WAVE;
         // Before a timing push it holds the army back while it arms; at
         // the push it goes with everything it has.
-        let (holding, pushing) = push_phase(s);
+        let phase = s.push_phase();
+        let (holding, pushing) = (phase == PushPhase::Arming, phase == PushPhase::Due);
         let ready =
             (have >= want || (capped(s) && have >= FIRST_WAVE)) && !holding || pushing && enough;
         self.belief = spymaster::beliefs(s);
         self.wave = Some((have.round() as u32, want.ceil() as u32, ready));
-        self.holding_for = s.push.filter(|_| holding);
         // Armies brawling on the Heart and nobody holding it long is a
         // stalemate (games of four or more): an army that has fought for it
         // a long while goes to break a base instead, or to find one on a
@@ -676,25 +673,20 @@ impl Marshal {
         } else {
             None
         };
+        let pushing = s.push_phase() == PushPhase::Due;
+        let what = if pushing { "Timing push" } else { "Attacking" };
         let Some((t, margin)) = odds else {
             // It doesn't weigh odds, or knows nothing of theirs to weigh:
             // the nearest building it knows of, or look for them.
-            let what = if push_phase(s).1 {
-                "Timing push"
-            } else {
-                "Attacking"
-            };
             return ready
                 .then(|| self.target(s, from))
                 .flatten()
                 .map(|t| (t, format!("{what} with {} regiments", army.len())));
         };
         let needed = ODDS_NEEDED + ODDS_CAUTION * persona.caution();
-        let pushing = push_phase(s).1;
         // A push goes unless the odds are hopeless.
         let go = ready && (margin >= needed || full || pushing && margin >= PUSH_ODDS)
             || enough && margin >= ODDS_STRIKE;
-        let what = if pushing { "Timing push" } else { "Attacking" };
         go.then(|| {
             (
                 t,
@@ -763,16 +755,18 @@ impl Marshal {
     }
 
     /// What the army is waiting for or doing beyond what its goal says, in
-    /// a few words, for the AI lens.
-    pub fn plan_note(&self, now: u32) -> Option<String> {
+    /// a few words, for the AI lens; `push` is its Sovereign's timing push.
+    pub fn plan_note(&self, now: u32, push: Option<u32>) -> Option<String> {
         let wave = self.wave;
         match self.goal {
-            Goal::Gather if self.holding_for.is_some() => self.holding_for.map(|t| {
-                format!(
-                    "holding back to arm for its timing push at {}",
-                    crate::lens::clock(t)
-                )
-            }),
+            Goal::Gather if sovereign::push_phase(push, now) == PushPhase::Arming => {
+                push.map(|t| {
+                    format!(
+                        "holding back to arm for its timing push at {}",
+                        crate::lens::clock(t)
+                    )
+                })
+            }
             Goal::Gather if now < self.regroup_until => Some(format!(
                 "regrouping after a costly attack, {}s more",
                 (self.regroup_until - now).div_ceil(TICKS_PER_SECOND)
@@ -894,17 +888,6 @@ fn usual_wave(s: &Sense, persona: &Personality) -> f32 {
     ((FIRST_WAVE + PER_MINUTE * minutes) * boldness).min(BIGGEST_WAVE)
 }
 
-/// Whether it holds its army back for a coming timing push, and whether
-/// the push is due now.
-fn push_phase(s: &Sense) -> (bool, bool) {
-    s.push.map_or((false, false), |t| {
-        (
-            s.now < t && s.now + PUSH_LEAD >= t,
-            s.now >= t && s.now < t + PUSH_WINDOW,
-        )
-    })
-}
-
 /// Whether its supply is used up to within a regiment or so of its cap:
 /// waiting for a bigger army gains nothing.
 fn capped(s: &Sense) -> bool {
@@ -979,34 +962,6 @@ fn rally_point(s: &Sense, home: Vec2) -> Vec2 {
         .unwrap_or(home + Vec2::Y);
     let p = home + (toward - home).normalize_or(Vec2::Y) * RALLY_OUT;
     s.terrain.clamp(p, 4.0)
-}
-
-/// An enemy building its side has seen and still stands.
-pub(super) struct Sighted {
-    handle: StructureHandle,
-    pub(super) at: Vec2,
-    pub(super) role: Role,
-    pub(super) owner: u8,
-}
-
-/// Every enemy building its side has seen and still stands.
-pub(super) fn enemy_buildings(s: &Sense) -> Vec<Sighted> {
-    let Some(st) = s.world.structures() else {
-        return Vec::new();
-    };
-    let table = st.buildings();
-    st.iter()
-        .filter(|v| s.view.hostile(s.party, v.owner) && v.seen_by(s.party))
-        .filter_map(|v| {
-            let role = table.get(usize::from(v.building))?.role;
-            Some(Sighted {
-                handle: v.handle,
-                at: v2(v.centre()),
-                role,
-                owner: v.owner,
-            })
-        })
-        .collect()
 }
 
 /// The middle of the enemies it sees at its buildings, if they are a

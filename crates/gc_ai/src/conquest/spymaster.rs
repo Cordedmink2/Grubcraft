@@ -4,12 +4,12 @@
 //! where it last saw them; it never knows of one it hasn't seen. The
 //! battle estimator then weighs that army against its own.
 
-use gc_sim::structures::Role;
+use gc_sim::structures::{Role, StructureHandle};
 use glam::Vec2;
 
 use super::{Sense, steward};
 use crate::estimator::{Approach, Force, estimate};
-use crate::perception::{Seen, TICKS};
+use crate::perception::{Seen, TICKS, v2};
 use crate::personality::Faction;
 
 /// How a fight is taken to start, for weighing armies before one: the
@@ -18,6 +18,68 @@ const APPROACH: Approach = Approach {
     gap: 15.0,
     closing: 1.5,
 };
+
+/// An enemy building its side has seen and still stands.
+pub struct Sighted {
+    pub handle: StructureHandle,
+    pub at: Vec2,
+    pub role: Role,
+    pub owner: u8,
+}
+
+/// Every enemy building its side has seen and still stands.
+pub fn enemy_buildings(s: &Sense) -> Vec<Sighted> {
+    let Some(st) = s.world.structures() else {
+        return Vec::new();
+    };
+    let table = st.buildings();
+    st.iter()
+        .filter(|v| s.view.hostile(s.party, v.owner) && v.seen_by(s.party))
+        .filter_map(|v| {
+            let role = table.get(usize::from(v.building))?.role;
+            Some(Sighted {
+                handle: v.handle,
+                at: v2(v.centre()),
+                role,
+                owner: v.owner,
+            })
+        })
+        .collect()
+}
+
+/// The enemy fighters in sight now within `reach` of any of `points`.
+pub fn fighters_near<'a>(
+    s: &'a Sense,
+    points: &'a [Vec2],
+    reach: f32,
+) -> impl Iterator<Item = &'a Seen> + 'a {
+    s.view.regiments.iter().filter(move |r| {
+        s.view.hostile(s.party, r.owner)
+            && !r.broken()
+            && !s.kit.all_workers.contains(&r.unit)
+            && points.iter().any(|p| p.distance(r.pos) <= reach)
+    })
+}
+
+/// How near enemy fighters in sight must be to threaten a small party
+/// out on its own (a scout, raiders), tiles.
+const DANGER: f32 = 22.0;
+
+/// Where the nearest enemy fighter in sight stands, if those within
+/// [`DANGER`] of any of `mine` have more supply than `mine`: a lone enemy
+/// no bigger (another side's scout) is let pass, or two scouts would turn
+/// each other back for ever.
+pub fn outmatched(s: &Sense, mine: &[&Seen]) -> Option<Vec2> {
+    let at: Vec<Vec2> = mine.iter().map(|r| r.pos).collect();
+    let near: Vec<&Seen> = fighters_near(s, &at, DANGER).collect();
+    if s.kit.supply_of(near.iter().copied()) <= s.kit.supply_of(mine.iter().copied()) {
+        return None;
+    }
+    let from = crate::captain::helpers::centroid(mine);
+    near.iter()
+        .map(|r| r.pos)
+        .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
+}
 
 /// Every fighting regiment it knows of, of any side: those in sight now
 /// and those it remembers, where it last saw them. Workers and the broken
@@ -142,15 +204,17 @@ pub fn beliefs(s: &Sense) -> Vec<Belief> {
 
 /// How it reads an enemy's early build, from the buildings its side has
 /// seen of theirs: what it answers when it adapts its opening.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// In order of urgency, the least first: a coming attack is answered
+/// before a chance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Read {
+    /// Towers by the hall: it means to sit tight.
+    Walls,
+    /// A second hall early: few soldiers for now.
+    Greedy,
     /// A second production building on one hall, early: an attack is
     /// coming soon.
     Rush,
-    /// A second hall early: few soldiers for now.
-    Greedy,
-    /// Towers by the hall: it means to sit tight.
-    Walls,
 }
 
 impl Read {
@@ -171,16 +235,6 @@ impl Read {
             Read::Walls => "towers and a slow build",
         }
     }
-
-    /// Which to answer first when enemies differ: a coming attack before
-    /// a chance.
-    fn urgency(self) -> u8 {
-        match self {
-            Read::Rush => 2,
-            Read::Greedy => 1,
-            Read::Walls => 0,
-        }
-    }
 }
 
 /// The seconds of game time by which a build counts as early, for each
@@ -189,6 +243,8 @@ impl Read {
 const RUSH_BY: f32 = 210.0;
 const GREEDY_BY: f32 = 300.0;
 const WALLS_BY: f32 = 300.0;
+/// Past this, seconds, there is no early build left to read.
+pub const READ_UNTIL: f32 = 300.0;
 
 /// What it has made of one enemy's build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,35 +260,25 @@ pub struct Scouted {
 /// reads made this time.
 pub fn read_builds(s: &Sense, reads: &mut Vec<Scouted>) -> Vec<Scouted> {
     let mut new = Vec::new();
-    let Some(st) = s.world.structures() else {
-        return new;
-    };
     let seconds = s.now as f32 / TICKS;
-    if seconds > RUSH_BY.max(GREEDY_BY).max(WALLS_BY) {
+    if seconds > READ_UNTIL {
         return new;
     }
-    let table = st.buildings();
     // Halls, production buildings and towers of each enemy it has seen.
     let mut counts: Vec<(u8, [u8; 3])> = Vec::new();
-    for v in st
-        .iter()
-        .filter(|v| s.view.hostile(s.party, v.owner) && v.seen_by(s.party))
-    {
-        let Some(b) = table.get(usize::from(v.building)) else {
-            continue;
-        };
+    for b in enemy_buildings(s) {
         let slot = match b.role {
             Role::Main | Role::Outpost => 0,
             Role::Production => 1,
             Role::Defence => 2,
             _ => continue,
         };
-        match counts.iter_mut().find(|(o, _)| *o == v.owner) {
+        match counts.iter_mut().find(|(o, _)| *o == b.owner) {
             Some((_, c)) => c[slot] += 1,
             None => {
                 let mut c = [0; 3];
                 c[slot] = 1;
-                counts.push((v.owner, c));
+                counts.push((b.owner, c));
             }
         }
     }
@@ -262,5 +308,5 @@ pub fn read_builds(s: &Sense, reads: &mut Vec<Scouted>) -> Vec<Scouted> {
 
 /// The read to answer of those made: the most urgent.
 pub fn to_answer(reads: &[Scouted]) -> Option<Scouted> {
-    reads.iter().copied().max_by_key(|r| r.read.urgency())
+    reads.iter().copied().max_by_key(|r| r.read)
 }

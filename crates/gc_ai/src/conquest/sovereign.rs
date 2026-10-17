@@ -9,7 +9,6 @@ use gc_sim::TICKS_PER_SECOND;
 use gc_sim::structures::Role;
 
 use super::Sense;
-use super::marshal::enemy_buildings;
 use super::spymaster;
 use crate::personality::Personality;
 
@@ -28,13 +27,33 @@ const GRUDGE_SUPPLY: f32 = 6.0;
 /// How long the most vengeful keeps a grudge, ticks; the least, a third.
 const GRUDGE_TICKS: u32 = 4 * 60 * TICKS_PER_SECOND;
 /// How long before a push it arms and holds the army back, ticks.
-pub const PUSH_LEAD: u32 = 100 * TICKS_PER_SECOND;
+const PUSH_LEAD: u32 = 100 * TICKS_PER_SECOND;
 /// How long after a push's time the army may still set out on it, ticks.
-pub const PUSH_WINDOW: u32 = 30 * TICKS_PER_SECOND;
+const PUSH_WINDOW: u32 = 30 * TICKS_PER_SECOND;
 /// The first push, minutes: the most aggressive, the least.
 const FIRST_PUSH: (f32, f32) = (7.0, 10.0);
 /// Between one push and the next, ticks.
 const PUSH_EVERY: u32 = 6 * 60 * TICKS_PER_SECOND;
+
+/// Where a timing push stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PushPhase {
+    /// None planned soon.
+    None,
+    /// Coming: the Steward arms for it and the Marshal holds the army back.
+    Arming,
+    /// Now: the army sets out with everything it has.
+    Due,
+}
+
+/// Where the timing push planned for tick `push` stands at tick `now`.
+pub fn push_phase(push: Option<u32>, now: u32) -> PushPhase {
+    match push {
+        Some(t) if now < t && now + PUSH_LEAD >= t => PushPhase::Arming,
+        Some(t) if now >= t && now < t + PUSH_WINDOW => PushPhase::Due,
+        _ => PushPhase::None,
+    }
+}
 
 /// Why it goes for an enemy first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,8 +89,8 @@ impl Sovereign {
         }
         self.next_think = s.now + THINK_TICKS;
         self.plan_push(s, persona, &mut notes);
-        self.remember_grudges(s, persona);
         let focus = if s.plan.gangs_up {
+            self.remember_grudges(s, persona);
             self.choose_focus(s)
         } else {
             None
@@ -125,14 +144,10 @@ impl Sovereign {
             .filter(|v| v.owner == s.party)
             .map(|v| crate::perception::v2(v.centre()))
             .collect();
-        // Soldiers in sight now, not workers, and enough of them to be an
-        // attack rather than a scout passing.
+        // Soldiers in sight now, and enough of them to be an attack rather
+        // than a scout passing.
         let mut at_us: Vec<(u8, f32)> = Vec::new();
-        for r in s.view.regiments.iter().filter(|r| {
-            s.view.hostile(s.party, r.owner)
-                && !s.kit.all_workers.contains(&r.unit)
-                && mine.iter().any(|b| b.distance(r.pos) <= GRUDGE_REACH)
-        }) {
+        for r in spymaster::fighters_near(s, &mine, GRUDGE_REACH) {
             let supply = s.kit.supply_of(std::iter::once(r));
             match at_us.iter_mut().find(|(o, _)| *o == r.owner) {
                 Some(a) => a.1 += supply,
@@ -205,7 +220,7 @@ fn rivals(s: &Sense) -> Vec<u8> {
 /// How far ahead each rival is, as far as it has seen: its army's supply,
 /// and its halls and other buildings.
 fn standings(s: &Sense, rivals: &[u8]) -> Vec<(u8, f32)> {
-    let buildings = enemy_buildings(s);
+    let buildings = spymaster::enemy_buildings(s);
     rivals
         .iter()
         .map(|&o| {

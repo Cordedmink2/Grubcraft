@@ -9,9 +9,9 @@
 use gc_sim::{RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
-use super::Sense;
 use super::strategy::Scouting;
-use crate::orders::{Act, ROUTINE, Want};
+use super::{Sense, spymaster};
+use crate::orders::{ROUTINE, Want};
 use crate::perception::{Seen, v2};
 
 /// The scout needs an army of at least this many fighters (itself counted)
@@ -24,10 +24,6 @@ const MIN_ARMY_EARLY: usize = 4;
 const SIGHT: f32 = 38.0;
 /// A place counts as looked at once a regiment of its own comes this near.
 const LOOKED: f32 = 14.0;
-/// An enemy fighter this near sends the scout back.
-const DANGER: f32 = 22.0;
-/// It falls back from enemies of more than this many times its own supply.
-const OVERMATCH: f32 = 1.0;
 /// An enemy this near a place guards it.
 const GUARDED: f32 = 32.0;
 /// An enemy building seen this near a start means someone holds it.
@@ -64,14 +60,13 @@ struct Place {
     start: bool,
     /// The tick any of its regiments last had it in sight, if ever.
     seen: Option<u32>,
-    /// The tick its scout first came to look at it.
-    scouted: Option<u32>,
     /// Left alone until this tick (enemies were near the way there).
     avoid_until: u32,
     /// Next to its own or a friend's building, as of the last look.
     own: bool,
 }
 
+#[derive(Default)]
 pub struct Scout {
     level: Scouting,
     regiment: Option<RegimentHandle>,
@@ -98,31 +93,7 @@ pub struct Scout {
     first_enemy_start: Option<u32>,
 }
 
-impl Default for Scout {
-    fn default() -> Self {
-        Scout::new()
-    }
-}
-
 impl Scout {
-    pub fn new() -> Scout {
-        Scout {
-            level: Scouting::Never,
-            regiment: None,
-            places: Vec::new(),
-            target: None,
-            trip_ends: 0,
-            driven_back: None,
-            fall_back_until: 0,
-            taken: None,
-            lost_at: None,
-            done: false,
-            returning: false,
-            home: None,
-            first_enemy_start: None,
-        }
-    }
-
     /// The regiment it has taken, if any: the army leaves it alone.
     pub fn regiment(&self) -> Option<RegimentHandle> {
         self.regiment
@@ -181,7 +152,7 @@ impl Scout {
         // Enemy fighters near: fall back, and leave the place it was going
         // to alone for a while.
         if s.now >= self.fall_back_until
-            && let Some(foe) = danger(s, me)
+            && let Some(foe) = spymaster::outmatched(s, &[me])
         {
             self.fall_back_until = s.now + FALL_BACK;
             // Leave the place alone for a while only if the enemy stands by
@@ -247,20 +218,7 @@ impl Scout {
             return;
         };
         let Some(to) = to else { return };
-        let to = s
-            .terrain
-            .nearest_walkable(to, 6.0)
-            .unwrap_or_else(|| s.terrain.clamp(to, 2.0));
-        wants.push(Want {
-            regiment: h,
-            act: Act::Move {
-                to,
-                facing: None,
-                pace: 0.0,
-            },
-            priority,
-            group: GROUP,
-        });
+        wants.push(s.walk(h, to, priority, GROUP));
     }
 
     /// Note which places its regiments have in sight now.
@@ -292,7 +250,6 @@ impl Scout {
             if p.start && theirs.iter().any(|b| b.distance(p.at) <= HELD) {
                 p.seen.get_or_insert(s.now);
                 if scout.is_some_and(|o| o.distance(p.at) <= SIGHT) {
-                    p.scouted.get_or_insert(s.now);
                     self.first_enemy_start.get_or_insert(s.now);
                 }
             }
@@ -300,11 +257,8 @@ impl Scout {
             if ours.iter().any(|o| o.distance(p.at) <= LOOKED) {
                 p.seen = Some(s.now);
             }
-            if scout.is_some_and(|o| o.distance(p.at) <= LOOKED) && p.scouted.is_none() {
-                p.scouted = Some(s.now);
-                if p.start && !p.own {
-                    self.first_enemy_start.get_or_insert(s.now);
-                }
+            if p.start && !p.own && scout.is_some_and(|o| o.distance(p.at) <= LOOKED) {
+                self.first_enemy_start.get_or_insert(s.now);
             }
         }
     }
@@ -385,7 +339,7 @@ impl Scout {
     }
 
     /// A few plain words on what it is doing, for the AI lens.
-    pub fn note(&self, now: u32) -> Option<String> {
+    pub fn note(&self, now: u32) -> String {
         let starts = self.places.iter().filter(|p| p.start).count();
         let seen = self
             .places
@@ -393,7 +347,7 @@ impl Scout {
             .filter(|p| p.start && p.seen.is_some())
             .count();
         let tally = format!("{seen} of {starts} starts seen");
-        let words = if self.level == Scouting::Never {
+        if self.level == Scouting::Never {
             "none, this level sends none".to_string()
         } else if self.regiment.is_some() {
             if now < self.fall_back_until {
@@ -415,47 +369,18 @@ impl Scout {
         } else if self.done {
             format!("done, {tally}")
         } else if let Some(t) = self.lost_at {
-            if self.level == Scouting::Early {
-                format!("lost, will not send another, {tally}")
+            // An early scout lost is done: only one that scouts all game
+            // gets here.
+            let left = (t + REPLACE).saturating_sub(now).div_ceil(TICKS_PER_SECOND);
+            if left > 0 {
+                format!("lost, sends another in {left}s, {tally}")
             } else {
-                let left = (t + REPLACE).saturating_sub(now).div_ceil(TICKS_PER_SECOND);
-                if left > 0 {
-                    format!("lost, sends another in {left}s, {tally}")
-                } else {
-                    format!("lost, waiting for a spare regiment, {tally}")
-                }
+                format!("lost, waiting for a spare regiment, {tally}")
             }
         } else {
             "none yet".to_string()
-        };
-        Some(words)
+        }
     }
-}
-
-/// The nearest of the enemy fighters it can see within [`DANGER`] of the
-/// scout `me`, if they are more than it can stand against: a lone regiment
-/// no bigger than it is (another side's scout) is let pass, or two scouts
-/// would turn each other back for ever.
-fn danger(s: &Sense, me: &Seen) -> Option<Vec2> {
-    let near: Vec<&Seen> = s
-        .view
-        .regiments
-        .iter()
-        .filter(|r| {
-            s.view.hostile(s.party, r.owner)
-                && !r.broken()
-                && !s.kit.all_workers.contains(&r.unit)
-                && r.pos.distance(me.pos) <= DANGER
-        })
-        .collect();
-    let theirs = s.kit.supply_of(near.iter().copied());
-    let ours = s.kit.supply_of([me]);
-    if theirs <= ours * OVERMATCH {
-        return None;
-    }
-    near.iter()
-        .map(|r| r.pos)
-        .min_by(|a, b| a.distance(me.pos).total_cmp(&b.distance(me.pos)))
 }
 
 /// Every place worth a look: the map's starts, then the middles of its
@@ -465,7 +390,6 @@ fn places(s: &Sense) -> Vec<Place> {
         at,
         start,
         seen: None,
-        scouted: None,
         avoid_until: 0,
         own: false,
     };
@@ -559,8 +483,8 @@ mod tests {
 
     #[test]
     fn a_scout_that_never_goes_out_says_so() {
-        let scout = Scout::new();
-        assert_eq!(scout.note(0).unwrap(), "none, this level sends none");
+        let scout = Scout::default();
+        assert_eq!(scout.note(0), "none, this level sends none");
         assert_eq!(scout.regiment(), None);
     }
 }

@@ -839,8 +839,6 @@ impl Steward {
             .or_else(|| options.max_by_key(|b| (fighters(b), std::cmp::Reverse(b.stats.cost_grub))))
     }
 
-    /// Whether it is time to expand: its seeps are running out, or the
-    /// time has come and they are full.
     /// Whether a building the opening asks for is still to go up: its
     /// towers, its production after the first, or its early expansion.
     fn opening_due(&self, s: &Sense, look: &Look) -> bool {
@@ -856,17 +854,24 @@ impl Steward {
         let expanding = early
             .expand_at
             .is_some_and(|t| s.now >= t && s.now < t + OPENING_EXPAND_TICKS)
-            && self.home.is_some_and(|home| {
-                look.mine
-                    .iter()
-                    .filter(|m| m.hub(s.kit.economy))
-                    .all(|m| m.at().distance(home) <= SERVE)
-            });
+            && self.hubs_at_home(s, look);
         towers < usize::from(early.towers)
             || (production > 0 && production < usize::from(early.producers))
             || expanding
     }
 
+    /// Whether every hub it has is at home: it hasn't expanded yet.
+    fn hubs_at_home(&self, s: &Sense, look: &Look) -> bool {
+        self.home.is_some_and(|home| {
+            look.mine
+                .iter()
+                .filter(|m| m.hub(s.kit.economy))
+                .all(|m| m.at().distance(home) <= SERVE)
+        })
+    }
+
+    /// Whether it is time to expand: its seeps are running out, or the
+    /// time has come and they are full.
     fn time_to_expand(&self, s: &Sense, look: &Look) -> bool {
         let grub: Vec<_> = look
             .served
@@ -883,13 +888,8 @@ impl Steward {
         let time = s.now >= s.expand_after;
         // An opening that expands early does, seeps full or not, once: while
         // every hub it has is at home.
-        let early = s.plan.early.expand_at.is_some_and(|t| s.now >= t)
-            && self.home.is_some_and(|home| {
-                look.mine
-                    .iter()
-                    .filter(|m| m.hub(s.kit.economy))
-                    .all(|m| m.at().distance(home) <= SERVE)
-            });
+        let early =
+            s.plan.early.expand_at.is_some_and(|t| s.now >= t) && self.hubs_at_home(s, look);
         let rising = look
             .mine
             .iter()
@@ -1101,9 +1101,7 @@ impl Steward {
             return false;
         }
         // Before a timing push it arms for it.
-        let pushing_soon = s
-            .push
-            .is_some_and(|t| s.now < t && s.now + sovereign::PUSH_LEAD >= t);
+        let pushing_soon = s.push_phase() == sovereign::PushPhase::Arming;
         // At the supply limit there is nothing more to arm with.
         if s.world
             .bank(s.party)

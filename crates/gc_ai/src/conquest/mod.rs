@@ -22,10 +22,11 @@ pub mod strategy;
 
 use std::sync::Arc;
 
-use gc_sim::{PlayerCommand, PlayerId, World};
+use gc_sim::{PlayerCommand, PlayerId, RegimentHandle, World};
+use glam::Vec2;
 
 use crate::difficulty::Knobs;
-use crate::orders::Hands;
+use crate::orders::{Act, Hands, Want};
 use crate::perception::Perception;
 use crate::terrain::Terrain;
 use kit::Kit;
@@ -59,6 +60,32 @@ pub struct Sense<'a> {
     pub focus: Option<u8>,
     /// When its Sovereign's next timing push sets out.
     pub push: Option<u32>,
+}
+
+impl Sense<'_> {
+    /// Where its Sovereign's timing push stands now.
+    pub fn push_phase(&self) -> sovereign::PushPhase {
+        sovereign::push_phase(self.push, self.now)
+    }
+
+    /// An order for `regiment` to walk to `to` (or the nearest ground it
+    /// can stand on), for a party out on its own.
+    fn walk(&self, regiment: RegimentHandle, to: Vec2, priority: u8, group: u32) -> Want {
+        let to = self
+            .terrain
+            .nearest_walkable(to, 6.0)
+            .unwrap_or_else(|| self.terrain.clamp(to, 2.0));
+        Want {
+            regiment,
+            act: Act::Move {
+                to,
+                facing: None,
+                pace: 0.0,
+            },
+            priority,
+            group,
+        }
+    }
 }
 
 /// A Conquest mind's economy and army.
@@ -143,12 +170,12 @@ impl Realm {
             terrain: captain.terrain,
             expand_after: self.expand_after,
             plan: self.plan.opening(self.opening_at(captain.view.tick)),
-            focus: self.sovereign.focus.map(|(o, _)| o),
-            push: self.sovereign.push,
+            focus: None,
+            push: None,
         };
         // A level that adapts reads its enemies' early builds and answers
         // the most pressing.
-        if self.plan.adapts && sense.now < strategy::ANSWER_UNTIL && sense.now >= self.next_read {
+        if self.plan.adapts && sense.now >= self.next_read {
             self.next_read = sense.now + READ_TICKS;
             for r in spymaster::read_builds(&sense, &mut self.reads) {
                 captain.journal.note(
@@ -162,8 +189,11 @@ impl Realm {
                 );
             }
         }
-        let answer = self.answering(sense.now);
-        sense.plan = sense.plan.answer(answer.map(|a| a.read), sense.now);
+        // Answered from the tick it was read, so an answer's own early
+        // expansion is due from then, not from every tick anew.
+        if let Some(a) = self.answering(sense.now) {
+            sense.plan = sense.plan.answer(Some(a.read), a.at);
+        }
         let belief = &self.marshal.belief;
         for note in self
             .sovereign
@@ -251,15 +281,6 @@ impl Realm {
             ),
         )];
         let beliefs = &self.marshal.belief;
-        // The faction's name, or with its player's number when two
-        // enemies share a faction.
-        let named = |b: &spymaster::Belief| match b.faction {
-            Some(f) if beliefs.iter().filter(|o| o.faction == b.faction).count() == 1 => {
-                f.name().to_string()
-            }
-            Some(f) => format!("{} (player {})", f.name(), b.owner + 1),
-            None => format!("player {}", b.owner + 1),
-        };
         let known: Vec<String> = beliefs
             .iter()
             .map(|b| {
@@ -271,7 +292,7 @@ impl Realm {
                     .map_or(String::new(), |&(_, o, at)| {
                         format!(", odds {o:+.2} as of {}", crate::lens::clock(at))
                     });
-                format!("{} {} supply{odds}", named(b), b.supply)
+                format!("{} {} supply{odds}", enemy_name(beliefs, b.owner), b.supply)
             })
             .collect();
         lines.push(line(
@@ -282,7 +303,7 @@ impl Realm {
                 known.join("; ")
             },
         ));
-        if let Some(note) = self.marshal.plan_note(now) {
+        if let Some(note) = self.marshal.plan_note(now, self.sovereign.push) {
             lines.push(line("plan", note));
         }
         let mut aims = Vec::new();
@@ -299,29 +320,30 @@ impl Realm {
         if !aims.is_empty() {
             lines.push(line("aims", aims.join("; ")));
         }
-        if let Some(note) = self.marshal.scout.note(now) {
-            lines.push(line("scout", note));
-        }
-        if self.plan.raids
-            && let Some(note) = self
+        lines.push(line("scout", self.marshal.scout.note(now)));
+        if self.plan.raids {
+            let note = self
                 .marshal
                 .raider
-                .note(now, |o| enemy_name(&self.marshal.belief, o))
-        {
+                .note(now, |o| enemy_name(&self.marshal.belief, o));
             lines.push(line("raid", note));
         }
         lines
     }
 }
 
-/// An enemy by its faction if it knows it, else by its seat.
-fn enemy_name(belief: &[spymaster::Belief], owner: u8) -> String {
-    match belief
+/// An enemy by its faction if it knows it, with its player's number when
+/// two enemies share a faction, else by its seat.
+fn enemy_name(beliefs: &[spymaster::Belief], owner: u8) -> String {
+    let faction = beliefs
         .iter()
         .find(|b| b.owner == owner)
-        .and_then(|b| b.faction)
-    {
-        Some(f) => f.name().to_string(),
+        .and_then(|b| b.faction);
+    match faction {
+        Some(f) if beliefs.iter().filter(|b| b.faction == faction).count() == 1 => {
+            f.name().to_string()
+        }
+        Some(f) => format!("{} (player {})", f.name(), owner + 1),
         None => format!("player {}", owner + 1),
     }
 }

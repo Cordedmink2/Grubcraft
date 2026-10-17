@@ -13,7 +13,6 @@ use gc_sim::structures::Role;
 use gc_sim::{RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
-use super::marshal::enemy_buildings;
 use super::{Sense, spymaster};
 use crate::orders::{Act, ROUTINE, Want, attack_group};
 use crate::perception::Seen;
@@ -29,10 +28,6 @@ const FIRST_RAID: u32 = 5 * 60 * TICKS_PER_SECOND;
 /// a new party is taken once one has ended.
 const REST: u32 = 45 * TICKS_PER_SECOND;
 const COOLDOWN: u32 = 90 * TICKS_PER_SECOND;
-/// Enemy fighters this near a raider are a danger to it.
-const DANGER: f32 = 22.0;
-/// They fall back from enemies of more than this many times their supply.
-const OVERMATCH: f32 = 1.0;
 /// They fall back once they are down to this share of the soldiers they
 /// set out with.
 const LOST_SHARE: f32 = 0.5;
@@ -74,10 +69,18 @@ pub struct Spot {
     pub workers: bool,
 }
 
+impl Spot {
+    /// What is there, in a word.
+    fn what(self) -> &'static str {
+        if self.workers { "workers" } else { "expansion" }
+    }
+}
+
 /// Where the party is in its raid.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Phase {
     /// No party out.
+    #[default]
     Idle,
     /// Going for workers, or at them.
     Out,
@@ -87,8 +90,8 @@ enum Phase {
     Resting(u32),
 }
 
+#[derive(Default)]
 pub struct Raider {
-    enabled: bool,
     regiments: Vec<RegimentHandle>,
     phase: Phase,
     /// Soldiers at the first taking, and at the last setting out.
@@ -104,37 +107,15 @@ pub struct Raider {
     rally: Option<Vec2>,
     /// Worker regiments seen near the party and not yet counted as gone.
     watching: Vec<RegimentHandle>,
+    /// The workers in sight it goes for, as of its last update.
+    prey: Vec<RegimentHandle>,
     /// Raids set out so far, and worker regiments seen go while a party
     /// was near them (for the tests).
     raids: u32,
     kills: u32,
 }
 
-impl Default for Raider {
-    fn default() -> Self {
-        Raider::new()
-    }
-}
-
 impl Raider {
-    pub fn new() -> Raider {
-        Raider {
-            enabled: false,
-            regiments: Vec::new(),
-            phase: Phase::Idle,
-            original: 0,
-            started_with: 0,
-            target: None,
-            trip_ends: 0,
-            avoid: Vec::new(),
-            next_party: 0,
-            rally: None,
-            watching: Vec::new(),
-            raids: 0,
-            kills: 0,
-        }
-    }
-
     /// The regiments it has taken, if any: the army leaves them alone.
     pub fn regiments(&self) -> &[RegimentHandle] {
         &self.regiments
@@ -165,11 +146,11 @@ impl Raider {
         name: impl Fn(u8) -> String,
     ) -> Vec<String> {
         let mut notes = Vec::new();
-        self.enabled = s.plan.raids;
-        if !self.enabled {
+        if !s.plan.raids {
             return notes;
         }
         self.rally = rally.or(self.rally);
+        self.prey.clear();
         self.avoid.retain(|&(_, until)| s.now < until);
         self.count_kills(s);
         self.regiments.retain(|h| s.view.get(*h).is_some());
@@ -180,7 +161,6 @@ impl Raider {
             }
         } else if recall {
             notes.push("Raiders called back to the army".to_string());
-            self.regiments.clear();
             self.end(s.now);
         }
         match self.phase {
@@ -192,8 +172,10 @@ impl Raider {
         notes
     }
 
-    /// The party is over: no regiments out and no new one for a while.
+    /// The party is over: its regiments go back to the army, and no new
+    /// party is taken for a while.
     fn end(&mut self, now: u32) {
+        self.regiments.clear();
         self.phase = Phase::Idle;
         self.target = None;
         self.watching.clear();
@@ -245,11 +227,7 @@ impl Raider {
         notes.push(format!(
             "Raiding {} {} with {} regiment{}",
             name(target.owner),
-            if target.workers {
-                "workers"
-            } else {
-                "expansion"
-            },
+            target.what(),
             self.regiments.len(),
             if self.regiments.len() == 1 { "" } else { "s" }
         ));
@@ -259,9 +237,7 @@ impl Raider {
     fn go_to(&mut self, s: &Sense, target: Spot) {
         let mid = self.middle(s).unwrap_or(target.at);
         let pace = self
-            .regiments
-            .iter()
-            .filter_map(|h| s.view.get(*h))
+            .members(s)
             .map(|r| s.view.pace(r))
             .fold(f32::MAX, f32::min)
             .clamp(0.5, 50.0);
@@ -291,16 +267,13 @@ impl Raider {
                 self.watching.push(r.handle);
             }
         }
+        self.prey = prey.iter().map(|r| r.handle).collect();
         // Where it was going: reached with no workers about, or given up
         // on. Workers in sight are taken wherever they are.
         if let Some(t) = self.target
             && prey.is_empty()
         {
-            let reached = self
-                .regiments
-                .iter()
-                .filter_map(|h| s.view.get(*h))
-                .any(|r| r.pos.distance(t.at) <= LOOKED);
+            let reached = self.members(s).any(|r| r.pos.distance(t.at) <= LOOKED);
             if reached || s.now >= self.trip_ends {
                 self.avoid.push((t.at, s.now + AVOID / 2));
                 self.target = None;
@@ -309,13 +282,11 @@ impl Raider {
         if self.target.is_none() && prey.is_empty() {
             match self.choose(s, mid) {
                 Some(t) => {
-                    if self.target != Some(t) {
-                        notes.push(format!(
-                            "Raiders moving on to {} {}",
-                            name(t.owner),
-                            if t.workers { "workers" } else { "expansion" }
-                        ));
-                    }
+                    notes.push(format!(
+                        "Raiders moving on to {} {}",
+                        name(t.owner),
+                        t.what()
+                    ));
                     self.go_to(s, t);
                 }
                 None => {
@@ -342,18 +313,14 @@ impl Raider {
     /// On the run home: at the rally point they rest, or go back to the
     /// army for good if they are too few.
     fn fall_back(&mut self, s: &Sense, limit: u32, notes: &mut Vec<String>) {
-        let home = self.rally.is_none_or(|rally| {
-            self.regiments
-                .iter()
-                .filter_map(|h| s.view.get(*h))
-                .all(|r| r.pos.distance(rally) <= HOME)
-        });
+        let home = self
+            .rally
+            .is_none_or(|rally| self.members(s).all(|r| r.pos.distance(rally) <= HOME));
         if !home && s.now < limit {
             return;
         }
         if (self.soldiers(s) as f32) < KEEP_SHARE * self.original as f32 {
             notes.push("The raiders are too few: back to the army".to_string());
-            self.regiments.clear();
             self.end(s.now);
         } else {
             self.phase = Phase::Resting(s.now + REST);
@@ -377,10 +344,14 @@ impl Raider {
             Some(t) => self.set_out(s, t, name, notes),
             None => {
                 notes.push("No workers to raid: raiders back to the army".to_string());
-                self.regiments.clear();
                 self.end(s.now);
             }
         }
+    }
+
+    /// The party's regiments in sight now (its own always are).
+    fn members<'a>(&'a self, s: &'a Sense) -> impl Iterator<Item = &'a Seen> + 'a {
+        self.regiments.iter().filter_map(|h| s.view.get(*h))
     }
 
     /// Soldiers in the party now.
@@ -394,37 +365,14 @@ impl Raider {
 
     /// The middle of the party.
     fn middle(&self, s: &Sense) -> Option<Vec2> {
-        let rs: Vec<Vec2> = self
-            .regiments
-            .iter()
-            .filter_map(|h| s.view.get(*h))
-            .map(|r| r.pos)
-            .collect();
-        (!rs.is_empty()).then(|| rs.iter().copied().sum::<Vec2>() / rs.len() as f32)
+        let rs: Vec<&Seen> = self.members(s).collect();
+        (!rs.is_empty()).then(|| crate::captain::helpers::centroid(&rs))
     }
 
     /// Whether enemy fighters it can see near the party outweigh it.
     fn in_danger(&self, s: &Sense) -> bool {
-        let mine: Vec<&Seen> = self
-            .regiments
-            .iter()
-            .filter_map(|h| s.view.get(*h))
-            .collect();
-        let near: Vec<&Seen> = s
-            .view
-            .regiments
-            .iter()
-            .filter(|r| {
-                s.view.hostile(s.party, r.owner)
-                    && !r.broken()
-                    && !s.kit.all_workers.contains(&r.unit)
-                    && mine.iter().any(|m| m.pos.distance(r.pos) <= DANGER)
-            })
-            .collect();
-        outweighs(
-            s.kit.supply_of(near.iter().copied()),
-            s.kit.supply_of(mine.iter().copied()),
-        )
+        let mine: Vec<&Seen> = self.members(s).collect();
+        spymaster::outmatched(s, &mine).is_some()
     }
 
     /// Enemy workers in sight within [`CHASE`] of `from` that are worth
@@ -471,24 +419,15 @@ impl Raider {
 
     /// The best place to raid from `from` now, if any.
     fn choose(&self, s: &Sense, from: Vec2) -> Option<Spot> {
-        let mine: Vec<Vec2> = self
-            .regiments
-            .iter()
-            .filter_map(|h| s.view.get(*h))
-            .map(|r| r.pos)
-            .collect();
+        let mine: Vec<Vec2> = self.members(s).map(|r| r.pos).collect();
         let mut spots: Vec<Spot> = Vec::new();
         // Workers in sight, and those it has seen and lost sight of, unless
         // the party has been by where they were and they are not there.
         let seen = s.view.regiments.iter().filter(|r| {
             s.view.hostile(s.party, r.owner) && !r.broken() && s.kit.all_workers.contains(&r.unit)
         });
-        let lost = s.view.last_seen().filter(|r| {
-            s.kit.all_workers.contains(&r.unit)
-                && s.view
-                    .seen_at(r.handle)
-                    .is_some_and(|t| s.now.saturating_sub(t) <= MEMORY)
-                && mine.iter().all(|m| m.distance(r.pos) > LOOKED)
+        let lost = s.view.last_seen_within(MEMORY).filter(|r| {
+            s.kit.all_workers.contains(&r.unit) && mine.iter().all(|m| m.distance(r.pos) > LOOKED)
         });
         for r in seen.chain(lost) {
             spots.push(Spot {
@@ -500,7 +439,7 @@ impl Raider {
         // With no workers known, the halls that are not an enemy's first:
         // the workers are there.
         if spots.is_empty() {
-            let table = enemy_buildings(s);
+            let table = spymaster::enemy_buildings(s);
             spots.extend(
                 table
                     .iter()
@@ -519,67 +458,43 @@ impl Raider {
 
     /// The orders for the party now, if one is out.
     pub fn steer(&self, s: &Sense, wants: &mut Vec<Want>) {
-        if !self.enabled || self.regiments.is_empty() {
-            return;
-        }
-        let Some(mid) = self.middle(s) else { return };
-        let rally = |wants: &mut Vec<Want>, priority: u8| {
-            let Some(to) = self.rally else { return };
-            let to = s
-                .terrain
-                .nearest_walkable(to, 6.0)
-                .unwrap_or_else(|| s.terrain.clamp(to, 2.0));
-            for &h in &self.regiments {
-                wants.push(Want {
-                    regiment: h,
-                    act: Act::Move {
-                        to,
-                        facing: None,
-                        pace: 0.0,
-                    },
-                    priority,
-                    group: GROUP,
-                });
-            }
+        let walk = |wants: &mut Vec<Want>, to: Vec2, priority: u8| {
+            wants.extend(
+                self.regiments
+                    .iter()
+                    .map(|&h| s.walk(h, to, priority, GROUP)),
+            );
         };
         match self.phase {
             Phase::Idle => {}
-            Phase::Falling(_) => rally(wants, ROUTINE + 1),
-            Phase::Resting(_) => rally(wants, ROUTINE),
-            Phase::Out => {
-                let prey = self.prey_in_sight(s, mid);
-                if !prey.is_empty() {
-                    // Each goes for the worker nearest it.
-                    for &h in &self.regiments {
-                        let Some(me) = s.view.get(h) else { continue };
-                        if let Some(p) = prey.iter().min_by(|a, b| {
-                            a.pos.distance(me.pos).total_cmp(&b.pos.distance(me.pos))
-                        }) {
-                            wants.push(Want {
-                                regiment: h,
-                                act: Act::Attack(p.handle),
-                                priority: ROUTINE + 1,
-                                group: attack_group(p.handle),
-                            });
-                        }
-                    }
-                } else if let Some(t) = self.target {
-                    let to = s
-                        .terrain
-                        .nearest_walkable(t.at, 6.0)
-                        .unwrap_or_else(|| s.terrain.clamp(t.at, 2.0));
-                    for &h in &self.regiments {
+            Phase::Falling(_) | Phase::Resting(_) => {
+                // Running home comes before anything else it was told.
+                let priority = ROUTINE + u8::from(matches!(self.phase, Phase::Falling(_)));
+                if let Some(rally) = self.rally {
+                    walk(wants, rally, priority);
+                }
+            }
+            Phase::Out if !self.prey.is_empty() => {
+                // Each goes for the worker nearest it.
+                for me in self.members(s) {
+                    let nearest = self
+                        .prey
+                        .iter()
+                        .filter_map(|h| s.view.get(*h))
+                        .min_by(|a, b| a.pos.distance(me.pos).total_cmp(&b.pos.distance(me.pos)));
+                    if let Some(p) = nearest {
                         wants.push(Want {
-                            regiment: h,
-                            act: Act::Move {
-                                to,
-                                facing: None,
-                                pace: 0.0,
-                            },
-                            priority: ROUTINE,
-                            group: GROUP,
+                            regiment: me.handle,
+                            act: Act::Attack(p.handle),
+                            priority: ROUTINE + 1,
+                            group: attack_group(p.handle),
                         });
                     }
+                }
+            }
+            Phase::Out => {
+                if let Some(t) = self.target {
+                    walk(wants, t.at, ROUTINE);
                 }
             }
         }
@@ -587,14 +502,11 @@ impl Raider {
 
     /// A few plain words on what it is doing, for the AI lens: nothing
     /// for a level that doesn't raid.
-    pub fn note(&self, now: u32, name: impl Fn(u8) -> String) -> Option<String> {
-        if !self.enabled {
-            return None;
-        }
+    pub fn note(&self, now: u32, name: impl Fn(u8) -> String) -> String {
         let n = self.regiments.len();
         let regiments = format!("{n} regiment{}", if n == 1 { "" } else { "s" });
         let seconds = |t: u32| t.saturating_sub(now).div_ceil(TICKS_PER_SECOND);
-        Some(match (self.phase, self.target) {
+        match (self.phase, self.target) {
             (Phase::Out, Some(t)) => format!(
                 "{regiments} {} {} {} at ({:.0}, {:.0})",
                 if t.workers {
@@ -603,7 +515,7 @@ impl Raider {
                     "going for the"
                 },
                 name(t.owner),
-                if t.workers { "workers" } else { "expansion" },
+                t.what(),
                 t.at.x,
                 t.at.y
             ),
@@ -616,18 +528,13 @@ impl Raider {
                 format!("none out, sends another in {}s", seconds(self.next_party))
             }
             (Phase::Idle, _) => "none out".to_string(),
-        })
+        }
     }
-}
-
-/// Whether `theirs` supply of fighters outweighs `ours`.
-fn outweighs(theirs: f32, ours: f32) -> bool {
-    theirs > ours * OVERMATCH
 }
 
 /// Where the enemy towers it has seen stand.
 fn towers(s: &Sense) -> Vec<Vec2> {
-    enemy_buildings(s)
+    spymaster::enemy_buildings(s)
         .iter()
         .filter(|b| b.role == Role::Defence)
         .map(|b| b.at)
@@ -758,16 +665,9 @@ mod tests {
     }
 
     #[test]
-    fn enemy_fighters_outweigh_it_only_when_there_is_more_of_them() {
-        assert!(outweighs(5.0, 4.0));
-        assert!(!outweighs(4.0, 4.0));
-        assert!(!outweighs(0.0, 4.0));
-    }
-
-    #[test]
-    fn a_raider_that_is_not_enabled_says_nothing() {
-        let r = Raider::new();
-        assert_eq!(r.note(0, |_| String::new()), None);
+    fn a_raider_with_no_party_out_says_so() {
+        let r = Raider::default();
+        assert_eq!(r.note(0, |_| String::new()), "none out");
         assert!(r.regiments().is_empty());
     }
 }
