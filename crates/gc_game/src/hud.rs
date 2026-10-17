@@ -436,10 +436,9 @@ impl Running {
         }
         hud.blocks.clear();
         if let Some(structures) = self.world.structures() {
-            // Enemy buildings join once buildings have sight (step 5).
-            let ours = |p| !self.world.hostile(side, p) || self.reveal_all;
+            let shown = crate::buildings::shown_to(side, self.reveal_all);
             hud.blocks
-                .extend(structures.iter().filter(|s| ours(s.owner)).map(|s| Block {
+                .extend(structures.iter().filter(|s| shown(s)).map(|s| Block {
                     rect: [
                         s.tile.0 as f32,
                         s.tile.1 as f32,

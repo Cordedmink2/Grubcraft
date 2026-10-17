@@ -91,7 +91,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 8;
+pub const SIM_VERSION: u32 = 9;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -542,7 +542,8 @@ pub enum Command {
         building: BuildingId,
         tile: (i16, i16),
     },
-    /// Close with an enemy building and knock it down.
+    /// Close with an enemy building and knock it down. In fog of war, only
+    /// one the issuer's side has seen.
     AttackStructure {
         regiment: RegimentHandle,
         structure: StructureHandle,
@@ -710,13 +711,19 @@ impl World {
         self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
         self.events.reserve(setup.structures as usize);
         // A match played for a victory is won only that way; the sandbox's
-        // buildings leave holding the field as it was.
+        // buildings leave holding the field as it was, and everything in
+        // sight.
         // The Heart counts only on a map that has it.
         let mut v = setup.victories;
         v.heart &= setup.heart.is_some();
         if v.any() {
             self.judge
                 .conquest(verdict::Throne::new(v, setup.heart, setup.build_percent));
+            // ...and in fog of war.
+            if let Some(c) = &mut self.conquest {
+                c.structures.fog();
+            }
+            (self.vision).fog(self.regiments.capacity(), setup.structures as usize);
         }
         true
     }
@@ -956,6 +963,7 @@ impl World {
             &self.units,
             &self.stances,
             &self.terrain,
+            self.conquest.as_mut().map(|c| &mut c.structures),
         );
         if !self.scratch {
             self.events
@@ -1151,7 +1159,10 @@ impl World {
                     (Some(r), Some(enemy))
                         if self.regiments.owner[r] == pc.player
                             && self.stances.hostile(pc.player, enemy)
-                            && !self.regiments.morale_state[r].broken() =>
+                            && !self.regiments.morale_state[r].broken()
+                            // In fog of war, only a building its side has seen.
+                            && (conquest.structures.get(structure))
+                                .is_some_and(|s| s.seen_by(pc.player)) =>
                     {
                         conquest.stop_work(r);
                         conquest
@@ -1393,9 +1404,38 @@ impl World {
         &self.terrain
     }
 
+    /// Whether the match is played in fog of war (see [`vision`]).
+    pub fn fog(&self) -> bool {
+        self.vision.fogged()
+    }
+
+    /// Where `party`'s side can see in fog of war, as circles (centre and
+    /// radius, in tiles) into `out`, which is cleared first: a circle round
+    /// each of the side's regiments and buildings, reaching as far as it
+    /// sees straight out from its longer sides. For the game's drawing of
+    /// the fog; the simulation's own sight is edge to edge, so it reaches a
+    /// little further at the corners and less off the short sides.
+    pub fn sight(&self, party: PlayerId, out: &mut Vec<(FxVec2, Fx)>) {
+        out.clear();
+        let friend = |owner| !self.stances.hostile(party, owner);
+        // Round a block: as far as its sight reaches straight out from its
+        // longer sides.
+        let round =
+            |b: combat::Block, sight: Fx| (b.centre, sight + b.half_width.max(b.half_depth));
+        let regs = &self.regiments;
+        for i in (0..regs.alive.len()).filter(|&i| regs.alive[i] && friend(regs.owner[i])) {
+            out.push(round(
+                combat::Block::of(regs, &self.units, i),
+                vision::SIGHT,
+            ));
+        }
+        let posts = self.vision.posts().filter(|&(owner, ..)| friend(owner));
+        out.extend(posts.map(|(_, block, sight)| round(block, sight)));
+    }
+
     /// Whether `party`'s side can see regiment `h` (see [`vision`]). Always
-    /// true on a map with no cover, and for a party's own and its allies'
-    /// regiments; false for a regiment that is gone.
+    /// true on a map with no cover and no fog of war, and for a party's own
+    /// and its allies' regiments; false for a regiment that is gone.
     /// While deploying, no enemy regiment is seen.
     pub fn sees(&self, party: PlayerId, h: RegimentHandle) -> bool {
         self.regiments.resolve(h).is_some_and(|i| {
@@ -1437,7 +1477,8 @@ impl World {
         verdict::holding_the_field(&self.regiments, &self.stances, &self.vision)
     }
 
-    /// Whether regiment `h` is hidden from every enemy of its owner.
+    /// Whether cover hides regiment `h` from every enemy of its owner (see
+    /// [`vision`]; being out of sight in fog of war is not hiding).
     pub fn hidden(&self, h: RegimentHandle) -> bool {
         self.regiments
             .resolve(h)

@@ -208,6 +208,17 @@ impl Block {
         Block::at(regs, units, i, regs.position[i])
     }
 
+    /// A block lined up with the map's axes: a building's footprint.
+    pub(crate) fn square(centre: FxVec2, half_width: Fx, half_depth: Fx) -> Block {
+        Block {
+            centre,
+            forward: FxVec2::new(Fx::ZERO, Fx::ONE),
+            right: FxVec2::new(Fx::ONE, Fx::ZERO),
+            half_width,
+            half_depth,
+        }
+    }
+
     /// Regiment `i`'s block if its centre were at `centre`.
     fn at(regs: &Regiments, units: &[UnitStats], i: usize, centre: FxVec2) -> Block {
         let stats = &units[regs.unit[i] as usize];
@@ -1514,8 +1525,10 @@ impl Combat {
             if !regs.alive[j]
                 || !stances.hostile(owner, regs.owner[j])
                 || !vision.sees(owner, j, regs.owner[j])
-                // A hidden archer holds its fire at enemies who can't see it.
-                || !vision.sees(regs.owner[j], i, owner)
+                // A hidden archer holds its fire at enemies who can't see it
+                // for cover (being out of their sight in fog of war is not
+                // hiding).
+                || !vision.uncovered(regs.owner[j], i, owner)
             {
                 return;
             }

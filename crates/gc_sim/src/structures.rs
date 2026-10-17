@@ -29,6 +29,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
+use crate::combat::Block;
 use crate::conquest::ConquestUnit;
 use crate::nav::{CELLS_PER_TILE, CLEARANCE, Nav};
 use crate::regiments::{Order, Regiments};
@@ -57,6 +58,19 @@ pub enum Role {
 }
 
 impl Role {
+    /// How far a building of this role sees in fog of war, edge to edge,
+    /// in tiles (see [`crate::vision`]): towers see past their reach, a
+    /// wall hardly at all.
+    pub const fn sight(self) -> Fx {
+        Fx::from_int(match self {
+            Role::Main => 32,
+            Role::Outpost => 28,
+            Role::Defence => 36,
+            Role::Wall => 8,
+            _ => 20,
+        })
+    }
+
     pub const ALL: [Role; 9] = [
         Role::Main,
         Role::Outpost,
@@ -266,9 +280,16 @@ pub struct StructureView {
     /// While its main building's tier upgrade goes on: the building it
     /// becomes, and percent done.
     pub upgrading: Option<(BuildingId, u8)>,
+    /// The parties that have seen it: every party outside fog of war.
+    pub seen: u8,
 }
 
 impl StructureView {
+    /// Whether `party` has seen it.
+    pub fn seen_by(&self, party: PlayerId) -> bool {
+        self.seen & (1 << party) != 0
+    }
+
     pub fn finished(&self) -> bool {
         self.built_percent == 100
     }
@@ -433,6 +454,11 @@ pub struct Structures {
     siege_stalls: Vec<u8>,
     /// Buildings brought down in the last tick, for the events.
     pub(crate) fallen: Vec<StructureHandle>,
+    /// The parties that have seen each building, its owner first: in fog of
+    /// war a building stays known once seen (see [`crate::vision`]).
+    seen: Vec<u8>,
+    /// Fog of war: buildings are known only once seen.
+    fog: bool,
 }
 
 /// The match's building table, each made sane, and with no tier upgrade
@@ -482,6 +508,8 @@ impl Structures {
             siege_gap: vec![Fx::ZERO; regiments],
             siege_stalls: vec![0; regiments],
             fallen: Vec::with_capacity(n),
+            seen: vec![0; n],
+            fog: false,
         }
     }
 
@@ -545,6 +573,7 @@ impl Structures {
                 let done = self.upgrade_full[i] - self.upgrade_left[i];
                 (to, (done * 100 / self.upgrade_full[i].max(1)) as u8)
             }),
+            seen: self.seen(i),
         }
     }
 
@@ -647,12 +676,47 @@ impl Structures {
     }
 
     /// The slots of the buildings standing, in index order.
-    fn standing(&self) -> impl Iterator<Item = usize> + '_ {
+    pub(crate) fn standing(&self) -> impl Iterator<Item = usize> + '_ {
         (0..self.hp.len()).filter(|&i| self.hp[i] > 0)
     }
 
     fn stats_of(&self, i: usize) -> &BuildingStats {
         &self.buildings[self.building[i] as usize]
+    }
+
+    /// Building slot `i`'s footprint as a block, for sight.
+    pub(crate) fn block(&self, i: usize) -> Block {
+        let [x, y, w, d] = self.footprint(i);
+        Block::square(
+            footprint_centre([x, y, w, d]),
+            Fx::from_ratio(w, 2),
+            Fx::from_ratio(d, 2),
+        )
+    }
+
+    /// How far building slot `i` sees (see [`Role::sight`]).
+    pub(crate) fn sight(&self, i: usize) -> Fx {
+        self.stats_of(i).role.sight()
+    }
+
+    pub(crate) fn owner_of(&self, i: usize) -> PlayerId {
+        self.owner[i]
+    }
+
+    /// Play in fog of war from now on.
+    pub(crate) fn fog(&mut self) {
+        self.fog = true;
+    }
+
+    /// The parties that have seen building slot `i`: all of them outside
+    /// fog of war.
+    pub(crate) fn seen(&self, i: usize) -> u8 {
+        self.seen[i]
+    }
+
+    /// Parties in `mask` have now seen building slot `i`.
+    pub(crate) fn mark_seen(&mut self, i: usize, mask: u8) {
+        self.seen[i] |= mask;
     }
 
     /// The footprint of building slot `i`: x, y, width, depth in tiles.
@@ -754,6 +818,7 @@ impl Structures {
         self.hp[i] = u32::from(self.buildings[building as usize].hp) * HP_SCALE;
         self.work_left[i] = 0;
         self.upgrade_to[i] = None;
+        self.seen[i] = if self.fog { 1 << owner } else { u8::MAX };
         nav.set_built(self.footprint(i), true, regs);
         Some(self.handle(i))
     }
@@ -1053,6 +1118,7 @@ impl Structures {
             if self.work_left[i] > 0 {
                 h.u32(self.work_full[i]);
             }
+            h.u8(self.seen[i]);
             if let Some(to) = self.upgrade_to[i] {
                 h.u16(to);
                 h.u32(self.upgrade_left[i]);

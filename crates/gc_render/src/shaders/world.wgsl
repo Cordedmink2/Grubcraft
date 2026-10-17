@@ -35,6 +35,10 @@ const HIGHLIGHT: f32 = 1.6;
 @group(0) @binding(1) var heightmap: texture_2d<u32>;
 @group(0) @binding(2) var shadow_map: texture_depth_2d;
 @group(0) @binding(3) var shadow_sampler: sampler_comparison;
+// Fog of war: one texel per tile, 1 in view, about 0.55 seen before, about
+// 0.2 never seen. All 1 when the match has no fog.
+@group(0) @binding(4) var fog_map: texture_2d<f32>;
+@group(0) @binding(5) var fog_sampler: sampler;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -61,6 +65,16 @@ fn terrain_normal(xz: vec2<f32>) -> vec3<f32> {
     let hu = height_at(xz - vec2<f32>(0.0, e));
     let hd = height_at(xz + vec2<f32>(0.0, e));
     return normalize(vec3<f32>(hl - hr, 2.0 * e, hu - hd));
+}
+
+// Dim and drain the colour of ground out of sight. Tile (i, j) is the texel
+// at (i, j), so a position in tiles divided by the map size is its uv.
+fn veil(c: vec3<f32>, xz: vec2<f32>) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(fog_map));
+    let seen = textureSampleLevel(fog_map, fog_sampler, xz / size, 0.0).r;
+    let out = clamp((1.0 - seen) / 0.8, 0.0, 1.0);
+    let grey = vec3<f32>(dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)));
+    return mix(c, grey, out * 0.5) * (0.1 + 0.9 * seen);
 }
 
 fn hash2(p: vec2<f32>) -> f32 {
@@ -215,7 +229,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let wc = shade(water, wn, vec3<f32>(in.world.x, g.misc.x, in.world.z));
         c = mix(c, wc, clamp(0.5 + depth * 1.5, 0.0, 0.92));
     }
-    return vec4<f32>(c, 1.0);
+    return vec4<f32>(veil(c, xz), 1.0);
 }
 
 // ---------------------------------------------------------------- regiments
@@ -279,6 +293,8 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
     // color.a is the selection highlight strength.
     let albedo = srgb_to_linear(in.color.rgb);
     let c = shade(albedo, in.normal, in.world);
+    // Not veiled: boxes are what the side is shown (remembered buildings,
+    // the building ghost, bars and marks), so they stay readable in fog.
     return vec4<f32>(c + albedo * in.color.a * 0.8, 1.0);
 }
 

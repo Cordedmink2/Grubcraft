@@ -16,7 +16,7 @@
 //! ```
 
 use gc_data::{Faction, GameData};
-use gc_fixed::{Angle, FxVec2};
+use gc_fixed::{Angle, Fx, FxVec2};
 use gc_replay::{Recorder, Replay};
 use gc_sim::structures::Role;
 use gc_sim::{
@@ -40,7 +40,7 @@ const UNTRAIN_AT: u32 = 41;
 const LAY_FROM: u32 = 20 * TICKS_PER_SECOND;
 const SPARE_FROM: u32 = 80 * TICKS_PER_SECOND;
 const UPGRADE_FROM: u32 = 120 * TICKS_PER_SECOND;
-const CHARGE_AT: u32 = 250 * TICKS_PER_SECOND;
+const MARCH_AT: u32 = 150 * TICKS_PER_SECOND;
 const REMOVE_AT: u32 = 295 * TICKS_PER_SECOND;
 /// Soldiers and workers each side trains up to.
 const FIGHTERS: usize = 6;
@@ -132,7 +132,7 @@ impl Kit {
 }
 
 /// What one side has done so far.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct Side {
     helped: bool,
     called_off: bool,
@@ -447,19 +447,33 @@ impl Match {
             }
             _ => {}
         }
-        // Every soldier at the other side's main building.
-        if t >= CHARGE_AT && !self.sides[usize::from(p)].charged {
-            if let Some(target) = self.main_of(1 - p) {
-                for r in self.world.regiments.iter() {
-                    if r.owner == p && r.unit == k.fighter && k.fighter != k.worker {
+        // The soldiers march on the other side's main building (each idle
+        // one, once a second), and once they have seen it through the fog,
+        // every soldier attacks it.
+        if t >= MARCH_AT && !self.sides[usize::from(p)].charged {
+            let target = self.main_of(1 - p);
+            let seen = target.is_some_and(|m| m.seen_by(p));
+            if let Some(target) = target.filter(|_| seen || t.is_multiple_of(TICKS_PER_SECOND)) {
+                let fighters = (self.world.regiments.iter())
+                    .filter(|r| r.owner == p && r.unit == k.fighter && k.fighter != k.worker);
+                for r in fighters {
+                    if seen {
                         out.push(order(Command::AttackStructure {
                             regiment: r.handle,
                             structure: target.handle,
                         }));
+                    } else if !r.moving && !r.engaged {
+                        out.push(order(Command::MoveTo {
+                            regiment: r.handle,
+                            target: target.centre(),
+                            facing: None,
+                            files: 0,
+                            pace: Fx::ZERO,
+                        }));
                     }
                 }
             }
-            self.sides[usize::from(p)].charged = true;
+            self.sides[usize::from(p)].charged = seen || target.is_none();
         }
         // The host takes the first side's barracks away.
         if t == REMOVE_AT
@@ -524,7 +538,9 @@ mod tests {
                 );
             }
             assert!(m.own(p, Some(k.spare)).is_empty(), "side {p} called off");
-            assert!(m.sides[usize::from(p)].helped && m.sides[usize::from(p)].called_off);
+            let side = m.sides[usize::from(p)];
+            assert!(side.helped && side.called_off);
+            assert!(side.charged, "side {p} found the other's main building");
         }
         assert!(m.own(0, Some(m.kits[0].barracks)).is_empty(), "removed");
         let played = m.world.tick_count();

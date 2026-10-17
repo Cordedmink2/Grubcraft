@@ -215,11 +215,11 @@ fn ground_range(ground: &impl Fn(f32, f32) -> f32, s: &StructureView) -> (f32, f
         .fold((f32::MAX, f32::MIN), |(lo, hi), g| (lo.min(g), hi.max(g)))
 }
 
-/// Whether a building of `world` stands over `p` (always false outside
-/// Conquest, the only mode with buildings).
-pub fn covers(world: &World, p: Vec2) -> bool {
+/// Whether a building of `world` that `shown` allows stands over `p`
+/// (always false outside Conquest, the only mode with buildings).
+pub fn covers(world: &World, shown: impl Fn(&StructureView) -> bool, p: Vec2) -> bool {
     world.structures().is_some_and(|all| {
-        all.iter().any(|b| {
+        all.iter().filter(|b| shown(b)).any(|b| {
             let (x, y) = (b.tile.0 as f32, b.tile.1 as f32);
             (x..x + f32::from(b.width)).contains(&p.x) && (y..y + f32::from(b.depth)).contains(&p.y)
         })
@@ -255,14 +255,22 @@ fn block(
     }
 }
 
-/// Draw every standing building: a box in its owner's colour, dimmer as
-/// its hit points fall, and a bar over it once it is damaged. `across`
-/// is the way the camera looks along the ground, so the bars face it.
+/// Whether `side` is shown a building: in fog of war, enemy buildings show
+/// once seen; with `reveal_all`, everything shows.
+pub fn shown_to(side: PlayerId, reveal_all: bool) -> impl Fn(&StructureView) -> bool + Copy {
+    move |s| reveal_all || s.seen_by(side)
+}
+
+/// Draw every standing building that `shown` allows: a box in its owner's
+/// colour, dimmer as its hit points fall, and a bar over it once it is
+/// damaged. `across` is the way the camera looks along the ground, so the
+/// bars face it.
 pub fn push(
     world: &World,
     table: &Table,
     ground: impl Fn(f32, f32) -> f32,
     team: impl Fn(PlayerId) -> [u8; 3],
+    shown: impl Fn(&StructureView) -> bool,
     across: Vec2,
     out: &mut Vec<BoxInstance>,
 ) {
@@ -270,7 +278,7 @@ pub fn push(
         return;
     };
     let right = Vec2::new(-across.y, across.x);
-    for s in structures.iter() {
+    for s in structures.iter().filter(|s| shown(s)) {
         if out.len() + 3 > MAX_BOX_INSTANCES {
             return;
         }
@@ -444,6 +452,7 @@ pub fn push_ghost(
         max_hp: 1,
         built_percent: 100,
         upgrading: None,
+        seen: u8::MAX,
     };
     let [r, g, b] = colour;
     let colour = if fits { [r, g, b, GHOST_GLOW] } else { REFUSED };

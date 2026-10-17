@@ -47,7 +47,9 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 - Tier 2 (300 Grub, 100 Marrow, 60 s) lands around minute 5 to 6, matching the pacing target in 04.
 - The tier-2 production buildings cost 40 to 60 Marrow each. A tier-2 army therefore competes with the next tier and with elite units for the same scarce Marrow.
 
-**Not designed yet:** research costs and times, Grubfolk trade prices, and sight ranges for buildings.
+**Sight in fog of war** (built in Conquest step 5b, `Role::sight` in `gc_sim::structures`): a main building sees 32 tiles round its walls, an outpost 28, a tower 36 (past its 32-tile reach), a wall 8, and every other building 20. Regiments see 32.
+
+**Not designed yet:** research costs and times, and Grubfolk trade prices.
 
 ## Ember Clans
 

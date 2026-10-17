@@ -73,6 +73,12 @@ impl World {
     /// `capacity` regiments and its own random streams from `seed`.
     pub fn scratch(&self, capacity: u32, seed: u64) -> World {
         let n = capacity.max(1);
+        let mut vision = Vision::new(n as usize, &self.terrain, &self.stances);
+        // A rehearsal in fog of war is in fog too (without the buildings'
+        // watch, as it has no buildings).
+        if self.vision.fogged() {
+            vision.fog(n as usize, 0);
+        }
         World {
             tick: self.tick,
             rng: Pcg32::new(seed, streams::WORLD),
@@ -83,7 +89,7 @@ impl World {
             nav: self.nav.sharing(n as usize),
             stances: self.stances.clone(),
             terrain: self.terrain.clone(),
-            vision: Vision::new(n as usize, &self.terrain, &self.stances),
+            vision,
             // A rehearsal is all battle.
             deploy: crate::deploy::Deployment::default(),
             champions: None,

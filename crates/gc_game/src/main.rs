@@ -122,6 +122,7 @@ mod conquest_golden;
 mod credits;
 mod data;
 mod field;
+mod fog;
 #[cfg(test)]
 mod goldens;
 mod hud;
@@ -648,6 +649,8 @@ struct Running {
     viewer_scroll: f32,
     /// Sandbox: draw regiments hidden from the side you command too (Shift+V).
     reveal_all: bool,
+    /// The fog of war on the ground, when the match has it.
+    fog: fog::FogView,
     /// Data hash and size, for the overlay.
     data_label: String,
     seed: u64,
@@ -1294,6 +1297,7 @@ impl App {
             viewer: None,
             viewer_scroll: 0.0,
             reveal_all: false,
+            fog: Default::default(),
             data_label: format!(
                 "{:016x}   {} unit types",
                 game_data.short_hash(),
@@ -1936,12 +1940,13 @@ impl Running {
     fn building_under_cursor(&self, accept: impl Fn(PlayerId) -> bool) -> Option<StructureHandle> {
         let ray = self.cursor_ray()?;
         let hm = &self.heightmap;
+        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
         buildings::pick(
             &self.world,
             &self.buildings,
             |x, z| hm.height_at(x, z).max(hm.water_level()),
             ray,
-            |s| accept(s.owner),
+            |s| shown(s) && accept(s.owner),
         )
     }
 
@@ -2805,6 +2810,14 @@ impl Running {
             self.renderer.clear_ui();
         }
 
+        self.fog.update(
+            self.last_frame,
+            &mut self.renderer,
+            &self.world,
+            self.sandbox.side,
+            self.heightmap.tiles,
+            !self.reveal_all,
+        );
         let frame = FrameParams {
             view_proj,
             camera_pos: eye,
@@ -3531,6 +3544,7 @@ impl Running {
         self.sandbox = Sandbox::new(matches!(kind, MatchKind::Sandbox));
         // Seeing through the woods stays in the sandbox.
         self.reveal_all &= matches!(kind, MatchKind::Sandbox);
+        self.fog.reset();
         self.parties = sandbox_parties();
         self.battle = None;
         self.speed = NORMAL_SPEED;
@@ -4090,10 +4104,13 @@ impl Running {
         // Arrows that come down in the water are lost, and so are those that
         // land on a building (the picture has no roof or wall to stick them
         // in, and a shaft showing through a wall would look wrong).
+        // Only buildings the viewer is shown, so arrows don't trace hidden
+        // ones.
         let world = &self.world;
+        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
         let dry = |p: Vec2| {
             let ground = heightmap.height_at(p.x, p.y);
-            (ground >= water && !buildings::covers(world, p)).then_some(ground)
+            (ground >= water && !buildings::covers(world, shown, p)).then_some(ground)
         };
         // Where each volley came from, as the arrows in the air are drawn, so
         // they come down where they were seen to. One pass over the volleys
@@ -4562,6 +4579,7 @@ impl Running {
             &self.buildings,
             ground,
             |p| color_of(parties, p),
+            buildings::shown_to(self.sandbox.side, self.reveal_all),
             across,
             &mut self.instances,
         );
