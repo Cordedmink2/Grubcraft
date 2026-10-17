@@ -15,7 +15,7 @@ use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 14;
+pub const PROTOCOL: u8 = 15;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -199,7 +199,7 @@ fn read_army(r: &mut Reader) -> Option<Vec<u16>> {
 }
 
 fn read_faction(r: &mut Reader) -> Option<Faction> {
-    Faction::ALL.get(r.u8()? as usize).copied()
+    Faction::from_u8(r.u8()?)
 }
 
 fn read_slot(r: &mut Reader) -> Option<Slot> {

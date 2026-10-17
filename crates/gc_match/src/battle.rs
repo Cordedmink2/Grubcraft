@@ -56,7 +56,7 @@ pub fn party_of(slot: &Slot) -> Party {
     Party {
         name: format!("{colour} ({})", slot.name),
         color,
-        faction: Some(Faction::from_index(slot.faction.index() as u8)),
+        faction: Some(slot.faction),
     }
 }
 
@@ -116,7 +116,7 @@ pub fn set_out(
     let (mut spawns, mut ready) = (Vec::new(), Vec::new());
     for (i, slot) in players.iter().enumerate() {
         let party = i as PlayerId;
-        let faction = Faction::from_index(slot.faction.index() as u8);
+        let faction = slot.faction;
         set.parties.push(party_of(slot));
         let mind = (deploy && slot.kind == SlotKind::Ai).then(|| {
             let pick = gc_fixed::Pcg32::new(roll, i as u64).next_u32();
@@ -888,7 +888,7 @@ pub(crate) mod tests {
         let limit = minutes * 60 * gc_sim::TICKS_PER_SECOND;
         while m.world.tick_count() < limit && !m.step(&[]).decided {
             if std::env::var_os("AI_TRACE").is_some() && m.world.tick_count().is_multiple_of(400) {
-                println!("t={}s", m.world.tick_count() / 20);
+                println!("t={}s", m.world.tick_count() / gc_sim::TICKS_PER_SECOND);
                 for mind in m.minds.iter() {
                     println!("  {}", mind.summary());
                 }

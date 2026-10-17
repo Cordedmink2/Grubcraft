@@ -7,6 +7,8 @@
 //! describes what to show and [`Hud::frame`](crate::hud::Hud::frame) calls
 //! these to draw it.
 
+use std::fmt::Write as _;
+
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, text_width};
 use crate::hud::{HudEvent, HudInput, WIDGET_QUEUE, draw_portrait, health_color, rgb};
 use crate::lobby::thousands;
@@ -37,6 +39,10 @@ pub struct TopBar {
     pub supply_cap: u32,
     /// Percent of gathered Grub kept (100 = no upkeep).
     pub upkeep_percent: u32,
+    /// Brood: larvae ready and how many the Hives and Hatchery Pits hold.
+    /// Shown only when the room is above 0.
+    pub larvae: u32,
+    pub larva_room: u32,
     /// Match time.
     pub clock_secs: u32,
 }
@@ -64,7 +70,8 @@ pub struct Block {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QueueItem<'a> {
     pub name: &'a str,
-    /// Percent trained; only the front one trains.
+    /// Percent trained. The front one trains, and so does every unit that
+    /// hatches (all at once); the others show 0.
     pub progress: u8,
 }
 
@@ -81,6 +88,8 @@ pub struct StructurePanel<'a> {
     pub upgrading: Option<(&'a str, u8)>,
     /// Its training queue, front first (at most 5 are shown).
     pub queue: &'a [QueueItem<'a>],
+    /// Larvae ready here and the most it holds (None for a building with none).
+    pub larvae: Option<(u8, u8)>,
 }
 
 /// Match time as "14:32", or "1:02:05" from the first hour.
@@ -119,6 +128,15 @@ pub(crate) fn draw_top_bar(draw: &mut DrawList, bar: Rect, t: &TopBar) {
         theme::TEXT
     };
     x = top_item(draw, x, y, "Supply", &supply, supply_color);
+    if t.larva_room > 0 {
+        let larvae = format!("{}/{}", t.larvae, t.larva_room);
+        let color = if t.larvae == 0 {
+            theme::WARN
+        } else {
+            theme::TEXT
+        };
+        x = top_item(draw, x, y, "Larvae", &larvae, color);
+    }
     if t.upkeep_percent < 100 {
         top_item(
             draw,
@@ -243,7 +261,7 @@ pub(crate) fn draw_structure(
             let mid = Rect::new(inner.x, inner.y + 18, inner.w, (inner.h - 18 - 8).max(0));
             draw.text_centered(mid, 2, theme::MUTED, &initial.to_string());
         }
-        if i == 0 {
+        if i == 0 || item.progress > 0 {
             let bar = Rect::new(inner.x, inner.bottom() - 6, inner.w, 6);
             draw.meter(
                 bar,
@@ -273,7 +291,10 @@ fn draw_structure_card(draw: &mut DrawList, r: Rect, s: &StructurePanel) {
         health_color(hp),
         theme::FIELD,
     );
-    let numbers = format!("{}/{}", s.hp, s.max_hp);
+    let mut numbers = format!("{}/{}", s.hp, s.max_hp);
+    if let Some((held, cap)) = s.larvae {
+        let _ = write!(numbers, "  Larvae {held}/{cap}");
+    }
     draw.text(x, inner.y + 32, 1, theme::MUTED, &fit(&numbers, chars));
 
     let state = if let Some(done) = s.building {

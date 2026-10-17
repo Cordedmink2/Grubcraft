@@ -21,6 +21,7 @@ const _: () = assert!(
         && record::BUILDING_DROP_OFF_MARROW == gc_sim::structures::DROP_OFF_MARROW
         && record::BUILDING_POWERS_FIELD == gc_sim::structures::POWERS_FIELD
         && record::BUILDING_ANTI_AIR == gc_sim::structures::ANTI_AIR
+        && record::BUILDING_LARVAE == gc_sim::structures::LARVAE
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );
 
@@ -452,6 +453,7 @@ pub fn push_ghost(
         max_hp: 1,
         built_percent: 100,
         upgrading: None,
+        growing: false,
         seen: u8::MAX,
     };
     let [r, g, b] = colour;
@@ -523,6 +525,7 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::Tier => "Your tier is too low for that.",
         Refusal::Price => "You can't afford that.",
         Refusal::Busy => "That building is busy.",
+        Refusal::Larva => "No larvae are ready.",
     }
 }
 

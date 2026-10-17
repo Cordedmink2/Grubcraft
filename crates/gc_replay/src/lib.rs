@@ -44,6 +44,10 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 17: the Conquest units' larva and used-up-worker traits (read as
+///   neither);
+/// - 16: the hand-over command;
+/// - 15: the header's unit names (read as none);
 /// - 14: how the battle was won (read as holding the field) and the
 ///   Conquest victories and Titan's Heart (read as a sandbox: no victory);
 /// - 13: the fall back and brace commands;
@@ -59,7 +63,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 14;
+pub const FORMAT: u16 = 17;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -121,6 +125,11 @@ pub struct Header {
     /// plays on the map it stores either way; this is for drawing that
     /// map.
     pub map: Option<u8>,
+    /// The names of the game's unit types when it was recorded, in table
+    /// order, so the game can tell whether its own table still names the
+    /// same regiments by the same ids (a reorder keeps the size); empty
+    /// for files from before format 15, and for test recordings.
+    pub unit_names: Vec<String>,
 }
 
 /// What the replay list needs of a file, which format 10 keeps in a block
@@ -223,7 +232,7 @@ impl ConquestRecord {
             .filter(|b| b.len() == n)?;
         let n: usize = r.var_as()?;
         let units = (0..n.min(r.remaining()))
-            .map(|_| r.conquest_unit())
+            .map(|_| r.conquest_unit(format))
             .collect::<Option<Vec<_>>>()
             .filter(|u| u.len() == n)?;
         let structures = r.var_as().filter(|&s| s <= MAX_STRUCTURES)?;
@@ -524,6 +533,10 @@ impl Replay {
             None => w.var(0),
         }
         w.var(h.map.map_or(0, |c| u64::from(c) + 1));
+        w.var(h.unit_names.len() as u64);
+        for name in &h.unit_names {
+            w.bytes(name.as_bytes());
+        }
         w.u64(self.seed);
         w.var(u64::from(self.regiments));
         w.var(u64::from(self.map_tiles));
@@ -943,6 +956,14 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
     } else {
         None
     };
+    let mut unit_names = Vec::new();
+    if format >= 15 {
+        let n: usize = r.var_as()?;
+        unit_names.reserve(n.min(r.remaining()));
+        for _ in 0..n {
+            unit_names.push(text(r)?);
+        }
+    }
     Some(Header {
         build,
         data_hash,
@@ -952,6 +973,7 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
         sim_version,
         result,
         map,
+        unit_names,
     })
 }
 
@@ -1135,6 +1157,7 @@ mod tests {
             sim_version: Some(gc_sim::SIM_VERSION),
             result: None,
             map: None,
+            unit_names: vec!["Spears".into(), "Bows".into()],
         };
         let mut drill = Drill::new(7);
         drill.regiments_per_player = 6;
@@ -1525,8 +1548,8 @@ mod tests {
         replay.header = Header::default();
         let empty = replay.legacy_body();
         // The empty header: no build, data hash 0, no players, nobody, no
-        // desync, no sim version, no result, no map choice.
-        let header_len = 1 + 8 + 1 + 1 + 1 + 1 + 1 + 1;
+        // desync, no sim version, no result, no map choice, no unit names.
+        let header_len = 1 + 8 + 1 + 1 + 1 + 1 + 1 + 1 + 1;
         body.extend_from_slice(&empty[body.len() + header_len..]);
         // Nor, from format 8 down, the system trail's count.
         assert_eq!(body.pop(), Some(0));
@@ -1548,8 +1571,9 @@ mod tests {
         let mut w = Writer::default();
         w.bytes(replay.note.as_bytes());
         let at = w.buf.len() + 1 + 8 + 1 + 1 + 1;
-        // Every format older than 11 has no map choice (after the sim
-        // version and result).
+        // Every format older than 15 has no unit names, and older than 11
+        // no map choice (after the sim version and result).
+        assert_eq!(body.remove(at + 3), 0);
         assert_eq!(body.remove(at + 2), 0);
         assert!(body.drain(at..at + dropped).all(|b| b == 0));
         assert_eq!(body.pop(), Some(0));
@@ -1633,13 +1657,51 @@ mod tests {
         ));
     }
 
-    /// `replay` (a Field Battle) as format 11 wrote it: format 12 without
-    /// the Conquest flags at the end of the info block and after the map.
-    fn format_11(replay: &Replay) -> Vec<u8> {
-        assert!(replay.conquest.is_none());
+    /// `replay`'s info block as format 14 wrote it: format 15 without the
+    /// unit names, which `replay` must not have (a count of 0 just before
+    /// the seed, map size and the rest of the info block).
+    fn info_14(replay: &Replay) -> Vec<u8> {
+        assert!(replay.header.unit_names.is_empty());
         let new = replay.encode();
         let len = u32::from_le_bytes(new[6..10].try_into().unwrap()) as usize;
-        let info = &new[10..10 + len];
+        let mut info = new[10..10 + len].to_vec();
+        let mut tail = Writer::default();
+        tail.u64(replay.seed);
+        tail.var(u64::from(replay.regiments));
+        tail.var(u64::from(replay.map_tiles));
+        let at = info
+            .windows(tail.buf.len())
+            .position(|w| w == tail.buf)
+            .unwrap()
+            - 1;
+        assert_eq!(info.remove(at), 0);
+        info
+    }
+
+    #[test]
+    fn a_format_14_replay_has_no_unit_names() {
+        let mut replay = record();
+        replay.header.unit_names.clear();
+        let new = replay.encode();
+        let len = u32::from_le_bytes(new[6..10].try_into().unwrap()) as usize;
+        let info = info_14(&replay);
+        let mut old = MAGIC.to_vec();
+        old.extend_from_slice(&14u16.to_le_bytes());
+        old.extend_from_slice(&(info.len() as u32).to_le_bytes());
+        old.extend_from_slice(&info);
+        old.extend_from_slice(&new[10 + len..]);
+        assert_eq!(Replay::decode(&old).unwrap(), replay);
+        let path = temp("header-14", &old);
+        assert_eq!(Replay::read_header(&path).unwrap(), replay.info());
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// `replay` (a Field Battle with no unit names) as format 11 wrote it:
+    /// format 12 without the Conquest flags at the end of the info block
+    /// and after the map.
+    fn format_11(replay: &Replay) -> Vec<u8> {
+        assert!(replay.conquest.is_none());
+        let info = info_14(replay);
         assert_eq!(info.last(), Some(&0));
         let mut body = Writer::default();
         replay.write_units(&mut body);
@@ -1647,15 +1709,16 @@ mod tests {
         replay.write_tail(&mut body);
         let mut old = MAGIC.to_vec();
         old.extend_from_slice(&11u16.to_le_bytes());
-        old.extend_from_slice(&(len as u32 - 1).to_le_bytes());
-        old.extend_from_slice(&info[..len - 1]);
+        old.extend_from_slice(&(info.len() as u32 - 1).to_le_bytes());
+        old.extend_from_slice(&info[..info.len() - 1]);
         old.extend_from_slice(&lz4_flex::compress_prepend_size(&body.buf));
         old
     }
 
     #[test]
     fn a_format_11_replay_is_a_field_battle() {
-        let replay = record();
+        let mut replay = record();
+        replay.header.unit_names.clear();
         let old = format_11(&replay);
         assert_eq!(Replay::decode(&old).unwrap(), replay);
         let path = temp("header-11", &old);

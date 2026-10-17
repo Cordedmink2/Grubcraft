@@ -125,6 +125,8 @@ impl Writer {
         self.var(u64::from(u.train_ticks));
         self.var(u.trained_at.map_or(0, |b| u64::from(b) + 1));
         self.u8(u.tier);
+        self.bool(u.hatches);
+        self.bool(u.consumed);
     }
 
     pub fn node(&mut self, n: &NodeSetup) {
@@ -261,6 +263,10 @@ impl Writer {
                 self.u8(20);
                 self.handle(regiment);
                 self.bool(on);
+            }
+            Command::HandOver { to } => {
+                self.u8(21);
+                self.u8(to);
             }
         }
     }
@@ -414,8 +420,9 @@ impl<'a> Reader<'a> {
         })
     }
 
-    pub fn conquest_unit(&mut self) -> Option<ConquestUnit> {
-        Some(ConquestUnit {
+    /// A Conquest unit as file format `format` wrote it.
+    pub fn conquest_unit(&mut self, format: u16) -> Option<ConquestUnit> {
+        let mut u = ConquestUnit {
             breaker: Breaker::from_u8(self.u8()?)?,
             worker: self.bool()?,
             supply: self.u8()?,
@@ -424,7 +431,13 @@ impl<'a> Reader<'a> {
             train_ticks: self.var_as()?,
             trained_at: self.maybe_id()?,
             tier: self.u8()?,
-        })
+            ..ConquestUnit::default()
+        };
+        if format >= 17 {
+            u.hatches = self.bool()?;
+            u.consumed = self.bool()?;
+        }
+        Some(u)
     }
 
     pub fn node(&mut self) -> Option<NodeSetup> {
@@ -521,6 +534,7 @@ impl<'a> Reader<'a> {
                 regiment: self.handle()?,
                 on: self.bool()?,
             },
+            21 => Command::HandOver { to: self.u8()? },
             _ => return None,
         };
         Some(PlayerCommand { player, command })
@@ -616,6 +630,7 @@ mod tests {
                 },
                 at: FxVec2::from_ints(-8, 120),
             },
+            Command::HandOver { to: 3 },
         ];
         let mut w = Writer::default();
         for command in commands {

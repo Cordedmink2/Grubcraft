@@ -84,9 +84,10 @@ fn charge(world: &World, out: &mut Vec<PlayerCommand>) {
     charge_with(world, out, |_| true);
 }
 
-/// [`charge`], for the regiments of the parties `charging` picks.
+/// [`charge`], for the regiments of the parties `charging` picks, each
+/// order given by whoever commands the regiment.
 fn charge_with(world: &World, out: &mut Vec<PlayerCommand>, charging: fn(PlayerId) -> bool) {
-    if world.tick_count() % 20 != 1 {
+    if world.tick_count() % gc_sim::TICKS_PER_SECOND != 1 {
         return;
     }
     for r in world.regiments.iter() {
@@ -107,7 +108,7 @@ fn charge_with(world: &World, out: &mut Vec<PlayerCommand>, charging: fn(PlayerI
             .min_by_key(distance);
         if let Some(e) = nearest {
             out.push(PlayerCommand {
-                player: r.owner,
+                player: world.stances().commander(r.owner),
                 command: Command::Attack {
                     regiment: r.handle,
                     target: e.handle,
@@ -115,6 +116,30 @@ fn charge_with(world: &World, out: &mut Vec<PlayerCommand>, charging: fn(PlayerI
             });
         }
     }
+}
+
+/// Four armies that only charge. A minute in, side 2 hands its army to its
+/// ally, side 0, who charges with it from then on; side 2's own order a
+/// tick later is refused, and so is side 3 handing its army to an enemy.
+/// At two minutes side 2 takes its army back.
+fn handing_over(world: &World, out: &mut Vec<PlayerCommand>) {
+    let hand = |player, to| PlayerCommand {
+        player,
+        command: Command::HandOver { to },
+    };
+    match world.tick_count() {
+        1200 => out.extend([hand(2, 0), hand(3, 0)]),
+        1201 => {
+            let r = world.regiments.iter().find(|r| r.owner == 2);
+            out.extend(r.map(|r| PlayerCommand {
+                player: 2,
+                command: Command::FallBack { regiment: r.handle },
+            }));
+        }
+        2400 => out.push(hand(2, 2)),
+        _ => {}
+    }
+    charge(world, out);
 }
 
 /// Side 1 only ever charges; side 0 braces its spears where it stands and
@@ -395,6 +420,26 @@ const GOLDENS: &[Golden] = &[
         minds: true,
         extra: no_extra,
         champions: true,
+        deployment: false,
+    },
+    // A player hands their army to an ally and takes it back (docs/11,
+    // "Hand-over"; see [`handing_over`]).
+    Golden {
+        name: "field-handover-2v2",
+        seed: 0x4a2d,
+        map_tiles: 256,
+        sides: &[
+            side(EmberClans, Veteran, 0),
+            side(Brood, Veteran, 1),
+            side(Choir, Veteran, 0),
+            side(CarrionConcord, Veteran, 1),
+        ],
+        soldiers: 0,
+        rows: 1,
+        minutes: 3,
+        minds: false,
+        extra: handing_over,
+        champions: false,
         deployment: false,
     },
     // The deployment phase every battle with people opens with (docs/06,

@@ -1146,6 +1146,8 @@ mod tests {
             supply_used: 64,
             supply_cap: 90,
             upkeep_percent: 100,
+            larvae: 0,
+            larva_room: 0,
             clock_secs: 14 * 60 + 32,
         }
     }
@@ -1211,6 +1213,31 @@ mod tests {
     }
 
     #[test]
+    fn larvae_show_in_the_top_bar_only_with_room_for_them() {
+        let mut hud = Hud::default();
+        let mut bar = |top| run_with(&mut hud, HudInput::default(), &[], &[], with_top(top)).1;
+        let plain = bar(top_bar());
+        let brood = bar(TopBar {
+            larvae: 2,
+            larva_room: 6,
+            ..top_bar()
+        });
+        let text_quads = |d: &DrawList| in_top_bar(d, theme::TEXT) + in_top_bar(d, theme::MUTED);
+        assert_eq!(
+            text_quads(&brood),
+            text_quads(&plain) + "Larvae".len() + "2/6".len()
+        );
+        // None ready: the count turns amber.
+        let empty = bar(TopBar {
+            larvae: 0,
+            larva_room: 3,
+            ..top_bar()
+        });
+        assert_eq!(in_top_bar(&empty, theme::WARN), "0/3".len());
+        assert_eq!(in_top_bar(&plain, theme::WARN), 0);
+    }
+
+    #[test]
     fn the_minimap_draws_nothing_extra_without_marks() {
         let (_, plain) = run(&mut Hud::default(), HudInput::default(), &[], &[]);
         let nodes = [
@@ -1273,6 +1300,7 @@ mod tests {
                 building: None,
                 upgrading: Some(("Clan Keep", 25)),
                 queue,
+                larvae: None,
             }),
             ..Extras::default()
         }

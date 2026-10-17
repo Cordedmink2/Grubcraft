@@ -121,7 +121,9 @@ fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
                     assert!(world.regiments.owner(foe).is_some());
                 }
                 Event::Ambush(_) => {}
-                Event::Fallen { .. } => unreachable!("no buildings in a battle"),
+                Event::Fallen { .. } | Event::Consumed { .. } => {
+                    unreachable!("no buildings in a battle")
+                }
             }
         }
         // Soldiers shot down are among the losses told.

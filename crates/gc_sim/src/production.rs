@@ -7,6 +7,10 @@
 //! - A queue holds [`QUEUE`] regiments. The one at the front starts once
 //!   its owner has the supply for it, counting those already in training,
 //!   and takes its `train_ticks` at the match's tempo.
+//! - Units that hatch from larvae (the Brood's, see [`crate::larvae`])
+//!   hatch all at once: every one in the queue starts as soon as there is
+//!   supply for it, not only the front one. They start in queue order: one
+//!   waiting for supply holds up those behind it.
 //! - A finished regiment comes out at the building's south side (or another
 //!   where that is blocked) and marches to its rally point, if it has one.
 //! - Calling off the last in a queue gives back all it cost. A building
@@ -34,6 +38,11 @@ pub(crate) struct Trained {
     pub(crate) rally: Option<FxVec2>,
 }
 
+/// Whether a regiment of type `unit` hatches from a larva.
+fn hatches(units: &[ConquestUnit], unit: UnitId) -> bool {
+    units.get(usize::from(unit)).is_some_and(|u| u.hatches)
+}
+
 /// What a regiment of type `unit` takes of its owner's supply.
 fn supply(units: &[ConquestUnit], unit: UnitId) -> u32 {
     units
@@ -49,8 +58,9 @@ pub struct Production {
     queue_gen: Vec<u16>,
     queue: Vec<[UnitId; QUEUE]>,
     queued: Vec<u8>,
-    /// Ticks left for the regiment at the front; 0 until it starts.
-    clock: Vec<u32>,
+    /// Ticks left for each regiment in the queue; 0 until it starts. Only
+    /// the front one trains, unless they hatch.
+    clock: Vec<[u32; QUEUE]>,
     rally: Vec<Option<FxVec2>>,
     /// Regiments that finished training in the last tick.
     pub(crate) trained: Vec<Trained>,
@@ -63,7 +73,7 @@ impl Production {
             queue_gen: vec![0; structures],
             queue: vec![[0; QUEUE]; structures],
             queued: vec![0; structures],
-            clock: vec![0; structures],
+            clock: vec![[0; QUEUE]; structures],
             rally: vec![None; structures],
             trained: Vec::with_capacity(structures),
         }
@@ -75,7 +85,7 @@ impl Production {
         if self.queue_gen[i] != h.generation {
             self.queue_gen[i] = h.generation;
             self.queued[i] = 0;
-            self.clock[i] = 0;
+            self.clock[i] = [0; QUEUE];
             self.rally[i] = None;
         }
         i
@@ -96,15 +106,24 @@ impl Production {
     /// Ticks left for the regiment at the front of building `h`'s queue,
     /// once it has started.
     pub fn front_ticks_left(&self, h: StructureHandle) -> Option<u32> {
-        self.live(h).map(|i| self.clock[i]).filter(|&t| t > 0)
+        self.ticks_left(h, 0)
     }
 
-    /// How far the regiment at the front of building `h`'s queue has
-    /// trained, in percent: 0 while it waits for supply.
-    pub fn front_percent(&self, h: StructureHandle, units: &[ConquestUnit]) -> Option<u8> {
-        let &unit = self.queue_of(h).first()?;
+    /// Ticks left for regiment `k` of building `h`'s queue, once it has
+    /// started.
+    pub fn ticks_left(&self, h: StructureHandle, k: usize) -> Option<u32> {
+        let i = self.live(h)?;
+        (k < usize::from(self.queued[i]))
+            .then(|| self.clock[i][k])
+            .filter(|&t| t > 0)
+    }
+
+    /// How far regiment `k` of building `h`'s queue has trained, in
+    /// percent: 0 until it starts.
+    pub fn percent(&self, h: StructureHandle, k: usize, units: &[ConquestUnit]) -> Option<u8> {
+        let &unit = self.queue_of(h).get(k)?;
         let full = self.train_ticks(units, unit);
-        let left = self.front_ticks_left(h).unwrap_or(full).min(full);
+        let left = self.ticks_left(h, k).unwrap_or(full).min(full);
         Some((100 - left * 100 / full) as u8)
     }
 
@@ -113,7 +132,7 @@ impl Production {
         let ticks = units
             .get(usize::from(unit))
             .map_or(1, |u| u32::from(u.train_ticks));
-        (ticks * self.build_percent / 100).max(1)
+        crate::conquest::at_tempo(ticks, self.build_percent)
     }
 
     /// Building `h`'s rally point.
@@ -143,9 +162,7 @@ impl Production {
             return None;
         }
         self.queued[i] -= 1;
-        if n == 1 {
-            self.clock[i] = 0;
-        }
+        self.clock[i][n - 1] = 0;
         Some(self.queue[i][n - 1])
     }
 
@@ -163,11 +180,14 @@ impl Production {
     ) {
         for i in 0..self.queued.len() {
             if self.queued[i] > 0
-                && self.clock[i] > 0
                 && let Some(owner) = structures.live_slot(i, self.queue_gen[i])
                 && let Some(u) = used.get_mut(usize::from(owner))
             {
-                *u += supply(units, self.queue[i][0]);
+                for k in 0..usize::from(self.queued[i]) {
+                    if self.clock[i][k] > 0 {
+                        *u += supply(units, self.queue[i][k]);
+                    }
+                }
             }
         }
     }
@@ -191,48 +211,63 @@ impl Production {
             let Some(owner) = structures.live_slot(i, self.queue_gen[i]) else {
                 // It fell: the queue goes with it.
                 self.queued[i] = 0;
-                self.clock[i] = 0;
+                self.clock[i] = [0; QUEUE];
                 continue;
             };
-            let unit = self.queue[i][0];
-            if self.clock[i] == 0 {
-                // Supply left under each player's cap, counting those in
-                // training.
-                let room = room.get_or_insert_with(|| {
-                    let mut taken = used.take().map_or([0; MAX_PARTIES], |f| f());
-                    self.in_training(structures, units, &mut taken);
-                    // Out this tick, but not on the field until it ends.
-                    for t in &self.trained {
-                        if let Some(n) = taken.get_mut(usize::from(t.owner)) {
-                            *n += supply(units, t.unit);
+            let mut k = 0;
+            while k < usize::from(self.queued[i]) {
+                let unit = self.queue[i][k];
+                // Behind the front, only what hatches is under way.
+                if k > 0 && !hatches(units, unit) {
+                    break;
+                }
+                if self.clock[i][k] == 0 {
+                    // Supply left under each player's cap, counting those
+                    // in training.
+                    let room = room.get_or_insert_with(|| {
+                        let mut taken = used.take().map_or([0; MAX_PARTIES], |f| f());
+                        self.in_training(structures, units, &mut taken);
+                        // Out this tick, but not on the field until it ends.
+                        for t in &self.trained {
+                            if let Some(n) = taken.get_mut(usize::from(t.owner)) {
+                                *n += supply(units, t.unit);
+                            }
                         }
-                    }
-                    core::array::from_fn(|p| {
-                        structures
-                            .supply_cap(p as PlayerId)
-                            .saturating_sub(taken[p])
-                    })
-                });
-                let need = supply(units, unit);
-                let Some(left) = room.get_mut(usize::from(owner)).filter(|l| **l >= need) else {
-                    // Waits for room.
+                        core::array::from_fn(|p| {
+                            structures
+                                .supply_cap(p as PlayerId)
+                                .saturating_sub(taken[p])
+                        })
+                    });
+                    let need = supply(units, unit);
+                    let Some(left) = room.get_mut(usize::from(owner)).filter(|l| **l >= need)
+                    else {
+                        // Waits for room, and those behind it wait too.
+                        break;
+                    };
+                    *left -= need;
+                    self.clock[i][k] = self.train_ticks(units, unit);
+                }
+                self.clock[i][k] -= 1;
+                if self.clock[i][k] > 0 {
+                    k += 1;
                     continue;
-                };
-                *left -= need;
-                self.clock[i] = self.train_ticks(units, unit);
+                }
+                self.trained.push(Trained {
+                    owner,
+                    unit,
+                    at: structures.door(i, nav),
+                    rally: self.rally[i],
+                });
+                self.queue[i].copy_within(k + 1.., k);
+                self.clock[i].copy_within(k + 1.., k);
+                self.clock[i][QUEUE - 1] = 0;
+                self.queued[i] -= 1;
+                if !hatches(units, unit) {
+                    // The next starts next tick.
+                    break;
+                }
             }
-            self.clock[i] -= 1;
-            if self.clock[i] > 0 {
-                continue;
-            }
-            self.trained.push(Trained {
-                owner,
-                unit,
-                at: structures.door(i, nav),
-                rally: self.rally[i],
-            });
-            self.queue[i].copy_within(1.., 0);
-            self.queued[i] -= 1;
         }
     }
 
@@ -245,10 +280,10 @@ impl Production {
                 continue;
             }
             h.u8(self.queued[i] + 1);
-            for &u in &self.queue[i][..usize::from(self.queued[i])] {
-                h.u16(u);
+            for k in 0..usize::from(self.queued[i]) {
+                h.u16(self.queue[i][k]);
+                h.u32(self.clock[i][k]);
             }
-            h.u32(self.clock[i]);
             match self.rally[i] {
                 Some(at) => {
                     h.u8(1);

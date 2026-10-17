@@ -16,10 +16,10 @@ pub const BUILDINGS_PATH: &str = "data/buildings";
 /// Pack path of the Conquest unit table.
 pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 1;
+pub const BUILDING_SCHEMA: u32 = 2;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
-pub const CONQUEST_UNIT_SCHEMA: u32 = 1;
+pub const CONQUEST_UNIT_SCHEMA: u32 = 2;
 /// An index field that names nothing.
 pub const NONE: u16 = u16::MAX;
 /// Largest footprint side, in tiles (docs/21: buildings are 2×2 to 5×5,
@@ -87,8 +87,13 @@ pub const BUILDING_DROP_OFF_MARROW: u8 = 2;
 pub const BUILDING_POWERS_FIELD: u8 = 4;
 /// Its attack can hit flying units.
 pub const BUILDING_ANTI_AIR: u8 = 8;
-const BUILDING_FLAGS: u8 =
-    BUILDING_DROP_OFF_GRUB | BUILDING_DROP_OFF_MARROW | BUILDING_POWERS_FIELD | BUILDING_ANTI_AIR;
+/// Brood: holds larvae and grows them (schema 2).
+pub const BUILDING_LARVAE: u8 = 16;
+const BUILDING_FLAGS: u8 = BUILDING_DROP_OFF_GRUB
+    | BUILDING_DROP_OFF_MARROW
+    | BUILDING_POWERS_FIELD
+    | BUILDING_ANTI_AIR
+    | BUILDING_LARVAE;
 
 /// One building. Times are simulation ticks at Standard tempo, lengths `Fx`
 /// raw values, so the simulation reads them without floating point.
@@ -206,7 +211,11 @@ pub const UNIT_FRIENDLY_FIRE: u16 = 1 << 6;
 pub const UNIT_DIRECT_FIRE: u16 = 1 << 7;
 pub const UNIT_DETECTOR: u16 = 1 << 8;
 pub const UNIT_TERROR: u16 = 1 << 9;
-const UNIT_FLAGS: u16 = (1 << 10) - 1;
+/// Brood: hatches from a larva (schema 2).
+pub const UNIT_HATCHES: u16 = 1 << 10;
+/// Brood: a worker used up by the building it starts (schema 2).
+pub const UNIT_CONSUMED: u16 = 1 << 11;
+const UNIT_FLAGS: u16 = (1 << 12) - 1;
 
 /// One unit a Conquest player can field: its battle stats exactly as a
 /// `data/units.ron` entry bakes, and how it is raised. Heroes are not in

@@ -4,7 +4,7 @@
 //! the opening the host sends: each side's main building and workers at its
 //! start.
 
-use gc_data::conquest::{Class, ConquestUnitRecord, NONE};
+use gc_data::conquest::{Class, ConquestUnitRecord, NONE, UNIT_CONSUMED, UNIT_HATCHES};
 use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_map::{Kind, Map};
@@ -17,8 +17,8 @@ use gc_sim::{
 };
 use gc_ui::Settings;
 use gc_ui::lobby::{
-    COLORS, CONQUEST_MAP_PLAYERS, Faction as LobbyFaction, GameMode, LobbySettings, MatchStart,
-    Slot, SlotKind, Tempo, Victory,
+    COLORS, CONQUEST_MAP_PLAYERS, GameMode, LobbySettings, MatchStart, Slot, SlotKind, Tempo,
+    Victory,
 };
 use glam::Vec2;
 
@@ -96,6 +96,8 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
         train_ticks: u.train_ticks,
         trained_at: (u.trained_at != NONE).then_some(u.trained_at),
         tier: u.tier,
+        hatches: u.flags & UNIT_HATCHES != 0,
+        consumed: u.flags & UNIT_CONSUMED != 0,
     }
 }
 
@@ -122,12 +124,7 @@ pub fn start_stores(f: Faction) -> (u32, u32) {
 
 /// Each lobby player's faction, in player order.
 pub fn factions(start: &MatchStart) -> Vec<Faction> {
-    // gc_data and the lobby list the factions in the same order.
-    start
-        .players
-        .iter()
-        .map(|s| Faction::ALL[s.faction.index()])
-        .collect()
+    start.players.iter().map(|s| s.faction).collect()
 }
 
 /// `--conquest MAP`: Conquest on the lobby's Conquest map `choice`, you at
@@ -148,8 +145,7 @@ pub fn quick_conquest(choice: usize, settings: &Settings, map_seed: u64) -> Matc
             } else {
                 format!("AI {}", i + 1)
             };
-            slot.faction =
-                LobbyFaction::ALL[(settings.faction.index() + i) % LobbyFaction::ALL.len()];
+            slot.faction = Faction::ALL[(settings.faction.index() + i) % Faction::ALL.len()];
             slot.color = (settings.player_color + i as u8) % COLORS;
             slot.team = i as u8;
             slot

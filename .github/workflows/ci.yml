@@ -80,10 +80,14 @@ jobs:
       - name: Warlord in release mode
         if: runner.os == 'Linux'
         run: cargo test --release -p gc_ai --test versus warlord
+      # macOS runner clocks are too noisy to gate tick time on (the same
+      # code has timed 1.2 to 2.8 ms p99 there): it only warns. Linux and
+      # Windows still gate it, and the instruction counts below (Linux)
+      # are the real guard against slowdowns.
       - name: Simulation benchmark and budgets
-        run: cargo run --release -p gc_bench
+        run: cargo run --release -p gc_bench -- ${{ runner.os == 'macOS' && '--warn-on-time' || '' }}
       - name: Big-map benchmark and budgets (six-player Conquest, 768 tiles)
-        run: cargo run --release -p gc_bench -- --scenario conquest-6p
+        run: cargo run --release -p gc_bench -- --scenario conquest-6p ${{ runner.os == 'macOS' && '--warn-on-time' || '' }}
       # An hour of six-player Conquest on a 768-tile Wilds map, held to the
       # 6 GB budget and the simulation's big-map heap budget.
       - name: Conquest soak

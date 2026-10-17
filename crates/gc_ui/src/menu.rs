@@ -1040,7 +1040,7 @@ impl<N: Network> Menu<N> {
         let mut hint = format!(
             "{}: {} to play.",
             me.faction.name(),
-            me.faction.difficulty()
+            crate::lobby::faction_difficulty(me.faction)
         );
         let field_battle = lobby.settings.mode == GameMode::FieldBattle;
         let mut hint_color = theme::MUTED;
