@@ -33,7 +33,7 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
             stats: table.stats[i],
         })
         .collect();
-    let units = data
+    let units: Vec<KitUnit> = data
         .conquest_units
         .iter()
         .enumerate()
@@ -58,7 +58,10 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
     Kit {
         // gc_data and gc_ai list the factions in the same order.
         faction,
-        economy: EconomyStyle::Shared,
+        economy: units
+            .iter()
+            .find(|u| u.unit.worker)
+            .map_or(EconomyStyle::Shared, |w| EconomyStyle::of(&w.unit)),
         buildings,
         units,
         all_workers: data
@@ -376,10 +379,14 @@ mod tests {
         let minutes = env_number("AI_MINUTES", 40) as u32;
         let level = level_from_env();
         let players = gc_ui::lobby::CONQUEST_MAP_PLAYERS[choice];
+        // AI_FACTIONS picks them by their index in `Faction::ALL`, such as
+        // "12" for the Brood against the Choir.
+        let picked = std::env::var("AI_FACTIONS").unwrap_or_default();
         let factions: Vec<Faction> = (0..players)
-            .map(|i| match players {
-                2 => [Faction::EmberClans, Faction::CarrionConcord][i],
-                _ => Faction::ALL[i % 4],
+            .map(|i| match (picked.as_bytes().get(i), players) {
+                (Some(c), _) => Faction::ALL[usize::from(c - b'0') % Faction::ALL.len()],
+                (None, 2) => [Faction::EmberClans, Faction::CarrionConcord][i],
+                (None, _) => Faction::ALL[i % 4],
             })
             .collect();
         let started = std::time::Instant::now();

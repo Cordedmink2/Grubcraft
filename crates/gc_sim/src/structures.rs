@@ -31,6 +31,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 
 use crate::combat::Block;
 use crate::conquest::ConquestUnit;
+use crate::economy::Resource;
 use crate::nav::{CELLS_PER_TILE, CLEARANCE, Nav};
 use crate::regiments::{Order, RegimentHandle, Regiments};
 use crate::verdict::Mains;
@@ -168,6 +169,8 @@ pub enum Refusal {
     Busy,
     /// It hatches from a larva, and its owner has none ready.
     Larva,
+    /// It needs power, and none of its owner's fields reach there.
+    Unpowered,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -181,6 +184,10 @@ pub const ANTI_AIR: u8 = 8;
 pub const LARVAE: u8 = 16;
 /// Brood: spreads root-veins (see [`crate::veins`]).
 pub const VEINS: u8 = 32;
+/// Choir: works only inside a field of power (see [`crate::power`]).
+pub const NEEDS_POWER: u8 = 64;
+/// The furthest a field or tuning reaches, in tiles.
+pub const MAX_REACH: u8 = 30;
 
 /// A tower's shooting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -214,9 +221,16 @@ pub struct BuildingStats {
     pub depth: u8,
     /// What it adds to its owner's supply cap.
     pub supply: u8,
-    /// `DROP_OFF_*`, [`POWERS_FIELD`], [`ANTI_AIR`] and [`LARVAE`] bits.
+    /// `DROP_OFF_*`, [`POWERS_FIELD`], [`ANTI_AIR`], [`LARVAE`], [`VEINS`]
+    /// and [`NEEDS_POWER`] bits.
     pub flags: u8,
     pub attack: Option<TowerAttack>,
+    /// How far its field of power ([`POWERS_FIELD`]) or its root-veins
+    /// ([`VEINS`]) reach from its edge, in tiles.
+    pub field: u8,
+    /// The nodes it works with no workers, and how far from its edge, in
+    /// tiles (the Choir's Resonators and Siphons, see [`crate::power`]).
+    pub tunes: Option<(Resource, u8)>,
 }
 
 /// Largest footprint side, in tiles.
@@ -230,6 +244,8 @@ impl BuildingStats {
             width: self.width.clamp(1, MAX_FOOTPRINT),
             depth: self.depth.clamp(1, MAX_FOOTPRINT),
             build_ticks: self.build_ticks.max(1),
+            field: self.field.min(MAX_REACH),
+            tunes: self.tunes.map(|(r, tiles)| (r, tiles.min(MAX_REACH))),
             attack: self.attack.map(|a| TowerAttack {
                 range: a.range.max(Fx::ZERO),
                 reload_ticks: a.reload_ticks.max(1),
@@ -257,6 +273,14 @@ impl BuildingStats {
             h.u16(a.damage);
             h.u16(a.reload_ticks);
             h.u8(a.shots);
+        }
+        h.u8(self.field);
+        match self.tunes {
+            Some((r, tiles)) => {
+                h.u8(1 + r as u8);
+                h.u8(tiles);
+            }
+            None => h.u8(0),
         }
     }
 }
@@ -458,6 +482,14 @@ pub struct Structures {
     pub(crate) vein_from: Vec<u32>,
     pub(crate) vein_linked: Vec<u32>,
     pub(crate) vein_cands: Vec<u32>,
+    /// Power and tuning, worked out each tick (see [`crate::power`]): the
+    /// standing finished buildings that power a field, those that tune
+    /// nodes (and last tick's), and a count bumped whenever the tuners
+    /// change, so the economy only reassigns nodes then.
+    pub(crate) powerers: Vec<StructureHandle>,
+    pub(crate) tuners: Vec<StructureHandle>,
+    pub(crate) tuners_was: Vec<StructureHandle>,
+    pub(crate) tuner_stamp: u32,
     /// Tempo: build and upgrade times at this percent of Standard.
     build_percent: u32,
     /// By regiment slot: the building it is attacking, and the generation
@@ -530,6 +562,10 @@ impl Structures {
             vein_from: vec![crate::veins::UNLINKED; n],
             vein_linked: Vec::with_capacity(n),
             vein_cands: Vec::with_capacity(n),
+            powerers: Vec::with_capacity(n),
+            tuners: Vec::with_capacity(n),
+            tuners_was: Vec::with_capacity(n),
+            tuner_stamp: 0,
             build_percent: build_percent.clamp(10, 1000),
             siege: vec![None; regiments],
             siege_gen: vec![0; regiments],
@@ -737,6 +773,11 @@ impl Structures {
             }
         }
         m
+    }
+
+    /// How many building slots there are, standing or free.
+    pub(crate) fn slots(&self) -> usize {
+        self.hp.len()
     }
 
     /// The slots of the buildings standing, in index order.

@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use gc_bake::rosters::{
-    Ability, Armour, Building, BuildingFlag, Class, FactionDef, Flag, From, Kind, Role, Roster,
-    Stats, Unit,
+    Ability, Armour, Building, BuildingFlag, Class, FactionDef, Flag, From, Kind, Node, Role,
+    Roster, Stats, Unit,
 };
 use serde::Deserialize;
 
@@ -148,6 +148,16 @@ fn rosters_follow_the_design_rules() {
                     u.flags.contains(&Flag::Burrows),
                     faction == FactionDef::Brood,
                     "{at}: Brood workers, and only they, burrow at their node"
+                );
+                assert_eq!(
+                    u.flags.contains(&Flag::BuildsOnly),
+                    faction == FactionDef::Choir,
+                    "{at}: Choir workers, and only they, never gather"
+                );
+            } else {
+                assert!(
+                    !u.flags.contains(&Flag::BuildsOnly),
+                    "{at}: only workers build"
                 );
             }
             assert!(!u.abilities.is_empty(), "{at}: no abilities");
@@ -407,13 +417,35 @@ fn buildings_follow_the_design_rules() {
                 brood && (b.role == Role::Main || b.name == "Pustule"),
                 "{at}: root-veins"
             );
-            if brood {
+            let choir = faction == FactionDef::Choir;
+            if brood || choir {
                 assert!(
                     !b.flags.contains(&BuildingFlag::DropOffGrub)
                         && !b.flags.contains(&BuildingFlag::DropOffMarrow),
-                    "{at}: Brood buildings are no drop-offs"
+                    "{at}: Brood and Choir buildings are no drop-offs"
                 );
             }
+            // Every Choir building but those that power a field needs power;
+            // nobody else's does (docs/21).
+            let powers = b.flags.contains(&BuildingFlag::PowersField);
+            assert_eq!(
+                b.flags.contains(&BuildingFlag::NeedsPower),
+                choir && !powers,
+                "{at}: needs power"
+            );
+            assert_eq!(
+                b.field > 0,
+                powers || b.flags.contains(&BuildingFlag::Veins),
+                "{at}: a field's reach is set for, and only for, fields and veins"
+            );
+            // The Resonator tunes seeps and the Siphon veins (docs/03).
+            let tunes = b.tunes.as_ref().map(|t| (t.node, t.tiles));
+            let expected = match b.name.as_str() {
+                "Resonator" if choir => Some((Node::Seeps, 4)),
+                "Siphon" if choir => Some((Node::Veins, 3)),
+                _ => None,
+            };
+            assert_eq!(tunes, expected, "{at}: tunes");
         }
 
         // The main building: one at tier 1, upgraded twice.

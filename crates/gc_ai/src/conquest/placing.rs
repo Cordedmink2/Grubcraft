@@ -3,8 +3,9 @@
 //! between its halls and their seeps and veins, so a base never walls in
 //! its own workers or armies.
 //!
-//! Every spot is checked with [`World::may_lay`] and [`World::can_build`],
-//! the checks the simulation makes when the order lands; the ground may still change in
+//! Every spot is checked with [`World::can_lay`] (tier, price, ground and,
+//! for a building that needs power, a field of power there), the check the
+//! simulation makes when the order lands; the ground may still change in
 //! the reaction time between (someone stands there), and then the Steward
 //! simply tries again.
 
@@ -78,7 +79,7 @@ pub fn spot_for(
         open.sort_by(|a, b| a.1.total_cmp(&b.1));
         if let Some(&(t, _)) = open
             .iter()
-            .find(|(t, _)| world.can_build(building, *t).is_ok())
+            .find(|(t, _)| world.can_lay(party, building, *t).is_ok())
         {
             return Some(t);
         }

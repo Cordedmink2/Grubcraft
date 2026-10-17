@@ -33,6 +33,13 @@ const QUIET_TICKS: u32 = 8 * TICKS_PER_SECOND;
 const LOOK_TICKS: u32 = 4;
 /// How long it gathers after falling back before setting out again.
 const REGROUP_TICKS: u32 = 30 * TICKS_PER_SECOND;
+/// Ticks it contests the Titan's Heart with a full army, never holding it,
+/// before it gives the Heart a rest and raids a base instead.
+const HEART_PATIENCE: u32 = 10 * 60 * TICKS_PER_SECOND;
+/// Ticks such a raid lasts, Heart or no Heart.
+const RAID_TICKS: u32 = 8 * 60 * TICKS_PER_SECOND;
+/// Supply short of the limit that still counts as a full army.
+const FULL_SLACK: u32 = 12;
 /// Enemies within this many tiles of its buildings are a threat to home.
 const THREAT: f32 = 30.0;
 /// Enemies at an outlying building call the whole army home once they are
@@ -116,6 +123,10 @@ pub struct Marshal {
     holders: Vec<RegimentHandle>,
     /// After falling back, it gathers until this tick before setting out.
     regroup_until: u32,
+    /// Since when it has gone for the Heart without holding it.
+    contesting_since: Option<u32>,
+    /// Until this tick it raids and leaves the Heart alone.
+    raid_until: u32,
     orders: Orders,
     wants: Vec<Want>,
     battle_wants: Vec<Want>,
@@ -134,6 +145,8 @@ impl Marshal {
             battle: None,
             holders: Vec::new(),
             regroup_until: 0,
+            contesting_since: None,
+            raid_until: 0,
             orders: Orders::new(party, reaction_ticks, orders_per_minute),
             wants: Vec::new(),
             battle_wants: Vec::new(),
@@ -291,6 +304,36 @@ impl Marshal {
     fn decide(&mut self, c: &mut Ctx, s: &Sense, army: &[&Seen], home: Option<Vec2>) {
         let Some(rally) = self.rally else { return };
         let ready = wave_ready(s, c.persona, army);
+        // Every army full and on the Heart, and nobody holding it, is a
+        // stalemate (four-way games): a full army that has fought for it a
+        // long while goes to break a base instead, and leaves the Heart be
+        // until it is back.
+        if we_hold_heart(s) || !s.world.heart().is_some_and(|h| h.open) {
+            self.contesting_since = None;
+        }
+        let full = s
+            .world
+            .bank(s.party)
+            .is_some_and(|b| b.supply_used + FULL_SLACK >= SUPPLY_LIMIT);
+        if full
+            && self
+                .contesting_since
+                .is_some_and(|t| s.now >= t + HEART_PATIENCE)
+            && let Some(t) = raid_target(s, centroid(army))
+        {
+            c.journal.note(
+                s.now,
+                "The Heart is a stalemate: going to break a base".to_string(),
+            );
+            self.contesting_since = None;
+            self.raid_until = s.now + RAID_TICKS;
+            self.goal = Goal::Attack(t);
+            self.out = army.iter().map(|r| r.handle).collect();
+            self.set_out_with = army.iter().map(|r| u32::from(r.models)).sum();
+        }
+        let raiding = s.now < self.raid_until;
+        let heart_to_take = |s: &Sense| heart_to_take(s).filter(|_| !raiding);
+        let enemy_holds_heart = |s: &Sense| enemy_holds_heart(s) && !raiding;
         // Home first, but a threat to outlying buildings doesn't pull the
         // army off the Titan's Heart: a game of armies guarding sprawling
         // bases never ends otherwise.
@@ -348,6 +391,9 @@ impl Marshal {
                 if let Some((goal, note)) = set_out {
                     self.out = army.iter().map(|r| r.handle).collect();
                     self.set_out_with = soldiers(&self.out);
+                    if matches!(goal, Goal::Heart(_)) {
+                        self.contesting_since.get_or_insert(s.now);
+                    }
                     self.goal = goal;
                     c.journal.note(s.now, note);
                 }
@@ -373,6 +419,7 @@ impl Marshal {
                             "They hold the Heart: going to take it back".to_string(),
                         );
                     }
+                    self.contesting_since.get_or_insert(s.now);
                     self.goal = Goal::Heart(heart);
                 } else if matches!(self.goal, Goal::Heart(_)) {
                     // Ours now, or shut: back to gathering.
@@ -382,7 +429,11 @@ impl Marshal {
                     }
                 } else {
                     let mid = centroid_of(s.view, &self.out).unwrap_or(rally);
-                    match self.target(s, mid) {
+                    let t = raiding
+                        .then(|| raid_target(s, mid))
+                        .flatten()
+                        .or_else(|| self.target(s, mid));
+                    match t {
                         Some(t) => self.goal = Goal::Attack(t),
                         None => {
                             c.journal
@@ -443,7 +494,7 @@ impl Marshal {
                         3,
                     );
                 } else {
-                    self.knock_down(s, &going, at);
+                    self.knock_down(s, &going, at, s.now < self.raid_until);
                 }
             }
         }
@@ -485,15 +536,21 @@ impl Marshal {
 
     /// At the target: every regiment goes for one of the nearest enemy
     /// buildings, towers first, spread over the few nearest.
-    fn knock_down(&mut self, s: &Sense, going: &[&Seen], at: Vec2) {
+    /// On a raid, main buildings next.
+    fn knock_down(&mut self, s: &Sense, going: &[&Seen], at: Vec2, raiding: bool) {
         let mut targets = enemy_buildings(s);
         targets.retain(|t| t.1.distance(at) <= AT_TARGET * 2.0);
         if targets.is_empty() {
             return;
         }
         targets.sort_by(|a, b| {
-            let key =
-                |t: &(StructureHandle, Vec2, Role)| (t.2 != Role::Defence, t.1.distance(at) as i32);
+            let key = |t: &(StructureHandle, Vec2, Role)| {
+                (
+                    t.2 != Role::Defence,
+                    raiding && t.2 != Role::Main,
+                    t.1.distance(at) as i32,
+                )
+            };
             key(a).cmp(&key(b))
         });
         targets.truncate(3);
@@ -585,6 +642,16 @@ fn army_supply(s: &Sense, army: &[&Seen]) -> f32 {
         .filter_map(|r| s.kit.unit(r.unit))
         .map(|u| f32::from(u.unit.supply))
         .sum()
+}
+
+/// Where to raid: the nearest enemy main building it has seen, as
+/// breaking those is what wins.
+fn raid_target(s: &Sense, from: Vec2) -> Option<Vec2> {
+    enemy_buildings(s)
+        .into_iter()
+        .filter(|b| b.2 == Role::Main)
+        .map(|b| b.1)
+        .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
 }
 
 /// The Titan's Heart, if it is open and not held by its own side.

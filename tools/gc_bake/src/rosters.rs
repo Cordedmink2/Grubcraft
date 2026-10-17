@@ -50,7 +50,28 @@ pub struct Building {
     pub flags: Vec<BuildingFlag>,
     #[serde(default)]
     pub attack: Option<Attack>,
+    /// How far its field of power or its root-veins reach from its edge,
+    /// in tiles (`PowersField` and `Veins` buildings).
+    #[serde(default)]
+    pub field: u8,
+    /// Choir: the nodes it works with no workers.
+    #[serde(default)]
+    pub tunes: Option<Tunes>,
     pub effect: String,
+}
+
+/// The nodes a building tunes, and how far from its edge, in tiles.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tunes {
+    pub node: Node,
+    pub tiles: u8,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Node {
+    Seeps,
+    Veins,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -85,6 +106,8 @@ pub enum BuildingFlag {
     Larvae,
     /// Brood: spreads root-veins (docs/03, "the vein network").
     Veins,
+    /// Choir: works only inside a `PowersField` building's field.
+    NeedsPower,
 }
 
 #[derive(Deserialize)]
@@ -202,6 +225,8 @@ pub enum Flag {
     Hatches,
     /// Brood: a worker used up by the building it starts.
     Consumed,
+    /// Choir: a worker that builds and mends but does not gather.
+    BuildsOnly,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]

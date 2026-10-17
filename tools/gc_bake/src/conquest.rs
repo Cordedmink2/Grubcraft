@@ -188,6 +188,16 @@ fn building_record(
             starting.iter().map(|n| (n.as_str(), 1)),
             &b.name,
         )?,
+        field_tiles: b.field,
+        tunes: match &b.tunes {
+            Some(t) => match t.node {
+                rosters::Node::Seeps => cq::TUNES_SEEPS,
+                rosters::Node::Veins => cq::TUNES_VEINS,
+            },
+            None => cq::TUNES_NOTHING,
+        },
+        tune_tiles: b.tunes.as_ref().map_or(0, |t| t.tiles),
+        reserved: 0,
     })
 }
 
@@ -282,6 +292,7 @@ fn building_flag(f: rosters::BuildingFlag) -> u8 {
         rosters::BuildingFlag::DropOffGrub => cq::BUILDING_DROP_OFF_GRUB,
         rosters::BuildingFlag::DropOffMarrow => cq::BUILDING_DROP_OFF_MARROW,
         rosters::BuildingFlag::PowersField => cq::BUILDING_POWERS_FIELD,
+        rosters::BuildingFlag::NeedsPower => cq::BUILDING_NEEDS_POWER,
         rosters::BuildingFlag::AntiAir => cq::BUILDING_ANTI_AIR,
         rosters::BuildingFlag::Larvae => cq::BUILDING_LARVAE,
         rosters::BuildingFlag::Veins => cq::BUILDING_VEINS,
@@ -311,6 +322,7 @@ fn unit_flag(f: rosters::Flag) -> u16 {
         rosters::Flag::Crystal => cq::UNIT_CRYSTAL,
         rosters::Flag::Undead => cq::UNIT_UNDEAD,
         rosters::Flag::Burrows => cq::UNIT_BURROWS,
+        rosters::Flag::BuildsOnly => cq::UNIT_BUILDS_ONLY,
         rosters::Flag::SiegeOnly => cq::UNIT_SIEGE_ONLY,
         rosters::Flag::FriendlyFire => cq::UNIT_FRIENDLY_FIRE,
         rosters::Flag::DirectFire => cq::UNIT_DIRECT_FIRE,

@@ -8,9 +8,7 @@ use gc_sim::economy::{GRUB_LOAD, GRUB_SLOTS, GRUB_TICKS, NodeSetup, Resource, SE
 use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::structures::{Armour, DROP_OFF_GRUB, Role, StructureView, VEINS};
-use gc_sim::veins::{
-    MAIN_VEIN_TILES, REGROW_PER_SECOND, RELAY_VEIN_TILES, VEIN_FLOW_TICKS, VeinView,
-};
+use gc_sim::veins::{REGROW_PER_SECOND, VEIN_FLOW_TICKS, VeinView};
 use gc_sim::{
     BuildingStats, Capacities, Command, ConquestSetup, ConquestUnit, MAX_PARTIES, MatchSetup,
     PlayerCommand, RegimentHandle, StructureHandle, TICKS_PER_SECOND, UnitStats, World,
@@ -30,6 +28,10 @@ const PUSTULE: u16 = 1;
 const STRUCTURE: u16 = 2;
 /// A plain Living building, no VEINS.
 const SHRINE: u16 = 3;
+
+/// How far the Hive's and a Pustule's root-veins reach, in tiles.
+const MAIN_VEIN_TILES: i32 = 15;
+const RELAY_VEIN_TILES: i32 = 8;
 
 const SECOND: u32 = TICKS_PER_SECOND;
 const MINUTE: u32 = 60 * SECOND;
@@ -79,6 +81,8 @@ fn building(role: Role, armour: Armour, side: u8, hp: u16, flags: u8) -> Buildin
         supply: 0,
         flags,
         attack: None,
+        field: 0,
+        tunes: None,
     }
 }
 
@@ -88,9 +92,13 @@ fn buildings() -> [BuildingStats; 4] {
             supply: 40,
             cost_grub: 400,
             build_ticks: 1000,
+            field: MAIN_VEIN_TILES as u8,
             ..building(Role::Main, Armour::Living, 5, 3000, VEINS | DROP_OFF_GRUB)
         },
-        building(Role::Housing, Armour::Living, 2, 1500, VEINS),
+        BuildingStats {
+            field: RELAY_VEIN_TILES as u8,
+            ..building(Role::Housing, Armour::Living, 2, 1500, VEINS)
+        },
         building(Role::Housing, Armour::Structure, 3, 1500, 0),
         building(Role::Housing, Armour::Living, 2, 1500, 0),
     ]

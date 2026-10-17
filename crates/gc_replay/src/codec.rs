@@ -7,7 +7,7 @@
 //! bumping [`crate::FORMAT`].
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::structures::{Armour, Breaker, Role, TowerAttack};
+use gc_sim::structures::{Armour, Breaker, Role, TowerAttack, VEINS};
 use gc_sim::{
     BuildingStats, Command, ConquestUnit, Formation, Mass, NodeSetup, PlayerCommand,
     RegimentHandle, Resource, StructureHandle, UnitStats,
@@ -114,6 +114,14 @@ impl Writer {
             }
             None => self.bool(false),
         }
+        self.u8(b.field);
+        match b.tunes {
+            Some((r, tiles)) => {
+                self.u8(1 + r as u8);
+                self.u8(tiles);
+            }
+            None => self.u8(0),
+        }
     }
 
     pub fn conquest_unit(&mut self, u: &ConquestUnit) {
@@ -128,6 +136,7 @@ impl Writer {
         self.bool(u.hatches);
         self.bool(u.consumed);
         self.bool(u.burrows);
+        self.bool(u.builds_only);
     }
 
     pub fn node(&mut self, n: &NodeSetup) {
@@ -394,8 +403,9 @@ impl<'a> Reader<'a> {
         Some(v.checked_sub(1))
     }
 
-    pub fn building(&mut self) -> Option<BuildingStats> {
-        Some(BuildingStats {
+    /// A building as file format `format` wrote it.
+    pub fn building(&mut self, format: u16) -> Option<BuildingStats> {
+        let mut b = BuildingStats {
             role: Role::from_u8(self.u8()?)?,
             tier: self.u8()?,
             upgrades_from: self.maybe_id()?,
@@ -418,7 +428,21 @@ impl<'a> Reader<'a> {
             } else {
                 None
             },
-        })
+            field: 0,
+            tunes: None,
+        };
+        if format >= 19 {
+            b.field = self.u8()?;
+            b.tunes = match self.u8()? {
+                0 => None,
+                r => Some((Resource::from_u8(r - 1)?, self.u8()?)),
+            };
+        } else if b.flags & VEINS != 0 {
+            // Before fields were data, root-veins reached 15 tiles from a
+            // main building and 8 from any other.
+            b.field = if b.role == Role::Main { 15 } else { 8 };
+        }
+        Some(b)
     }
 
     /// A Conquest unit as file format `format` wrote it.
@@ -440,6 +464,9 @@ impl<'a> Reader<'a> {
         }
         if format >= 18 {
             u.burrows = self.bool()?;
+        }
+        if format >= 19 {
+            u.builds_only = self.bool()?;
         }
         Some(u)
     }

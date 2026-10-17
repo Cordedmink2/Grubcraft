@@ -5,17 +5,19 @@
 //! production buildings, tiers up, expands to free seeps, and keeps every
 //! production building training towards a balanced army.
 //!
-//! It plays the shared economy every faction has today (workers carry Grub
-//! and Marrow to drop-offs). Faction economies plug in through
-//! [`EconomyStyle`](super::kit::EconomyStyle) as they reach the simulation.
+//! Each faction's economy ([`EconomyStyle`]) changes which nodes count as
+//! served and what it builds to serve more: drop-off halls for the shared
+//! economy, Pustules and Hives spreading the root-veins for the Brood, and
+//! Resonators and Siphons tuning nodes for the Choir, whose workers only
+//! build.
 
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
-use gc_sim::structures::{BuildingStats, Role, StructureHandle, StructureView};
+use gc_sim::structures::{BuildingStats, Role, StructureHandle, StructureView, VEINS};
 use gc_sim::{BuildingId, Command, RegimentHandle, Resource, TICKS_PER_SECOND, UnitId};
 use glam::Vec2;
 
 use super::Sense;
-use super::kit::{KitBuilding, KitUnit};
+use super::kit::{EconomyStyle, KitBuilding, KitUnit};
 use super::placing;
 use crate::orders::Hands as Clicks;
 use crate::perception::{Class, Seen, to_fx_vec, v2};
@@ -48,6 +50,11 @@ const MARROW_ENOUGH: u32 = 600;
 const LOW: u32 = 1_500;
 /// How often a Marrow gatherer may move to Grub.
 const REBALANCE_TICKS: u32 = 5 * TICKS_PER_SECOND;
+/// Workers the Choir keeps, all builders.
+const BUILDERS: usize = 3;
+/// How far from the main building's middle a Pustule may go to carry the
+/// veins on towards a seep: inside the Hive's own veins, so it links.
+const RELAY_REACH: f32 = 16.0;
 
 /// A building it ordered laid that hasn't shown on the field yet.
 #[derive(Clone, Copy, Debug)]
@@ -87,6 +94,8 @@ pub struct Steward {
     /// see them in the world): the building, the unit if one is to be
     /// trained, and when.
     busy: Vec<(StructureHandle, Option<UnitId>, u32)>,
+    /// Nodes it found no spot to tune from.
+    untunable: Vec<u16>,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -106,6 +115,34 @@ impl Mine {
     fn takes(&self, r: Resource) -> bool {
         self.stats.flags & r.drop_off() != 0
     }
+    /// Whether, once finished, it makes the nodes near it worth working:
+    /// a drop-off hall, a Hive spreading veins, a Resonator.
+    fn hub(&self, style: EconomyStyle) -> bool {
+        match style {
+            EconomyStyle::Shared => self.takes(Resource::Grub),
+            EconomyStyle::Veins => self.stats.flags & VEINS != 0 && self.stats.role == Role::Main,
+            EconomyStyle::Tuned => self.tunes(Resource::Grub),
+        }
+    }
+    /// Whether it tunes nodes of `r`.
+    fn tunes(&self, r: Resource) -> bool {
+        self.stats.tunes.is_some_and(|(t, _)| t == r)
+    }
+    /// Whether it tunes (or will, once finished) a node of `r` at `p`.
+    fn reaches(&self, r: Resource, p: Vec2) -> bool {
+        self.stats.tunes.is_some_and(|(t, tiles)| {
+            t == r
+                && gap(self.view.tile, (self.stats.width, self.stats.depth), p) <= f32::from(tiles)
+        })
+    }
+}
+
+/// How far `p` is from the edge of the footprint at `tile`, `size` across
+/// and deep, in tiles (0 inside it).
+fn gap(tile: (i32, i32), size: (u8, u8), p: Vec2) -> f32 {
+    let lo = Vec2::new(tile.0 as f32, tile.1 as f32);
+    let hi = lo + Vec2::new(f32::from(size.0), f32::from(size.1));
+    p.clamp(lo, hi).distance(p)
 }
 
 /// What the Steward reads off the field at each look.
@@ -200,10 +237,17 @@ impl Steward {
         let served = nodes
             .iter()
             .filter(|n| n.left > 0)
-            .filter(|n| {
-                let at = v2(n.at);
-                mine.iter()
-                    .any(|m| m.finished() && m.takes(n.resource) && m.at().distance(at) <= SERVE)
+            .filter(|n| match s.kit.economy {
+                EconomyStyle::Shared => {
+                    let at = v2(n.at);
+                    mine.iter().any(|m| {
+                        m.finished() && m.takes(n.resource) && m.at().distance(at) <= SERVE
+                    })
+                }
+                EconomyStyle::Veins => s.world.on_veins(s.party, n.at),
+                EconomyStyle::Tuned => n
+                    .tuner
+                    .is_some_and(|h| mine.iter().any(|m| m.view.handle == h)),
             })
             .map(|n| (n.index, n.resource, v2(n.at), n.left))
             .collect();
@@ -226,7 +270,7 @@ impl Steward {
     fn wants_marrow(&self, s: &Sense, look: &Look) -> bool {
         let banked = s.world.bank(s.party).map_or(0, |b| b.marrow);
         let started = look.tier >= 2
-            || look.workers.len() >= 10
+            || working(s, look) >= 10
             || look
                 .mine
                 .iter()
@@ -237,12 +281,16 @@ impl Steward {
     /// Idle workers go to the served node that most needs them, the nearest
     /// first; workers sent to one node go in one click.
     fn put_to_work(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
+        if s.kit.economy == EconomyStyle::Tuned {
+            return;
+        }
         let mut at_node = look.at_node.clone();
         let marrow = self.wants_marrow(s, look);
         let idle: Vec<RegimentHandle> = s
             .world
             .idle_workers(s.party)
-            .filter(|&h| !self.recently_sent(h))
+            // A worker that only builds (the Choir's Tuner) can't gather.
+            .filter(|&h| !self.recently_sent(h) && !s.world.builds_only(h))
             .collect();
         let mut sent: Vec<(u16, Vec<RegimentHandle>)> = Vec::new();
         for h in idle {
@@ -304,7 +352,11 @@ impl Steward {
     /// the Grub to go with it.
     fn rebalance(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
         let banked = s.world.bank(s.party).map_or(0, |b| b.marrow);
-        if banked < 2 * MARROW_ENOUGH || s.now < self.next_rebalance || !clicks.free() {
+        if banked < 2 * MARROW_ENOUGH
+            || s.now < self.next_rebalance
+            || !clicks.free()
+            || s.kit.economy == EconomyStyle::Tuned
+        {
             return;
         }
         let on_marrow = |n: u16| {
@@ -447,9 +499,12 @@ impl Steward {
         let rising = look
             .mine
             .iter()
-            .filter(|m| !m.finished() && m.takes(Resource::Grub))
+            .filter(|m| !m.finished() && m.hub(s.kit.economy))
             .count();
-        let want = (slots + SPARE_WORKERS + rising * 4).min(MAX_WORKERS);
+        let want = match s.kit.economy {
+            EconomyStyle::Tuned => BUILDERS + usize::from(look.tier),
+            _ => (slots + SPARE_WORKERS + rising * 4).min(MAX_WORKERS),
+        };
         self.ledger.workers = look.workers.len() as u16;
         self.ledger.want_workers = want as u16;
         let mut have = look.workers.len() + self.workers_queued(s, look);
@@ -517,12 +572,35 @@ impl Steward {
         self.ledger.producers = producers.len() as u8;
         let headroom = 4 + 3 * producers.len() as u32;
         let cap = bank.supply_cap + rising_supply;
-        let workers = look.workers.len();
+        let workers = working(s, look);
+        let marrow = self.wants_marrow(s, look);
         let housing = || {
             (cap < SUPPLY_LIMIT && cap < bank.supply_used + headroom)
                 .then(|| s.kit.housing())
                 .flatten()
-                .map(|b| (b, self.inner_spot(look)))
+                .map(|b| (b, self.housing_spot(s, look, b)))
+        };
+        // The Choir: a tuner by each node near its buildings not yet tuned,
+        // Grub first, Marrow once it wants it.
+        let tune = || {
+            if s.kit.economy != EconomyStyle::Tuned {
+                return None;
+            }
+            [Resource::Grub, Resource::Marrow]
+                .into_iter()
+                .filter(|&r| r == Resource::Grub || marrow)
+                .find_map(|r| Some((s.kit.tuner(r)?, self.tune_site(s, look, r)?)))
+        };
+        // The Brood: another Hatchery Pit when larvae run short and Grub
+        // piles up, one per tier.
+        let hatch = || {
+            let b = s.kit.hatchery()?;
+            let pits = look.mine.iter().filter(|m| m.view.building == b.id).count();
+            (s.kit.economy == EconomyStyle::Veins
+                && bank.larvae == 0
+                && bank.grub >= 2 * u32::from(b.stats.cost_grub) + 200
+                && pits < usize::from(look.tier.max(1)))
+            .then(|| (b, self.inner_spot(look)))
         };
         let first = || {
             (production == 0 && workers >= 6)
@@ -531,7 +609,10 @@ impl Steward {
                 .map(|b| (b, self.inner_spot(look)))
         };
         let expand = || {
-            let b = s.kit.expansion()?;
+            let b = match s.kit.economy {
+                EconomyStyle::Tuned => s.kit.tuner(Resource::Grub),
+                _ => s.kit.expansion(),
+            }?;
             if !self.time_to_expand(s, look) {
                 return None;
             }
@@ -548,20 +629,33 @@ impl Steward {
                 .flatten()
                 .map(|b| (b, self.inner_spot(look)))
         };
-        let wanted: Option<(&KitBuilding, Vec2)> =
-            housing().or_else(first).or_else(expand).or_else(more);
+        let wanted: Option<(&KitBuilding, Vec2)> = housing()
+            .or_else(tune)
+            .or_else(first)
+            .or_else(hatch)
+            .or_else(expand)
+            .or_else(more);
         let Some((b, near)) = wanted else { return };
         if s.world.may_lay(s.party, b.id).is_err() {
             self.ledger.saving = (u32::from(b.stats.cost_grub), u32::from(b.stats.cost_marrow));
             return;
         }
         let Some(tile) =
-            placing::spot_for(s.world, s.party, b.id, &b.stats, near, &self.lanes(look))
+            placing::spot_for(s.world, s.party, b.id, &b.stats, near, &self.lanes(s, look))
         else {
             // Nowhere fits: look again in a while, not every think.
             self.next_lay = s.now + LAY_TICKS;
             return;
         };
+        // A tuner too far from the node it was put up for would tune
+        // nothing: give that node up.
+        if let Some((r, tiles)) = b.stats.tunes
+            && let Some(n) = self.node_at(s, r, near)
+            && gap(tile, (b.stats.width, b.stats.depth), near) > f32::from(tiles)
+        {
+            self.untunable.push(n);
+            return;
+        }
         let foot_mid = Vec2::new(
             tile.0 as f32 + f32::from(b.stats.width) / 2.0,
             tile.1 as f32 + f32::from(b.stats.depth) / 2.0,
@@ -584,10 +678,59 @@ impl Steward {
         }
     }
 
+    /// Where to put housing: for the Brood, a Pustule carrying the veins
+    /// towards the nearest seep they don't reach; for the Choir, a
+    /// Resonator by a seep it doesn't tune yet; else at home.
+    fn housing_spot(&self, s: &Sense, look: &Look, b: &KitBuilding) -> Vec2 {
+        let home = self.home.unwrap_or(Vec2::ZERO);
+        let site = match s.kit.economy {
+            EconomyStyle::Tuned => b.stats.tunes.and_then(|(r, _)| self.tune_site(s, look, r)),
+            EconomyStyle::Veins if b.stats.flags & VEINS != 0 => s.world.economy().and_then(|e| {
+                e.nodes()
+                    .filter(|n| n.resource == Resource::Grub && n.left > LOW)
+                    .filter(|n| !s.world.on_veins(s.party, n.at))
+                    .map(|n| v2(n.at))
+                    .filter(|p| p.distance(home) <= RELAY_REACH + 10.0)
+                    .min_by(|a, b| a.distance(home).total_cmp(&b.distance(home)))
+                    .map(|p| {
+                        let d = p.distance(home);
+                        home + (p - home) / d.max(1.0) * (d - 4.0).clamp(0.0, RELAY_REACH)
+                    })
+            }),
+            _ => None,
+        };
+        site.unwrap_or_else(|| self.inner_spot(look))
+    }
+
+    /// The Choir's next node of `r` to tune: the nearest to home of those
+    /// near its buildings that none of its tuners (finished or going up)
+    /// reaches.
+    fn tune_site(&self, s: &Sense, look: &Look, r: Resource) -> Option<Vec2> {
+        let home = self.home?;
+        let economy = s.world.economy()?;
+        economy
+            .nodes()
+            .filter(|n| n.resource == r && n.left > LOW / 2)
+            .filter(|n| !self.untunable.contains(&n.index))
+            .map(|n| v2(n.at))
+            .filter(|&p| !look.mine.iter().any(|m| m.reaches(r, p)))
+            .filter(|&p| look.mine.iter().any(|m| m.at().distance(p) <= SERVE))
+            .min_by(|a, b| a.distance(home).total_cmp(&b.distance(home)))
+    }
+
+    /// The node of `r` at `p`, if one is there.
+    fn node_at(&self, s: &Sense, r: Resource, p: Vec2) -> Option<u16> {
+        s.world
+            .economy()?
+            .nodes()
+            .find(|n| n.resource == r && v2(n.at).distance(p) < 0.5)
+            .map(|n| n.index)
+    }
+
     /// Lanes from each hall to the nodes it serves, kept free of buildings.
-    fn lanes(&self, look: &Look) -> Vec<(Vec2, Vec2)> {
+    fn lanes(&self, s: &Sense, look: &Look) -> Vec<(Vec2, Vec2)> {
         let mut lanes = Vec::new();
-        for m in look.mine.iter().filter(|m| m.takes(Resource::Grub)) {
+        for m in look.mine.iter().filter(|m| m.hub(s.kit.economy)) {
             for n in &look.served {
                 if m.at().distance(n.2) <= SERVE {
                     lanes.push((m.at(), n.2));
@@ -647,16 +790,18 @@ impl Steward {
             .iter()
             .filter(|n| n.1 == Resource::Grub)
             .collect();
-        let full = grub
-            .iter()
-            .all(|n| look.at_node[usize::from(n.0)] >= u16::from(GRUB_SLOTS) - 1);
+        // The Choir's tuned seeps need nobody: they are as full as they get.
+        let full = s.kit.economy == EconomyStyle::Tuned
+            || grub
+                .iter()
+                .all(|n| look.at_node[usize::from(n.0)] >= u16::from(GRUB_SLOTS) - 1);
         let left: u32 = grub.iter().map(|n| n.3).sum();
         let running_out = left < LOW * grub.len().max(1) as u32 || grub.len() < 2;
         let time = s.now >= s.expand_after;
         let rising = look
             .mine
             .iter()
-            .any(|m| !m.finished() && m.takes(Resource::Grub));
+            .any(|m| !m.finished() && m.hub(s.kit.economy));
         !rising && (running_out || (time && full))
     }
 
@@ -695,10 +840,14 @@ impl Steward {
                     .filter(|q| q.distance(p) <= 12.0)
                     .collect();
                 let mid = cluster.iter().copied().sum::<Vec2>() / cluster.len() as f32;
-                (mid, home.distance(mid) - 25.0 * cluster.len() as f32)
+                (p, mid, home.distance(mid) - 25.0 * cluster.len() as f32)
             })
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(mid, _)| mid)
+            .min_by(|a, b| a.2.total_cmp(&b.2))
+            // A tuner goes by a seep, to tune it; a hall in the middle.
+            .map(|(p, mid, _)| match s.kit.economy {
+                EconomyStyle::Tuned => p,
+                _ => mid,
+            })
     }
 
     /// Tier up when the economy and army can stand the wait.
@@ -710,7 +859,7 @@ impl Steward {
             .mine
             .iter()
             .any(|m| m.finished() && trains_fighters(s, m.view.building));
-        let workers = look.workers.len();
+        let workers = working(s, look);
         let army: u32 = look
             .army
             .iter()
@@ -881,6 +1030,22 @@ impl Steward {
                 None => self.rallied.push((m.view.handle, at)),
             }
         }
+    }
+}
+
+/// How big its economy is, in workers: those it has, or for the Choir,
+/// whose workers only build, the workers its tuned nodes stand for.
+fn working(s: &Sense, look: &Look) -> usize {
+    match s.kit.economy {
+        EconomyStyle::Tuned => look
+            .served
+            .iter()
+            .map(|n| match n.1 {
+                Resource::Grub => usize::from(GRUB_SLOTS),
+                Resource::Marrow => usize::from(MARROW_SLOTS),
+            })
+            .sum(),
+        _ => look.workers.len(),
     }
 }
 

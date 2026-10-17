@@ -4,7 +4,7 @@
 //! left clear for the game to draw the 3D model in, so the panels draw
 //! nothing there.
 
-use crate::draw::{CELL_W, Rect, fit};
+use crate::draw::{CELL_W, Rect, fit, wrap};
 use crate::lobby::Faction;
 use crate::ui::{ButtonStyle, Ui, theme};
 
@@ -521,46 +521,6 @@ fn ability_lines(e: &Entry) -> Vec<Line> {
                 text,
             });
         }
-    }
-    lines
-}
-
-/// `text` broken into lines of at most `width` characters, at spaces where
-/// it can (a word longer than a line is cut).
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        let mut word = word;
-        loop {
-            let used = line.chars().count();
-            let need = word.chars().count() + usize::from(used > 0);
-            if used + need <= width {
-                if used > 0 {
-                    line.push(' ');
-                }
-                line.push_str(word);
-                break;
-            }
-            if used > 0 {
-                lines.push(std::mem::take(&mut line));
-                continue;
-            }
-            // A word wider than the line: cut it.
-            let cut = word
-                .char_indices()
-                .nth(width)
-                .map_or(word.len(), |(at, _)| at);
-            lines.push(word[..cut].to_string());
-            word = &word[cut..];
-            if word.is_empty() {
-                break;
-            }
-        }
-    }
-    if !line.is_empty() || lines.is_empty() {
-        lines.push(line);
     }
     lines
 }

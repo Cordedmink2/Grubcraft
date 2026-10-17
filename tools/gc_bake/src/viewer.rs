@@ -197,6 +197,7 @@ fn flag_name(f: Flag) -> &'static str {
         Flag::Terror => "causes terror",
         Flag::Hatches => "hatches from a larva",
         Flag::Consumed => "used up to grow buildings",
+        Flag::BuildsOnly => "builds but does not gather",
     }
 }
 

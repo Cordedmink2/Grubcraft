@@ -21,7 +21,7 @@ Every faction's buildings with first-pass numbers for Conquest (M3): cost, build
 
 - **Ember Clans:** the sturdiest bases. The halls, towers and walls are Fortified, and so is the Outpost Hall used to expand.
 - **Brood:** every structure is grown by using up the Gnawer that starts it, so its real price is the listed Grub plus a worker (50 Grub and a larva). Upgrading the Hive uses no Gnawer. All Brood structures are Living. Nothing repairs them, but they regrow 2 hit points a second while on root-veins. **Built (2026-10-17, faction depth stage 1):** the Gnawer is used up at the foundation, and the building then grows on its own at one builder's speed; other Gnawers can't help it or mend it. **Built (2026-10-17, faction depth stage 2):** a finished Living building standing within reach of its owner's linked root-veins regrows 2 hit points a second.
-- **Choir:** every building except the Spire, Resonators and Siphons needs power. It must stand inside the field of a Spire (8 tiles) or a Resonator or Siphon (6 tiles). An unpowered building stops training, researching and shooting until power returns.
+- **Choir:** every building except the Spire, Resonators and Siphons needs power. It must stand inside the field of a Spire (8 tiles) or a Resonator or Siphon (6 tiles). An unpowered building stops training, researching and shooting until power returns. **Built (2026-10-17, faction depth stage 3):** a Choir building that needs power can only be laid where one of its owner's finished fields reaches its footprint ("It must stand inside a field of power."), and while none does its training queue waits. The field's reach is the `field` of the building in `data/rosters/choir.ron` (Spire tiers 8, Resonator and Siphon 6), and the buildings that need power have the `NeedsPower` flag. Researching and shooting are not built yet.
 - **Carrion Concord:** the Counting House and Tollgate are Fortified, and everything else is Structure, including the Waystation. The Reliquary (75 Grub, 2×2) is small and cheap, made to be planted beside other players' fights.
 
 ## Models and construction stages
@@ -118,7 +118,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Cathedral (upgrades Spire) | 2 | 300 / 100 | 60 s | 3,600 | Fortified | 4×4 | +14 | Tier 2: Harmonic Walkers, Glass Striders, Skyglass, the Conductor and a second hero. |
 | Grand Organ (upgrades Cathedral) | 3 | 600 / 250 | 90 s | 4,400 | Fortified | 4×4 | +24 | Tier 3: monsters, top upgrades and a third hero. |
 | Resonator | 1 | 150 / 0 | 25 s | 500 | Structure | 2×2 | +4 | Tunes a seep within 4 tiles to make Grub with no workers, links with Resonators within 14 tiles into chords, and powers buildings within 6 tiles. |
-| Siphon | 1 | 175 / 0 | 30 s | 500 | Structure | 2×2 | +4 | A Resonator built on a Marrow vein: about 50 Marrow a minute. Links chords and powers buildings like a Resonator. |
+| Siphon | 1 | 175 / 0 | 30 s | 500 | Structure | 2×2 | +4 | A Resonator built against a Marrow vein (within 3 tiles of its edge): about 50 Marrow a minute. Links chords and powers buildings like a Resonator. |
 | Forge of Facets | 1 | 160 / 0 | 50 s | 1,300 | Structure | 4×4 |  | Builds every Choir regiment that walks. |
 | Harmonics Lab | 1 | 175 / 0 | 50 s | 1,100 | Structure | 3×3 |  | Researches upgrades. |
 | Skyglass Loom | 2 | 160 / 50 | 55 s | 1,100 | Structure | 3×3 |  | Builds Skyglass. |

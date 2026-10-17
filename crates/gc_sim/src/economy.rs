@@ -19,6 +19,12 @@
 //!   then comes into the store through their owner's root-veins, if the
 //!   node is on them; off them, it waits there until it is (see
 //!   [`crate::veins`]).
+//! - **Tuned nodes** (the Choir's): a node within reach of a finished
+//!   building that tunes its kind (a Resonator for seeps, a Siphon for
+//!   veins, see [`crate::power`]) yields a load every [`TUNED_GRUB_TICKS`]
+//!   (or [`TUNED_MARROW_TICKS`]) into that building's owner's store, with
+//!   no workers, as it runs dry and to dregs like any node. Workers can
+//!   still gather there too.
 //! - **Supply.** A player's cap is what their standing buildings add, up to
 //!   [`SUPPLY_LIMIT`]; what their regiments take counts against it.
 //! - **Upkeep.** Grub brought in is cut by how much supply is in use: all
@@ -27,7 +33,8 @@
 //!   `100 / gather_percent` of the time.
 //!
 //! Five workers on a seep seven tiles from their hall bring in about 200
-//! Grub a minute, and three on a vein about 50 Marrow, as docs/04 sets.
+//! Grub a minute, and three on a vein about 50 Marrow, as docs/04 sets; a
+//! tuned seep or vein brings in the same.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -36,7 +43,7 @@ use gc_fixed::{Fx, FxVec2};
 
 use crate::conquest::{ConquestSetup, ConquestUnit};
 use crate::regiments::{Order, Regiments};
-use crate::structures::{Approach, DROP_OFF_GRUB, DROP_OFF_MARROW, Structures};
+use crate::structures::{Approach, DROP_OFF_GRUB, DROP_OFF_MARROW, StructureHandle, Structures};
 use crate::veins::VEIN_FLOW_TICKS;
 use crate::{MAX_PARTIES, PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
 
@@ -79,6 +86,14 @@ impl Resource {
         }
     }
 
+    /// Ticks a tuned node takes to yield a load at Standard tempo.
+    pub fn tune_ticks(self) -> u32 {
+        match self {
+            Resource::Grub => TUNED_GRUB_TICKS,
+            Resource::Marrow => TUNED_MARROW_TICKS,
+        }
+    }
+
     /// The building flag of a drop-off that takes it.
     pub fn drop_off(self) -> u8 {
         match self {
@@ -100,6 +115,10 @@ pub const MARROW_LOAD: u32 = 5;
 /// Ticks to fill a load at Standard tempo.
 pub const GRUB_TICKS: u32 = 9 * TICKS_PER_SECOND;
 pub const MARROW_TICKS: u32 = 12 * TICKS_PER_SECOND;
+/// Ticks a tuned seep, and a tuned vein, takes to yield a load at
+/// Standard tempo: about 200 Grub and 50 Marrow a minute.
+pub const TUNED_GRUB_TICKS: u32 = 3 * TICKS_PER_SECOND;
+pub const TUNED_MARROW_TICKS: u32 = 6 * TICKS_PER_SECOND;
 /// A dry node still yields at this percent of its rate.
 pub const DREGS_PERCENT: u32 = 25;
 /// The most supply a player can have.
@@ -136,6 +155,8 @@ pub struct NodeView {
     pub full: u32,
     /// Workers filling a load there, as of the last tick.
     pub workers: u8,
+    /// The building tuning it, as of the last tick.
+    pub tuner: Option<StructureHandle>,
 }
 
 /// A player's store and supply, as the game's top bar shows them.
@@ -189,6 +210,13 @@ pub struct Economy {
     node_full: Vec<u32>,
     /// Workers filling a load at each node; counted afresh each tick.
     node_busy: Vec<u8>,
+    /// The building tuning each node, worked out again whenever the
+    /// tuners change (the [`Structures::tuner_stamp`] last seen), and
+    /// ticks it has worked towards its next load (back to 0 when another
+    /// takes over).
+    node_tuner: Vec<Option<StructureHandle>>,
+    tuners_seen: Option<u32>,
+    tune_clock: Vec<u32>,
     /// Grub in hundredths, and Marrow, by player.
     grub: [u32; MAX_PARTIES],
     marrow: [u32; MAX_PARTIES],
@@ -220,6 +248,9 @@ impl Economy {
             node_left: setup.nodes.iter().map(|n| n.amount).collect(),
             node_full: setup.nodes.iter().map(|n| n.amount).collect(),
             node_busy: vec![0; setup.nodes.len()],
+            node_tuner: vec![None; setup.nodes.len()],
+            tuners_seen: None,
+            tune_clock: vec![0; setup.nodes.len()],
             grub: setup.start.map(|(g, _)| g.saturating_mul(GRUB_SCALE)),
             marrow: setup.start.map(|(_, m)| m),
             step: vec![Step::Idle; n],
@@ -297,6 +328,7 @@ impl Economy {
             left: self.node_left[i],
             full: self.node_full[i],
             workers: self.node_busy[i],
+            tuner: self.node_tuner[i],
         })
     }
 
@@ -405,6 +437,7 @@ impl Economy {
         }
         // Each player's supply in use, counted at the first Grub brought in.
         let mut used = None;
+        self.tune(regs, kinds, structures, &mut used);
         for r in 0..self.step.len() {
             if self.step[r] == Step::Idle {
                 continue;
@@ -568,6 +601,93 @@ impl Economy {
         self.bank(regs, kinds, r, used);
     }
 
+    /// Every tuned node works towards its next load, and yields it into
+    /// its tuner's owner's store once done.
+    fn tune(
+        &mut self,
+        regs: &Regiments,
+        kinds: &[ConquestUnit],
+        structures: &Structures,
+        used: &mut Option<[u32; MAX_PARTIES]>,
+    ) {
+        if self.tuners_seen != Some(structures.tuner_stamp) {
+            self.tuners_seen = Some(structures.tuner_stamp);
+            for n in 0..self.node_at.len() {
+                let tuner = structures.tuner_of(self.node_resource[n], self.node_at[n]);
+                let handle = tuner.map(|s| structures.handle(s));
+                if handle != self.node_tuner[n] {
+                    self.node_tuner[n] = handle;
+                    self.tune_clock[n] = 0;
+                }
+            }
+        }
+        for n in 0..self.node_at.len() {
+            let kind = self.node_resource[n];
+            // A tuner fallen since this tick's links works nothing.
+            let Some(s) = self.node_tuner[n].and_then(|h| structures.resolve(h)) else {
+                continue;
+            };
+            let left = self.node_left[n];
+            self.tune_clock[n] += 1;
+            if self.tune_clock[n] < self.tune_period(n) {
+                continue;
+            }
+            self.tune_clock[n] = 0;
+            // A dry node gives a whole load, only slower.
+            let take = if left == 0 {
+                kind.load()
+            } else {
+                kind.load().min(left)
+            };
+            self.node_left[n] = left.saturating_sub(take);
+            self.deposit(structures.owner_of(s), kind, take, regs, kinds, used);
+        }
+    }
+
+    /// Ticks between loads from tuned node `n`: slower once it runs dry,
+    /// and scaled by tempo.
+    fn tune_period(&self, n: usize) -> u32 {
+        let mut ticks = self.node_resource[n].tune_ticks();
+        if self.node_left[n] == 0 {
+            ticks = ticks * 100 / DREGS_PERCENT;
+        }
+        (ticks * 100 / self.gather_percent).max(1)
+    }
+
+    /// How much the nodes tuned by building `h` yield a minute, as things
+    /// stand: dry nodes and tempo counted, before any upkeep cut to Grub.
+    pub fn tuned_per_minute(&self, h: StructureHandle) -> u32 {
+        (0..self.node_at.len())
+            .filter(|&n| self.node_tuner[n] == Some(h))
+            .map(|n| self.node_resource[n].load() * 60 * TICKS_PER_SECOND / self.tune_period(n))
+            .sum()
+    }
+
+    /// `amount` of `kind` goes into player `p`'s store: Grub cut by their
+    /// upkeep.
+    fn deposit(
+        &mut self,
+        p: PlayerId,
+        kind: Resource,
+        amount: u32,
+        regs: &Regiments,
+        kinds: &[ConquestUnit],
+        used: &mut Option<[u32; MAX_PARTIES]>,
+    ) {
+        let p = usize::from(p);
+        if p >= MAX_PARTIES {
+            return;
+        }
+        match kind {
+            Resource::Grub => {
+                let used = used.get_or_insert_with(|| self.supply_in_use(kinds, regs))[p];
+                let kept = amount * upkeep_percent(used) * GRUB_SCALE / 100;
+                self.grub[p] = self.grub[p].saturating_add(kept);
+            }
+            Resource::Marrow => self.marrow[p] = self.marrow[p].saturating_add(amount),
+        }
+    }
+
     /// Worker slot `r`'s load goes into its owner's store, and it goes back
     /// for more.
     fn bank(
@@ -581,16 +701,7 @@ impl Economy {
             self.step[r] = Step::ToNode;
             return;
         };
-        let p = usize::from(regs.owner[r]);
-        let amount = u32::from(amount);
-        match kind {
-            Resource::Grub => {
-                let used = used.get_or_insert_with(|| self.supply_in_use(kinds, regs))[p];
-                let kept = amount * upkeep_percent(used) * GRUB_SCALE / 100;
-                self.grub[p] = self.grub[p].saturating_add(kept);
-            }
-            Resource::Marrow => self.marrow[p] = self.marrow[p].saturating_add(amount),
-        }
+        self.deposit(regs.owner[r], kind, u32::from(amount), regs, kinds, used);
         self.load[r] = None;
         self.step[r] = Step::ToNode;
         self.set_off(r);
@@ -605,6 +716,7 @@ impl Economy {
             h.i32(self.node_at[i].y.raw());
             h.u32(self.node_left[i]);
             h.u32(self.node_full[i]);
+            h.u32(self.tune_clock[i]);
         }
         for p in 0..MAX_PARTIES {
             h.u32(self.grub[p]);

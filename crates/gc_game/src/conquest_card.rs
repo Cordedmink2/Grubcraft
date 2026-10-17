@@ -311,7 +311,7 @@ impl Running {
         let side = self.sandbox.side;
         // Workers used up by what they build (the Brood's) can only start a
         // foundation nothing has started, and one is enough.
-        let spent = (self.selected.iter()).any(|&h| is_consumed(regiments, units, h));
+        let spent = (self.selected.iter()).any(|&h| has_flag(regiments, units, h, UNIT_CONSUMED));
         let mend = self.building_under_cursor(|o| o == side).filter(|&h| {
             self.world
                 .structures()
@@ -328,7 +328,10 @@ impl Running {
             Mend(StructureHandle),
             Gather(u16),
         }
-        let job = match (mend, self.node_near(at)) {
+        // Workers that only build (the Choir's) don't gather: sent to a
+        // node, they just walk there (with any others, who gather).
+        let gathers = !(self.selected.iter()).all(|&h| self.world.builds_only(h));
+        let job = match (mend, self.node_near(at).filter(|_| gathers)) {
             (Some(structure), _) => Job::Mend(structure),
             (None, Some(node)) => Job::Gather(node),
             (None, None) => return false,
@@ -337,6 +340,13 @@ impl Running {
             Job::Mend(structure) => Command::Construct {
                 regiment,
                 structure,
+            },
+            Job::Gather(_) if self.world.builds_only(regiment) => Command::MoveTo {
+                regiment,
+                target: crate::fx_vec(at),
+                facing: None,
+                files: 0,
+                pace: gc_fixed::Fx::ZERO,
             },
             Job::Gather(node) => Command::Gather { regiment, node },
         };
@@ -387,12 +397,17 @@ fn is_worker(regiments: &Regiments, units: &[ConquestUnitRecord], h: RegimentHan
     })
 }
 
-/// Whether regiment `h` is a worker used up by the building it starts.
-fn is_consumed(regiments: &Regiments, units: &[ConquestUnitRecord], h: RegimentHandle) -> bool {
+/// Whether regiment `h`'s unit has the `UNIT_*` flag `flag`.
+fn has_flag(
+    regiments: &Regiments,
+    units: &[ConquestUnitRecord],
+    h: RegimentHandle,
+    flag: u16,
+) -> bool {
     regiments.get(h).is_some_and(|r| {
         units
             .get(usize::from(r.unit))
-            .is_some_and(|u| u.flags & UNIT_CONSUMED != 0)
+            .is_some_and(|u| u.flags & flag != 0)
     })
 }
 

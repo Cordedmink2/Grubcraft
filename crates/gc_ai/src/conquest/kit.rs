@@ -4,8 +4,8 @@
 //! [`Kit`] from the baked data and the map; the simulation itself knows
 //! nothing of factions.
 
-use gc_sim::structures::{BuildingStats, DROP_OFF_GRUB, Role};
-use gc_sim::{BuildingId, ConquestUnit, UnitId, World};
+use gc_sim::structures::{BuildingStats, DROP_OFF_GRUB, LARVAE, Role, VEINS};
+use gc_sim::{BuildingId, ConquestUnit, Resource, UnitId, World};
 use glam::Vec2;
 
 use crate::personality::Faction;
@@ -27,14 +27,33 @@ pub struct KitUnit {
     pub fighter: bool,
 }
 
-/// How a faction's economy works, for the Steward's faction module
-/// (docs/18-ai.md, "Steward"). Every faction plays the shared economy
-/// (workers carry Grub and Marrow to drop-offs) until its own mechanics
-/// reach the simulation; each then gets its own variant here.
+/// How a faction's economy works, for the Steward (docs/18-ai.md,
+/// "Steward"; docs/03-factions.md for the factions' economies).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EconomyStyle {
+    /// Workers carry Grub and Marrow to drop-offs (the Ember Clans and the
+    /// Carrion Concord).
     #[default]
     Shared,
+    /// Workers burrow in at nodes on the root-veins, which carry what they
+    /// gather home; Pustules and Hives spread the veins (the Brood).
+    Veins,
+    /// Buildings work the nodes near them with no workers, and workers
+    /// only build (the Choir's Resonators and Siphons).
+    Tuned,
+}
+
+impl EconomyStyle {
+    /// The style of a faction whose workers are of type `worker`.
+    pub fn of(worker: &ConquestUnit) -> EconomyStyle {
+        if worker.burrows {
+            EconomyStyle::Veins
+        } else if worker.builds_only {
+            EconomyStyle::Tuned
+        } else {
+            EconomyStyle::Shared
+        }
+    }
 }
 
 /// A faction's build menu and the map's starts.
@@ -105,15 +124,34 @@ impl Kit {
     }
 
     /// What to put up by a far seep: an outpost hall if the faction has
-    /// one, else a second main building.
+    /// one, else a second main building (for the Brood, a Hive, whose own
+    /// veins carry the seep's Grub home). None for the Choir, whose
+    /// expansions are tuners ([`Kit::tuner`]).
     pub fn expansion(&self) -> Option<&KitBuilding> {
-        let takes_grub = |b: &&KitBuilding| b.stats.flags & DROP_OFF_GRUB != 0;
+        let takes_grub = |b: &&KitBuilding| b.stats.flags & (DROP_OFF_GRUB | VEINS) != 0;
         self.buildings
             .iter()
             .filter(|b| b.stats.role == Role::Outpost)
             .filter(takes_grub)
             .min_by_key(|b| b.stats.cost_grub)
             .or_else(|| self.main().filter(takes_grub))
+    }
+
+    /// The cheapest building that works nodes of `resource` with no
+    /// workers: the Choir's Resonator for seeps, Siphon for veins.
+    pub fn tuner(&self, resource: Resource) -> Option<&KitBuilding> {
+        self.buildings
+            .iter()
+            .filter(|b| b.stats.tunes.is_some_and(|(r, _)| r == resource))
+            .min_by_key(|b| b.stats.cost_grub)
+    }
+
+    /// The building that adds larvae, main buildings aside: the Brood's
+    /// Hatchery Pit.
+    pub fn hatchery(&self) -> Option<&KitBuilding> {
+        self.buildings
+            .iter()
+            .find(|b| b.stats.flags & LARVAE != 0 && b.stats.role != Role::Main)
     }
 
     /// The units building type `b` (or anything it grew from) trains.

@@ -4611,12 +4611,19 @@ impl Running {
         self.ui_sound(sounds::UiSound::Move);
     }
 
+    /// The building being placed (one K would place, or a worker lay), if
+    /// any.
+    fn laying(&self) -> Option<BuildingId> {
+        match self.hud.armed {
+            Some(hud::Armed::Lay(id)) => Some(id),
+            _ => self.sandbox.building_tool.then_some(self.sandbox.building),
+        }
+    }
+
     /// The building K would place, or a worker lay, ghosted under the cursor.
     fn push_building_ghost(&mut self) {
-        let id = match self.hud.armed {
-            Some(hud::Armed::Lay(id)) => id,
-            _ if self.sandbox.building_tool => self.sandbox.building,
-            _ => return,
+        let Some(id) = self.laying() else {
+            return;
         };
         let Some((stats, tile, why)) = self.building_placement(id) else {
             return;
@@ -4664,6 +4671,25 @@ impl Running {
             self.sandbox.side,
             self.reveal_all,
             |p| color_of(parties, p),
+            &mut self.instances,
+        );
+        buildings::push_tuning(
+            &self.world,
+            self.sandbox.side,
+            self.reveal_all,
+            &mut self.instances,
+        );
+        // The fields of power stand out while a building that needs one is
+        // being placed.
+        let lit = self.laying().is_some_and(|id| {
+            (self.buildings.stats.get(usize::from(id)))
+                .is_some_and(|s| s.flags & gc_sim::structures::NEEDS_POWER != 0)
+        });
+        buildings::push_fields(
+            &self.world,
+            self.sandbox.side,
+            self.reveal_all,
+            lit,
             &mut self.instances,
         );
         buildings::push_heart(&self.world, parties, &mut self.instances);

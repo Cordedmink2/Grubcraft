@@ -9,7 +9,7 @@
 
 use std::fmt::Write as _;
 
-use crate::draw::{CELL_W, Color, DrawList, Rect, fit, text_width};
+use crate::draw::{CELL_H, CELL_W, Color, DrawList, Rect, fit, text_width, wrap};
 use crate::hud::{HudEvent, HudInput, WIDGET_QUEUE, draw_portrait, health_color, rgb};
 use crate::lobby::thousands;
 use crate::ui::{Press, theme};
@@ -93,7 +93,46 @@ pub struct StructurePanel<'a> {
     /// A living building of yours: whether it stands on your linked
     /// root-veins, where it regrows (None for any other building).
     pub rooted: Option<bool>,
+    /// A Choir building of yours that needs power: whether a field of
+    /// power reaches it (None for any other building).
+    pub powered: Option<bool>,
+    /// A building of yours that tunes seeps or veins (None for any other).
+    pub tuning: Option<Tuning>,
 }
+
+/// What a tuning building (a Resonator or Siphon) is working.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tuning {
+    /// It tunes Marrow veins, not Grub seeps.
+    pub vein: bool,
+    /// How many nodes it tunes now.
+    pub nodes: u8,
+    /// What they yield together, a minute, at the match tempo (before any
+    /// upkeep cut to Grub).
+    pub per_minute: u32,
+}
+
+impl Tuning {
+    /// The panel's line about it.
+    fn line(self) -> String {
+        let (node, what) = if self.vein {
+            ("vein", "Marrow")
+        } else {
+            ("seep", "Grub")
+        };
+        match self.nodes {
+            0 => format!("No {node} in reach"),
+            1 => format!("Tuning a {node}: about {} {what} a minute", self.per_minute),
+            n => format!(
+                "Tuning {n} {node}s: about {} {what} a minute",
+                self.per_minute
+            ),
+        }
+    }
+}
+
+/// A building that needs power, with none.
+const UNPOWERED: &str = "Unpowered: stopped until a field of power reaches it";
 
 /// Match time as "14:32", or "1:02:05" from the first hour.
 pub(crate) fn clock(secs: u32) -> String {
@@ -307,30 +346,78 @@ fn draw_structure_card(draw: &mut DrawList, r: Rect, s: &StructurePanel) {
             format!("Upgrading to {to} {}%", done.min(100)),
             theme::ACCENT,
         ))
+    } else if let Some(on) = s.rooted {
+        Some(if on {
+            ("On root-veins".to_string(), theme::GOOD)
+        } else {
+            ("Cut off: no regrowth".to_string(), theme::WARN)
+        })
     } else {
-        s.rooted.map(|on| {
+        s.powered.map(|on| {
             if on {
-                ("On root-veins".to_string(), theme::GOOD)
+                ("Powered".to_string(), theme::GOOD)
             } else {
-                ("Cut off: no regrowth".to_string(), theme::WARN)
+                (UNPOWERED.to_string(), theme::WARN)
             }
         })
     };
-    if let Some((state, color)) = state {
-        let chars = (inner.w / CELL_W).max(1) as usize;
-        draw.text(
-            inner.x,
-            portrait.bottom() + 6,
-            1,
-            color,
-            &fit(&state, chars),
-        );
+    // What it is doing, then what it tunes (once it stands), each wrapped
+    // to the card and cut off where the card ends.
+    let tuning = s.tuning.filter(|_| s.building.is_none()).map(|t| {
+        let color = if t.nodes == 0 {
+            theme::MUTED
+        } else {
+            theme::TEXT
+        };
+        (t.line(), color)
+    });
+    let chars = (inner.w / CELL_W).max(1) as usize;
+    let mut y = portrait.bottom() + 6;
+    for (text, color) in state.into_iter().chain(tuning) {
+        for line in wrap(&text, chars) {
+            if y + CELL_H > inner.bottom() {
+                return;
+            }
+            draw.text(inner.x, y, 1, color, &line);
+            y += CELL_H;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tuning_building_says_what_it_tunes() {
+        let line = |vein, nodes, per_minute| {
+            Tuning {
+                vein,
+                nodes,
+                per_minute,
+            }
+            .line()
+        };
+        assert_eq!(line(false, 0, 0), "No seep in reach");
+        assert_eq!(line(true, 0, 0), "No vein in reach");
+        assert_eq!(
+            line(false, 1, 200),
+            "Tuning a seep: about 200 Grub a minute"
+        );
+        assert_eq!(line(true, 1, 50), "Tuning a vein: about 50 Marrow a minute");
+        assert_eq!(
+            line(false, 2, 400),
+            "Tuning 2 seeps: about 400 Grub a minute"
+        );
+    }
+
+    #[test]
+    fn long_lines_wrap_at_spaces_to_the_card() {
+        let lines = wrap(UNPOWERED, 28);
+        assert!(lines.len() >= 2 && lines.iter().all(|l| l.chars().count() <= 28));
+        assert_eq!(lines.join(" "), UNPOWERED);
+        assert_eq!(wrap("Powered", 28), ["Powered"]);
+    }
 
     #[test]
     fn the_clock_shows_hours_only_when_there_are_some() {

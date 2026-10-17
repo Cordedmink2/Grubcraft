@@ -13,9 +13,11 @@
 // Some(the building it upgrades), with the upgrade's cost and time), cost,
 // build_time (seconds at Standard tempo), hp, armour (Fortified, Structure,
 // Living), footprint (tiles across and deep), supply (cap it adds), flags
-// (DropOffGrub, DropOffMarrow, PowersField, AntiAir), attack (towers: range in
-// tiles, damage per shot, seconds between shots, shots per volley) and effect
-// (plain words). starting_buildings and starting_units (unit name and count)
+// (DropOffGrub, DropOffMarrow, PowersField, NeedsPower, AntiAir, Larvae,
+// Veins), field (tiles a PowersField's power or Veins' root-veins reach from
+// its edge), tunes (Choir: Some((node: Seeps or Veins, tiles))), attack
+// (towers: range in tiles, damage per shot, seconds between shots, shots per
+// volley) and effect (plain words). starting_buildings and starting_units (unit name and count)
 // are what a player starts Conquest with (docs/04-economy.md; Brood larvae are
 // a meter, not units). A unit's `from: Building("...")` names one of these
 // buildings.
@@ -81,8 +83,8 @@
             armour: Fortified,
             footprint: (4, 4),
             supply: 4,
-            // Plain workers bring both here until Resonators are built.
-            flags: [PowersField, DropOffGrub, DropOffMarrow],
+            flags: [PowersField],
+            field: 8,
             effect: "Main building. Builds Tuners and Conductors and powers buildings within 8 tiles.",
         ),
         (
@@ -96,8 +98,8 @@
             armour: Fortified,
             footprint: (4, 4),
             supply: 14,
-            // Plain workers bring both here until Resonators are built.
-            flags: [PowersField, DropOffGrub, DropOffMarrow],
+            flags: [PowersField],
+            field: 8,
             effect: "Tier 2: Harmonic Walkers, Glass Striders, Skyglass, the Conductor and a second hero.",
         ),
         (
@@ -111,8 +113,8 @@
             armour: Fortified,
             footprint: (4, 4),
             supply: 24,
-            // Plain workers bring both here until Resonators are built.
-            flags: [PowersField, DropOffGrub, DropOffMarrow],
+            flags: [PowersField],
+            field: 8,
             effect: "Tier 3: monsters, top upgrades and a third hero.",
         ),
         (
@@ -126,6 +128,8 @@
             footprint: (2, 2),
             supply: 4,
             flags: [PowersField],
+            field: 6,
+            tunes: Some((node: Seeps, tiles: 4)),
             effect: "Tunes a seep within 4 tiles to make Grub with no workers, links with Resonators within 14 tiles into chords, and powers buildings within 6 tiles.",
         ),
         (
@@ -139,7 +143,9 @@
             footprint: (2, 2),
             supply: 4,
             flags: [PowersField],
-            effect: "A Resonator built on a Marrow vein: about 50 Marrow a minute. Links chords and powers buildings like a Resonator.",
+            field: 6,
+            tunes: Some((node: Veins, tiles: 3)),
+            effect: "A Resonator built against a Marrow vein (within 3 tiles): about 50 Marrow a minute. Links chords and powers buildings like a Resonator.",
         ),
         (
             name: "Forge of Facets",
@@ -150,6 +156,7 @@
             hp: 1300,
             armour: Structure,
             footprint: (4, 4),
+            flags: [NeedsPower],
             effect: "Builds every Choir regiment that walks.",
         ),
         (
@@ -161,6 +168,7 @@
             hp: 1100,
             armour: Structure,
             footprint: (3, 3),
+            flags: [NeedsPower],
             effect: "Researches upgrades.",
         ),
         (
@@ -172,6 +180,7 @@
             hp: 1100,
             armour: Structure,
             footprint: (3, 3),
+            flags: [NeedsPower],
             effect: "Builds Skyglass.",
         ),
         (
@@ -183,7 +192,7 @@
             hp: 900,
             armour: Fortified,
             footprint: (2, 2),
-            flags: [AntiAir],
+            flags: [NeedsPower, AntiAir],
             attack: Some((range: 30.0, damage: 10, reload: 2.0, shots: 1)),
             effect: "A beam that hits ground and air. Every 20 s it tolls, silencing enemy abilities within 10 tiles for 5 s.",
         ),
@@ -196,6 +205,7 @@
             hp: 1100,
             armour: Structure,
             footprint: (3, 3),
+            flags: [NeedsPower],
             effect: "Builds and restores heroes.",
         ),
     ],
@@ -207,7 +217,7 @@
             supply: 1,
             train_time: 14.0,
             from: Building("Spire"),
-            flags: [Crystal],
+            flags: [Crystal, BuildsOnly],
             abilities: [
                 (
                     name: "Construct",

@@ -45,6 +45,8 @@ fn hall_stats() -> BuildingStats {
         supply: 15,
         flags: DROP_OFF_GRUB | DROP_OFF_MARROW,
         attack: None,
+        field: 0,
+        tunes: None,
     }
 }
 

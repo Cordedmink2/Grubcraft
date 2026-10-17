@@ -29,6 +29,7 @@ mod hash;
 pub mod larvae;
 pub mod morale;
 pub mod nav;
+pub mod power;
 pub mod production;
 mod regiments;
 pub mod scenario;
@@ -93,7 +94,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 15;
+pub const SIM_VERSION: u32 = 16;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -829,6 +830,45 @@ impl World {
     /// Whether `point` lies on `owner`'s linked root-veins.
     pub fn on_veins(&self, owner: PlayerId, point: FxVec2) -> bool {
         self.structures().is_some_and(|s| s.on_veins(owner, point))
+    }
+
+    /// The finished buildings powering a field (Conquest only).
+    pub fn power_fields(&self) -> impl Iterator<Item = power::FieldView> + '_ {
+        self.structures()
+            .into_iter()
+            .flat_map(Structures::field_views)
+    }
+
+    /// For a building that needs power: whether it has it now. `None` for
+    /// any other (Conquest only).
+    pub fn powered(&self, h: StructureHandle) -> Option<bool> {
+        let s = self.structures()?;
+        let i = s.resolve(h)?;
+        s.needs_power(i).then(|| s.powered(i))
+    }
+
+    /// Whether one of `owner`'s fields of power reaches a building of type
+    /// `building` with its north-west tile at `tile` (Conquest only).
+    pub fn power_reaches(&self, owner: PlayerId, building: BuildingId, tile: (i32, i32)) -> bool {
+        self.structures().is_some_and(|s| {
+            s.buildings().get(usize::from(building)).is_some_and(|b| {
+                s.power_reaches(
+                    owner,
+                    [tile.0, tile.1, i32::from(b.width), i32::from(b.depth)],
+                )
+            })
+        })
+    }
+
+    /// Whether regiment `h` is a worker that builds but does not gather
+    /// (see [`ConquestUnit::builds_only`]).
+    pub fn builds_only(&self, h: RegimentHandle) -> bool {
+        let Some(c) = &self.conquest else {
+            return false;
+        };
+        self.regiments
+            .get(h)
+            .is_some_and(|r| c.unit(r.unit).builds_only)
     }
 
     /// Whether `player` could have a worker lay a building of type

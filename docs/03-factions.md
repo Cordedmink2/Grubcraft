@@ -190,8 +190,9 @@ Ancient crystal automata, the Titan's own nervous system come loose and self-awa
 - Resonators within 14 tiles of each other link with a visible beam. **Any three mutually linked Resonators form a Chord**: a glowing triangle on the ground.
 - **Harmony bonus:** every seep inside a Chord produces extra Grub, scaling with the triangle's area, from +10% for a small chord to +60% at the maximum area. A seep only takes its best chord; overlapping chords do not stack.
 - **The weak point is geometry.** Kill one Resonator and every chord using it collapses. Bigger triangles pay more and are harder to defend. Every Choir player is constantly choosing between greed and safety, and every opponent can *see* that choice on the map.
-- Marrow is harvested by **Siphons**, special Resonators built on Marrow veins.
+- Marrow is harvested by **Siphons**, special Resonators built against Marrow veins.
 - Choir structures must sit inside a Resonator's field (powered); outside it they shut down.
+- *Built (2026-10-17, faction depth stage 3): Resonators and Siphons tune nodes and the Choir's buildings need power. A finished Resonator works every seep within 4 tiles of its edge, and a Siphon every Marrow vein within 3, with no workers: about 200 Grub or 50 Marrow a minute each, running the node dry and to dregs as workers would. A node takes only the tuner whose centre is nearest it. The Spire powers a field 8 tiles from its edge and a Resonator or Siphon 6; every other Choir building can only be laid inside one of its owner's fields and trains nothing while none reaches it. The Spire takes no loads and Tuners don't gather, so the Choir's income is its Resonators and Siphons: it starts with two Resonators, placed in reach of the base's seeps. On the field your fields of power show as faint rings (bright while you lay a building that needs power), beams run from your Resonators and Siphons to the nodes they tune, and a building's card says whether it is powered and what it tunes a minute. Chords and Resonance come next.*
 
 ### Faction meter: **Resonance** (0 to 100)
 Charges continuously while chords are intact (faster with more chords). Spent on:

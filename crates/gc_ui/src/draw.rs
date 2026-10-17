@@ -98,6 +98,46 @@ pub fn fit(text: &str, max_chars: usize) -> String {
     s.chars().take(max_chars).collect()
 }
 
+/// `text` broken into lines of at most `width` characters, at spaces where
+/// it can (a word longer than a line is cut).
+pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let mut word = word;
+        loop {
+            let used = line.chars().count();
+            let need = word.chars().count() + usize::from(used > 0);
+            if used + need <= width {
+                if used > 0 {
+                    line.push(' ');
+                }
+                line.push_str(word);
+                break;
+            }
+            if used > 0 {
+                lines.push(std::mem::take(&mut line));
+                continue;
+            }
+            // A word wider than the line: cut it.
+            let cut = word
+                .char_indices()
+                .nth(width)
+                .map_or(word.len(), |(at, _)| at);
+            lines.push(word[..cut].to_string());
+            word = &word[cut..];
+            if word.is_empty() {
+                break;
+            }
+        }
+    }
+    if !line.is_empty() || lines.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
 #[derive(Default)]
 pub struct DrawList {
     pub quads: Vec<Quad>,
