@@ -18,6 +18,7 @@ use glam::Vec2;
 
 use super::Sense;
 use super::kit::{EconomyStyle, KitBuilding, KitUnit};
+use super::strategy::Early;
 use super::{placing, spymaster};
 use crate::orders::Hands as Clicks;
 use crate::perception::{Class, Seen, to_fx_vec, v2};
@@ -217,14 +218,17 @@ impl Steward {
         self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);
         // Short of an army, soldiers come before more workers, and the
-        // money it has goes on them first.
-        if self.arming {
+        // money it has goes on them first; but an opening's buildings come
+        // first while it lasts, or arming would spend what it saves for
+        // them.
+        let soldiers_first = self.arming && s.plan.early == Early::USUAL;
+        if soldiers_first {
             self.train_army(s, clicks, &look);
         }
         self.train_workers(s, clicks, &look);
         self.build(s, clicks, &look);
         self.tier_up(s, clicks, &look);
-        if !self.arming {
+        if !soldiers_first {
             self.train_army(s, clicks, &look);
         }
         if let Some(rally) = rally {

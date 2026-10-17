@@ -63,7 +63,13 @@ pub struct Realm {
     expand_after: u32,
     plan: Strategy,
     opening: &'static Opening,
+    /// What it has made of its enemies' early builds.
+    reads: Vec<spymaster::Scouted>,
+    next_read: u32,
 }
+
+/// Ticks between its looks at its enemies' builds.
+const READ_TICKS: u32 = 2 * gc_sim::TICKS_PER_SECOND;
 
 impl Realm {
     pub fn new(
@@ -86,6 +92,30 @@ impl Realm {
             expand_after,
             plan,
             opening,
+            reads: Vec::new(),
+            next_read: 0,
+        }
+    }
+
+    /// The enemy build it answers at tick `now`, while it does.
+    fn answering(&self, now: u32) -> Option<spymaster::Scouted> {
+        if !self.plan.adapts || now >= strategy::ANSWER_UNTIL {
+            return None;
+        }
+        spymaster::to_answer(&self.reads)
+    }
+
+    /// An enemy by its faction if it knows it, else by its seat.
+    fn enemy_name(&self, owner: u8) -> String {
+        match self
+            .marshal
+            .belief
+            .iter()
+            .find(|b| b.owner == owner)
+            .and_then(|b| b.faction)
+        {
+            Some(f) => f.name().to_string(),
+            None => format!("player {}", owner + 1),
         }
     }
 
@@ -107,7 +137,7 @@ impl Realm {
         out: &mut Vec<PlayerCommand>,
     ) {
         let kit = Arc::clone(&self.kit);
-        let sense = Sense {
+        let mut sense = Sense {
             world,
             view: captain.view,
             kit: &kit,
@@ -118,6 +148,24 @@ impl Realm {
             expand_after: self.expand_after,
             plan: self.plan.opening(self.opening_at(captain.view.tick)),
         };
+        // A level that adapts reads its enemies' early builds and answers
+        // the most pressing.
+        if self.plan.adapts && sense.now < strategy::ANSWER_UNTIL && sense.now >= self.next_read {
+            self.next_read = sense.now + READ_TICKS;
+            for r in spymaster::read_builds(&sense, &mut self.reads) {
+                captain.journal.note(
+                    sense.now,
+                    format!(
+                        "Scouted {}: {}; answering with {}",
+                        self.enemy_name(r.owner),
+                        r.read.name(),
+                        r.read.answer_name()
+                    ),
+                );
+            }
+        }
+        let answer = self.answering(sense.now);
+        sense.plan = sense.plan.answer(answer.map(|a| a.read), sense.now);
         self.clicks.refresh(sense.now);
         self.steward
             .think(&sense, &mut self.clicks, self.marshal.rally);
@@ -180,10 +228,17 @@ impl Realm {
         } else {
             format!("opened with {}", self.opening.name)
         };
+        let answer = self.answering(now).map_or(String::new(), |a| {
+            format!(
+                "; answering {}'s {}",
+                self.enemy_name(a.owner),
+                a.read.name()
+            )
+        });
         let mut lines = vec![line(
             "economy",
             format!(
-                "{opening}; keeps {}% workers, {producers} producer{} a tier   saving: {saving}   arming: {arming}",
+                "{opening}{answer}; keeps {}% workers, {producers} producer{} a tier   saving: {saving}   arming: {arming}",
                 self.plan.workers_percent,
                 if producers == 1 { "" } else { "s" }
             ),
