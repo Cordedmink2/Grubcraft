@@ -38,13 +38,13 @@ pub enum SoundId {
     MusicCalm = 11,
     /// Music, battle layer (loops, plays in step with the calm layer).
     MusicBattle = 12,
-    /// A Ember Clans regiment charges into contact: its war voice.
+    /// An Ember Clans regiment charges into contact: its war voice.
     EmberCharge = 13,
-    /// A Ember Clans regiment breaks and runs: its war voice.
+    /// An Ember Clans regiment breaks and runs: its war voice.
     EmberRout = 14,
-    /// A Ember Clans regiment rallies: its war voice.
+    /// An Ember Clans regiment rallies: its war voice.
     EmberRally = 15,
-    /// The Ember Clans regiment's champion wins the pre-battle duel; the regiment roars.
+    /// An Ember Clans regiment's champion wins the pre-battle duel; the regiment roars.
     EmberVictory = 16,
     /// A Brood regiment charges into contact: its war voice.
     BroodCharge = 17,
@@ -52,7 +52,7 @@ pub enum SoundId {
     BroodRout = 18,
     /// A Brood regiment rallies: its war voice.
     BroodRally = 19,
-    /// The Brood regiment's champion wins the pre-battle duel; the regiment roars.
+    /// A Brood regiment's champion wins the pre-battle duel; the regiment roars.
     BroodVictory = 20,
     /// A Shard Choir regiment charges into contact: its war voice.
     ChoirCharge = 21,
@@ -60,7 +60,7 @@ pub enum SoundId {
     ChoirRout = 22,
     /// A Shard Choir regiment rallies: its war voice.
     ChoirRally = 23,
-    /// The Shard Choir regiment's champion wins the pre-battle duel; the regiment roars.
+    /// A Shard Choir regiment's champion wins the pre-battle duel; the regiment roars.
     ChoirVictory = 24,
     /// A Carrion Concord regiment charges into contact: its war voice.
     CarrionCharge = 25,
@@ -68,13 +68,39 @@ pub enum SoundId {
     CarrionRout = 26,
     /// A Carrion Concord regiment rallies: its war voice.
     CarrionRally = 27,
-    /// The Carrion Concord regiment's champion wins the pre-battle duel; the regiment roars.
+    /// A Carrion Concord regiment's champion wins the pre-battle duel; the regiment roars.
     CarrionVictory = 28,
 }
 
 impl SoundId {
-    /// Index in [`SoundId::ALL`] of the first battle cry (four per faction).
-    const FIRST_CRY: usize = 13;
+    /// The battle cries, by faction (Ember Clans, Brood, Shard Choir,
+    /// Carrion Concord) and by [`Cry`].
+    const CRIES: [[SoundId; 4]; 4] = [
+        [
+            SoundId::EmberCharge,
+            SoundId::EmberRout,
+            SoundId::EmberRally,
+            SoundId::EmberVictory,
+        ],
+        [
+            SoundId::BroodCharge,
+            SoundId::BroodRout,
+            SoundId::BroodRally,
+            SoundId::BroodVictory,
+        ],
+        [
+            SoundId::ChoirCharge,
+            SoundId::ChoirRout,
+            SoundId::ChoirRally,
+            SoundId::ChoirVictory,
+        ],
+        [
+            SoundId::CarrionCharge,
+            SoundId::CarrionRout,
+            SoundId::CarrionRally,
+            SoundId::CarrionVictory,
+        ],
+    ];
 
     pub const COUNT: usize = 29;
 
@@ -122,7 +148,7 @@ impl SoundId {
     /// 3 Carrion Concord, the order of the game's factions; a larger number
     /// wraps) for an event.
     pub fn cry(faction: u8, cry: Cry) -> SoundId {
-        SoundId::ALL[SoundId::FIRST_CRY + usize::from(faction % 4) * 4 + cry as usize]
+        SoundId::CRIES[usize::from(faction % 4)][cry as usize]
     }
 }
 

@@ -2893,7 +2893,7 @@ impl Running {
                     |unit| {
                         let i = usize::from(unit);
                         Some(sounds::Voice {
-                            faction: units.factions.get(i)?.index(),
+                            faction: *units.factions.get(i)?,
                             // Regiments that only shoot don't charge.
                             charges: units.stats.get(i)?.range.raw() == 0,
                         })

@@ -17,7 +17,7 @@ use gc_audio::{Audio, Bank, Cry, SoundId};
 use gc_platform::logln;
 use gc_sim::champions::Outcome;
 use gc_sim::events::{Event, VolleyId};
-use gc_sim::{MoraleState, RegimentHandle, TICKS_PER_SECOND, UnitId, World};
+use gc_sim::{MoraleState, PlayerId, RegimentHandle, TICKS_PER_SECOND, UnitId, World};
 use glam::Vec2;
 use std::time::{Duration, Instant};
 
@@ -40,12 +40,14 @@ const AMBIENT_EVERY: u32 = 10;
 /// wall of noise.
 const CRY_TICKS: u32 = 28;
 const MAX_CRIES: usize = 4;
-/// Ticks before the same regiment is heard to cry the same cry again, for
-/// a charge, a rout and a rally.
-const CRY_COOLDOWN: [u32; 3] = [
+/// Ticks before the same regiment is heard to cry the same cry again, by
+/// [`Cry`]: a charge, a rout, a rally (a champion's victory is no
+/// regiment's, and is cheered once a duel).
+const CRY_COOLDOWN: [u32; 4] = [
     10 * TICKS_PER_SECOND,
     8 * TICKS_PER_SECOND,
     8 * TICKS_PER_SECOND,
+    0,
 ];
 /// A cry carries this much further than the hearing range's one.
 const CRY_REACH: f32 = 1.3;
@@ -80,12 +82,11 @@ pub enum UiSound {
     Attack,
 }
 
-/// What a regiment type sounds like: its faction (0 Ember Clans, 1 Brood, 2
-/// Shard Choir, 3 Carrion Concord) and whether it charges (rather than
-/// only shooting).
+/// What a regiment type sounds like: its faction and whether it charges
+/// (rather than only shooting).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Voice {
-    pub faction: u8,
+    pub faction: gc_ai::Faction,
     pub charges: bool,
 }
 
@@ -97,10 +98,15 @@ struct CryCap {
 }
 
 impl CryCap {
+    /// Whether [`MAX_CRIES`] are still sounding at `tick`.
+    fn full(&mut self, tick: u32) -> bool {
+        self.starts.retain(|&start| tick < start + CRY_TICKS);
+        self.starts.len() >= MAX_CRIES
+    }
+
     /// Room for one more cry at `tick`? If so, it is counted.
     fn admit(&mut self, tick: u32) -> bool {
-        self.starts.retain(|&start| tick < start + CRY_TICKS);
-        if self.starts.len() >= MAX_CRIES {
+        if self.full(tick) {
             return false;
         }
         self.starts.push(tick);
@@ -113,19 +119,18 @@ struct Seen {
     handle: RegimentHandle,
     /// Tick before which no further blow is played for it.
     quiet_until: u32,
-    /// Ticks before which it is not heard to cry a charge, a rout, a rally.
-    cry_quiet: [u32; 3],
+    /// Ticks before which it is not heard to cry each [`Cry`] again.
+    cry_quiet: [u32; 4],
 }
 
 impl Seen {
-    /// Whether the cry on cooldown `slot` may be heard from this regiment
-    /// at `tick`.
-    fn may_cry(&self, slot: usize, tick: u32) -> bool {
-        tick >= self.cry_quiet[slot]
+    /// Whether this regiment may be heard to cry `kind` at `tick`.
+    fn may_cry(&self, kind: Cry, tick: u32) -> bool {
+        tick >= self.cry_quiet[kind as usize]
     }
 
-    fn cried(&mut self, slot: usize, tick: u32) {
-        self.cry_quiet[slot] = tick + CRY_COOLDOWN[slot];
+    fn cried(&mut self, kind: Cry, tick: u32) {
+        self.cry_quiet[kind as usize] = tick + CRY_COOLDOWN[kind as usize];
     }
 }
 
@@ -170,23 +175,17 @@ fn forget_match(
     *duel_cried = None;
 }
 
-/// Which of a regiment's cooldowns a cry is on (the champion's victory cry
-/// is no regiment's).
-fn cooldown_slot(kind: Cry) -> Option<usize> {
-    match kind {
-        Cry::Charge => Some(0),
-        Cry::Rout => Some(1),
-        Cry::Rally => Some(2),
-        Cry::Victory => None,
-    }
-}
-
 /// Whether a regiment at `at` marching along `heading` (a unit vector) is
 /// close enough on a foe at `foe`, and facing it, to start its charge cry.
 fn closing_on(at: Vec2, heading: Vec2, foe: Vec2) -> bool {
     let offset = foe - at;
-    let distance = offset.length();
-    distance > 0.01 && distance < CHARGE_LEAD && offset.dot(heading) >= CHARGE_AHEAD * distance
+    let d2 = offset.length_squared();
+    let ahead = offset.dot(heading);
+    // Squared, so no square root for the many far away.
+    d2 > 1e-4
+        && d2 < CHARGE_LEAD * CHARGE_LEAD
+        && ahead >= 0.0
+        && ahead * ahead >= CHARGE_AHEAD * CHARGE_AHEAD * d2
 }
 
 /// A Settings slider (0..=100) as a volume, 0.0..=1.0.
@@ -346,7 +345,7 @@ impl Sounds {
             if self.hushed {
                 continue;
             }
-            if r.engaged && (at - self.focus).length() < self.hearing * 1.5 {
+            if r.engaged && self.in_earshot(at, 1.5) {
                 fighting += 1.0;
             }
         }
@@ -368,7 +367,7 @@ impl Sounds {
             *slot = Some(Seen {
                 handle,
                 quiet_until: 0,
-                cry_quiet: [0; 3],
+                cry_quiet: [0; 4],
             });
         }
         slot.as_mut().expect("just filled")
@@ -459,20 +458,19 @@ impl Sounds {
         kind: Cry,
         at: Vec2,
     ) -> bool {
-        if self.hushed || (at - self.focus).length() >= self.hearing * CRY_REACH {
+        if self.hushed || !self.in_earshot(at, CRY_REACH) {
             return false;
         }
-        let slot = regiment.zip(cooldown_slot(kind));
-        if let Some((h, slot)) = slot
-            && !self.seen_mut(h).may_cry(slot, tick)
+        if let Some(h) = regiment
+            && !self.seen_mut(h).may_cry(kind, tick)
         {
             return false;
         }
         if !self.cries.admit(tick) {
             return false;
         }
-        if let Some((h, slot)) = slot {
-            self.seen_mut(h).cried(slot, tick);
+        if let Some(h) = regiment {
+            self.seen_mut(h).cried(kind, tick);
         }
         let gain = match kind {
             Cry::Charge => 0.9,
@@ -480,7 +478,7 @@ impl Sounds {
             Cry::Victory => 1.0,
         };
         self.play_at(
-            SoundId::cry(voice.faction, kind),
+            SoundId::cry(voice.faction.index(), kind),
             at,
             gain,
             CRY_REACH,
@@ -501,9 +499,14 @@ impl Sounds {
         voice: &impl Fn(UnitId) -> Option<Voice>,
     ) {
         let tick = world.tick_count();
-        if !tick.is_multiple_of(CHARGE_SCAN_EVERY) {
+        // Nothing a cry could come of: not heard, between scans, or as many
+        // cries as may sound already sounding.
+        if !heard || !tick.is_multiple_of(CHARGE_SCAN_EVERY) || self.cries.full(tick) {
             return;
         }
+        // Who could be charged, gathered once, on the first regiment that
+        // might charge.
+        let mut foes: Option<Vec<(Vec2, PlayerId)>> = None;
         for r in world.regiments.iter() {
             if !r.moving || r.engaged || r.morale.broken() || !r.formation.can_charge() {
                 continue;
@@ -512,22 +515,33 @@ impl Sounds {
                 continue;
             };
             let at = from_fx_vec(r.position);
-            // Only a regiment near the camera is worth the search.
-            if (at - self.focus).length() >= self.hearing * CRY_REACH {
+            // Only a regiment near the camera, seen, and not just heard to
+            // charge is worth the search.
+            if !self.in_earshot(at, CRY_REACH)
+                || !shown(r.handle)
+                || !self.seen_mut(r.handle).may_cry(Cry::Charge, tick)
+            {
                 continue;
             }
-            let heading = from_fx_vec(r.facing.to_vec());
-            let closing = world.regiments.iter().any(|q| {
-                closing_on(at, heading, from_fx_vec(q.position))
-                    && !q.morale.broken()
-                    && world.hostile(r.owner, q.owner)
+            let foes = foes.get_or_insert_with(|| {
+                world
+                    .regiments
+                    .iter()
+                    .filter(|q| !q.morale.broken())
+                    .map(|q| (from_fx_vec(q.position), q.owner))
+                    .collect()
             });
-            if closing {
-                self.hushed = !heard || !shown(r.handle);
-                self.cry(tick, Some(r.handle), v, Cry::Charge, at);
+            let heading = from_fx_vec(r.facing.to_vec());
+            let closing = foes
+                .iter()
+                .any(|&(foe, owner)| closing_on(at, heading, foe) && world.hostile(r.owner, owner));
+            if closing
+                && self.cry(tick, Some(r.handle), v, Cry::Charge, at)
+                && self.cries.full(tick)
+            {
+                break;
             }
         }
-        self.hushed = false;
     }
 
     /// The winner of the champions' duel has his regiment's side roar, once,
@@ -610,6 +624,11 @@ impl Sounds {
     /// Play a sound at a map position: quieter with distance from the
     /// camera's ground point, panned by which side of the screen it is on.
     /// `reach` stretches how far it carries (horns carry further than blows).
+    /// Whether `at` is within `reach` times the hearing range.
+    fn in_earshot(&self, at: Vec2, reach: f32) -> bool {
+        (at - self.focus).length() < self.hearing * reach
+    }
+
     fn play_at(&self, sound: SoundId, at: Vec2, gain: f32, reach: f32, priority: u8) {
         if self.hushed {
             return;
@@ -699,7 +718,7 @@ mod tests {
             Some(Seen {
                 handle,
                 quiet_until: 900,
-                cry_quiet: [900; 3],
+                cry_quiet: [900; 4],
             });
             4
         ];
@@ -740,14 +759,13 @@ mod tests {
         let mut seen = Seen {
             handle,
             quiet_until: 0,
-            cry_quiet: [0; 3],
+            cry_quiet: [0; 4],
         };
-        assert!(seen.may_cry(0, 50));
-        seen.cried(0, 50);
-        assert!(!seen.may_cry(0, 50 + CRY_COOLDOWN[0] - 1));
-        assert!(seen.may_cry(0, 50 + CRY_COOLDOWN[0]));
-        assert!(seen.may_cry(1, 51), "a rout is another cry");
-        assert_eq!(cooldown_slot(Cry::Victory), None);
+        assert!(seen.may_cry(Cry::Charge, 50));
+        seen.cried(Cry::Charge, 50);
+        assert!(!seen.may_cry(Cry::Charge, 50 + CRY_COOLDOWN[0] - 1));
+        assert!(seen.may_cry(Cry::Charge, 50 + CRY_COOLDOWN[0]));
+        assert!(seen.may_cry(Cry::Rout, 51), "a rout is another cry");
     }
 
     #[test]
