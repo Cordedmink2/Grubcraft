@@ -4603,6 +4603,13 @@ impl Running {
             buildings::push_rally(&self.world, h, colour, &mut self.instances);
         }
         buildings::push_nodes(&self.world, &mut self.instances);
+        buildings::push_veins(
+            &self.world,
+            self.sandbox.side,
+            self.reveal_all,
+            |p| color_of(parties, p),
+            &mut self.instances,
+        );
         buildings::push_heart(&self.world, parties, &mut self.instances);
     }
 

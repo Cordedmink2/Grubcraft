@@ -81,6 +81,10 @@ pub enum BuildingFlag {
     /// power to work.
     PowersField,
     AntiAir,
+    /// Brood: holds larvae and grows them (docs/04, "Larvae").
+    Larvae,
+    /// Brood: spreads root-veins (docs/03, "the vein network").
+    Veins,
 }
 
 #[derive(Deserialize)]
@@ -194,6 +198,10 @@ pub enum Flag {
     DirectFire,
     Detector,
     Terror,
+    /// Brood: hatches from a larva (docs/04, "Larvae").
+    Hatches,
+    /// Brood: a worker used up by the building it starts.
+    Consumed,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]

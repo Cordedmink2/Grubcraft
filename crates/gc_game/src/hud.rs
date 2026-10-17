@@ -427,6 +427,21 @@ impl Running {
         let camera = self.active_camera();
         let (view_proj, plane) = (camera.view_proj(), camera.ground_plane());
 
+        // The rubber band of a left-drag that will box select on release
+        // (not one that places, builds or carries out an armed order).
+        let band = self
+            .selection_box()
+            .filter(|_| {
+                (self.hud.armed.is_none() || self.hud_wants_mouse())
+                    && !self.sandbox.placing
+                    && !self.sandbox.building_tool
+            })
+            .map(|(lo, hi)| {
+                let (x0, y0) = ((lo.x / scale) as i32, (lo.y / scale) as i32);
+                let (x1, y1) = ((hi.x / scale) as i32, (hi.y / scale) as i32);
+                gc_ui::Rect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1))
+            });
+
         let hud = &mut self.hud;
         if self.selected.is_empty() {
             hud.armed = None;
@@ -597,7 +612,6 @@ impl Running {
         }; QUEUE_SLOTS];
         let mut queued = 0;
         if let Some((h, p)) = picked_structure.zip(self.world.production()) {
-            let front = self.world.training_percent(h).unwrap_or(0);
             for (i, &u) in p.queue_of(h).iter().take(QUEUE_SLOTS).enumerate() {
                 queue[i] = QueueItem {
                     name: self
@@ -605,7 +619,7 @@ impl Running {
                         .names
                         .get(usize::from(u))
                         .map_or("", String::as_str),
-                    progress: if i == 0 { front } else { 0 },
+                    progress: self.world.queue_percent(h, i).unwrap_or(0),
                 };
                 queued = i + 1;
             }
@@ -622,6 +636,16 @@ impl Running {
                     .upgrading
                     .map(|(to, percent)| (self.buildings.name(to), percent)),
                 queue: &queue[..queued],
+                // Your own finished ones only: a foundation grows none, and
+                // an enemy's larvae are not yours to count.
+                larvae: (s.owner == self.sandbox.side && s.finished())
+                    .then(|| self.world.larvae_in(s.handle))
+                    .flatten()
+                    .map(|n| (n, gc_sim::larvae::LARVA_CAP)),
+                // Your own finished living buildings regrow on your veins.
+                rooted: (s.owner == self.sandbox.side)
+                    .then(|| self.world.rooted(s.handle))
+                    .flatten(),
             });
 
         let mut input = std::mem::take(&mut hud.input);
@@ -629,6 +653,11 @@ impl Running {
         input.shift = self.input.shift;
         input.now_ms = now_ms;
         hud.draw.clear();
+        // Drawn first, so the bar and panels stay on top of it.
+        if let Some(r) = band {
+            hud.draw.rect(r, [120, 255, 140, 36]);
+            hud.draw.border(r, 1, [170, 255, 180, 230]);
+        }
         hud.events.clear();
         let data = HudData {
             grid: &grid,
@@ -676,7 +705,6 @@ impl Running {
                 });
             draw_ride_hint(&mut self.hud.draw, screen, name);
         }
-
         upload_ui(
             &mut self.renderer,
             &mut self.ui_quads,
@@ -815,6 +843,8 @@ impl Running {
             supply_used: b.supply_used,
             supply_cap: b.supply_cap,
             upkeep_percent: b.upkeep_percent(),
+            larvae: b.larvae,
+            larva_room: b.larva_room,
             clock_secs: self.world.tick_count() / gc_sim::TICKS_PER_SECOND,
         })
     }
