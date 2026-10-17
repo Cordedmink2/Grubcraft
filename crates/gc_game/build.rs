@@ -55,29 +55,23 @@ fn main() {
     .expect("write viewer catalog");
 }
 
-/// Extra model packs joined after the soldiers, each directory's `*.pak`
-/// files in name order: building packs, then scenery packs.
-const EXTRA_PACKS: [&str; 2] = ["buildings", "scenery"];
-
-/// Join the soldier pack (`assets/models.pak`) and every extra pack
-/// (`assets/<dir>/*.pak` for each of [`EXTRA_PACKS`]) into the one model
-/// pack the game embeds. They are kept apart in the repository because
-/// GitHub refuses files over 100 MB, and so each set bakes on its own.
+/// Join the soldier pack (`assets/models.pak`) and every building pack
+/// (`assets/buildings/*.pak`, by name) into the one model pack the game
+/// embeds. They are kept apart in the repository because GitHub refuses
+/// files over 100 MB, and so each faction's buildings bake on their own.
 fn join_models(assets: &std::path::Path, out_dir: &std::path::Path) {
     use gc_assets::model::{ModelTables, Models};
+    let buildings = assets.join("buildings");
+    println!("cargo:rerun-if-changed={}", buildings.display());
     let mut packs = vec![assets.join("models.pak")];
-    for dir in EXTRA_PACKS {
-        let dir = assets.join(dir);
-        println!("cargo:rerun-if-changed={}", dir.display());
-        let mut more: Vec<PathBuf> = std::fs::read_dir(&dir)
-            .into_iter()
-            .flatten()
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "pak"))
-            .collect();
-        more.sort();
-        packs.extend(more);
-    }
+    let mut more: Vec<PathBuf> = std::fs::read_dir(&buildings)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "pak"))
+        .collect();
+    more.sort();
+    packs.extend(more);
     let mut joined = ModelTables::default();
     for path in &packs {
         println!("cargo:rerun-if-changed={}", path.display());
