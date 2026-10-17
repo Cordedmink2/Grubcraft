@@ -798,6 +798,7 @@ mod tests {
             max_hp: 100,
             built_percent: 30,
             upgrading: None,
+            growing: false,
             seen: 1,
         };
         let model = |s: &StructureView| looks.model_of(s).map(|m| models.models[m].name());
