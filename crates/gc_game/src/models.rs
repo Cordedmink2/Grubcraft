@@ -1,5 +1,6 @@
-//! Soldier models, baked from glTF by `tools/gc_artbake` into
-//! `assets/models.pak` and embedded in the executable, and the choice of
+//! Soldier and building models, baked from glTF by `tools/gc_artbake` into
+//! `assets/models.pak` and `assets/buildings/*.pak`, joined into one pack by
+//! the build script and embedded in the executable, and the choice of
 //! which animation frame each soldier shows.
 
 use gc_assets::model::{ClipKind, ClipRecord, Models};
@@ -7,7 +8,7 @@ use gc_assets::{Aligned, Pack};
 
 use crate::puppets::Move;
 
-static PACK: &Aligned<[u8]> = &Aligned(*include_bytes!("../../../assets/models.pak"));
+static PACK: &Aligned<[u8]> = &Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/models.pak")));
 
 /// The embedded models. The pack is checked when the game starts; a failure
 /// means the committed pack is broken, so the game runs with boxes instead.

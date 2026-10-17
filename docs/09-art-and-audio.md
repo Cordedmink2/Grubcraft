@@ -21,6 +21,10 @@ Stylized low-poly with rich lighting, as if the battlefield were a hand-painted 
 | Choir | Triangular, faceted, floating parts | Pale glass, cyan and violet light | Light triangles over territory, refracting beams |
 | Carrion Concord | Tall, narrow, ornate, hanging lanterns | Bone white, verdigris, ledger-ink blue, lantern orange | Long caravans, ghost-lights over battlefields |
 
+### Buildings
+- Buildings are 3D models built in Blender by script, from a shared kit and bake script in the shared project folder (`design/buildings/source/`, brief in `design/buildings/BRIEF.md`). Built 2026-10-17, starting with the Ember Clans' Clan Hall.
+- Each building has four looks (foundation, frame with scaffolding, nearly done, finished), so its construction is visible. Each faction builds in its own way, and each building uses one material shared by its four looks. See [21 · Buildings](21-buildings.md#models-and-construction-stages) for the stages, budgets and packs.
+
 ### The world
 - The Titan is everywhere at large scale: ridges are visibly ribs, lakes sit in old eye-sockets, forests grow like fur. At play scale it reads as natural terrain with an unsettling hint.
 - Grub glows a warm amber-green and pulses slowly. Seeps are the brightest thing on the map, so economy is readable from far zoom.

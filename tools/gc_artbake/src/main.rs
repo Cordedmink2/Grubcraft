@@ -94,9 +94,17 @@ struct ModelConfig {
     /// Triangle budgets for each level of detail, from full to fewest.
     lod_triangles: [usize; LODS],
     /// Painted texture maps, for models whose detail is in textures rather
-    /// than vertex colours.
+    /// than vertex colours. Models naming the very same maps share one
+    /// material (a building's construction stages).
     #[serde(default)]
     textures: Option<textures::TextureConfig>,
+    /// Keep the source's own positions, in tiles, with the origin at the
+    /// middle of the footprint on the ground: no re-centring or scaling to
+    /// `height`, so a building's construction stages line up with each
+    /// other and with its footprint. `height` is then only the size the
+    /// game culls and picks a level of detail by.
+    #[serde(default)]
+    keep_origin: bool,
 }
 
 fn default_team_tolerance() -> f32 {
@@ -200,6 +208,8 @@ fn run(opts: &Options) -> Result<(), String> {
 fn bake_pack(config: &Config, opts: &Options) -> Result<(Vec<u8>, ModelTables), String> {
     let resolve = |src: &str| opts.resolve(src);
     let mut tables = ModelTables::default();
+    // Materials already baked, by the maps they were baked from.
+    let mut materials: HashMap<String, usize> = HashMap::new();
     for m in &config.models {
         let path = resolve(&m.source).map_err(|e| format!("{}: {e}", m.name))?;
         // A painted albedo map also gives the vertex colours (for the report
@@ -218,13 +228,21 @@ fn bake_pack(config: &Config, opts: &Options) -> Result<(Vec<u8>, ModelTables), 
             report(&baked);
         }
         if let (Some(cfg), Some((albedo, albedo_path))) = (&m.textures, &albedo) {
-            let material = tables.materials();
-            if material >= MAX_MATERIALS {
-                return Err(format!("{}: more than {MAX_MATERIALS} materials", m.name));
-            }
-            let texels = textures::bake(cfg, albedo, albedo_path, resolve)
-                .map_err(|e| format!("{}: {e}", m.name))?;
-            tables.textures.extend_from_slice(&texels);
+            let key = format!("{cfg:?}");
+            let material = match materials.get(&key) {
+                Some(&material) => material,
+                None => {
+                    let material = tables.materials();
+                    if material >= MAX_MATERIALS {
+                        return Err(format!("{}: more than {MAX_MATERIALS} materials", m.name));
+                    }
+                    let texels = textures::bake(cfg, albedo, albedo_path, resolve)
+                        .map_err(|e| format!("{}: {e}", m.name))?;
+                    tables.textures.extend_from_slice(&texels);
+                    materials.insert(key, material);
+                    material
+                }
+            };
             for v in &mut baked.verts {
                 v.material = material as u8 + 1;
             }
@@ -509,15 +527,23 @@ fn bake_model(
     let skel = Skeleton::new(doc);
     let rest_globals = skel.globals(&skel.rest);
 
-    let skin = doc
-        .skins()
-        .next()
-        .ok_or("no skin (the model is not rigged)")?;
-    let joints: Vec<usize> = skin.joints().map(|j| j.index()).collect();
+    // A model without a skin (a building) never moves: every part hangs
+    // from the one still bone.
+    let skin = doc.skins().next();
+    if skin.is_none() && !cfg.clips.is_empty() {
+        return Err("clips named, but the model is not rigged".into());
+    }
+    let joints: Vec<usize> = skin
+        .iter()
+        .flat_map(|s| s.joints().map(|j| j.index()))
+        .collect();
     if joints.len() > MAX_BONES as usize {
         return Err(format!("{} bones, more than {MAX_BONES}", joints.len()));
     }
-    let inverse_bind: Vec<Mat4> = match skin.reader(get).read_inverse_bind_matrices() {
+    let inverse_bind: Vec<Mat4> = match skin
+        .as_ref()
+        .and_then(|s| s.reader(get).read_inverse_bind_matrices())
+    {
         Some(r) => r.map(|m| Mat4::from_cols_array_2d(&m)).collect(),
         None => vec![Mat4::IDENTITY; joints.len()],
     };
@@ -670,10 +696,21 @@ fn bake_model(
         lo = lo.min(p);
         hi = hi.max(p);
     }
-    let scale = cfg.height / (hi.y - lo.y).max(1e-6);
-    let to_game = Mat4::from_scale(Vec3::splat(scale))
-        * Mat4::from_translation(Vec3::new(-(lo.x + hi.x) / 2.0, -lo.y, -(lo.z + hi.z) / 2.0))
-        * turn;
+    let to_game = if cfg.keep_origin {
+        // Stored positions reach this far from the origin, in tiles.
+        let room = f32::from(i16::MAX) / POSITION_SCALE;
+        if lo.min_element() < -room || hi.max_element() > room {
+            return Err(format!(
+                "reaches {lo} to {hi}, beyond the {room:.2} tiles a position can store"
+            ));
+        }
+        turn
+    } else {
+        let scale = cfg.height / (hi.y - lo.y).max(1e-6);
+        Mat4::from_scale(Vec3::splat(scale))
+            * Mat4::from_translation(Vec3::new(-(lo.x + hi.x) / 2.0, -lo.y, -(lo.z + hi.z) / 2.0))
+            * turn
+    };
     let from_game = to_game.inverse();
     for v in &mut verts {
         v.pos = to_game.transform_point3(v.pos);
@@ -819,6 +856,10 @@ fn bake_model(
             })
             .collect();
         clips.push((kind, frames));
+    }
+    if skin.is_none() {
+        // A still model stands in one pose: one frame where nothing moves.
+        clips.push((ClipKind::Idle, vec![vec![Mat4::IDENTITY]]));
     }
     clips.sort_by_key(|(k, _)| *k as u8);
 

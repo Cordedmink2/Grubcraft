@@ -1,0 +1,133 @@
+// Brood buildings, baked into assets/buildings/brood.pak by tools/gc_artbake
+// (`cargo run -p gc_artbake --release -- --config assets-src/buildings/brood.ron --out assets/buildings/brood.pak`).
+// Each building has four models: its growth stages `#1` (root-veins and resin mound), `#2` (ribcage in a
+// membrane cocoon) and `#3` (shell mostly hardened), then the finished building under its own name,
+// exactly as in data/rosters. Main-building upgrades (Great Hive, Throne Hive) have only `#3` and the
+// finished model. All models of a building share one texture set (one material) and keep their
+// authored positions in tiles (`keep_origin`), with the origin at the middle of the footprint on the
+// ground and the door facing +z. Sources and scripts: the project's design/buildings/ folder
+// (docs/21-buildings.md).
+(
+    models: [
+        (
+            name: "Hive #1",
+            source: "shared:grubcraft/buildings/brood/hive/stage1.glb",
+            height: 5.6,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/hive/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/hive/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/hive/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/hive/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/hive/emissive.png"),
+            )),
+        ),
+        (
+            name: "Hive #2",
+            source: "shared:grubcraft/buildings/brood/hive/stage2.glb",
+            height: 5.6,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/hive/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/hive/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/hive/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/hive/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/hive/emissive.png"),
+            )),
+        ),
+        (
+            name: "Hive #3",
+            source: "shared:grubcraft/buildings/brood/hive/stage3.glb",
+            height: 5.6,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/hive/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/hive/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/hive/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/hive/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/hive/emissive.png"),
+            )),
+        ),
+        (
+            name: "Hive",
+            source: "shared:grubcraft/buildings/brood/hive/final.glb",
+            height: 5.6,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/hive/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/hive/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/hive/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/hive/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/hive/emissive.png"),
+            )),
+        ),
+        (
+            name: "Great Hive #3",
+            source: "shared:grubcraft/buildings/brood/great-hive/stage3.glb",
+            height: 6.9,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/great-hive/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/great-hive/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/great-hive/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/great-hive/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/great-hive/emissive.png"),
+            )),
+        ),
+        (
+            name: "Great Hive",
+            source: "shared:grubcraft/buildings/brood/great-hive/final.glb",
+            height: 6.9,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/great-hive/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/great-hive/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/great-hive/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/great-hive/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/great-hive/emissive.png"),
+            )),
+        ),
+        (
+            name: "Throne Hive #3",
+            source: "shared:grubcraft/buildings/brood/throne-hive/stage3.glb",
+            height: 7.4,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/throne-hive/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/throne-hive/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/throne-hive/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/throne-hive/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/throne-hive/emissive.png"),
+            )),
+        ),
+        (
+            name: "Throne Hive",
+            source: "shared:grubcraft/buildings/brood/throne-hive/final.glb",
+            height: 7.4,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/throne-hive/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/throne-hive/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/throne-hive/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/throne-hive/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/throne-hive/emissive.png"),
+            )),
+        ),
+    ],
+)

@@ -1,7 +1,9 @@
 //! Buildings in the sandbox (Conquest, docs/21-buildings.md): the baked
 //! table as the simulation reads it, and how the field draws, places and
-//! picks them. Each building is a placeholder box until models arrive.
+//! picks them. A building with models shows its construction stage
+//! ([`Looks`]); one without is a placeholder box.
 
+use gc_assets::model::Models;
 use gc_data::conquest::{self as record, BuildingRecord};
 use gc_data::{Faction, GameData};
 use gc_render::{BoxInstance, MAX_BOX_INSTANCES};
@@ -191,6 +193,130 @@ impl Table {
     }
 }
 
+/// Looks a building model has: three construction stages (foundation,
+/// frame, nearly done) and the finished building.
+pub const STAGES: usize = 4;
+/// Percent built at which each stage after the foundation begins.
+const STAGE_FROM: [u8; STAGES - 1] = [25, 60, 100];
+/// The finished building.
+const FINISHED: usize = STAGES - 1;
+/// The stage a tier upgrade shows in its second half: the upgrade nearly
+/// done, scaffolding still up.
+const UPGRADE_STAGE: usize = 2;
+/// Workers shown on a main building while its tier upgrade goes up (no
+/// builders are sent to one).
+pub const UPGRADE_CREW: usize = 3;
+/// Each faction's worker, who builds its buildings, by model name.
+fn worker_of(faction: Faction) -> &'static str {
+    match faction {
+        Faction::EmberClans => "Hands",
+        Faction::CarrionConcord => "Ledger Clerk",
+        Faction::Choir => "Tuner",
+        Faction::Brood => "Gnawer",
+    }
+}
+
+/// The construction stage a building `built_percent` built shows (0 is the
+/// foundation, [`STAGES`] - 1 the finished building).
+pub fn stage_of(built_percent: u8) -> usize {
+    STAGE_FROM
+        .iter()
+        .take_while(|&&p| built_percent >= p)
+        .count()
+}
+
+/// The model name of a building's stage: its own name when finished, and
+/// `#1` to `#3` after it for the stages going up.
+pub fn stage_name(name: &str, stage: usize) -> String {
+    if stage == FINISHED {
+        name.to_string()
+    } else {
+        format!("{name} #{}", stage + 1)
+    }
+}
+
+/// Which models dress the buildings (docs/21-buildings.md, Models).
+pub struct Looks {
+    /// By building type, the model of each stage, if it has one.
+    stages: Vec<[Option<usize>; STAGES]>,
+    /// By building type, its faction's worker model.
+    crews: Vec<Option<usize>>,
+    /// By model, the top of a still model (a building's look) in tiles
+    /// above its floor, or `None` for a rigged soldier.
+    tops: Vec<Option<f32>>,
+}
+
+impl Looks {
+    pub fn new(table: &Table, models: &Models<'_>) -> Looks {
+        Looks {
+            stages: (table.names.iter())
+                .map(|name| core::array::from_fn(|k| models.by_name(&stage_name(name, k))))
+                .collect(),
+            crews: (table.factions.iter())
+                .map(|&f| models.by_name(worker_of(f)))
+                .collect(),
+            tops: (models.models.iter())
+                .map(|m| {
+                    let first = m.first_vertex as usize;
+                    let vertices = &models.vertices[first..first + m.vertex_count as usize];
+                    m.is_still().then(|| {
+                        let top = vertices.iter().map(|v| v.pos[1]).max().unwrap_or(0);
+                        f32::from(top.max(0)) / gc_assets::model::POSITION_SCALE
+                    })
+                })
+                .collect(),
+        }
+    }
+
+    /// Whether `model` is a still model (a building's look).
+    pub fn is_still(&self, model: usize) -> bool {
+        self.tops.get(model).is_some_and(Option::is_some)
+    }
+
+    /// How tall the look `model` stands above its floor, in tiles: the
+    /// foundation is low, the finished building tall.
+    pub fn top(&self, model: usize) -> f32 {
+        self.tops.get(model).copied().flatten().unwrap_or(0.0)
+    }
+
+    fn stage(&self, building: BuildingId, stage: usize) -> Option<usize> {
+        self.stages.get(usize::from(building))?[stage]
+    }
+
+    /// The model `s` shows now: its construction stage while it goes up,
+    /// and in the second half of a tier upgrade the upgrade nearly done.
+    /// `None` draws it as a box.
+    pub fn model_of(&self, s: &StructureView) -> Option<usize> {
+        if !s.finished() {
+            return self.stage(s.building, stage_of(s.built_percent));
+        }
+        match s.upgrading {
+            Some((to, percent)) if percent >= 50 => self
+                .stage(to, UPGRADE_STAGE)
+                .or_else(|| self.stage(s.building, FINISHED)),
+            _ => self.stage(s.building, FINISHED),
+        }
+    }
+
+    /// The worker model shown at work on `s`'s tier upgrade, if any.
+    pub fn crew_of(&self, s: &StructureView) -> Option<usize> {
+        s.upgrading?;
+        *self.crews.get(usize::from(s.building))?
+    }
+}
+
+/// Where the upgrade crew of a `width` by `depth` footprint centred on
+/// `centre` stand, and the way each faces: one at the front (south) edge and
+/// one on each side, turned to the walls.
+pub fn crew_spots(centre: Vec2, width: u8, depth: u8) -> [(Vec2, Vec2); UPGRADE_CREW] {
+    let (hw, hd) = (f32::from(width) / 2.0 + 0.4, f32::from(depth) / 2.0 + 0.4);
+    [
+        (centre + Vec2::new(-hw * 0.3, hd), Vec2::NEG_Y),
+        (centre + Vec2::new(hw, hd * 0.2), Vec2::NEG_X),
+        (centre + Vec2::new(-hw, -hd * 0.3), Vec2::X),
+    ]
+}
+
 /// How tall a building of this role is drawn, in tiles.
 fn height_of(role: Role) -> f32 {
     match role {
@@ -215,6 +341,15 @@ fn ground_range(ground: &impl Fn(f32, f32) -> f32, s: &StructureView) -> (f32, f
         .into_iter()
         .map(|(dx, dy)| ground(x + dx, y + dy))
         .fold((f32::MAX, f32::MIN), |(lo, hi), g| (lo.min(g), hi.max(g)))
+}
+
+/// Where a building's model stands: the middle of its footprint, the
+/// height of its floor, and how far that is above the ground there. It stands on the highest ground
+/// under it; the plinth every model has below its floor hides the slope.
+pub fn model_spot(s: &StructureView, ground: &impl Fn(f32, f32) -> f32) -> (Vec2, f32, f32) {
+    let centre = centre_of(s.tile, s.width, s.depth);
+    let (_, hi) = ground_range(ground, s);
+    (centre, hi, hi - ground(centre.x, centre.y))
 }
 
 /// Whether a building of `world` that `shown` allows stands over `p`
@@ -267,12 +402,14 @@ pub fn shown_to(side: PlayerId, reveal_all: bool) -> impl Fn(&StructureView) -> 
 /// colour, dimmer as its hit points fall, and a bar over it once it is
 /// damaged. `across` is the way the camera looks along the ground, so the
 /// bars face it.
+#[allow(clippy::too_many_arguments)]
 pub fn push(
     world: &World,
     table: &Table,
     ground: impl Fn(f32, f32) -> f32,
     team: impl Fn(PlayerId) -> [u8; 3],
     shown: impl Fn(&StructureView) -> bool,
+    modelled: impl Fn(&StructureView) -> Option<f32>,
     across: Vec2,
     out: &mut Vec<BoxInstance>,
 ) {
@@ -287,9 +424,14 @@ pub fn push(
         let Some(stats) = table.stats.get(usize::from(s.building)) else {
             continue;
         };
-        let height = height_of(stats.role);
-        let [r, g, b] = shade(team(s.owner), s.hp, s.max_hp);
-        out.push(block(&s, height, [r, g, b, 0], &ground));
+        // A building with a model is drawn with the soldiers (its bar
+        // floats over the model's roof).
+        let height = modelled(&s).unwrap_or_else(|| {
+            let [r, g, b] = shade(team(s.owner), s.hp, s.max_hp);
+            let height = height_of(stats.role);
+            out.push(block(&s, height, [r, g, b, 0], &ground));
+            height
+        });
         if s.hp >= s.max_hp {
             continue;
         }
@@ -780,6 +922,136 @@ mod tests {
         assert_eq!(role("Watchtower"), Role::Defence);
         assert_eq!(table.units.len(), data.units.len());
         assert!(table.describe(0).contains("Clan Hall"));
+    }
+
+    #[test]
+    fn stages_follow_the_work_done() {
+        assert_eq!(stage_of(0), 0);
+        assert_eq!(stage_of(24), 0);
+        assert_eq!(stage_of(25), 1);
+        assert_eq!(stage_of(59), 1);
+        assert_eq!(stage_of(60), 2);
+        assert_eq!(stage_of(99), 2);
+        assert_eq!(stage_of(100), FINISHED);
+        assert_eq!(stage_name("Clan Hall", 0), "Clan Hall #1");
+        assert_eq!(stage_name("Clan Hall", FINISHED), "Clan Hall");
+    }
+
+    /// Every building model in the pack dresses a building (or one of its
+    /// stages), fits the name field and its footprint, and stands still.
+    #[test]
+    fn building_models_dress_buildings() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let models = crate::models::load().unwrap();
+        let looks = Looks::new(&table, &models);
+        let names: Vec<String> = (table.names.iter())
+            .flat_map(|n| (0..STAGES).map(move |k| stage_name(n, k)))
+            .collect();
+        for n in &names {
+            assert!(n.len() <= gc_assets::model::NAME_BYTES, "{n}");
+        }
+        let mut dressed = 0;
+        for (b, stages) in looks.stages.iter().enumerate() {
+            let stats = table.stats[b];
+            for m in stages.iter().flatten() {
+                let r = models.models[*m];
+                assert_eq!(r.bones, 1, "{} is rigged", r.name());
+                // Inside its footprint, give or take the eaves.
+                let reach = f32::from(stats.width.max(stats.depth)) / 2.0 + 0.35;
+                let first = r.first_vertex as usize;
+                for v in &models.vertices[first..first + r.vertex_count as usize] {
+                    let [x, _, z] = v
+                        .pos
+                        .map(|c| f32::from(c) / gc_assets::model::POSITION_SCALE);
+                    assert!(
+                        x.abs() <= reach && z.abs() <= reach,
+                        "{} at {x}, {z}",
+                        r.name()
+                    );
+                }
+                dressed += 1;
+            }
+            // A finished model needs every stage a worker can lay.
+            if stages[FINISHED].is_some() && stats.upgrades_from.is_none() {
+                assert!(
+                    stages.iter().all(Option::is_some),
+                    "{} lacks a stage",
+                    table.name(b as u16)
+                );
+            }
+        }
+        let still = models.models.iter().filter(|m| m.is_still()).count();
+        assert_eq!(
+            dressed, still,
+            "a building model's name matches no building"
+        );
+        assert!(
+            looks.stages[0][FINISHED].is_some(),
+            "the Clan Hall has no model"
+        );
+        assert!(
+            looks.crews.iter().all(Option::is_some),
+            "a faction lacks its worker"
+        );
+    }
+
+    #[test]
+    fn a_building_shows_its_stage_and_its_upgrade() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let models = crate::models::load().unwrap();
+        let looks = Looks::new(&table, &models);
+        let id = |name: &str| {
+            (0..table.len() as BuildingId)
+                .find(|&b| table.name(b) == name)
+                .unwrap()
+        };
+        let (hall, keep) = (id("Clan Hall"), id("Castle Keep"));
+        let mut s = StructureView {
+            handle: StructureHandle {
+                index: 0,
+                generation: 0,
+            },
+            owner: 0,
+            building: hall,
+            tile: (0, 0),
+            width: 5,
+            depth: 5,
+            hp: 10,
+            max_hp: 100,
+            built_percent: 30,
+            upgrading: None,
+            growing: false,
+            seen: 1,
+        };
+        let model = |s: &StructureView| looks.model_of(s).map(|m| models.models[m].name());
+        assert_eq!(model(&s), Some("Clan Hall #2"));
+        assert_eq!(looks.crew_of(&s), None);
+        s.built_percent = 100;
+        assert_eq!(model(&s), Some("Clan Hall"));
+        // An upgrade shows the old hall, then the upgrade going up (or the
+        // old hall while the upgrade has no model), with a crew at work.
+        s.upgrading = Some((keep, 20));
+        assert_eq!(model(&s), Some("Clan Hall"));
+        assert_eq!(
+            looks.crew_of(&s).map(|m| models.models[m].name()),
+            Some("Hands")
+        );
+        s.upgrading = Some((keep, 70));
+        let later = model(&s).unwrap();
+        assert!(later == "Castle Keep #3" || later == "Clan Hall", "{later}");
+    }
+
+    #[test]
+    fn the_upgrade_crew_stands_outside_the_walls() {
+        let centre = Vec2::new(20.0, 30.0);
+        for (at, facing) in crew_spots(centre, 5, 4) {
+            let off = at - centre;
+            assert!(off.x.abs() > 2.5 || off.y.abs() > 2.0, "{off}");
+            // Facing the building.
+            assert!(facing.dot(-off) > 0.0, "{off} {facing}");
+        }
     }
 
     #[test]

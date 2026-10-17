@@ -423,8 +423,13 @@ impl Renderer {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("grubcraft"),
                 required_features: adapter.features() & wanted,
-                required_limits: wgpu::Limits::downlevel_defaults()
-                    .using_resolution(adapter.limits()),
+                required_limits: wgpu::Limits {
+                    // Soldier and building materials take three layers
+                    // each: ask for all the GPU has (2,048 on every desktop
+                    // GPU we target).
+                    max_texture_array_layers: adapter.limits().max_texture_array_layers,
+                    ..wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits())
+                },
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 ..Default::default()
             })

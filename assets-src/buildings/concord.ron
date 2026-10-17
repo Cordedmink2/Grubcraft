@@ -1,0 +1,132 @@
+// Carrion Concord buildings, baked into assets/buildings/concord.pak by tools/gc_artbake
+// (`cargo run -p gc_artbake --release -- --config assets-src/buildings/concord.ron --out assets/buildings/concord.pak`).
+// Each building has four models: its construction stages `#1` (foundation), `#2` (frame) and `#3`
+// (nearly done), then the finished building under its own name, exactly as in data/rosters.
+// Tier upgrades (Exchange, Grand Bourse) have only `#3` and the finished model.
+// All four share one texture set (one material) and keep their authored positions in tiles
+// (`keep_origin`), with the origin at the middle of the footprint on the ground and the door
+// facing +z. Sources and scripts: the project's design/buildings/ folder (docs/21-buildings.md).
+(
+    models: [
+        (
+            name: "Counting House #1",
+            source: "shared:grubcraft/buildings/concord/counting-house/stage1.glb",
+            height: 6.8,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/counting-house/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/counting-house/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/counting-house/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/counting-house/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/counting-house/emissive.png"),
+            )),
+        ),
+        (
+            name: "Counting House #2",
+            source: "shared:grubcraft/buildings/concord/counting-house/stage2.glb",
+            height: 6.8,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/counting-house/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/counting-house/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/counting-house/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/counting-house/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/counting-house/emissive.png"),
+            )),
+        ),
+        (
+            name: "Counting House #3",
+            source: "shared:grubcraft/buildings/concord/counting-house/stage3.glb",
+            height: 6.8,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/counting-house/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/counting-house/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/counting-house/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/counting-house/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/counting-house/emissive.png"),
+            )),
+        ),
+        (
+            name: "Counting House",
+            source: "shared:grubcraft/buildings/concord/counting-house/final.glb",
+            height: 6.8,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/counting-house/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/counting-house/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/counting-house/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/counting-house/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/counting-house/emissive.png"),
+            )),
+        ),
+        (
+            name: "Exchange #3",
+            source: "shared:grubcraft/buildings/concord/exchange/stage3.glb",
+            height: 7.45,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/exchange/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/exchange/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/exchange/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/exchange/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/exchange/emissive.png"),
+            )),
+        ),
+        (
+            name: "Exchange",
+            source: "shared:grubcraft/buildings/concord/exchange/final.glb",
+            height: 7.45,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/exchange/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/exchange/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/exchange/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/exchange/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/exchange/emissive.png"),
+            )),
+        ),
+        (
+            name: "Grand Bourse #3",
+            source: "shared:grubcraft/buildings/concord/grand-bourse/stage3.glb",
+            height: 7.4,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/grand-bourse/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/grand-bourse/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/grand-bourse/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/grand-bourse/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/grand-bourse/emissive.png"),
+            )),
+        ),
+        (
+            name: "Grand Bourse",
+            source: "shared:grubcraft/buildings/concord/grand-bourse/final.glb",
+            height: 7.4,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/grand-bourse/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/grand-bourse/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/grand-bourse/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/grand-bourse/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/grand-bourse/emissive.png"),
+            )),
+        ),
+    ],
+)

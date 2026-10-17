@@ -38,6 +38,7 @@ jobs:
     # re-baked here (most sources live outside the repository), so its
     # manifest is compared with models.ron, the pack and the sources the repo
     # holds; the check says how many shared sources it could not look at.
+    # Each faction's building pack is checked the same way.
     name: Packs match their manifests
     runs-on: ubuntu-latest
     steps:
@@ -47,6 +48,13 @@ jobs:
           alsa: 'true'
       - run: cargo run --release -p gc_artbake -- --check
       - run: cargo run --release -p gc_scenebake -- --check
+      - name: Building packs (one per faction)
+        shell: bash
+        run: |
+          for config in assets-src/buildings/*.ron; do
+            faction=$(basename "$config" .ron)
+            cargo run --release -p gc_artbake -- --config "$config" --out "assets/buildings/$faction.pak" --check
+          done
       - run: cargo run --release -p gc_sfx -- --check
 
   test:
