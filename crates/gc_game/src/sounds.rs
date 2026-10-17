@@ -38,7 +38,7 @@ const AMBIENT_EVERY: u32 = 10;
 /// Battle cries: how long one is counted as sounding (they run 1 to 1.6
 /// s), and how many may sound at once, so a big battle is a roar and not a
 /// wall of noise.
-const CRY_TICKS: u32 = 28;
+const CRY_TICKS: u32 = 32;
 const MAX_CRIES: usize = 4;
 /// Ticks before the same regiment is heard to cry the same cry again, by
 /// [`Cry`]: a charge, a rout, a rally (a champion's victory is no
@@ -394,7 +394,10 @@ impl Sounds {
                         self.play_at(SoundId::Charge, at, 1.0, 1.4, PRI_CHARGE);
                         // Hitting home at speed: a charge, whose cry usually
                         // began as the blocks closed (see `charges`).
+                        // (Braced spears that turned a charge back are
+                        // given its weight, but they didn't charge.)
                         if r.charge > 0
+                            && !r.braced
                             && let Some(v) = voice(r.unit)
                         {
                             self.cry(tick, Some(regiment), v, Cry::Charge, at);
@@ -408,7 +411,13 @@ impl Sounds {
                         self.morale_change(from, to, at);
                         if let Some(v) = voice(r.unit) {
                             match (from, to) {
-                                (_, MoraleState::Routing) => {
+                                // Breaking, the first time (routing) or the
+                                // second (shattered).
+                                (_, MoraleState::Routing)
+                                | (
+                                    MoraleState::Steady | MoraleState::Wavering,
+                                    MoraleState::Shattered,
+                                ) => {
                                     self.cry(tick, Some(regiment), v, Cry::Rout, at);
                                 }
                                 (MoraleState::Routing, to) if !to.broken() => {
@@ -508,7 +517,12 @@ impl Sounds {
         // might charge.
         let mut foes: Option<Vec<(Vec2, PlayerId)>> = None;
         for r in world.regiments.iter() {
-            if !r.moving || r.engaged || r.morale.broken() || !r.formation.can_charge() {
+            if !r.moving
+                || r.engaged
+                || r.falling_back
+                || r.morale.broken()
+                || !r.formation.can_charge()
+            {
                 continue;
             }
             let Some(v) = voice(r.unit).filter(|v| v.charges) else {
@@ -527,7 +541,8 @@ impl Sounds {
                 world
                     .regiments
                     .iter()
-                    .filter(|q| !q.morale.broken())
+                    // Only foes the player can see, so a cry gives none away.
+                    .filter(|q| !q.morale.broken() && shown(q.handle))
                     .map(|q| (from_fx_vec(q.position), q.owner))
                     .collect()
             });
@@ -563,11 +578,14 @@ impl Sounds {
         if self.duel_cried == Some(c.called) {
             return;
         }
-        self.duel_cried = Some(c.called);
         let champion = c.champions[usize::from(winner)];
         if let Some(v) = world.regiments.get(champion).and_then(|r| voice(r.unit)) {
             self.hushed = !heard || !shown(champion);
-            self.cry(tick, None, v, Cry::Victory, from_fx_vec(c.spot));
+            // Marked cheered only once heard, so a camera that comes near
+            // in time (or a cap that frees) still gets it.
+            if self.cry(tick, None, v, Cry::Victory, from_fx_vec(c.spot)) {
+                self.duel_cried = Some(c.called);
+            }
             self.hushed = false;
         }
     }
@@ -621,14 +639,14 @@ impl Sounds {
         }
     }
 
-    /// Play a sound at a map position: quieter with distance from the
-    /// camera's ground point, panned by which side of the screen it is on.
-    /// `reach` stretches how far it carries (horns carry further than blows).
     /// Whether `at` is within `reach` times the hearing range.
     fn in_earshot(&self, at: Vec2, reach: f32) -> bool {
         (at - self.focus).length() < self.hearing * reach
     }
 
+    /// Play a sound at a map position: quieter with distance from the
+    /// camera's ground point, panned by which side of the screen it is on.
+    /// `reach` stretches how far it carries (horns carry further than blows).
     fn play_at(&self, sound: SoundId, at: Vec2, gain: f32, reach: f32, priority: u8) {
         if self.hushed {
             return;

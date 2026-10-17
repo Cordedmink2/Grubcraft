@@ -39,7 +39,7 @@ pub fn parse_wav(bytes: &[u8]) -> Result<Wav, String> {
         let body = at + 8;
         let end = (body + size).min(bytes.len());
         match id {
-            b"fmt " if size >= 16 => {
+            b"fmt " if size >= 16 && body + 16 <= bytes.len() => {
                 format = Some((
                     u16_at(body),
                     u16_at(body + 2),
@@ -317,8 +317,10 @@ fn render(wav: &Wav, t: &Take) -> Vec<f32> {
     );
     // Filter out what would fold back when played faster than it was
     // recorded, at the highest speed of the take.
-    let fastest = ratio(t.semi + t.glide.max(0.0)) * src_rate / SFX_RATE as f32;
-    let cutoff = (0.45 * SFX_RATE as f32 / fastest.max(1.0)).min(0.45 * src_rate);
+    // A tone at f in the source plays at f times the pitch ratio, and must
+    // stay under the output's half rate.
+    let fastest = ratio(t.semi + t.glide.max(0.0));
+    let cutoff = (0.45 * SFX_RATE as f32 / fastest).min(0.45 * src_rate);
     let (mut lp1, mut lp2) = (
         Biquad::new(Kind::Low, cutoff, 0.707, src_rate),
         Biquad::new(Kind::Low, cutoff, 0.707, src_rate),
@@ -353,7 +355,7 @@ fn render(wav: &Wav, t: &Take) -> Vec<f32> {
 /// crossfaded into the last (it should be a steady tone, or the seam shows).
 fn sustain(src: Vec<f32>, len: usize) -> Vec<f32> {
     if src.len() >= len {
-        return src[..len.max(8)].to_vec();
+        return src[..len.max(8).min(src.len())].to_vec();
     }
     let fade = (src.len() / 4).max(1);
     let mut out = src.clone();
