@@ -38,6 +38,9 @@ pub struct Strategy {
     /// Plans timing pushes: arms for a set time, then goes with
     /// everything.
     pub pushes: bool,
+    /// Sends a small fast raiding party at the enemy's workers once its
+    /// army is big enough to spare one.
+    pub raids: bool,
     /// What its opening changes while it lasts (docs/18-ai.md, "Steward"):
     /// the usual play outside one, see [`Strategy::opening`].
     pub early: Early,
@@ -160,6 +163,7 @@ impl Strategy {
                 adapts: false,
                 gangs_up: false,
                 pushes: false,
+                raids: false,
                 early: Early::USUAL,
             },
             Difficulty::Veteran => Strategy {
@@ -173,6 +177,7 @@ impl Strategy {
                 adapts: false,
                 gangs_up: false,
                 pushes: false,
+                raids: false,
                 early: Early::USUAL,
             },
             Difficulty::General => Strategy {
@@ -186,6 +191,7 @@ impl Strategy {
                 adapts: true,
                 gangs_up: true,
                 pushes: false,
+                raids: false,
                 early: Early::USUAL,
             },
             Difficulty::Warlord => Strategy {
@@ -199,6 +205,7 @@ impl Strategy {
                 adapts: true,
                 gangs_up: true,
                 pushes: true,
+                raids: true,
                 early: Early::USUAL,
             },
         }

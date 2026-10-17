@@ -173,6 +173,10 @@ mod tests {
         pub clicks: u32,
         /// The tick its scout first looked at a start an enemy might hold.
         pub scout_looked: Option<u32>,
+        /// Raids its raiders set out on, and enemy worker regiments seen
+        /// to go while they were near.
+        pub raids: u32,
+        pub raid_kills: u32,
     }
 
     /// A headless Conquest match played to its end (or the time limit).
@@ -251,6 +255,8 @@ mod tests {
             scout_looked: mind
                 .realm()
                 .and_then(|r| r.marshal.scout.first_enemy_start_looked_at()),
+            raids: mind.realm().map_or(0, |r| r.marshal.raider.raids()),
+            raid_kills: mind.realm().map_or(0, |r| r.marshal.raider.kills()),
         }
     }
 
@@ -468,6 +474,12 @@ mod tests {
         let openings = openings_from_env("AI_OPENINGS");
         let played = play_with(choice, &factions, &levels, seed, minutes, temper, &openings);
         println!("{}", played.report());
+        for (p, side) in played.sides.iter().enumerate() {
+            println!(
+                "side {p}: {} raids set out, {} enemy worker regiments seen gone near the raiders",
+                side.raids, side.raid_kills
+            );
+        }
         println!(
             "{} game minutes in {:.1?}",
             played.ticks / 60 / TICKS_PER_SECOND,
@@ -594,6 +606,40 @@ mod tests {
                     .all(|&t| t <= 5 * 60 * TICKS_PER_SECOND),
                 "{looked:?}"
             );
+        }
+    }
+
+    /// A Warlord's raiders set out against the enemy's workers in a
+    /// one-on-one on Ribcage Pass, and at least one party sees some of
+    /// them go, within fifteen minutes; a lens panel shows the `raid`
+    /// line after the `scout` line, and a General has none.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_a_warlords_raiders_kill_enemy_workers() {
+        let factions = [Faction::EmberClans, Faction::EmberClans];
+        let mut killed = 0;
+        for seed in [7, 8] {
+            let played = play(0, &factions, &[Difficulty::Warlord], seed, 15);
+            for (p, side) in played.sides.iter().enumerate() {
+                let find = |label: &str| {
+                    let start = format!("  {label:<7} ");
+                    side.lens.iter().position(|l| l.starts_with(&start))
+                };
+                let scout = find("scout").expect("a Warlord scouts");
+                assert_eq!(find("raid"), Some(scout + 1), "side {p}: {:?}", side.lens);
+                killed += side.raid_kills;
+            }
+            assert!(
+                played.sides.iter().any(|s| s.raids > 0),
+                "seed {seed}: no raid set out: {}",
+                played.report()
+            );
+        }
+        assert!(killed > 0, "the raiders saw no enemy worker go");
+        let played = play(0, &factions, &[Difficulty::General], 7, 8);
+        for side in &played.sides {
+            assert_eq!(side.raids, 0);
+            assert!(side.lens.iter().all(|l| !l.starts_with("  raid    ")));
         }
     }
 

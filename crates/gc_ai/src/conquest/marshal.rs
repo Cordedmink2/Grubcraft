@@ -14,6 +14,7 @@ use gc_sim::structures::{Role, StructureHandle};
 use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
+use super::raider::Raider;
 use super::scout::Scout;
 use super::sovereign::{PUSH_LEAD, PUSH_WINDOW};
 use super::{Sense, spymaster};
@@ -152,6 +153,9 @@ pub struct Marshal {
     battle_wants: Vec<Want>,
     /// The fast regiment it lends to look at the map: not part of the army.
     pub scout: Scout,
+    /// The small fast party it lends to raid enemy workers: not part of
+    /// the army either.
+    pub raider: Raider,
     /// What it believes of each enemy's army, as of its last think. Only
     /// for the AI lens to show.
     pub belief: Vec<spymaster::Belief>,
@@ -187,6 +191,7 @@ impl Marshal {
             wants: Vec::new(),
             battle_wants: Vec::new(),
             scout: Scout::new(),
+            raider: Raider::new(),
             belief: Vec::new(),
             odds: Vec::new(),
             wave: None,
@@ -232,17 +237,39 @@ impl Marshal {
             .iter()
             .filter(|r| r.owner == party && s.kit.is_fighter(r.unit) && !r.broken())
             .collect();
-        // The scout is not part of the army: no wave, battle or attack
-        // counts it or sends it anywhere.
         if s.now >= self.next_think {
             let waiting = self.waiting(&fighters);
             self.scout.update(s, &fighters, &waiting, self.rally, home);
+            // The raiders are called back to defend home, and for a timing
+            // push (and not sent out as one nears).
+            let (holding, pushing) = push_phase(s);
+            let recall = matches!(self.goal, Goal::Defend(_)) || holding || pushing;
+            let belief = &self.belief;
+            let scout = self.scout.regiment();
+            let spare: Vec<&Seen> = waiting
+                .iter()
+                .copied()
+                .filter(|r| Some(r.handle) != scout)
+                .collect();
+            let army =
+                fighters.len() - usize::from(fighters.iter().any(|r| Some(r.handle) == scout));
+            for note in self
+                .raider
+                .update(s, army, &spare, self.rally, recall, |o| {
+                    super::enemy_name(belief, o)
+                })
+            {
+                c.journal.note(s.now, note);
+            }
         }
+        // Neither the scout nor the raiders are part of the army: no wave,
+        // battle or attack counts them or sends them anywhere.
         let scout = self.scout.regiment();
+        let raiders = self.raider.regiments();
         let army: Vec<&Seen> = fighters
             .iter()
             .copied()
-            .filter(|r| Some(r.handle) != scout)
+            .filter(|r| Some(r.handle) != scout && !raiders.contains(&r.handle))
             .collect();
         self.out.retain(|h| army.iter().any(|r| r.handle == *h));
         if army.is_empty() {
@@ -260,6 +287,7 @@ impl Marshal {
                 self.wants.retain(|w| b.view.get(w.regiment).is_none());
             }
             self.scout.steer(s, self.rally, &mut self.wants);
+            self.raider.steer(s, &mut self.wants);
             self.orders.decide(view, &mut self.wants);
         }
         self.orders.release(s.now, out);
@@ -280,6 +308,7 @@ impl Marshal {
             .filter(|r| {
                 !self.out.contains(&r.handle)
                     && !self.holders.contains(&r.handle)
+                    && !self.raider.regiments().contains(&r.handle)
                     && !r.engaged
                     && r.pos.distance(rally) <= WAITING
             })
@@ -346,9 +375,13 @@ impl Marshal {
         let at = b.at;
         let holders = &self.holders;
         let scout = self.scout.regiment();
+        let raiders = self.raider.regiments();
         view.subset(&mut b.view, |r| {
             let fights = if r.owner == party {
-                s.kit.is_fighter(r.unit) && !holders.contains(&r.handle) && Some(r.handle) != scout
+                s.kit.is_fighter(r.unit)
+                    && !holders.contains(&r.handle)
+                    && Some(r.handle) != scout
+                    && !raiders.contains(&r.handle)
             } else {
                 !s.kit.all_workers.contains(&r.unit)
             };
@@ -951,7 +984,7 @@ fn rally_point(s: &Sense, home: Vec2) -> Vec2 {
 /// An enemy building its side has seen and still stands.
 pub(super) struct Sighted {
     handle: StructureHandle,
-    at: Vec2,
+    pub(super) at: Vec2,
     pub(super) role: Role,
     pub(super) owner: u8,
 }

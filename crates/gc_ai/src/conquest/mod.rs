@@ -13,6 +13,7 @@ pub mod kit;
 pub mod marshal;
 pub mod opening;
 pub mod placing;
+pub mod raider;
 pub mod scout;
 pub mod sovereign;
 pub mod spymaster;
@@ -300,6 +301,14 @@ impl Realm {
         }
         if let Some(note) = self.marshal.scout.note(now) {
             lines.push(line("scout", note));
+        }
+        if self.plan.raids
+            && let Some(note) = self
+                .marshal
+                .raider
+                .note(now, |o| enemy_name(&self.marshal.belief, o))
+        {
+            lines.push(line("raid", note));
         }
         lines
     }
