@@ -13,6 +13,15 @@ Generated 2026-10-12 right after download. SHA-256 of every file, so a later re-
 | Alien Bug, author CDmir | "CC0" | opengameart.org/content/alien-bug-animated |
 | Quaternius Ultimate Monsters, Ultimate Modular Men, Easy Enemy Pack, LowPoly RPG Characters | Pack pages say "License: CC0". The packs contain no licence file. quaternius.com/license.html describes a Quaternius Asset License that forbids redistributing raw assets, so they stay out of the repo | quaternius.com/packs/<pack>.html |
 | ambientCG Ground054, Grass001, Rock035 | ambientCG API reports CC0 for all assets | ambientcg.com |
+| Battle-cry voices, read 2026-10-16: Voice Clip Pack - Male Adventurer RPG (author field wolfwoot, uploaded by 2DPIXX; the page asks for credit as "Brandon Song", optional) | "License(s): CC0" and "Feel free to use for whatever type of project." on the OpenGameArt page | opengameart.org/content/voice-clip-pack-male-adventurer-rpg |
+| Battlecry, author spookymodem | "License(s): CC-BY 3.0" on the OpenGameArt page ("A deep warcry before charging into battle."). **Credit required**: it is in CREDITS.md and on the credits screen | opengameart.org/content/battlecry |
+| Zombie / Skeleton / Monster Voice Effects (author field ArcadeParty, uploaded by Snabisch) | "License(s): CC0" on the OpenGameArt page | opengameart.org/content/zombie-skeleton-monster-voice-effects |
+| Ghost Monster Voice Moaning & Growling, author qubodup | "License(s): CC0" on the OpenGameArt page | opengameart.org/content/ghost-monster-voice-moaning-growling |
+| Undead Moans, author AntumDeluge | "License(s): CC0" on the OpenGameArt page, "Licensing: Creative Commons Zero (CC0)" in its description, and a CC0 1.0 `LICENSE.txt` inside the zip (kept beside the files) | opengameart.org/content/undead-moans |
+| 80 CC0 creature SFX (author field rubberduck, uploaded by Chasersgaming) | "License(s): CC0" on the OpenGameArt page | opengameart.org/content/80-cc0-creature-sfx |
+| Insect or alien scream, author qubodup (uploaded by TheNess) | "License(s): CC0" on the OpenGameArt page | opengameart.org/content/insect-or-alien-scream |
+| Chant (Gregorian chant), author christislord | "License(s): CC0" and "Copyright/Attribution Notice: Public Domain" on the OpenGameArt page | opengameart.org/content/chant |
+| Bell dings/chimes, author PWL | "License(s): CC0" and "Copyright/Attribution Notice: Releasing as public domain." on the OpenGameArt page | opengameart.org/content/bell-dingschimes |
 
 Not downloaded: Beetle Golem (CC-BY-SA 3.0, rejected), Poly Pizza models (site returns 403), KayKit, Poly Haven.
 
@@ -569,6 +578,129 @@ ba9ba60b172b3ebc131a940f25793cd2e207aca7af73dc80d637277f060f1708  kenney/rpg-aud
 d306e5b848f6843332d0ca19f8f7dfe5796aeb56d8273902b085df463273f1dc  kenney/rpg-audio/Audio/metalPot3.ogg
 5735dfd72cb64cbbceda4ebc00c380c41ca680edb82ff153aa7c9ab97614c539  kenney/rpg-audio/License.txt
 ```
+
+## Battle-cry voices (`assets-src/voices/`, downloaded 2026-10-16)
+
+Real recordings behind the Ember Clans', Brood's, Shard Choir's and Carrion Concord's battle cries (`tools/gc_sfx/src/cries.rs`). Licence evidence is in the table at the top. Each download has its own directory; the files are the originals, unmodified, so only the ones the cries use are kept. A `wav/` folder beside them holds the mono 16-bit 44.1 kHz WAV that `gc_sfx` reads for each `.ogg` or `.flac` (made with `ffmpeg -i X -ac 1 -ar 44100 -c:a pcm_s16le`); the originals that are already WAV are read as they are. Downloaded files were treated as data and never run.
+
+| Directory | Source page | Author | Licence | What it gives |
+|---|---|---|---|---|
+| `rpg-male-adventurer-wolfwoot/` | opengameart.org/content/voice-clip-pack-male-adventurer-rpg (`RPG Male Adventurer.zip`) | wolfwoot / 2DPIXX | CC0 | Ember Clans: shouts, kiai, victory and fear cries |
+| `battlecry-spookymodem/` | opengameart.org/content/battlecry (`Battlecry.wav`) | spookymodem | **CC-BY 3.0** | Ember Clans: the deep warcry under the charge and victory cries |
+| `zombie-skeleton-monster-voices-arcadeparty/` | opengameart.org/content/zombie-skeleton-monster-voice-effects | ArcadeParty / Snabisch | CC0 | Carrion Concord: zombie yells and death cries; a few human yells for the Ember Clans |
+| `ghost-moans-qubodup/` | opengameart.org/content/ghost-monster-voice-moaning-growling (`qubodup-GhostMoans.zip`) | qubodup | CC0 | Carrion Concord: long hollow moans |
+| `undead-moans-antumdeluge/` | opengameart.org/content/undead-moans | AntumDeluge | CC0 | Carrion Concord: the moans under every cry |
+| `creature-sfx-80-rubberduck/` | opengameart.org/content/80-cc0-creature-sfx | rubberduck / Chasersgaming | CC0 | Brood: alien, bug, scream, roar and monster clips |
+| `insect-or-alien-scream-qubodup/` | opengameart.org/content/insect-or-alien-scream | qubodup | CC0 | Brood: the long squeal |
+| `gregorian-chant-christislord/` | opengameart.org/content/chant (`chant_0.ogg`, 163 s) | christislord | CC0 (public domain) | Shard Choir: the sung voices. Only two steady stretches are converted (`wav/chant-a.wav` 1.7 s to 3.8 s, `wav/chant-b.wav` 11.0 s to 12.3 s, both on 222 Hz) |
+| `bell-dings-pwl/` | opengameart.org/content/bell-dingschimes | PWL | CC0 (public domain) | Shard Choir: the bells |
+
+SHA-256 of the original downloads (the zips are not kept, to keep the repository lean; the files in them are listed below):
+
+```
+eb874f027758ccf9eca0449d09dc3220dc44eb4095e8b0da93351d276e176f7f  RPG Male Adventurer.zip
+fe09126cfce9d90ad26936b116354d1c162de261a9053854a82696daee80e241  Battlecry.wav
+041ef356efc5d947db903530d68eb55b7e6fbfb77b96fdd092ab81eb8be59d57  Voice Effects Zombie-Skeleton-Monster Human Male.zip
+25962d146f4634a93efa7fbfe9cde63f4182189ced6105b4f92f23c65d8c2a43  qubodup-GhostMoans.zip
+013d2327338585d950e3d55422ec0233b443ed888cdbf9908961502690bbe67e  undead-moans.zip
+5d4002eea42f278e76543bb36e8ddd2cb978588a13271984191d8228f5d26768  80-CC0-creature-SFX.zip
+274d956faa2be61bbdb8a8bedc8f992860dde7c405773a70880f478f83e400ff  insectoralien.flac
+67631633064846d345aa7ed77a2a59509fecbab510281c106782cb5092330ba1  chant_0.ogg
+8ce40f49cd211125303df59db0da4fe911e8b2f34d3847011b15137c6b5850de  bell_ding1.wav
+e4a764a1e0a6284f5a5ec80caf3d44c76d3ff8db17ddab8b42abb6b143e83529  bell_ding2.wav
+99b9cdb7b9536c97c6738f1e0762cc40a3e7ef81bc774b0b6e0322aa70c96434  bell_ding3.wav
+b06e837aa5e5b626eba32ad87264b577164e2eab3b9180a955345d06197b6876  bell_ding4.wav
+```
+
+SHA-256 of every file in the repository under `voices/`:
+
+```
+fe09126cfce9d90ad26936b116354d1c162de261a9053854a82696daee80e241  voices/battlecry-spookymodem/Battlecry.wav
+8ce40f49cd211125303df59db0da4fe911e8b2f34d3847011b15137c6b5850de  voices/bell-dings-pwl/bell_ding1.wav
+e4a764a1e0a6284f5a5ec80caf3d44c76d3ff8db17ddab8b42abb6b143e83529  voices/bell-dings-pwl/bell_ding2.wav
+99b9cdb7b9536c97c6738f1e0762cc40a3e7ef81bc774b0b6e0322aa70c96434  voices/bell-dings-pwl/bell_ding3.wav
+b06e837aa5e5b626eba32ad87264b577164e2eab3b9180a955345d06197b6876  voices/bell-dings-pwl/bell_ding4.wav
+a725a4aef74d75bf8ddc9bc90abd49d1ba8380c62d80ee1318cf97c48c7a4124  voices/creature-sfx-80-rubberduck/alien_01.ogg
+a28c192579824352a0177d71d9f2fe32560d17b00fbc16297488bddd07ddcdc9  voices/creature-sfx-80-rubberduck/alien_02.ogg
+8e417706c6ca3f7eb99d9500d17bf74ef977d16c540dfa9d695db4721cc30003  voices/creature-sfx-80-rubberduck/alien_03.ogg
+0a46b3c9f1028ea251bc0aa82bb9bdaa2e6208ed48d5a4e83811be282bbe32c7  voices/creature-sfx-80-rubberduck/alien_04.ogg
+7f6414bd745b244af6f24f7bd2d58b0d7cd1c670ea389e122a750bc588ce7134  voices/creature-sfx-80-rubberduck/alien_05.ogg
+795a25119b46ec1b0ce8e059cb75ac48386fb6db581deb9d0bfd06dc27e6e6c9  voices/creature-sfx-80-rubberduck/alien_06.ogg
+a7afae8bd3b448184e92bbb6162702e86322e5df58045715176c450ba4bbea3a  voices/creature-sfx-80-rubberduck/bug_01.ogg
+7993707dcb082c4f9f297bec44f8aa276988d848f4cf10ea6046c1c45daee518  voices/creature-sfx-80-rubberduck/bug_02.ogg
+947dad474b93a2786455b1772184f79f4881cf8bf212353638a42f662c808b7b  voices/creature-sfx-80-rubberduck/bug_03.ogg
+478418f0d70667109145ca10d82e918c5eeb95c594be40186681179a883d64be  voices/creature-sfx-80-rubberduck/bug_04.ogg
+1208729886f3f66e7d8018e8880dff073275fd37b30e1016dd5b164161482df1  voices/creature-sfx-80-rubberduck/monster_03.ogg
+04b556b93bf3f99255ac362ebe7f905f750a8bcbb653f78ef7191adb91e71f49  voices/creature-sfx-80-rubberduck/monster_04.ogg
+ceb532ee0fe775d6f86a821099b75f1790ab8022b963cb837c8c1fa4fffee5c2  voices/creature-sfx-80-rubberduck/roar_02.ogg
+54da7bba4c4272b0b77dc3fe26a91d0a26d9280797fecb8197d716b47745eb85  voices/creature-sfx-80-rubberduck/scream_01.ogg
+73aedfbcc7e5b3004507d5a79e95ae53954026036bf8d6f65aa0a4ca298dd372  voices/creature-sfx-80-rubberduck/scream_02.ogg
+9bab240b1f8555a66f06ba1cc46f119d4493126b012870c1ea389ba8cde463dc  voices/creature-sfx-80-rubberduck/wav/alien_01.wav
+97bd24e1522cbab93e6b11967701f56b61134f4075f9cf7a482fb0ad0c8b39eb  voices/creature-sfx-80-rubberduck/wav/alien_02.wav
+3e8c3990ec5b082aa861d2c39da8e805c9675e2eb7ffb8a14efc3277040c3954  voices/creature-sfx-80-rubberduck/wav/alien_03.wav
+ccb9a7c30d5d4af18c63a357834c6ebf7e925b216d0fd6f43845e72b9ce6df95  voices/creature-sfx-80-rubberduck/wav/alien_04.wav
+93d15e37cbc4864bf76b7dff1052abe2ebd245e4deb2bd514ccd09113cbc3e00  voices/creature-sfx-80-rubberduck/wav/alien_05.wav
+f940e52bd783818e4adb829184d4db9854deb5921434937611b6f2fbb219755c  voices/creature-sfx-80-rubberduck/wav/alien_06.wav
+21096b4c9f9b7485f153a3d4111487531e2a0a691d0b8ad6f551dc262967375b  voices/creature-sfx-80-rubberduck/wav/bug_01.wav
+85bf734cbc6d0267db878069087f1a44133b878c55f588c31b12fe013d17a985  voices/creature-sfx-80-rubberduck/wav/bug_02.wav
+cad62c2531c7b559c3a155f9c9b3b043d38042cb5fe560171c19377489aa9c5e  voices/creature-sfx-80-rubberduck/wav/bug_03.wav
+e4f1fc645adbd945b8f90474034cc6bfb58b244fb626f0fa89adf85599728dbd  voices/creature-sfx-80-rubberduck/wav/bug_04.wav
+17636e1ff3588cd6a589faaa7453056d2996ec59e6df082181af42337814ce3d  voices/creature-sfx-80-rubberduck/wav/monster_03.wav
+4609bc77db70a303abaf1797e5e2fdb0b923031594be6fbcb767ca00fa331a99  voices/creature-sfx-80-rubberduck/wav/monster_04.wav
+558db5c462da8fe47838f045ff4417277e66a55c21471ecdf4ab04d89fcc5e3f  voices/creature-sfx-80-rubberduck/wav/roar_02.wav
+46e0e163a4a25d97ae1846d8b278989b820a79ccb30ccf25015137d45b8b8fa7  voices/creature-sfx-80-rubberduck/wav/scream_01.wav
+b9481789b1136f792c195286b4a821aabef56a5fc3e15f975d2fcf3b7fafe212  voices/creature-sfx-80-rubberduck/wav/scream_02.wav
+6ecb024d4cdc5cc85743faa79d41cd68f3d3e75d8faf3f23191311eac708efd4  voices/ghost-moans-qubodup/qubodup-GhostMoan01.wav
+fb987e07dffd1b546a37b587afa0995d55274caace3fcc7c692e532dafac4a18  voices/ghost-moans-qubodup/qubodup-GhostMoan05.wav
+67631633064846d345aa7ed77a2a59509fecbab510281c106782cb5092330ba1  voices/gregorian-chant-christislord/chant_0.ogg
+956f18dd112167fd02b251dc4981768777eb449ed1e06303f889ae9df8e739cc  voices/gregorian-chant-christislord/wav/chant-a.wav
+94ffe5cb45f41a458f239c522870e203e7f1fcffd6ff850712c7cd2c39cf8535  voices/gregorian-chant-christislord/wav/chant-b.wav
+274d956faa2be61bbdb8a8bedc8f992860dde7c405773a70880f478f83e400ff  voices/insect-or-alien-scream-qubodup/insectoralien.flac
+f5c480f4c14587a2a3e5036e9d78308ae4f76280ed0d8b4986796fe385f90231  voices/insect-or-alien-scream-qubodup/wav/insectoralien.wav
+18604485719a00414f368a3eedf074666ea7d0751bd4ee6f28f5510fcc3099a4  voices/rpg-male-adventurer-wolfwoot/attack1.wav
+5a9544f0e44bbe82365340fda70d4b1ac3b63bb99c4f68bc67687233431c1786  voices/rpg-male-adventurer-wolfwoot/attack3.wav
+4e67a283aba87cea4ef5a01b8c2baa353b522b0f2de66a3749a1a95123193a6a  voices/rpg-male-adventurer-wolfwoot/attack4.wav
+1bae8f04a042152c656c915e8fb3635860cf1099527ebafc7199eb5c75f3f02a  voices/rpg-male-adventurer-wolfwoot/attack6.wav
+e73f668a5b9c4bfa1ea97cbbd5342bd47d503c96c92a20119694b3f27d60f1a7  voices/rpg-male-adventurer-wolfwoot/attack8.wav
+93254d118fdfb1dac17e9b76dc7f57ad847654818cd10ba5f8630c5e4a14026a  voices/rpg-male-adventurer-wolfwoot/attackbig0.wav
+a8c74fc1f04f8619263c85cf8cc32ea264ba9ef5a7122650f4a90339f694bc6b  voices/rpg-male-adventurer-wolfwoot/attackbig1.wav
+7fb7582565945efd5c8722bc6a7ed858086850c0fb93c58e9ca2836a08b52930  voices/rpg-male-adventurer-wolfwoot/attackbig2.wav
+026d596cbafdd730e33422243010d63cc73088746e817bd89660201ca4a2506f  voices/rpg-male-adventurer-wolfwoot/attackbig3.wav
+05679adb1522e4e656d9e66fc9b6bd343538fb2968edd37492733f2f8b1255c1  voices/rpg-male-adventurer-wolfwoot/attackbig4.wav
+98c53fabbe6c7f584ee7164ed5c0407adbd4812b837c1c0ef90818025ff3ed7c  voices/rpg-male-adventurer-wolfwoot/attackbig5.wav
+8f65c53268ed217346b0c403b0e4a2b3649af055c645f0f2d747248f58c5a162  voices/rpg-male-adventurer-wolfwoot/hurt2.wav
+251f58f2e2d8ae8b5d2876fd3dea26848725b3b1fed18c196f1fceb5ed71993c  voices/rpg-male-adventurer-wolfwoot/hurt3.wav
+78cd72438249a22e5833a67d852e4db3b5579066caa2b4bed1c0dfa887602ff5  voices/rpg-male-adventurer-wolfwoot/hurt6.wav
+2777852ee5e29d3b95a5bcfefa2e51d156d43301460cb5d137b0369fb9df83f5  voices/rpg-male-adventurer-wolfwoot/hurt8.wav
+e94fb7ded133d30b6757dcc09305394a6833d3febecde2c5fcb306adb5607588  voices/rpg-male-adventurer-wolfwoot/jump0.wav
+3eec2046486166deb2cad4efbf59f2d3b71c5c0335354f659d7fd473d3fa81c2  voices/rpg-male-adventurer-wolfwoot/victory0.wav
+ecdbdac1aaacc3e0b0ebbe44b6c20e4ac5e16498c430b8cd278471dd45d6d52d  voices/rpg-male-adventurer-wolfwoot/victory1.wav
+cce4e7a43ab9bd5e34d58f568e21e724d8aee6d058d6e3d3372079e3fcc2c113  voices/rpg-male-adventurer-wolfwoot/yes0.wav
+d6b8192091bfb95caf14cbd385b012263fe764656b0fd471cd2eb64b6afe3007  voices/rpg-male-adventurer-wolfwoot/yes1.wav
+a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499  voices/undead-moans-antumdeluge/LICENSE.txt
+6e2f45883c07b00345270e92bd21545dae7caec864045537c65e3eea093dd916  voices/undead-moans-antumdeluge/undead-1.ogg
+c43c01f9264fa91539d8d78ed29f241ff20d4f498e6cf7a2e985fde2bdfe51ce  voices/undead-moans-antumdeluge/undead-2.ogg
+73c60abc7641518dd871ba4abbdfd3e15f93207147ed3bd012e62eff97e35457  voices/undead-moans-antumdeluge/undead-3.ogg
+bb18310d61c8c6d901cf71af35d6d10ec61186784532a688402384b5fa3006e5  voices/undead-moans-antumdeluge/undead-4.ogg
+d43a9324282cd95ddd80948d35b7d704856c3ec6274f543fd1a123e9771d2fbf  voices/undead-moans-antumdeluge/wav/undead-1.wav
+b26bdd4db3257b881d5a6f2bb8fb19ea213c3046d9f66d9665b0db3026ecd58b  voices/undead-moans-antumdeluge/wav/undead-2.wav
+79f228b3b432a5b2d89ff74ed27c3ccf3bad001976cd749740372fa9f09ad63d  voices/undead-moans-antumdeluge/wav/undead-3.wav
+8f3059e2143f0f55f7fb9d511e78e06e76ddb4bb9419b91c16e82dbd27740713  voices/undead-moans-antumdeluge/wav/undead-4.wav
+a9951034cb829218d5051d3b753a3b43669ce71d9b8ca2d52445e25f76ddcf7e  voices/zombie-skeleton-monster-voices-arcadeparty/humanDeath1.wav
+87d408cdff8270ecb0eb8226d09d45517f33f15654a03861073050e5f79a0ffe  voices/zombie-skeleton-monster-voices-arcadeparty/humanYell1.wav
+8294cfabf6b967c0f669f312d6f71ce4c3d87cd99063d566d612ee93e4fe736e  voices/zombie-skeleton-monster-voices-arcadeparty/humanYell4.wav
+f32b96086c4e23e568508bd0542bfdadb34ef0d5dc1fef9094b82dc18aa1c623  voices/zombie-skeleton-monster-voices-arcadeparty/zombieDeath1.wav
+e84d3d060439504e07c564a13bd57d55a575dc28c8f2af32f19a1b23514d538d  voices/zombie-skeleton-monster-voices-arcadeparty/zombieDeath2.wav
+9fb3eecfeef887007b8f737e663ef52cf6e8419b46011eb04e0775f1d78a1db8  voices/zombie-skeleton-monster-voices-arcadeparty/zombieDeath3.wav
+10437ee9e240e6b0d0c910f4586b89f306565c1e97ef7eca2bb0e11a3d6c76a2  voices/zombie-skeleton-monster-voices-arcadeparty/zombieDeath4.wav
+8c7a107ab2696b9905bfdaeadad6cc255f091676538b35bc12b0a85ade69e8de  voices/zombie-skeleton-monster-voices-arcadeparty/zombieYell1.wav
+d1f32fedcaafce528455d49512e78f5074a10e099536585850470960b5144f60  voices/zombie-skeleton-monster-voices-arcadeparty/zombieYell2.wav
+4a205aac389e07f360d4bb5c867e66d10e4539d5aac9283652cbfc0564c80a93  voices/zombie-skeleton-monster-voices-arcadeparty/zombieYell3.wav
+79cd27c70ac3b44d4f7e8940310ee21073987032ea299203347639170f8c1208  voices/zombie-skeleton-monster-voices-arcadeparty/zombieYell6.wav
+7adcb385a60805b4020e3f973fedc70706f76608d336c8774cd8272646c41662  voices/zombie-skeleton-monster-voices-arcadeparty/zombieYell7.wav
+```
+
+Considered and not used: Zodik - Deep Choir (CC0, a 3-minute track) and Crowd Shouting/Speaking Ambience (CC0), both downloaded to listen to and dropped, so they are not in the repository.
 
 ## Shared project folder only (`assets-src/` outside the repo)
 

@@ -27,7 +27,7 @@ pub fn all() -> Vec<Rendered> {
         looped: true,
         pcm: buf.finish(0.8, false),
     };
-    vec![
+    let mut clips = vec![
         sfx(SoundId::ArrowRelease, 0.55, arrow_release()),
         sfx(SoundId::ArrowImpact, 0.7, arrow_impact()),
         sfx(SoundId::Clash, 0.85, clash()),
@@ -41,21 +41,33 @@ pub fn all() -> Vec<Rendered> {
         sfx(SoundId::UiAttack, 0.5, ui_attack()),
         music(SoundId::MusicCalm, music_calm()),
         music(SoundId::MusicBattle, music_battle()),
-    ]
+    ];
+    // The battle cries come from recordings (see `cries`).
+    clips.extend(crate::cries::all());
+    clips
 }
 
 // ---------------------------------------------------------------- toolkit
 
 /// A mono float buffer being composed.
-struct Buf {
-    rate: f32,
-    s: Vec<f32>,
+pub(crate) struct Buf {
+    pub(crate) rate: f32,
+    pub(crate) s: Vec<f32>,
     /// Sounds written near the end wrap around to the start (for loops).
     wrap: bool,
 }
 
 impl Buf {
-    fn new(seconds: f32, rate: u32) -> Buf {
+    /// A finished mix at `rate`.
+    pub(crate) fn from_samples(s: Vec<f32>, rate: u32) -> Buf {
+        Buf {
+            rate: rate as f32,
+            s,
+            wrap: false,
+        }
+    }
+
+    pub(crate) fn new(seconds: f32, rate: u32) -> Buf {
         Buf {
             rate: rate as f32,
             s: vec![0.0; (seconds * rate as f32).round() as usize],
@@ -88,7 +100,7 @@ impl Buf {
     }
 
     /// Normalise to `peak`, fade the last few milliseconds, quantise.
-    fn finish(mut self, peak: f32, fade: bool) -> Vec<i16> {
+    pub(crate) fn finish(mut self, peak: f32, fade: bool) -> Vec<i16> {
         let max = self.s.iter().fold(1e-6f32, |m, v| m.max(v.abs()));
         let n = self.s.len();
         let fade_len = (self.rate * 0.012) as usize;
@@ -104,10 +116,10 @@ impl Buf {
 
 /// A tiny xorshift noise source; every sound seeds its own so the output
 /// never depends on render order.
-struct Rng(u32);
+pub(crate) struct Rng(pub(crate) u32);
 
 impl Rng {
-    fn noise(&mut self) -> f32 {
+    pub(crate) fn noise(&mut self) -> f32 {
         let mut x = self.0.max(1);
         x ^= x << 13;
         x ^= x >> 17;
