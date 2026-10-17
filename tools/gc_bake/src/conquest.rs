@@ -283,6 +283,7 @@ fn building_flag(f: rosters::BuildingFlag) -> u8 {
         rosters::BuildingFlag::DropOffMarrow => cq::BUILDING_DROP_OFF_MARROW,
         rosters::BuildingFlag::PowersField => cq::BUILDING_POWERS_FIELD,
         rosters::BuildingFlag::AntiAir => cq::BUILDING_ANTI_AIR,
+        rosters::BuildingFlag::Larvae => cq::BUILDING_LARVAE,
     }
 }
 
@@ -314,5 +315,7 @@ fn unit_flag(f: rosters::Flag) -> u16 {
         rosters::Flag::DirectFire => cq::UNIT_DIRECT_FIRE,
         rosters::Flag::Detector => cq::UNIT_DETECTOR,
         rosters::Flag::Terror => cq::UNIT_TERROR,
+        rosters::Flag::Hatches => cq::UNIT_HATCHES,
+        rosters::Flag::Consumed => cq::UNIT_CONSUMED,
     }
 }

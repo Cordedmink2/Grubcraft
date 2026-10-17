@@ -139,6 +139,10 @@ pub struct Bank {
     pub marrow: u32,
     pub supply_used: u32,
     pub supply_cap: u32,
+    /// Brood: larvae ready in their finished Hives and Hatchery Pits, and
+    /// how many those can hold (both 0 for a player with none).
+    pub larvae: u32,
+    pub larva_room: u32,
 }
 
 impl Bank {

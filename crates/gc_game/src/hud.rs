@@ -597,7 +597,6 @@ impl Running {
         }; QUEUE_SLOTS];
         let mut queued = 0;
         if let Some((h, p)) = picked_structure.zip(self.world.production()) {
-            let front = self.world.training_percent(h).unwrap_or(0);
             for (i, &u) in p.queue_of(h).iter().take(QUEUE_SLOTS).enumerate() {
                 queue[i] = QueueItem {
                     name: self
@@ -605,7 +604,7 @@ impl Running {
                         .names
                         .get(usize::from(u))
                         .map_or("", String::as_str),
-                    progress: if i == 0 { front } else { 0 },
+                    progress: self.world.queue_percent(h, i).unwrap_or(0),
                 };
                 queued = i + 1;
             }
@@ -622,6 +621,12 @@ impl Running {
                     .upgrading
                     .map(|(to, percent)| (self.buildings.name(to), percent)),
                 queue: &queue[..queued],
+                // Your own finished ones only: a foundation grows none, and
+                // an enemy's larvae are not yours to count.
+                larvae: (s.owner == self.sandbox.side && s.finished())
+                    .then(|| self.world.larvae_in(s.handle))
+                    .flatten()
+                    .map(|n| (n, gc_sim::larvae::LARVA_CAP)),
             });
 
         let mut input = std::mem::take(&mut hud.input);
@@ -815,6 +820,8 @@ impl Running {
             supply_used: b.supply_used,
             supply_cap: b.supply_cap,
             upkeep_percent: b.upkeep_percent(),
+            larvae: b.larvae,
+            larva_room: b.larva_room,
             clock_secs: self.world.tick_count() / gc_sim::TICKS_PER_SECOND,
         })
     }

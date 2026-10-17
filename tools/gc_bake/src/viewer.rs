@@ -195,6 +195,8 @@ fn flag_name(f: Flag) -> &'static str {
         Flag::DirectFire => "direct fire",
         Flag::Detector => "sees hidden units",
         Flag::Terror => "causes terror",
+        Flag::Hatches => "hatches from a larva",
+        Flag::Consumed => "used up to grow buildings",
     }
 }
 

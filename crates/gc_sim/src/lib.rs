@@ -26,6 +26,7 @@ pub mod events;
 pub mod fork;
 pub mod formation;
 mod hash;
+pub mod larvae;
 pub mod morale;
 pub mod nav;
 pub mod production;
@@ -91,7 +92,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 13;
+pub const SIM_VERSION: u32 = 14;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -760,8 +761,22 @@ impl World {
     /// How far the regiment at the front of building `h`'s queue has
     /// trained, in percent (Conquest only).
     pub fn training_percent(&self, h: StructureHandle) -> Option<u8> {
+        self.queue_percent(h, 0)
+    }
+
+    /// How far regiment `k` of building `h`'s queue has trained, in
+    /// percent (Conquest only). Behind the front only units that hatch
+    /// train, all at once.
+    pub fn queue_percent(&self, h: StructureHandle, k: usize) -> Option<u8> {
         let c = self.conquest.as_ref()?;
-        c.production.front_percent(h, &c.units)
+        c.production.percent(h, k, &c.units)
+    }
+
+    /// Larvae ready in building `h`, if it is one that holds them
+    /// (Conquest only).
+    pub fn larvae_in(&self, h: StructureHandle) -> Option<u8> {
+        let structures = self.structures()?;
+        structures.larvae_in(structures.resolve(h)?)
     }
 
     /// Whether `player` could have a worker lay a building of type
@@ -976,8 +991,16 @@ impl World {
             self.tick,
         );
         if !self.scratch {
-            self.events
-                .after(&self.regiments, &self.combat, self.vision.ambushes());
+            let consumed = self
+                .conquest
+                .as_ref()
+                .map_or(&[][..], |c| &c.structures.consumed[..]);
+            self.events.after(
+                &self.regiments,
+                &self.combat,
+                self.vision.ambushes(),
+                consumed,
+            );
             if let Some(conquest) = &self.conquest {
                 self.events.fallen(&conquest.structures.fallen);
             }

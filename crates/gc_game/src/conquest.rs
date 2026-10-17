@@ -4,7 +4,7 @@
 //! the opening the host sends: each side's main building and workers at its
 //! start.
 
-use gc_data::conquest::{Class, ConquestUnitRecord, NONE};
+use gc_data::conquest::{Class, ConquestUnitRecord, NONE, UNIT_CONSUMED, UNIT_HATCHES};
 use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_map::{Kind, Map};
@@ -96,6 +96,8 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
         train_ticks: u.train_ticks,
         trained_at: (u.trained_at != NONE).then_some(u.trained_at),
         tier: u.tier,
+        hatches: u.flags & UNIT_HATCHES != 0,
+        consumed: u.flags & UNIT_CONSUMED != 0,
     }
 }
 

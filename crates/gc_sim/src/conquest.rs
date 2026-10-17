@@ -1,6 +1,11 @@
 //! What a Conquest match adds to a battle (see [`crate::World::conquest`]):
 //! buildings and their construction ([`crate::structures`]), the economy
-//! ([`crate::economy`]) and training ([`crate::production`]).
+//! ([`crate::economy`]), training ([`crate::production`]) and the Brood's
+//! larvae ([`crate::larvae`]).
+//!
+//! The simulation knows no factions: what sets one apart comes from its
+//! units' and buildings' traits ([`ConquestUnit`], `BuildingStats::flags`),
+//! which the game sets from the faction rosters.
 
 use alloc::vec::Vec;
 
@@ -16,6 +21,12 @@ use crate::structures::{
 };
 use crate::verdict::Victories;
 use crate::{MAX_PARTIES, PlayerId, StateHasher, UnitId, UnitStats};
+
+/// `ticks` at Standard tempo, at a tempo where things take `percent` of
+/// their Standard time.
+pub(crate) fn at_tempo(ticks: u32, percent: u32) -> u32 {
+    (ticks * percent / 100).max(1)
+}
 
 /// What a Conquest match knows about each regiment type beyond its battle
 /// stats, by [`crate::UnitId`].
@@ -36,6 +47,14 @@ pub struct ConquestUnit {
     pub trained_at: Option<BuildingId>,
     /// The tier its owner needs to train it.
     pub tier: u8,
+    /// It hatches from a larva (the Brood's units): training one takes a
+    /// larva from its owner's [`crate::larvae`], and a building that
+    /// hatches them hatches its whole queue at once.
+    pub hatches: bool,
+    /// A worker used up by the building it starts (the Brood's Gnawers):
+    /// that building then grows on its own, and such a worker can't help
+    /// build or mend one.
+    pub consumed: bool,
 }
 
 impl ConquestUnit {
@@ -48,6 +67,7 @@ impl ConquestUnit {
         h.u16(self.train_ticks);
         h.u16(self.trained_at.unwrap_or(u16::MAX));
         h.u8(self.tier);
+        h.u8(u8::from(self.hatches) | u8::from(self.consumed) << 1);
     }
 }
 
@@ -137,9 +157,11 @@ impl Conquest {
             .unwrap_or_default()
     }
 
-    /// One tick: sieges and builders, then gathering, then training.
+    /// One tick: sieges and builders, then larvae, then gathering, then
+    /// training.
     pub(crate) fn update(&mut self, regs: &mut Regiments, stats: &[UnitStats], nav: &mut Nav) {
         self.structures.update(regs, stats, &self.units, nav);
+        self.structures.grow_larvae();
         self.economy
             .update(regs, stats, &self.units, &self.structures);
         let (units, economy) = (&self.units, &self.economy);
@@ -155,11 +177,14 @@ impl Conquest {
         let mut used = self.economy.supply_in_use(&self.units, regs);
         self.production
             .in_training(&self.structures, &self.units, &mut used);
+        let (larvae, larva_room) = self.structures.larvae_ready(p);
         Bank {
             grub,
             marrow,
             supply_used: used.get(usize::from(p)).copied().unwrap_or(0),
             supply_cap: self.structures.supply_cap(p),
+            larvae,
+            larva_room,
         }
     }
 
@@ -255,7 +280,15 @@ impl Conquest {
         h: StructureHandle,
         regs: &mut Regiments,
     ) -> bool {
-        if !self.unit(regs.unit[r]).worker || self.structures.owned(h, player).is_none() {
+        let unit = self.unit(regs.unit[r]);
+        let Some(i) = self.structures.owned(h, player) else {
+            return false;
+        };
+        // A worker used up to start a building can only start one that
+        // nothing has started yet.
+        if !unit.worker
+            || (unit.consumed && (self.structures.finished(i) || self.structures.growing(i)))
+        {
             return false;
         }
         self.stop_work(r);
@@ -311,6 +344,9 @@ impl Conquest {
         if self.structures.tier_of(player) < u.tier {
             return Err(Refusal::Tier);
         }
+        if u.hatches && !self.structures.has_larva(player) {
+            return Err(Refusal::Larva);
+        }
         if !self
             .economy
             .can_afford(player, u32::from(u.cost_grub), u32::from(u.cost_marrow))
@@ -320,7 +356,8 @@ impl Conquest {
         Ok(())
     }
 
-    /// `player`'s building `h` queues a regiment of type `unit`.
+    /// `player`'s building `h` queues a regiment of type `unit`, paying
+    /// for it, and a larva if it hatches from one.
     pub(crate) fn train(&mut self, player: PlayerId, h: StructureHandle, unit: UnitId) -> bool {
         if self.can_train(player, h, unit).is_err() {
             return false;
@@ -328,6 +365,9 @@ impl Conquest {
         let u = self.unit(unit);
         self.economy
             .spend(player, u32::from(u.cost_grub), u32::from(u.cost_marrow));
+        if u.hatches {
+            self.structures.take_larva(player, h.index as usize);
+        }
         self.production.enqueue(h, unit);
         true
     }
@@ -344,6 +384,9 @@ impl Conquest {
         let u = self.unit(unit);
         self.economy
             .refund(player, u32::from(u.cost_grub), u32::from(u.cost_marrow));
+        if u.hatches {
+            self.structures.give_back_larva(player);
+        }
         true
     }
 

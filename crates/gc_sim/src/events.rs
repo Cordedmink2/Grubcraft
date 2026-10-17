@@ -59,6 +59,12 @@ pub enum Event {
     Ambush(Ambush),
     /// A building was brought down (its handle is no longer live).
     Fallen { structure: StructureHandle },
+    /// A worker was used up to start a building growing (the Brood's
+    /// Gnawers; its handle is no longer live). It is not told as a loss.
+    Consumed {
+        worker: RegimentHandle,
+        structure: StructureHandle,
+    },
 }
 
 /// Each regiment slot as it stood before the tick.
@@ -141,8 +147,15 @@ impl Events {
         }
     }
 
-    /// Tell what the tick just played did.
-    pub(crate) fn after(&mut self, regs: &Regiments, combat: &Combat, ambushes: &[Ambush]) {
+    /// Tell what the tick just played did. `consumed` are the workers used
+    /// up by the buildings they started.
+    pub(crate) fn after(
+        &mut self,
+        regs: &Regiments,
+        combat: &Combat,
+        ambushes: &[Ambush],
+        consumed: &[(RegimentHandle, StructureHandle)],
+    ) {
         let list = &mut self.list;
         list.extend(
             combat
@@ -163,8 +176,11 @@ impl Events {
                 index: i as u32,
                 generation: b.generation,
             };
-            // Gone: wiped out.
+            // Gone: wiped out, or used up.
             let still = regs.alive[i] && regs.generation[i] == b.generation;
+            if !still && consumed.iter().any(|&(w, _)| w == regiment) {
+                continue;
+            }
             let models = if still { regs.models[i] } else { 0 };
             if models < b.models {
                 list.push(Event::Losses {
@@ -189,5 +205,10 @@ impl Events {
             }
         }
         list.extend(ambushes.iter().copied().map(Event::Ambush));
+        list.extend(
+            consumed
+                .iter()
+                .map(|&(worker, structure)| Event::Consumed { worker, structure }),
+        );
     }
 }

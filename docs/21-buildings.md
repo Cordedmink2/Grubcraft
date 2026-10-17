@@ -18,7 +18,7 @@ Every faction's buildings with first-pass numbers for Conquest (M3): cost, build
 ### Faction rules
 
 - **Ember Clans:** the sturdiest bases. The halls, towers and walls are Fortified, and so is the Outpost Hall used to expand.
-- **Brood:** every structure is grown by using up the Gnawer that starts it, so its real price is the listed Grub plus a worker (50 Grub and a larva). Upgrading the Hive uses no Gnawer. All Brood structures are Living. Nothing repairs them, but they regrow 2 hit points a second while on root-veins.
+- **Brood:** every structure is grown by using up the Gnawer that starts it, so its real price is the listed Grub plus a worker (50 Grub and a larva). Upgrading the Hive uses no Gnawer. All Brood structures are Living. Nothing repairs them, but they regrow 2 hit points a second while on root-veins. **Built (2026-10-17, faction depth stage 1):** the Gnawer is used up at the foundation, and the building then grows on its own at one builder's speed; other Gnawers can't help it or mend it. Regrowth on root-veins is not built yet.
 - **Choir:** every building except the Spire, Resonators and Siphons needs power. It must stand inside the field of a Spire (8 tiles) or a Resonator or Siphon (6 tiles). An unpowered building stops training, researching and shooting until power returns.
 - **Carrion Concord:** the Counting House and Tollgate are Fortified, and everything else is Structure, including the Waystation. The Reliquary (75 Grub, 2×2) is small and cheap, made to be planted beside other players' fights.
 

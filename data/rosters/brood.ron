@@ -50,8 +50,8 @@
             armour: Living,
             footprint: (5, 5),
             supply: 12,
-            // Plain workers bring both here until the Brood economy (veins, larvae) is built.
-            flags: [DropOffGrub, DropOffMarrow],
+            // Plain workers bring both here until the Brood root-veins are built.
+            flags: [DropOffGrub, DropOffMarrow, Larvae],
             effect: "Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 10 tiles around it.",
         ),
         (
@@ -65,8 +65,8 @@
             armour: Living,
             footprint: (5, 5),
             supply: 22,
-            // Plain workers bring both here until the Brood economy (veins, larvae) is built.
-            flags: [DropOffGrub, DropOffMarrow],
+            // Plain workers bring both here until the Brood root-veins are built.
+            flags: [DropOffGrub, DropOffMarrow, Larvae],
             effect: "Tier 2: evolutions, Drone-Moths, the Broodmother Bulk and a second hero.",
         ),
         (
@@ -80,8 +80,8 @@
             armour: Living,
             footprint: (5, 5),
             supply: 32,
-            // Plain workers bring both here until the Brood economy (veins, larvae) is built.
-            flags: [DropOffGrub, DropOffMarrow],
+            // Plain workers bring both here until the Brood root-veins are built.
+            flags: [DropOffGrub, DropOffMarrow, Larvae],
             effect: "Tier 3: monsters, top upgrades and a third hero.",
         ),
         (
@@ -105,6 +105,7 @@
             hp: 900,
             armour: Living,
             footprint: (3, 3),
+            flags: [Larvae],
             effect: "Holds 3 more larvae and spawns its own every 12 s.",
         ),
         (
@@ -173,6 +174,7 @@
             supply: 1,
             train_time: 12.0,
             from: Building("Hive"),
+            flags: [Hatches, Consumed],
             abilities: [
                 (
                     name: "Burrow In",
@@ -212,6 +214,7 @@
             supply: 3,
             train_time: 18.0,
             from: Building("Hive"),
+            flags: [Hatches],
             abilities: [
                 (
                     name: "Swarm Instinct",
@@ -251,6 +254,7 @@
             supply: 4,
             train_time: 22.0,
             from: Building("Hive"),
+            flags: [Hatches],
             abilities: [
                 (
                     name: "Hunker",
@@ -290,6 +294,7 @@
             supply: 2,
             train_time: 18.0,
             from: Building("Hive"),
+            flags: [Hatches],
             abilities: [
                 (
                     name: "Digest",
@@ -478,7 +483,7 @@
             supply: 3,
             train_time: 25.0,
             from: Building("Moth Roost"),
-            flags: [Flying, Detector],
+            flags: [Flying, Detector, Hatches],
             abilities: [
                 (
                     name: "Spore Bomb",
@@ -520,7 +525,7 @@
             supply: 4,
             train_time: 35.0,
             from: Building("Gorge"),
-            flags: [FriendlyFire],
+            flags: [FriendlyFire, Hatches],
             abilities: [
                 (
                     name: "Larva Sac",
@@ -555,7 +560,7 @@
             supply: 6,
             train_time: 55.0,
             from: Building("Gorge"),
-            flags: [Terror],
+            flags: [Terror, Hatches],
             abilities: [
                 (
                     name: "Devour",

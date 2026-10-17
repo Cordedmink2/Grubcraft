@@ -125,6 +125,8 @@ impl Writer {
         self.var(u64::from(u.train_ticks));
         self.var(u.trained_at.map_or(0, |b| u64::from(b) + 1));
         self.u8(u.tier);
+        self.bool(u.hatches);
+        self.bool(u.consumed);
     }
 
     pub fn node(&mut self, n: &NodeSetup) {
@@ -418,8 +420,9 @@ impl<'a> Reader<'a> {
         })
     }
 
-    pub fn conquest_unit(&mut self) -> Option<ConquestUnit> {
-        Some(ConquestUnit {
+    /// A Conquest unit as file format `format` wrote it.
+    pub fn conquest_unit(&mut self, format: u16) -> Option<ConquestUnit> {
+        let mut u = ConquestUnit {
             breaker: Breaker::from_u8(self.u8()?)?,
             worker: self.bool()?,
             supply: self.u8()?,
@@ -428,7 +431,13 @@ impl<'a> Reader<'a> {
             train_ticks: self.var_as()?,
             trained_at: self.maybe_id()?,
             tier: self.u8()?,
-        })
+            ..ConquestUnit::default()
+        };
+        if format >= 17 {
+            u.hatches = self.bool()?;
+            u.consumed = self.bool()?;
+        }
+        Some(u)
     }
 
     pub fn node(&mut self) -> Option<NodeSetup> {
