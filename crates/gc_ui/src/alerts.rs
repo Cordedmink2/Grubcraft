@@ -5,8 +5,8 @@
 //! window) and this draws a small badge at the nearest edge, with an arrow
 //! pointing outwards. Events that are in view get no badge.
 
-use crate::draw::{DrawList, Rect};
-use crate::hud::{HudEvent, HudInput, WIDGET_ALERT, WIDGET_IDLE};
+use crate::draw::{DrawList, Rect, mix};
+use crate::hud::{HudEvent, HudInput, WIDGET_ALERT, WIDGET_IDLE, muted_ink};
 use crate::ui::{Press, theme};
 
 /// Side of an alert badge, in UI pixels.
@@ -19,7 +19,7 @@ const IDLE_W: i32 = 112;
 const IDLE_H: i32 = 28;
 const MARGIN: i32 = 8;
 /// A pale lilac, for regiments that broke.
-const ROUT: [u8; 4] = [214, 206, 240, 255];
+const ROUT: [u8; 4] = [196, 186, 226, 255];
 
 /// What happened.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,8 +43,8 @@ impl AlertKind {
 
     fn color(self) -> [u8; 4] {
         match self {
-            AlertKind::Attack => theme::BAD,
-            AlertKind::Ambush => theme::ACCENT,
+            AlertKind::Attack => theme::MADDER,
+            AlertKind::Ambush => theme::WELD,
             AlertKind::Rout => ROUT,
         }
     }
@@ -164,11 +164,15 @@ pub fn draw(
         }
         let color = a.kind.color();
         let filled = a.fresh || hot;
-        draw.rect(r, if filled { color } else { theme::PANEL });
-        draw.border(r, 2, color);
-        let ink = if filled { theme::FIELD } else { color };
+        draw.boxed(r, if filled { color } else { theme::LINEN }, 2);
+        let ink = if filled {
+            theme::INK
+        } else {
+            mix(color, theme::INK, 0.35)
+        };
         draw.text_centered(r, 1, ink, a.kind.letter());
-        arrow(draw, r, side, color);
+        arrow(draw, r, side, theme::INK);
+        arrow(draw, r.inset(1), side, color);
         over.push(r);
     }
     events.extend(clicked.map(HudEvent::Alert));
@@ -185,16 +189,16 @@ pub fn draw(
         if hit && n > 0 {
             events.push(HudEvent::IdleWorker);
         }
-        draw.rect(
+        draw.boxed(
             r,
             if hot {
-                theme::BUTTON_HOT
+                mix(theme::LINEN_DK, theme::LINEN, 0.5)
             } else {
-                theme::BUTTON
+                theme::LINEN_DK
             },
+            2,
         );
-        draw.border(r, 1, theme::PANEL_EDGE);
-        let ink = if n > 0 { theme::TEXT } else { theme::DISABLED };
+        let ink = if n > 0 { theme::INK } else { muted_ink() };
         draw.text_centered(r, 1, ink, &format!("F1 Idle {n}"));
         over.push(r);
     }

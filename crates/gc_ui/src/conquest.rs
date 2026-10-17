@@ -9,12 +9,14 @@
 
 use std::fmt::Write as _;
 
-use crate::draw::{CELL_H, CELL_W, Color, DrawList, Rect, fit, text_width, wrap};
-use crate::hud::{HudEvent, HudInput, WIDGET_QUEUE, draw_portrait, health_color, rgb};
+use crate::draw::{CELL_H, CELL_W, Color, DrawList, Rect, fit, mix, text_width, wrap};
+use crate::hud::{
+    HudEvent, HudInput, WIDGET_QUEUE, draw_portrait, health_color, ink_meter, muted_ink, rgb,
+};
+use crate::icons::{self, Icon};
 use crate::lobby::thousands;
 use crate::ui::{Press, theme};
 
-const MARGIN: i32 = 8;
 /// Room between the items of the top bar.
 const TOP_GAP: i32 = 24;
 /// A Grub gathering spot on the minimap: a warm gold.
@@ -165,78 +167,127 @@ pub(crate) fn clock(secs: u32) -> String {
     }
 }
 
-/// A faction meter's item: its points out of `full`, green once full.
-fn meter_item(draw: &mut DrawList, x: i32, y: i32, label: &str, points: u32, full: u32) -> i32 {
-    let color = if points >= full {
-        theme::GOOD
-    } else {
-        theme::TEXT
-    };
-    top_item(draw, x, y, label, &format!("{points}/{full}"), color)
-}
-
-/// A label in grey and its value after it. Returns where the next item goes.
-fn top_item(draw: &mut DrawList, x: i32, y: i32, label: &str, value: &str, color: Color) -> i32 {
-    draw.text(x, y, 1, theme::MUTED, label);
+/// A label in muted ink and its value after it, if both fit before `limit`.
+/// Returns where the next item goes (`None` when it does not fit).
+fn top_item(
+    draw: &mut DrawList,
+    x: i32,
+    y: i32,
+    limit: i32,
+    label: &str,
+    value: &str,
+    color: Color,
+) -> Option<i32> {
     let vx = x + text_width(label, 1) + CELL_W;
-    draw.text(vx, y, 1, color, value);
-    vx + text_width(value, 1) + TOP_GAP
+    let end = vx + text_width(value, 1);
+    if end > limit {
+        return None;
+    }
+    draw.text(x, y, 1, muted_ink(), label);
+    draw.text_bold(vx, y, 1, color, value);
+    Some(end + TOP_GAP)
 }
 
-/// Draw the top bar `bar` (see [`HudLayout::top`](crate::hud::HudLayout::top)).
-pub(crate) fn draw_top_bar(draw: &mut DrawList, bar: Rect, t: &TopBar) {
-    draw.rect(
-        bar,
-        [theme::PANEL[0], theme::PANEL[1], theme::PANEL[2], 255],
+/// An icon with its number: Grub, Marrow or Supply.
+fn icon_item(
+    draw: &mut DrawList,
+    x: i32,
+    area: Rect,
+    icon: Icon,
+    dye: Color,
+    value: &str,
+    color: Color,
+) -> Option<i32> {
+    let end = x + 28 + text_width(value, 1);
+    if end > area.right() {
+        return None;
+    }
+    icons::icon(
+        draw,
+        Rect::new(x, area.y + (area.h - 24) / 2, 24, 24),
+        icon,
+        dye,
     );
-    draw.rect(Rect::new(0, bar.bottom() - 2, bar.w, 2), theme::PANEL_EDGE);
-    let y = (bar.h - 2 - 16) / 2;
-    let mut x = MARGIN;
-    x = top_item(draw, x, y, "Grub", &thousands(t.grub), theme::TEXT);
-    x = top_item(draw, x, y, "Marrow", &thousands(t.marrow), theme::TEXT);
+    let y = area.y + (area.h - 16) / 2;
+    draw.text_bold(x + 28, y, 1, color, value);
+    Some(end + TOP_GAP)
+}
+
+/// One item of the top bar, drawn at an x; where the next goes, if it fit.
+type TopItem = Box<dyn Fn(&mut DrawList, i32) -> Option<i32>>;
+
+/// Draw the economy along the top bar's `area`: Grub, Marrow and Supply as
+/// pictures with numbers, then the faction meters. Items that do not fit
+/// before the status chips are left out.
+pub(crate) fn draw_resources(draw: &mut DrawList, area: Rect, t: &TopBar) {
+    let y = area.y + (area.h - 16) / 2;
+    let limit = area.right();
+    let ink = theme::INK;
+    let mut x = area.x;
     let supply = format!("{}/{}", t.supply_used, t.supply_cap);
     let supply_color = if t.supply_used >= t.supply_cap {
-        theme::BAD
+        theme::MADDER
     } else {
-        theme::TEXT
+        ink
     };
-    x = top_item(draw, x, y, "Supply", &supply, supply_color);
+    let mut items: Vec<TopItem> = Vec::new();
+    let (grub, marrow) = (thousands(t.grub), thousands(t.marrow));
+    items.push(Box::new(move |d, x| {
+        icon_item(d, x, area, Icon::Grub, theme::WODE, &grub, ink)
+    }));
+    items.push(Box::new(move |d, x| {
+        icon_item(d, x, area, Icon::Marrow, ink, &marrow, ink)
+    }));
+    items.push(Box::new(move |d, x| {
+        icon_item(d, x, area, Icon::Supply, theme::WOAD, &supply, supply_color)
+    }));
     if t.larva_room > 0 {
         let larvae = format!("{}/{}", t.larvae, t.larva_room);
-        let color = if t.larvae == 0 {
-            theme::WARN
-        } else {
-            theme::TEXT
-        };
-        x = top_item(draw, x, y, "Larvae", &larvae, color);
+        let color = if t.larvae == 0 { theme::MADDER } else { ink };
+        items.push(Box::new(move |d, x| {
+            top_item(d, x, y, limit, "Larvae", &larvae, color)
+        }));
     }
     if t.resonance > 0 || t.chords > 0 {
-        x = meter_item(draw, x, y, "Resonance", t.resonance, RESONANCE_FULL);
+        let color = if t.resonance >= RESONANCE_FULL {
+            theme::WODE
+        } else {
+            ink
+        };
+        let value = format!("{}/{}", t.resonance, RESONANCE_FULL);
+        items.push(Box::new(move |d, x| {
+            top_item(d, x, y, limit, "Resonance", &value, color)
+        }));
         if t.chords > 0 {
-            x = top_item(draw, x, y, "Chords", &t.chords.to_string(), theme::TEXT);
+            let chords = t.chords.to_string();
+            items.push(Box::new(move |d, x| {
+                top_item(d, x, y, limit, "Chords", &chords, ink)
+            }));
         }
     }
     if let Some(honor) = t.honor {
-        x = meter_item(draw, x, y, "Honor", honor, HONOR_FULL);
+        let color = if honor >= HONOR_FULL {
+            theme::WODE
+        } else {
+            ink
+        };
+        let value = format!("{honor}/{HONOR_FULL}");
+        items.push(Box::new(move |d, x| {
+            top_item(d, x, y, limit, "Honor", &value, color)
+        }));
     }
     if t.upkeep_percent < 100 {
-        top_item(
-            draw,
-            x,
-            y,
-            "Upkeep",
-            &format!("{}%", t.upkeep_percent),
-            theme::WARN,
-        );
+        let value = format!("{}%", t.upkeep_percent);
+        items.push(Box::new(move |d, x| {
+            top_item(d, x, y, limit, "Upkeep", &value, theme::MADDER)
+        }));
     }
-    let time = clock(t.clock_secs);
-    draw.text(
-        bar.right() - MARGIN - text_width(&time, 1),
-        y,
-        1,
-        theme::TEXT,
-        &time,
-    );
+    for item in items {
+        match item(draw, x) {
+            Some(next) => x = next,
+            None => break,
+        }
+    }
 }
 
 /// Buildings on the minimap `r`: filled footprints, a white rim when selected.
@@ -254,7 +305,7 @@ pub(crate) fn draw_blocks(
         if b.selected
             && let Some(rim) = body.inset(-1).intersect(bounds)
         {
-            draw.rect(rim, theme::TEXT);
+            draw.rect(rim, [255, 250, 230, 255]);
         }
         if let Some(fill) = body.intersect(bounds) {
             draw.rect(fill, rgb(b.color));
@@ -312,8 +363,7 @@ pub(crate) fn draw_structure(
     for i in 0..QUEUE_SLOTS {
         let rect = Rect::new(left + i as i32 * (slot_w + CARD_GAP), row.y, slot_w, slot_h);
         let Some(item) = s.queue.get(i) else {
-            draw.rect(rect, theme::FIELD);
-            draw.border(rect, 1, theme::PANEL_EDGE);
+            draw.boxed(rect, theme::LINEN, 2);
             continue;
         };
         let hot = rect.contains(input.mouse.0, input.mouse.1);
@@ -327,29 +377,29 @@ pub(crate) fn draw_structure(
         if clicked {
             events.push(HudEvent::Unqueue(i));
         }
-        draw.rect(
+        draw.boxed(
             rect,
             if hot {
-                theme::BUTTON_HOT
+                mix(theme::LINEN_DK, theme::LINEN, 0.5)
             } else {
-                theme::BUTTON
+                theme::LINEN_DK
             },
+            2,
         );
-        draw.border(rect, 1, theme::PANEL_EDGE);
-        let inner = rect.inset(3);
+        let inner = rect.inset(4);
         let chars = (inner.w / CELL_W).max(1) as usize;
-        draw.text(inner.x, inner.y, 1, theme::TEXT, &fit(item.name, chars));
+        draw.text(inner.x, inner.y, 1, theme::INK, &fit(item.name, chars));
         if let Some(initial) = item.name.chars().next() {
             let mid = Rect::new(inner.x, inner.y + 18, inner.w, (inner.h - 18 - 8).max(0));
-            draw.text_centered(mid, 2, theme::MUTED, &initial.to_string());
+            draw.text_centered(mid, 2, muted_ink(), &initial.to_string());
         }
         if i == 0 || item.progress > 0 {
-            let bar = Rect::new(inner.x, inner.bottom() - 6, inner.w, 6);
-            draw.meter(
+            let bar = Rect::new(inner.x, inner.bottom() - 8, inner.w, 8);
+            ink_meter(
+                draw,
                 bar,
                 f32::from(item.progress.min(100)) / 100.0,
-                theme::ACCENT,
-                theme::FIELD,
+                theme::WELD,
             );
         }
     }
@@ -357,47 +407,43 @@ pub(crate) fn draw_structure(
 
 /// The building's own card: portrait, name, hit points and what it is doing.
 fn draw_structure_card(draw: &mut DrawList, r: Rect, s: &StructurePanel) {
-    draw.rect(r, theme::BUTTON);
-    draw.border(r, 1, theme::PANEL_EDGE);
-    let inner = r.inset(3);
+    draw.boxed(r, theme::LINEN_DK, 2);
+    let inner = r.inset(5);
     let side = inner.h.min(56);
     let portrait = Rect::new(inner.x, inner.y, side, side);
     draw_portrait(draw, portrait, s.color, s.name, 2);
     let x = portrait.right() + 6;
     let chars = ((inner.right() - x) / CELL_W).max(1) as usize;
-    draw.text(x, inner.y, 1, theme::TEXT, &fit(s.name, chars));
+    draw.text_bold(x, inner.y, 1, theme::INK, &fit(s.name, chars));
     let hp = s.hp as f32 / s.max_hp.max(1) as f32;
-    draw.meter(
-        Rect::new(x, inner.y + 20, (inner.right() - x).max(0), 8),
+    ink_meter(
+        draw,
+        Rect::new(x, inner.y + 20, (inner.right() - x).max(0), 10),
         hp,
         health_color(hp),
-        theme::FIELD,
     );
     let mut numbers = format!("{}/{}", s.hp, s.max_hp);
     if let Some((held, cap)) = s.larvae {
         let _ = write!(numbers, "  Larvae {held}/{cap}");
     }
-    draw.text(x, inner.y + 32, 1, theme::MUTED, &fit(&numbers, chars));
+    draw.text(x, inner.y + 34, 1, muted_ink(), &fit(&numbers, chars));
 
     let state = if let Some(done) = s.building {
-        Some((format!("Building {}%", done.min(100)), theme::ACCENT))
+        Some((format!("Building {}%", done.min(100)), theme::WOAD))
     } else if let Some((to, done)) = s.upgrading {
-        Some((
-            format!("Upgrading to {to} {}%", done.min(100)),
-            theme::ACCENT,
-        ))
+        Some((format!("Upgrading to {to} {}%", done.min(100)), theme::WOAD))
     } else if let Some(on) = s.rooted {
         Some(if on {
-            ("On root-veins".to_string(), theme::GOOD)
+            ("On root-veins".to_string(), theme::WODE)
         } else {
-            ("Cut off: no regrowth".to_string(), theme::WARN)
+            ("Cut off: no regrowth".to_string(), theme::MADDER)
         })
     } else {
         s.powered.map(|on| {
             if on {
-                ("Powered".to_string(), theme::GOOD)
+                ("Powered".to_string(), theme::WODE)
             } else {
-                (UNPOWERED.to_string(), theme::WARN)
+                (UNPOWERED.to_string(), theme::MADDER)
             }
         })
     };
@@ -405,9 +451,9 @@ fn draw_structure_card(draw: &mut DrawList, r: Rect, s: &StructurePanel) {
     // to the card and cut off where the card ends.
     let tuning = s.tuning.filter(|_| s.building.is_none()).map(|t| {
         let color = if t.nodes == 0 {
-            theme::MUTED
+            muted_ink()
         } else {
-            theme::TEXT
+            theme::INK
         };
         (t.line(), color)
     });

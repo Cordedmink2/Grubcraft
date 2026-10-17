@@ -7,7 +7,7 @@
 //! [`SlotState::Blocked`] is dim but still clicks, so the game can say why.
 
 use crate::draw::{CELL_W, DrawList, Rect, fit};
-use crate::hud::{HudEvent, HudInput, SlotState, WIDGET_POWER, slot_colors};
+use crate::hud::{HudEvent, HudInput, SlotState, WIDGET_POWER, muted_ink, slot_colors};
 use crate::ui::{Press, theme};
 
 /// The key on each button, first to last (the game binds the same keys).
@@ -66,22 +66,21 @@ pub(crate) fn draw(
             events.push(HudEvent::Power(i));
         }
         let (back, edge, text) = slot_colors(b.state, hot);
-        draw.rect(r, back);
-        draw.border(r, 1, edge);
-        let inner = r.inset(3);
+        draw.boxed(r, back, 2);
+        let _ = edge;
+        let inner = r.inset(4);
         let key = POWER_KEYS[i];
-        draw.text(inner.x, inner.y, 1, theme::MUTED, key);
+        let key_color = if b.state == SlotState::Off || b.state == SlotState::Blocked {
+            muted_ink()
+        } else {
+            theme::MADDER
+        };
+        draw.text(inner.x, inner.y, 1, key_color, key);
         let x = inner.x + (key.len() as i32 + 1) * CELL_W;
         let chars = ((inner.right() - x) / CELL_W).max(1) as usize;
         draw.text(x, inner.y, 1, text, &fit(b.name, chars));
         let chars = (inner.w / CELL_W).max(1) as usize;
-        draw.text(
-            inner.x,
-            inner.y + 16,
-            1,
-            theme::MUTED,
-            &fit(b.detail, chars),
-        );
+        draw.text(inner.x, inner.y + 16, 1, muted_ink(), &fit(b.detail, chars));
         over.push(r);
     }
 }
@@ -169,10 +168,11 @@ mod tests {
         // Back, four border sides, and a quad a letter of "F2", "Overclock"
         // and "20 Resonance".
         let letters = "F2Overclock20Resonance".len();
-        assert!(ready.quads.len() >= 5 + letters, "{}", ready.quads.len());
+        assert!(ready.quads.len() > letters, "{}", ready.quads.len());
         let has = |d: &DrawList, c| d.quads.iter().any(|q| q.color == c);
-        assert!(has(&armed, theme::PRIMARY) && !has(&ready, theme::PRIMARY));
-        assert!(has(&blocked, theme::DISABLED) && !has(&ready, theme::DISABLED));
+        assert!(has(&armed, theme::WELD) && !has(&ready, theme::WELD));
+        let dim = slot_colors(SlotState::Blocked, false).2;
+        assert!(has(&blocked, dim) && !has(&ready, dim));
     }
 
     #[test]

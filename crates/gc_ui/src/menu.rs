@@ -61,6 +61,8 @@ pub enum MenuAction {
     WatchReplay(PathBuf),
     /// The Unit viewer button: the game should open the viewer.
     OpenViewer,
+    /// The Guide button: the game should open the Guide.
+    OpenGuide,
     Quit,
 }
 
@@ -373,9 +375,9 @@ impl<N: Network> Menu<N> {
     fn draw_map_preview(&mut self, ui: &mut Ui, r: Rect, key: MapPreviewKey) {
         self.wanted_preview = Some(key);
         let Some(p) = self.current_preview() else {
-            ui.draw.rect(r, theme::FIELD);
-            ui.draw.text_centered(r, 1, theme::DISABLED, "...");
-            ui.draw.border(r, 2, theme::PANEL_EDGE);
+            ui.draw.rect(r, theme::FIELD_CLOTH);
+            ui.draw.text_centered(r, 1, theme::DISABLED_INK, "...");
+            ui.draw.border(r, 2, theme::INK);
             return;
         };
         draw_terrain(&mut ui.draw, r, &p.terrain);
@@ -384,11 +386,12 @@ impl<N: Network> Menu<N> {
             let x = r.x + (s[0] * r.w as f32) as i32;
             let y = r.y + (s[1] * r.h as f32) as i32;
             if inner.contains(x, y) {
-                ui.draw.rect(Rect::new(x - 3, y - 3, 7, 7), theme::FIELD);
-                ui.draw.rect(Rect::new(x - 2, y - 2, 5, 5), theme::ACCENT);
+                ui.draw
+                    .rect(Rect::new(x - 3, y - 3, 7, 7), theme::FIELD_CLOTH);
+                ui.draw.rect(Rect::new(x - 2, y - 2, 5, 5), theme::MADDER);
             }
         }
-        ui.draw.border(r, 2, theme::PANEL_EDGE);
+        ui.draw.border(r, 2, theme::INK);
     }
 
     fn save_settings(&mut self) {
@@ -436,25 +439,27 @@ impl<N: Network> Menu<N> {
 
     fn main_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
         let (w, h) = ui.screen;
-        let count = if self.in_match { 7 } else { 6 };
+        let count = if self.in_match { 8 } else { 7 };
         // Up to 66 pixels for each button and its gap, less in a short window.
-        let step = ((h - 120 - 24) / count).clamp(40, 66);
+        let step = ((h - 104 - 12 - 48) / count).clamp(40, 66);
         let (button_h, gap) = (step - step / 5, step / 5);
-        let total = 120 + count * step;
-        let area = centered(ui.screen, 360, total);
+        let total = 104 + count * step + 12;
+        let panel = centered(ui.screen, 460, total);
+        ui.panel(panel);
+        // The game's name, hung from the top of the cloth.
         let title = "GRUBCRAFT";
-        let tw = crate::draw::text_width(title, 4);
-        ui.label(area.x + (area.w - tw) / 2, area.y, 4, theme::ACCENT, title);
+        let banner_w = crate::draw::text_width(title, 3) + 40;
+        ui.banner(panel.x + (panel.w - banner_w) / 2, panel.y - 14, 3, title);
         ui.label_centered(
-            Rect::new(area.x, area.y + 76, area.w, 16),
+            Rect::new(panel.x, panel.y + 72, panel.w, 16),
             1,
-            theme::MUTED,
+            theme::INK_MUTED,
             "Command regiments across the body of a fallen Titan",
         );
         let mut stack = Stack {
-            x: area.x + 30,
-            y: area.y + 120,
-            w: area.w - 60,
+            x: panel.x + 50,
+            y: panel.y + 104,
+            w: panel.w - 100,
             gap,
         };
         let mut action = MenuAction::None;
@@ -480,6 +485,9 @@ impl<N: Network> Menu<N> {
         if ui.button(stack.next(button_h), "Replays", ButtonStyle::Normal, true) {
             self.go(ui, Screen::Replays);
             action = MenuAction::ListReplays;
+        }
+        if ui.button(stack.next(button_h), "Guide", ButtonStyle::Normal, true) {
+            action = MenuAction::OpenGuide;
         }
         if ui.button(
             stack.next(button_h),
@@ -522,7 +530,11 @@ impl<N: Network> Menu<N> {
         // then the Host and Back buttons, which keep a fixed pixel size.
         let panel = centered(ui.screen, 880, sp(64 + 74 + 6 * 48 + 8) + 124);
         ui.panel(panel);
-        ui.label(panel.x + 24, panel.y + 16, 2, theme::TEXT, "Play");
+        ui.header(
+            panel,
+            "Play",
+            "Host a game for friends, or join one on your network.",
+        );
         let card_w = (panel.w - 72) / 2;
         let top = panel.y + sp(64);
 
@@ -533,7 +545,7 @@ impl<N: Network> Menu<N> {
             w: card_w,
             gap: sp(12),
         };
-        ui.label(s.x, s.y, 2, theme::ACCENT, "Host a game");
+        ui.label(s.x, s.y, 2, theme::MADDER, "Host a game");
         s.skip(sp(40));
         let hint_y = s.y;
         s.skip(sp(34));
@@ -558,8 +570,11 @@ impl<N: Network> Menu<N> {
             self.host.map_seed = seed;
         }
         let (hint, hint_color) = match self.code_note {
-            Some(note) => (note, theme::BAD),
-            None => ("Friends on your Wi-Fi see it automatically.", theme::MUTED),
+            Some(note) => (note, theme::BAD_INK),
+            None => (
+                "Friends on your Wi-Fi see it automatically.",
+                theme::INK_MUTED,
+            ),
         };
         ui.label(s.x, hint_y, 1, hint_color, hint);
         // The map's picture sits beside the three rows below it (mode,
@@ -617,16 +632,16 @@ impl<N: Network> Menu<N> {
             w: card_w,
             gap: sp(12),
         };
-        ui.label(s.x, s.y, 2, theme::ACCENT, "Join a game");
+        ui.label(s.x, s.y, 2, theme::MADDER, "Join a game");
         s.skip(sp(40));
-        ui.label(s.x, s.y, 1, theme::MUTED, "Games on your network:");
+        ui.label(s.x, s.y, 1, theme::INK_MUTED, "Games on your network:");
         s.skip(sp(24));
         let list = Rect::new(s.x, s.y, s.w, sp(112));
-        ui.draw.rect(list, theme::FIELD);
-        ui.draw.border(list, 2, theme::PANEL_EDGE);
+        ui.draw.rect(list, theme::FIELD_CLOTH);
+        ui.draw.border(list, 2, theme::INK);
         let games: Vec<_> = self.net.discovered().to_vec();
         if games.is_empty() {
-            ui.label_centered(list, 1, theme::DISABLED, "No games found yet");
+            ui.label_centered(list, 1, theme::DISABLED_INK, "No games found yet");
         }
         const LISTED: usize = 3;
         for (i, g) in games.iter().take(LISTED).enumerate() {
@@ -656,11 +671,11 @@ impl<N: Network> Menu<N> {
                 row.x + 8,
                 ty,
                 1,
-                theme::TEXT,
+                theme::INK,
                 &fit(&text, (row.w / 8 - 12) as usize),
             );
             if !crate::lobby::plays_with(&g.version, &self.version) {
-                ui.label_right(row.right() - 8, ty, 1, theme::BAD, &g.version);
+                ui.label_right(row.right() - 8, ty, 1, theme::BAD_INK, &g.version);
             }
         }
         // Games come and go while the player types: the fields below keep
@@ -698,6 +713,15 @@ impl<N: Network> Menu<N> {
             Some(g) => (g.address.clone(), self.join_password.as_str()),
             None => (self.address.trim().to_string(), self.join_password.as_str()),
         };
+        if target.is_empty() {
+            ui.label(
+                join_btn.x,
+                join_btn.bottom() + 8,
+                1,
+                theme::INK_MUTED,
+                "Pick a game above, or type its address.",
+            );
+        }
         if ui.button(join_btn, "Join", ButtonStyle::Normal, !target.is_empty()) {
             let me = self.profile();
             match self.net.join(&me, &target, password) {
@@ -709,7 +733,11 @@ impl<N: Network> Menu<N> {
         // Footer.
         let back = Rect::new(panel.x + 24, panel.bottom() - 52, 140, 44);
         if let Some((text, is_error)) = &self.message {
-            let color = if *is_error { theme::BAD } else { theme::GOOD };
+            let color = if *is_error {
+                theme::BAD_INK
+            } else {
+                theme::GOOD_INK
+            };
             let chars = ((panel.w - 48) / 8) as usize;
             // Two lines at most.
             let first: String = text.chars().take(chars).collect();
@@ -751,7 +779,7 @@ impl<N: Network> Menu<N> {
             sp(64 + 36 + 20 + 4) + strip_h + rows_h + 124,
         );
         ui.panel(panel);
-        ui.label(panel.x + 24, panel.y + 16, 2, theme::TEXT, "Lobby");
+        ui.header(panel, "Lobby", "");
         let host_name = lobby
             .slots
             .iter()
@@ -761,7 +789,7 @@ impl<N: Network> Menu<N> {
             panel.right() - 24,
             panel.y + 24,
             1,
-            theme::MUTED,
+            theme::INK_MUTED,
             &format!("Host: {host_name}   Build {}", lobby.host_version),
         );
 
@@ -776,7 +804,7 @@ impl<N: Network> Menu<N> {
         // Which victories count (Conquest) or how big the map is (Field
         // Battle) has no room in the four columns: it sits in the header,
         // between the title and the host's name, clear of them.
-        let option_r = Rect::new(panel.x + 140, panel.y + 8, 270, sp(36));
+        let option_r = Rect::new(panel.x + 164, panel.y + 14, 270, sp(36));
         const CHAMPIONS: &str = "Champions before AI battles";
         let mut changed = false;
         if lobby.is_host {
@@ -864,16 +892,21 @@ impl<N: Network> Menu<N> {
             .iter()
             .enumerate()
             {
-                ui.label_centered(slot_rect(i as i32), 1, theme::TEXT, text);
+                ui.label_centered(slot_rect(i as i32), 1, theme::INK, text);
             }
             let text = if settings.mode == GameMode::Conquest {
                 format!("Victory: {}", settings.victory.name())
             } else {
                 format!("Size: {}", settings.map_size.name())
             };
-            ui.label_centered(option_r, 1, theme::TEXT, &text);
+            ui.label_centered(option_r, 1, theme::INK, &text);
             let on = if settings.champions { "on" } else { "off" };
-            ui.label_centered(champions_r, 1, theme::MUTED, &format!("{CHAMPIONS}: {on}"));
+            ui.label_centered(
+                champions_r,
+                1,
+                theme::INK_MUTED,
+                &format!("{CHAMPIONS}: {on}"),
+            );
         }
 
         // The map: its picture (when there is room), its name and its code.
@@ -888,16 +921,16 @@ impl<N: Network> Menu<N> {
             self.draw_map_preview(ui, picture, key);
             (x, w) = (strip.x + preview_side + 16, strip.w - preview_side - 16);
             let name = settings.map_name();
-            ui.label(x, strip.y, 2, theme::TEXT, &fit(name, (w / 16) as usize));
+            ui.label(x, strip.y, 2, theme::INK, &fit(name, (w / 16) as usize));
             // The orange dots on the picture, said once, if there is room.
             if preview_side >= sp(88) {
                 let hint = "Orange dots are the start positions.";
-                ui.label(x, strip.y + 38, 1, theme::MUTED, hint);
+                ui.label(x, strip.y + 38, 1, theme::INK_MUTED, hint);
             }
         }
         let code_r = Rect::new(x, strip.bottom() - sp(36), w, sp(36));
         let text_y = code_r.y + (code_r.h - 16) / 2;
-        ui.label(code_r.x, text_y, 1, theme::MUTED, "Map code");
+        ui.label(code_r.x, text_y, 1, theme::INK_MUTED, "Map code");
         let field_x = code_r.x + text_width("Map code", 1) + 8;
         if lobby.is_host {
             let field = Rect::new(field_x, code_r.y, 180, code_r.h);
@@ -914,13 +947,13 @@ impl<N: Network> Menu<N> {
             if let Some(note) = self.code_note {
                 let note_x = new_r.right() + 12;
                 let room = ((code_r.right() - note_x) / 8).max(0) as usize;
-                ui.label(note_x, text_y, 1, theme::BAD, &fit(note, room));
+                ui.label(note_x, text_y, 1, theme::BAD_INK, &fit(note, room));
             }
         } else {
             let code = map_code(settings.map_seed);
             let scale = if code_r.h >= 32 { 2 } else { 1 };
             let code_y = code_r.y + (code_r.h - 16 * scale) / 2;
-            ui.label(field_x, code_y, scale, theme::TEXT, &code);
+            ui.label(field_x, code_y, scale, theme::INK, &code);
         }
         if changed {
             self.net.edit_settings(settings);
@@ -935,7 +968,7 @@ impl<N: Network> Menu<N> {
                 panel.w - 48,
                 row_h,
             );
-            ui.draw.rect(row, [30, 35, 46, 255]);
+            ui.draw.rect(row, theme::CLOTH);
             let is_me = i == lobby.local_slot;
             let swatch_sz = row_h - 16;
             let swatch = Rect::new(row.x + 8, row.y + 8, swatch_sz, swatch_sz);
@@ -943,14 +976,14 @@ impl<N: Network> Menu<N> {
             let editable =
                 slot.occupied() && (is_me || (lobby.is_host && slot.kind == SlotKind::Ai));
             if !slot.occupied() {
-                ui.draw.rect(swatch, [50, 56, 70, 255]);
+                ui.draw.rect(swatch, theme::CLOTH_OFF);
             } else if ui.swatch(swatch, [r, g, b, 255], editable) {
                 self.net.edit_slot(i, SlotEdit::Color(slot.color + 1));
             }
             let text_y = row.y + (row.h - 16) / 2;
             let name_x = swatch.right() + 12;
             if !slot.occupied() {
-                ui.label(name_x, text_y, 1, theme::DISABLED, "Open slot");
+                ui.label(name_x, text_y, 1, theme::DISABLED_INK, "Open slot");
                 if lobby.is_host
                     && ui.button(
                         Rect::new(row.right() - 148, row.y + 8, 140, row_h - 16),
@@ -968,7 +1001,7 @@ impl<N: Network> Menu<N> {
                 name_x,
                 text_y,
                 1,
-                theme::TEXT,
+                theme::INK,
                 &fit(&format!("{}{you}", slot.name), 17),
             );
             let ctl_h = row_h - 16;
@@ -991,9 +1024,9 @@ impl<N: Network> Menu<N> {
                     self.net.edit_slot(i, SlotEdit::Team(ti as u8));
                 }
             } else {
-                ui.label_centered(faction_r, 1, theme::TEXT, slot.faction.name());
+                ui.label_centered(faction_r, 1, theme::INK, slot.faction.name());
                 let team = TEAM_NAMES[usize::from(slot.team) % MAX_PLAYERS];
-                ui.label_centered(team_r, 1, theme::TEXT, team);
+                ui.label_centered(team_r, 1, theme::INK, team);
             }
             match slot.kind {
                 SlotKind::Ai if lobby.is_host => {
@@ -1019,16 +1052,16 @@ impl<N: Network> Menu<N> {
                 }
                 _ => {
                     let (text, color) = if slot.kind == SlotKind::Human && is_me && lobby.is_host {
-                        ("Host", theme::ACCENT)
+                        ("Host", theme::MADDER)
                     } else if slot.kind == SlotKind::Ai {
                         (
                             AI_LEVELS[slot.ai_level as usize % AI_LEVELS.len()],
-                            theme::MUTED,
+                            theme::INK_MUTED,
                         )
                     } else if slot.ready {
-                        ("Ready", theme::GOOD)
+                        ("Ready", theme::GOOD_INK)
                     } else {
-                        ("Not ready", theme::MUTED)
+                        ("Not ready", theme::INK_MUTED)
                     };
                     ui.label_centered(status_r, 1, color, text);
                 }
@@ -1043,14 +1076,14 @@ impl<N: Network> Menu<N> {
             crate::lobby::faction_difficulty(me.faction)
         );
         let field_battle = lobby.settings.mode == GameMode::FieldBattle;
-        let mut hint_color = theme::MUTED;
+        let mut hint_color = theme::INK_MUTED;
         if field_battle {
             let budget = lobby.settings.budget.points();
             let spent = army_points(&self.roster, &me.army);
             hint += &if me.army.is_empty() {
                 "   Army: picked for you (Army to build your own).".to_string()
             } else if spent > budget {
-                hint_color = theme::BAD;
+                hint_color = theme::BAD_INK;
                 format!(
                     "   Army over budget: {}.",
                     army_summary(me.army.len(), spent, budget)
@@ -1063,26 +1096,23 @@ impl<N: Network> Menu<N> {
         ui.label(panel.x + 24, footer_y, 1, hint_color, &hint);
         let blocker = lobby.start_blocker();
         let mismatch = !lobby.version_mismatches().is_empty();
-        if let Some(why) = &blocker {
-            let color = if mismatch { theme::BAD } else { theme::MUTED };
-            ui.label(
-                panel.x + 24,
-                footer_y + 22,
-                1,
-                color,
-                &fit(why, ((panel.w - 48) / 8) as usize),
-            );
+        let todo = if lobby.is_host {
+            "Pick the map and rules, add computer players, then press Start."
         } else {
-            ui.label(
-                panel.x + 24,
-                footer_y + 22,
-                1,
-                theme::GOOD,
-                "Everyone is ready.",
-            );
-        }
+            "Pick your faction and colour, then tick Ready."
+        };
+        ui.label(panel.x + 24, footer_y + 22, 1, theme::INK, todo);
+        // Why Start is greyed out, right beside it.
+        let (why, color) = match &blocker {
+            Some(why) if mismatch => (why.as_str(), theme::BAD_INK),
+            Some(why) => (why.as_str(), theme::INK),
+            None => ("Everyone is ready.", theme::GOOD_INK),
+        };
+        let room = ((panel.w - 48 - text_width(todo, 1) - 24) / 8).max(0) as usize;
+        let why = fit(why, room);
+        ui.label_right(panel.right() - 24, footer_y + 22, 1, color, &why);
         if let Some(invite) = self.net.invite() {
-            ui.label(panel.x + 24, footer_y + 44, 1, theme::MUTED, invite);
+            ui.label(panel.x + 24, footer_y + 44, 1, theme::INK_MUTED, invite);
         }
         let btn_y = panel.bottom() - 52;
         let mut action = MenuAction::None;
@@ -1140,16 +1170,16 @@ impl<N: Network> Menu<N> {
         let sp = |n: i32| (n as f32 * k).round() as i32;
         let panel = centered(ui.screen, 640, sp(560));
         ui.panel(panel);
-        ui.label(panel.x + 24, panel.y + 16, 2, theme::TEXT, "Army");
-        ui.label_right(
-            panel.right() - 24,
-            panel.y + 24,
-            1,
-            theme::MUTED,
-            &format!(
-                "{}   {} points",
-                me.faction.name(),
-                thousands(lobby.settings.budget.points())
+        ui.header(
+            panel,
+            "Army",
+            &fit(
+                &format!(
+                    "{}, {} points: add regiments, then press Done.",
+                    me.faction.name(),
+                    thousands(lobby.settings.budget.points())
+                ),
+                60,
             ),
         );
 
@@ -1163,14 +1193,14 @@ impl<N: Network> Menu<N> {
                 continue;
             }
             let row = Rect::new(panel.x + 24, y, panel.w - 48, row_h);
-            ui.draw.rect(row, [30, 35, 46, 255]);
+            ui.draw.rect(row, theme::CLOTH);
             let text_y = row.y + (row.h - 16) / 2;
-            ui.label(row.x + 12, text_y, 1, theme::TEXT, &fit(&unit.name, 24));
+            ui.label(row.x + 12, text_y, 1, theme::INK, &fit(&unit.name, 24));
             ui.label(
                 row.x + 260,
                 text_y,
                 1,
-                theme::MUTED,
+                theme::INK_MUTED,
                 &format!("{} points", thousands(unit.points)),
             );
             let count = army.iter().filter(|&&a| a as usize == u).count();
@@ -1178,7 +1208,7 @@ impl<N: Network> Menu<N> {
             let plus = Rect::new(row.right() - 6 - btn, row.y + 6, btn, btn);
             let count_r = Rect::new(plus.x - 56, row.y, 56, row.h);
             let minus = Rect::new(count_r.x - btn, row.y + 6, btn, btn);
-            ui.label_centered(count_r, 1, theme::TEXT, &count.to_string());
+            ui.label_centered(count_r, 1, theme::INK, &count.to_string());
             if ui.button(minus, "-", ButtonStyle::Normal, count > 0) {
                 if let Some(at) = army.iter().rposition(|&a| a as usize == u) {
                     army.remove(at);
@@ -1204,14 +1234,14 @@ impl<N: Network> Menu<N> {
                 panel.x + 24,
                 summary_y,
                 1,
-                theme::MUTED,
+                theme::INK_MUTED,
                 "No regiments chosen: the Balanced mix will be picked for you.",
             );
         } else {
             let color = if spent > budget {
-                theme::BAD
+                theme::BAD_INK
             } else {
-                theme::TEXT
+                theme::INK
             };
             ui.label(
                 panel.x + 24,
@@ -1225,7 +1255,7 @@ impl<N: Network> Menu<N> {
                     panel.x + 24,
                     summary_y + 22,
                     1,
-                    theme::BAD,
+                    theme::BAD_INK,
                     "Over budget: the regiments lowest on the list will stay at home.",
                 );
             }
@@ -1233,7 +1263,7 @@ impl<N: Network> Menu<N> {
 
         let btn_y = panel.bottom() - 52;
         if ui.button(
-            Rect::new(panel.x + 24, btn_y, 180, 44),
+            Rect::new(panel.x + 24 + 148, btn_y, 180, 44),
             "Pick for me",
             ButtonStyle::Normal,
             !army.is_empty(),
@@ -1241,12 +1271,18 @@ impl<N: Network> Menu<N> {
             army.clear();
             changed = true;
         }
+        let back = ui.button(
+            Rect::new(panel.x + 24, btn_y, 140, 44),
+            "Back",
+            ButtonStyle::Normal,
+            true,
+        );
         let done = ui.button(
             Rect::new(panel.right() - 24 - 160, btn_y - 4, 160, 48),
             "Done",
             ButtonStyle::Primary,
             true,
-        );
+        ) || back;
         if changed {
             self.net
                 .edit_slot(lobby.local_slot, SlotEdit::Army(army.clone()));
@@ -1265,13 +1301,10 @@ impl<N: Network> Menu<N> {
         let sp = |n: i32| (n as f32 * k).round() as i32;
         let panel = centered(ui.screen, 760, sp(560));
         ui.panel(panel);
-        ui.label(panel.x + 24, panel.y + 16, 2, theme::TEXT, "Replays");
-        ui.label_right(
-            panel.right() - 24,
-            panel.y + 24,
-            1,
-            theme::MUTED,
-            "Every battle is saved here",
+        ui.header(
+            panel,
+            "Replays",
+            "Every battle is saved here. Pick one to see it again.",
         );
         let row_h = sp(56);
         let top = panel.y + sp(64);
@@ -1286,24 +1319,26 @@ impl<N: Network> Menu<N> {
             } else {
                 "No replays yet. Play a battle and it will be here to watch."
             };
-            ui.label(panel.x + 24, top, 1, theme::MUTED, text);
+            // An empty shelf: the message sits in the middle of the cloth.
+            let middle = Rect::new(panel.x + 24, top, panel.w - 48, (bottom - top) / 2);
+            ui.label_centered(middle, 1, theme::INK_MUTED, text);
         }
         let first = self.replay_page * per_page;
         let mut y = top;
         for entry in self.replays.iter().skip(first).take(per_page) {
             let row = Rect::new(panel.x + 24, y, panel.w - 48, row_h);
-            ui.draw.rect(row, [30, 35, 46, 255]);
+            ui.draw.rect(row, theme::CLOTH);
             let chars = ((row.w - 160) / 8).max(8) as usize;
             ui.label(
                 row.x + 12,
                 row.y + 10,
                 1,
-                theme::TEXT,
+                theme::INK,
                 &fit(&entry.title, chars),
             );
             let (color, detail) = match &entry.unplayable {
-                Some(why) => (theme::BAD, why.as_str()),
-                None => (theme::MUTED, entry.detail.as_str()),
+                Some(why) => (theme::BAD_INK, why.as_str()),
+                None => (theme::INK_MUTED, entry.detail.as_str()),
             };
             ui.label(
                 row.x + 12,
@@ -1326,11 +1361,17 @@ impl<N: Network> Menu<N> {
         let btn_y = panel.bottom() - 52;
         if let Some((text, _)) = &self.message {
             let chars = ((panel.w - 48) / 8).max(8) as usize;
-            ui.label(panel.x + 24, btn_y - 26, 1, theme::BAD, &fit(text, chars));
+            ui.label(
+                panel.x + 24,
+                btn_y - 26,
+                1,
+                theme::BAD_INK,
+                &fit(text, chars),
+            );
         }
         if pages > 1 {
             if ui.button(
-                Rect::new(panel.x + 24, btn_y, 120, 44),
+                Rect::new(panel.x + 24 + 148, btn_y, 120, 44),
                 "Newer",
                 ButtonStyle::Normal,
                 self.replay_page > 0,
@@ -1338,13 +1379,13 @@ impl<N: Network> Menu<N> {
                 self.replay_page -= 1;
             }
             ui.label_centered(
-                Rect::new(panel.x + 152, btn_y, 120, 44),
+                Rect::new(panel.x + 24 + 148 + 128, btn_y, 120, 44),
                 1,
-                theme::MUTED,
+                theme::INK_MUTED,
                 &format!("{} of {pages}", self.replay_page + 1),
             );
             if ui.button(
-                Rect::new(panel.x + 280, btn_y, 120, 44),
+                Rect::new(panel.x + 24 + 148 + 256, btn_y, 120, 44),
                 "Older",
                 ButtonStyle::Normal,
                 self.replay_page + 1 < pages,
@@ -1353,9 +1394,9 @@ impl<N: Network> Menu<N> {
             }
         }
         let back = ui.button(
-            Rect::new(panel.right() - 24 - 160, btn_y - 4, 160, 48),
+            Rect::new(panel.x + 24, btn_y, 140, 44),
             "Back",
-            ButtonStyle::Primary,
+            ButtonStyle::Normal,
             true,
         );
         if back || escape {
@@ -1369,11 +1410,11 @@ impl<N: Network> Menu<N> {
         let sp = |n: i32| (n as f32 * k).round() as i32;
         let panel = centered(ui.screen, 880, sp(640));
         ui.panel(panel);
-        ui.label(panel.x + 24, panel.y + 14, 2, theme::TEXT, "Settings");
+        ui.header(panel, "Settings", "Changes are saved when you go back.");
         let col_w = (panel.w - 72) / 2;
         let row = sp(34);
         let gap = sp(6);
-        let top = panel.y + sp(60);
+        let top = panel.y + sp(60).max(52);
         let before = self.settings.clone();
         let s = &mut self.settings;
 
@@ -1384,20 +1425,20 @@ impl<N: Network> Menu<N> {
             w: col_w,
             gap,
         };
-        ui.label(st.x, st.y, 1, theme::ACCENT, "PLAYER");
+        ui.section(st.x, st.y, st.w, "PLAYER");
         st.skip(sp(22));
         let mut name = std::mem::take(&mut s.player_name);
         ui.text_field(st.next(row), &mut name, 16, "Your name");
         s.player_name = name;
         let sw = st.next(row);
-        ui.label(sw.x, sw.y + (sw.h - 16) / 2, 1, theme::TEXT, "Colour");
+        ui.label(sw.x, sw.y + (sw.h - 16) / 2, 1, theme::INK, "Colour");
         for (i, (_, [r, g, b])) in PLAYER_COLORS.iter().enumerate() {
             let sq = Rect::new(sw.x + 150 + i as i32 * (row + 8), sw.y, row, row);
             if ui.swatch(sq, [*r, *g, *b, 255], true) {
                 s.player_color = i as u8;
             }
             if s.player_color as usize == i {
-                ui.draw.border(sq.inset(-3), 3, theme::ACCENT);
+                ui.draw.border(sq.inset(-3), 3, theme::MADDER);
             }
         }
         let fnames: Vec<&str> = Faction::ALL.iter().map(|f| f.name()).collect();
@@ -1406,7 +1447,7 @@ impl<N: Network> Menu<N> {
             s.faction = Faction::ALL[fi];
         }
         st.skip(sp(10));
-        ui.label(st.x, st.y, 1, theme::ACCENT, "DISPLAY");
+        ui.section(st.x, st.y, st.w, "DISPLAY");
         st.skip(sp(22));
         let gnames: Vec<&str> = GraphicsPreset::ALL.iter().map(|g| g.name()).collect();
         let mut gi = GraphicsPreset::ALL
@@ -1449,7 +1490,7 @@ impl<N: Network> Menu<N> {
             w: col_w,
             gap,
         };
-        ui.label(st.x, st.y, 1, theme::ACCENT, "AUDIO");
+        ui.section(st.x, st.y, st.w, "AUDIO");
         st.skip(sp(22));
         ui.slider(st.next(row), "Master", &mut s.volume_master);
         ui.slider(st.next(row), "Music", &mut s.volume_music);
@@ -1457,7 +1498,7 @@ impl<N: Network> Menu<N> {
         ui.slider(st.next(row), "Unit voices", &mut s.volume_voices);
         ui.slider(st.next(row), "Interface", &mut s.volume_ui);
         st.skip(sp(10));
-        ui.label(st.x, st.y, 1, theme::ACCENT, "ACCESSIBILITY");
+        ui.section(st.x, st.y, st.w, "ACCESSIBILITY");
         st.skip(sp(22));
         ui.toggle(
             st.next(row),
@@ -1478,14 +1519,14 @@ impl<N: Network> Menu<N> {
             panel.x + 24,
             note_y,
             1,
-            theme::MUTED,
+            theme::INK_MUTED,
             "Name, colour, faction, UI scale and the Master and Music volume work now. The",
         );
         ui.label(
             panel.x + 24,
             note_y + 18,
             1,
-            theme::MUTED,
+            theme::INK_MUTED,
             "other audio, graphics and accessibility choices are saved and take effect later.",
         );
         let back = Rect::new(panel.x + 24, panel.bottom() - 52, 140, 44);
@@ -1678,6 +1719,80 @@ mod tests {
     }
 
     #[test]
+    fn every_screen_has_a_title_banner_and_a_hint() {
+        let mut h = Harness::new();
+        assert!(h.has("GRUBCRAFT") && h.has("Command regiments"));
+        h.click("Play");
+        assert!(h.has("Play") && h.has("Host a game for friends"));
+        h.click("Back");
+        h.click("Replays");
+        assert!(h.has("Every battle is saved"));
+        h.click("Back");
+        h.click("Settings");
+        assert!(h.has("Changes are saved when you go back"));
+        h.click("Back");
+        h.click("Play");
+        h.click_last("Host");
+        assert_eq!(h.menu.screen(), Screen::Lobby);
+        assert!(h.has("Lobby") && h.has("press Start"));
+    }
+
+    #[test]
+    fn back_is_in_the_same_place_on_every_screen() {
+        let mut h = Harness::new();
+        let mut spots = Vec::new();
+        h.click("Play");
+        spots.push(("Play", h.text_pos("Back")));
+        h.click("Back");
+        h.click("Replays");
+        spots.push(("Replays", h.text_pos("Back")));
+        h.click("Back");
+        h.click("Settings");
+        spots.push(("Settings", h.text_pos("Back")));
+        // Bottom left of each panel (panels differ in width, so the exact x
+        // does; each label sits in a 140 wide button at the panel's edge).
+        for (name, (x, y)) in &spots {
+            assert!(*x < 440 && *y > 520, "{name}: {x},{y}");
+        }
+    }
+
+    #[test]
+    fn a_greyed_start_says_why_beside_it() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        assert!(h.has("Add at least one more player"));
+        let (rx, ry) = h.text_pos("Add at least one more player");
+        let (sx, sy) = *find_all(&h.ui.draw, "Start").last().unwrap();
+        // Right-aligned just above the Start button, in the same column.
+        assert!(rx + 40 > sx - 100 && ry < sy);
+        h.click("Add AI");
+        assert!(!h.has("Add at least one more player"));
+        assert!(h.has("Everyone is ready."));
+    }
+
+    #[test]
+    fn join_says_what_it_needs_while_it_is_greyed_out() {
+        let mut h = Harness::new();
+        h.click("Play");
+        assert!(h.has("Pick a game above, or type its address."));
+    }
+
+    #[test]
+    fn the_menu_draws_cloth_not_the_old_dark_panels() {
+        let h = Harness::new();
+        let solid: Vec<_> =
+            h.ui.draw
+                .quads
+                .iter()
+                .filter(|q| q.glyph == crate::draw::SOLID)
+                .map(|q| q.color)
+                .collect();
+        assert!(solid.contains(&theme::LINEN) && solid.contains(&theme::MADDER));
+        assert!(!solid.contains(&theme::PANEL));
+    }
+
+    #[test]
     fn main_menu_has_the_expected_buttons() {
         let h = Harness::new();
         for t in ["GRUBCRAFT", "Play", "Sandbox", "Settings", "Exit"] {
@@ -1820,7 +1935,7 @@ mod tests {
         assert!(champions(&h));
         h.click("Champions before AI battles");
         assert!(!champions(&h));
-        let (x, y) = h.text_pos("Start");
+        let (x, y) = *find_all(&h.ui.draw, "Start").last().unwrap();
         h.frame(UiInput {
             mouse: (x, y),
             pressed: true,
@@ -1935,11 +2050,11 @@ mod tests {
         let (x, y) = find_all(&h.ui.draw, "-")[0];
         h.click_at(x, y);
         assert!(h.has("3 regiments, 1,400 of 4,000 points"));
-        h.click("Done");
+        h.click_last("Done");
         assert_eq!(h.menu.screen(), Screen::Lobby);
         assert!(h.has("Army: 3 regiments, 1,400 of 4,000 points."));
         h.click("Add AI");
-        let (x, y) = h.text_pos("Start");
+        let (x, y) = *find_all(&h.ui.draw, "Start").last().unwrap();
         h.frame(UiInput {
             mouse: (x, y),
             pressed: true,

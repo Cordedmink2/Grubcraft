@@ -1,0 +1,137 @@
+// Guide text for the Carrion Concord. Format and rules: see ember_clans.ron.
+(
+    faction: CarrionConcord,
+    buildings: [
+        (
+            name: "Counting House",
+            summary: "Your starting base. It trains Ledger Clerks and Caravans, receives the Marrow your Clerks mine, and is where caravan routes start. It is Fortified. Upgrade it to the Exchange for undead heavies, cavalry, wraiths and a second hero.",
+            notes: [
+                ("Exchange", "The mid game: Gravewardens, Debt Collectors, Lantern Wraiths and a second hero. It costs Marrow, so put Clerks on a vein first."),
+            ],
+        ),
+        (
+            name: "Exchange",
+            summary: "The Counting House's second tier. It keeps working while it upgrades, raises your supply cap and unlocks the Lantern Spire and every tier-2 regiment. Upgrade again for the siege engine and the Insolvent when your trade is paying.",
+            notes: [
+                ("Grand Bourse", "The late game: the Mausoleum Engine, the Insolvent, the third hero and the top upgrades (not designed yet). Expensive, so upgrade once trade and Tithe fund it."),
+            ],
+        ),
+        (
+            name: "Grand Bourse",
+            summary: "The final tier of the main building. It raises the supply cap again, lets the Ossuary raise the Mausoleum Engine and the Insolvent, and opens the third hero slot. Nothing is left to upgrade, so spend on armies and trade.",
+            notes: [],
+        ),
+        (
+            name: "Waystation",
+            summary: "Your own trade post for caravan routes, paying at half rate, and a Marrow drop-off for expansions. Build one far from your Counting House so caravans earn on long routes and Clerks have a short walk home.",
+            notes: [],
+        ),
+        (
+            name: "Tenement",
+            summary: "Housing: every regiment uses supply, and each Tenement raises the cap. Cheap and quick to raise, so build one before you hit the cap, and keep them behind the front line.",
+            notes: [],
+        ),
+        (
+            name: "Reliquary",
+            summary: "Every model that dies within 12 tiles, on any side, pays you 1 Tithe. Small, cheap and buildable anywhere you have vision, so plant it beside other people's fights. Your own undead crumble away from Reliquaries, so keep them clear of your army.",
+            notes: [],
+        ),
+        (
+            name: "Ossuary",
+            summary: "Raises the undead: Bone Pikes and Gravewardens, and at tier 3 the Mausoleum Engine and the Insolvent. Undead never rout, so this is your steady frontline. Build it first among military buildings; Bone Pikes need no Marrow.",
+            notes: [],
+        ),
+        (
+            name: "Guildhall",
+            summary: "Trains your living troops: Crossbow Auditors and Debt Collectors. Living regiments reinforce near it. Build it beside the Ossuary so crossbows shoot over your undead pikes, and so cavalry can punish a stalled enemy.",
+            notes: [],
+        ),
+        (
+            name: "Lantern Spire",
+            summary: "Trains Lantern Wraiths, the Concord's flyers. Tier 2 and needs Marrow. Build one to scout, to harass archers and artillery, or to unnerve a line with the Wraiths' Dread Light.",
+            notes: [],
+        ),
+        (
+            name: "Tollgate",
+            summary: "Two crossbows that shoot ground and air, and every 4 damage they deal earns you 1 Grub. It is Fortified. Build one at your seeps and gates: it pays for itself while it kills, but it will not stop a real army.",
+            notes: [],
+        ),
+        (
+            name: "Vault of Names",
+            summary: "Hires and revives heroes: the Magnate, the Undertaker and the Usurer. Build it early; the Magnate pays for itself and the Undertaker multiplies your dead. Heroes cost Marrow, so keep some in reserve for a replacement.",
+            notes: [],
+        ),
+    ],
+    units: [
+        (
+            name: "Ledger Clerk",
+            tagline: "Worker: mines Marrow, builds and repairs.",
+            summary: "The Concord's worker. Carries 5 Marrow per trip to a Counting House (your Grub comes from caravans, Tithe and trade), and builds and repairs Concord structures. Weak fighters, so keep them out of raids.",
+        ),
+        (
+            name: "Caravan",
+            tagline: "Support: shuttles to trade posts for Grub.",
+            summary: "A slow, sturdy cart. Trade Run shuttles between your Counting House and a trade post, paying Grub per delivery that grows with the route (full rate at a hamlet or an ally, half at a Waystation). Guard it; a destroyed Caravan drops half its cargo.",
+        ),
+        (
+            name: "Bone Pikes",
+            tagline: "Undead spear line: never routs, no Marrow.",
+            summary: "Cheap undead pikemen who never rout and need no Marrow. Reach and Pike Wall stop cavalry cold. They crumble away from Reliquaries and lose to heavy infantry and archers, so support them with Crossbow Auditors. Your opening line.",
+        ),
+        (
+            name: "Crossbow Auditors",
+            tagline: "Crossbows: bolts pierce Heavy and Cavalry.",
+            summary: "Living crossbowmen. Audit adds 30% damage against Heavy and Cavalry, so they counter exactly what spears cannot. They are fragile in melee and rout normally, so stand them behind your undead pikes.",
+        ),
+        (
+            name: "Gravewardens",
+            tagline: "Undead heavy infantry: shielded, never routs.",
+            summary: "Shielded undead heavies. Unfeeling reduces the damage of flank and rear hits, and they never rout. They beat light infantry and spears but fear archers and monsters, and they crumble near Reliquaries. A tier-2 anchor.",
+        ),
+        (
+            name: "Debt Collectors",
+            tagline: "Cavalry: steal Grub from structures they hit.",
+            summary: "Heavy living cavalry with a big charge. Repossess steals 1 Grub for every 2 damage dealt to a structure, so raiding pays for itself. Strong against archers and artillery; spears stop them. Needs Marrow.",
+        ),
+        (
+            name: "Lantern Wraiths",
+            tagline: "Undead flyers: Dread Light drains enemy morale.",
+            summary: "Fast undead flyers that never rout. Their Dread Light aura drains 1.5 morale a second from nearby enemies, so a few Wraiths over a fight can break a line. Archers and other flyers answer them; they crumble near Reliquaries.",
+        ),
+        (
+            name: "Mausoleum Engine",
+            tagline: "Siege: long-range, raises Bound Dead from corpses.",
+            summary: "A tier-3 siege engine. It shoots from 40 tiles, deals triple damage to Fortified structures, and Interment raises corpses nearby as Bound Dead for 30 seconds. Slow and never routs. Cavalry and flyers kill it if unescorted.",
+        ),
+        (
+            name: "The Insolvent",
+            tagline: "Monster: heals on corpses, terror aura.",
+            summary: "A stitched-together tier-3 monster. It regains health for each corpse it walks over and its Terror Aura bleeds enemy morale within 10 tiles. Never routs. Focused ranged fire and heroes bring it down; best used after the fight has made corpses.",
+        ),
+        (
+            name: "Bound Dead",
+            tagline: "Summoned undead: raised from corpses, never rout.",
+            summary: "Raised by Raise the Bound, Indenture, Raise Dead, Interment and Mass Grave. Light undead who never rout and cost no supply. Temporary ones fade in 30 to 90 seconds; Indentured ones crumble instead. Cannot be trained.",
+        ),
+        (
+            name: "Grubfolk Militia",
+            tagline: "Hired spearmen: leave after 120 s.",
+            summary: "Spearmen hired from a hamlet with Hire Militia. They cost no supply and leave after 120 seconds, or at once if their hamlet is razed. A quick stopgap spear line when cavalry surprises you; they cannot be trained at a building.",
+        ),
+        (
+            name: "The Magnate",
+            tagline: "Hero of economy: banks interest, bribes, raids income.",
+            summary: "An economy hero. Hostile Takeover claims a hamlet as your exclusive trade post, Bribe pacifies a creep camp for Grub, and Compound Interest earns a share of your banked Grub. Market Crash halves every enemy's income. Stay out of fights.",
+        ),
+        (
+            name: "The Undertaker",
+            tagline: "Hero necromancer: raises the dead, bursts corpses.",
+            summary: "A necromancer. Raise Dead makes Bound Dead from corpses, Corpse Explosion bursts them for damage, and Last Rites heals an undead regiment and restores models. Mass Grave raises every model that dies in an area on your side. Fight where bodies fall.",
+        ),
+        (
+            name: "The Usurer",
+            tagline: "Hero duelist: drains health, marks targets, steals buffs.",
+            summary: "A debuffing duelist. Leech Debt drains a target's health into him, Lien marks a regiment to take more damage, Collateral steals a beneficial effect, and Foreclosure strips a weakened regiment of its weakest third. Pick off wounded regiments and enemy heroes.",
+        ),
+    ],
+)

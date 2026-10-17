@@ -226,6 +226,86 @@ impl DrawList {
     }
 }
 
+/// `a` blended towards `b` by `t` (0 is `a`, 1 is `b`), alpha kept from `a`.
+pub fn mix(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let ch = |i: usize| (f32::from(a[i]) + (f32::from(b[i]) - f32::from(a[i])) * t).round() as u8;
+    [ch(0), ch(1), ch(2), a[3]]
+}
+
+/// Length and gap of a stitch, in pixels.
+const STITCH: i32 = 6;
+const STITCH_GAP: i32 = 3;
+
+impl DrawList {
+    /// A row of embroidery stitches `t` pixels thick just inside `r`: dashes
+    /// in madder, woad, weld and wode wool in turn, as along the Bayeux
+    /// tapestry's borders.
+    pub fn stitched_border(&mut self, r: Rect, t: i32) {
+        use crate::ui::theme;
+        let dyes = [theme::MADDER, theme::WOAD, theme::WELD, theme::WODE];
+        let mut n = 0usize;
+        let mut run = |d: &mut DrawList, x: i32, y: i32, len: i32, horizontal: bool| {
+            let mut at = 0;
+            while at < len {
+                let l = STITCH.min(len - at);
+                let rect = if horizontal {
+                    Rect::new(x + at, y, l, t)
+                } else {
+                    Rect::new(x, y + at, t, l)
+                };
+                d.rect(rect, dyes[n % dyes.len()]);
+                n += 1;
+                at += STITCH + STITCH_GAP;
+            }
+        };
+        run(self, r.x, r.y, r.w, true);
+        run(self, r.x, r.y + t, r.h - 2 * t, false);
+        run(self, r.x, r.bottom() - t, r.w, true);
+        run(self, r.right() - t, r.y + t, r.h - 2 * t, false);
+    }
+
+    /// One horizontal row of stitches `t` thick from `x` across `len`.
+    pub fn stitch_row(&mut self, x: i32, y: i32, len: i32, t: i32) {
+        use crate::ui::theme;
+        let dyes = [theme::MADDER, theme::WOAD, theme::WELD, theme::WODE];
+        let (mut at, mut n) = (0, 0usize);
+        while at < len {
+            let l = STITCH.min(len - at);
+            self.rect(Rect::new(x + at, y, l, t), dyes[n % dyes.len()]);
+            n += 1;
+            at += STITCH + STITCH_GAP;
+        }
+    }
+
+    /// A linen cloth panel: `fill`, a dark ink outline and a stitched strip
+    /// just inside it. Returns the room left for content.
+    pub fn cloth(&mut self, r: Rect, fill: Color) -> Rect {
+        use crate::ui::theme;
+        self.rect(r, fill);
+        self.border(r, 2, theme::INK);
+        self.stitched_border(r.inset(4), 2);
+        r.inset(9)
+    }
+
+    /// A flat button or card: `fill` with an ink outline `t` thick.
+    pub fn boxed(&mut self, r: Rect, fill: Color, t: i32) {
+        self.rect(r, fill);
+        self.border(r, t, crate::ui::theme::INK);
+    }
+
+    /// Text drawn twice, a pixel apart, so it reads as heavier.
+    pub fn text_bold(&mut self, x: i32, y: i32, scale: i32, color: Color, text: &str) {
+        self.text(x, y, scale, color, text);
+        self.text(x + 1, y, scale, color, text);
+    }
+
+    /// A hard drop shadow under `r`, offset down and right by `d`.
+    pub fn shadow(&mut self, r: Rect, d: i32) {
+        self.rect(Rect::new(r.x + d, r.y + d, r.w, r.h), [20, 12, 6, 90]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +358,39 @@ mod tests {
         assert_eq!(fit("short", 10), "short");
         assert_eq!(fit("a very long player name", 10), "a very l..");
         assert_eq!(fit("abc", 1).chars().count(), 1);
+    }
+
+    #[test]
+    fn a_stitched_border_cycles_the_four_dyes_inside_its_rect() {
+        use crate::ui::theme;
+        let r = Rect::new(10, 10, 100, 40);
+        let mut d = DrawList::default();
+        d.stitched_border(r, 2);
+        assert!(d.quads.len() > 20);
+        let colours: std::collections::HashSet<Color> = d.quads.iter().map(|q| q.color).collect();
+        for dye in [theme::MADDER, theme::WOAD, theme::WELD, theme::WODE] {
+            assert!(colours.contains(&dye));
+        }
+        for q in &d.quads {
+            let q = Rect::new(
+                i32::from(q.pos[0]),
+                i32::from(q.pos[1]),
+                i32::from(q.size[0]),
+                i32::from(q.size[1]),
+            );
+            assert_eq!(q.intersect(r), Some(q));
+        }
+    }
+
+    #[test]
+    fn cloth_returns_the_room_inside_its_stitching() {
+        let r = Rect::new(0, 0, 100, 50);
+        let mut d = DrawList::default();
+        assert_eq!(d.cloth(r, [1; 4]), r.inset(9));
+        assert_eq!(
+            mix([0, 0, 0, 255], [100, 200, 50, 0], 0.5),
+            [50, 100, 25, 255]
+        );
     }
 
     #[test]

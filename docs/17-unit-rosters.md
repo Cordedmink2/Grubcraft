@@ -545,3 +545,30 @@ What the engine thread would need to add for these rosters to work in the game. 
 8. **Summons**: units marked summoned use no supply and carry a lifetime.
 9. **Neutral faction**: a fifth `Faction` value for Grubfolk and creeps, so Grubfolk Militia can leave the Concord roster.
 10. **Monsters with one model** already work with today's combat (one blow a second, damage spills across models). They may want a "sweep" rule later (one blow hitting several soldiers) if one-blow-a-second reads too slow on screen.
+
+<a id="guide-data"></a>
+## Guide data
+
+The in-game Guide ([08 · UI/UX](08-ui-ux.md#guide)) shows the numbers of this file's rosters and a paragraph of prose for each entry. Prose lives in `data/guide/`, one RON file per faction in the same order as `Faction::ALL` (`ember_clans.ron`, `brood.ron`, `choir.ron`, `carrion_concord.ron`) plus `classes.ron`. Nothing a roster says is written twice: costs, hit points, abilities and `effect` texts are read from `data/rosters/*.ron` when the game starts (`crates/gc_game/src/guide_data.rs`, which joins them into the Guide's view models).
+
+```ron
+(
+    faction: EmberClans,
+    buildings: [
+        (
+            name: "Clan Hall",            // as in the roster
+            summary: "...",               // at most 350 characters: role, when to build it, what beats it
+            notes: [("Castle Keep", "...")],   // benefit line for each tier upgrade, by the building it makes
+        ),
+    ],
+    units: [                              // regiments, summoned regiments and heroes
+        (name: "Yari Ashigaru", tagline: "...", summary: "..."),   // tagline at most 80 characters
+    ],
+)
+```
+
+- **Buildings.** `notes` holds a benefit line for the main building's tier upgrade (keyed by the upgrade's name) and, for a building whose rules text promises research, a `"Research"` note saying it is not designed yet. Everything else on a building's Upgrades tab is computed: the units it trains (their `tagline` is the benefit line), the heroes it hires, and for the Brood's tech building the evolutions.
+- **Units.** `tagline` is the one-line benefit shown wherever the unit appears as something a building trains, hires or evolves into. A unit's own Upgrades tab lists its evolutions and its roster abilities (the roster's `effect` is the benefit line).
+- **Class counters.** `classes.ron` holds the damage multipliers of [Classes and counters](#classes-and-counters) as `(attacker, target, multiplier)` rows. A troop's "Strong against" is every class it deals more than x1.0 to, and its "Weak against" every class that deals it more than x1.0 or that it deals less than x1.0 to. Heroes take and deal x1.0.
+- **Rules, checked by `guide_data` tests.** Every building, unit and hero in the rosters has exactly one entry, and every entry names something in the roster. Summaries are at most 350 characters, taglines at most 80, text is printable ASCII (the font draws nothing else) with no stray spaces. Every tier upgrade has a note, and no note names something that does not exist. Adding a roster entry without prose fails `cargo test -p gc_game guide_data`.
+- **Hero hire cost.** Rosters have no field for it, so the Guide prints the docs' design values (200 Grub and 50 Marrow, 40 s, 5 supply) labelled as such.

@@ -9,24 +9,42 @@ use crate::draw::{Color, DrawList, Rect, fit, text_width};
 pub mod theme {
     use crate::draw::Color;
 
-    pub const SCRIM: Color = [6, 8, 12, 190];
-    pub const PANEL: Color = [22, 26, 34, 240];
-    pub const PANEL_EDGE: Color = [70, 78, 94, 255];
-    pub const TEXT: Color = [236, 238, 242, 255];
-    pub const MUTED: Color = [150, 158, 172, 255];
-    pub const DISABLED: Color = [96, 102, 114, 255];
-    pub const ACCENT: Color = [232, 132, 50, 255];
-    pub const GOOD: Color = [110, 200, 120, 255];
-    pub const BAD: Color = [240, 96, 84, 255];
-    /// Amber, for a warning that is not yet a disaster.
-    pub const WARN: Color = [236, 190, 60, 255];
-    pub const BUTTON: Color = [44, 52, 68, 255];
-    pub const BUTTON_HOT: Color = [64, 74, 96, 255];
-    pub const BUTTON_DOWN: Color = [34, 40, 54, 255];
-    pub const PRIMARY: Color = [190, 92, 30, 255];
-    pub const PRIMARY_HOT: Color = [222, 118, 46, 255];
-    pub const PRIMARY_DOWN: Color = [150, 70, 22, 255];
-    pub const FIELD: Color = [12, 14, 20, 255];
+    // The Bayeux tapestry dyes: linen ground, ink outlines, and the madder,
+    // woad, weld and wode wools. Docs: docs/08-ui-ux.md#visual-style.
+    pub const LINEN: Color = [230, 214, 168, 255];
+    pub const LINEN_DK: Color = [201, 180, 124, 255];
+    pub const INK: Color = [43, 30, 18, 255];
+    pub const MADDER: Color = [154, 58, 42, 255];
+    pub const WOAD: Color = [46, 73, 104, 255];
+    pub const WELD: Color = [210, 165, 58, 255];
+    pub const WODE: Color = [90, 107, 58, 255];
+
+    pub const SCRIM: Color = [20, 12, 6, 200];
+    pub const PANEL: Color = [43, 30, 18, 245];
+    pub const TEXT: Color = [236, 224, 188, 255];
+    pub const MUTED: Color = [180, 160, 120, 255];
+    pub const PRIMARY: Color = [154, 58, 42, 255];
+    pub const PRIMARY_HOT: Color = [186, 76, 54, 255];
+    pub const PRIMARY_DOWN: Color = [120, 42, 30, 255];
+    pub const FIELD: Color = [26, 18, 10, 255];
+
+    // Menu cloth: widgets sit on linen, so their text is ink.
+    /// A sunk field on linen: text boxes, slider tracks, check boxes.
+    pub const FIELD_CLOTH: Color = [247, 239, 209, 255];
+    pub const SHADOW: Color = [20, 12, 6, 110];
+    pub const WEAVE: Color = [201, 180, 124, 70];
+    pub const LINEN_HI: Color = [243, 232, 196, 255];
+    pub const CLOTH: Color = [214, 194, 140, 255];
+    pub const CLOTH_HOT: Color = [236, 221, 174, 255];
+    pub const CLOTH_DOWN: Color = [186, 164, 110, 255];
+    pub const CLOTH_OFF: Color = [208, 192, 154, 255];
+    pub const OFF_EDGE: Color = [150, 132, 98, 255];
+    pub const WELD_HI: Color = [232, 190, 84, 255];
+    pub const INK_MUTED: Color = [104, 82, 54, 255];
+    pub const DISABLED_INK: Color = [146, 128, 94, 255];
+    pub const PLACEHOLDER: Color = [150, 132, 98, 255];
+    pub const GOOD_INK: Color = [62, 88, 34, 255];
+    pub const BAD_INK: Color = [150, 36, 24, 255];
 }
 
 #[derive(Clone, Debug, Default)]
@@ -205,9 +223,82 @@ impl Ui {
         self.active.widget(id, r, mouse, pressed, released)
     }
 
+    /// A cloth panel: soft shadow, ink outline, linen with a faint weave,
+    /// and a stitched multicolour border inside the edge.
     pub fn panel(&mut self, r: Rect) {
-        self.draw.rect(r, theme::PANEL);
-        self.draw.border(r, 2, theme::PANEL_EDGE);
+        self.draw
+            .rect(Rect::new(r.x + 5, r.y + 6, r.w, r.h), theme::SHADOW);
+        self.draw.rect(r, theme::INK);
+        let cloth = r.inset(3);
+        self.draw.rect(cloth, theme::LINEN);
+        // Horizontal threads: a light line every few pixels.
+        let mut y = cloth.y + 5;
+        while y < cloth.bottom() - 1 {
+            self.draw
+                .rect(Rect::new(cloth.x, y, cloth.w, 1), theme::WEAVE);
+            y += 6;
+        }
+        self.draw.border(cloth, 1, theme::LINEN_DK);
+        stitch(&mut self.draw, r.inset(5));
+    }
+
+    /// A hanging cloth banner with a swallow-tail, `title` on it, hung from
+    /// its top-left corner at `(x, y)`. Returns the banner's body.
+    pub fn banner(&mut self, x: i32, y: i32, scale: i32, title: &str) -> Rect {
+        let tw = text_width(title, scale);
+        let body = Rect::new(x, y, tw + 40, 16 * scale + 12);
+        let tail = 6 + 2 * scale;
+        // Shadow, then the swallow-tail: ink first, madder inside it.
+        self.draw.rect(
+            Rect::new(body.x + 4, body.y + 5, body.w, body.h),
+            theme::SHADOW,
+        );
+        self.draw.rect(body.inset(-3), theme::INK);
+        let rows = tail / 2;
+        for i in 0..rows {
+            let half = body.w / 2 * (rows - i) / (rows + 1);
+            let ry = body.bottom() + 3 + i * 2;
+            self.draw
+                .rect(Rect::new(body.x - 3, ry, half + 3, 2), theme::INK);
+            self.draw
+                .rect(Rect::new(body.right() - half, ry, half + 3, 2), theme::INK);
+        }
+        self.draw.rect(body, theme::MADDER);
+        for i in 0..rows {
+            let half = body.w / 2 * (rows - i) / (rows + 1);
+            let ry = body.bottom() + i * 2;
+            self.draw
+                .rect(Rect::new(body.x, ry, half, 2), theme::MADDER);
+            self.draw
+                .rect(Rect::new(body.right() - half, ry, half, 2), theme::MADDER);
+        }
+        // A weld stitch line along the top and bottom of the body.
+        for edge in [body.y + 3, body.bottom() - 5] {
+            let mut sx = body.x + 6;
+            while sx + 6 <= body.right() - 6 {
+                self.draw.rect(Rect::new(sx, edge, 6, 2), theme::WELD);
+                sx += 10;
+            }
+        }
+        let ty = body.y + (body.h - 16 * scale) / 2;
+        self.draw
+            .text(body.x + 21, ty + 1, scale, theme::INK, title);
+        self.draw.text(body.x + 20, ty, scale, theme::LINEN, title);
+        body
+    }
+
+    /// The header every screen shares: the title on a banner hanging from
+    /// the panel's top edge and, beside it, a one-line hint saying what to
+    /// do here. Returns the banner's body.
+    pub fn header(&mut self, panel: Rect, title: &str, hint: &str) -> Rect {
+        let banner = self.banner(panel.x + 24, panel.y - 8, 2, title);
+        if !hint.is_empty() {
+            let x = banner.right() + 20;
+            let room = ((panel.right() - 24 - x) / 8).max(0) as usize;
+            self.draw
+                .text(x, panel.y + 12, 1, theme::INK_MUTED, &fit(hint, room));
+        }
+        banner
     }
 
     pub fn label(&mut self, x: i32, y: i32, scale: i32, color: Color, text: &str) {
@@ -224,6 +315,16 @@ impl Ui {
             .text(right - text_width(text, scale), y, scale, color, text);
     }
 
+    /// A small heading over a group of widgets, underlined with thread.
+    pub fn section(&mut self, x: i32, y: i32, w: i32, text: &str) {
+        self.draw.text(x, y, 1, theme::MADDER, text);
+        let mut sx = x + text_width(text, 1) + 10;
+        while sx + 6 <= x + w {
+            self.draw.rect(Rect::new(sx, y + 7, 6, 2), theme::LINEN_DK);
+            sx += 10;
+        }
+    }
+
     pub fn button(&mut self, r: Rect, label: &str, style: ButtonStyle, enabled: bool) -> bool {
         let id = self.id();
         let (clicked, down) = if enabled {
@@ -233,27 +334,48 @@ impl Ui {
         };
         let hot = enabled && self.hovered(r);
         let primary = style == ButtonStyle::Primary;
-        let fill = match (down, hot, primary) {
-            (_, _, _) if !enabled => theme::BUTTON_DOWN,
-            (true, _, false) => theme::BUTTON_DOWN,
-            (true, _, true) => theme::PRIMARY_DOWN,
-            (_, true, false) => theme::BUTTON_HOT,
-            (_, true, true) => theme::PRIMARY_HOT,
-            (_, _, false) => theme::BUTTON,
-            (_, _, true) => theme::PRIMARY,
+        let (fill, text) = match (enabled, down, hot, primary) {
+            (false, ..) => (theme::CLOTH_OFF, theme::DISABLED_INK),
+            (_, true, _, false) => (theme::CLOTH_DOWN, theme::INK),
+            (_, true, _, true) => (theme::PRIMARY_DOWN, theme::LINEN),
+            (_, _, true, false) => (theme::CLOTH_HOT, theme::INK),
+            (_, _, true, true) => (theme::PRIMARY_HOT, theme::LINEN),
+            (_, _, _, false) => (theme::CLOTH, theme::INK),
+            (_, _, _, true) => (theme::PRIMARY, theme::LINEN),
         };
-        self.draw.rect(r, fill);
-        if hot {
-            self.draw.border(r, 2, theme::TEXT);
+        let outline = if enabled { theme::INK } else { theme::OFF_EDGE };
+        if enabled && !down {
+            self.draw
+                .rect(Rect::new(r.x + 2, r.y + 3, r.w, r.h), theme::SHADOW);
         }
-        let color = if enabled {
-            theme::TEXT
+        let face = if down {
+            Rect::new(r.x + 1, r.y + 2, r.w, r.h)
         } else {
-            theme::DISABLED
+            r
         };
+        self.draw.rect(face, outline);
+        self.draw.rect(face.inset(2), fill);
+        if enabled && !down && !primary {
+            // A lit upper edge, as on folded cloth.
+            self.draw.rect(
+                Rect::new(face.x + 2, face.y + 2, face.w - 4, 2),
+                theme::LINEN_HI,
+            );
+        }
+        if primary && enabled {
+            self.draw.border(face.inset(3), 1, theme::WELD);
+        }
+        if hot {
+            self.draw.border(face.inset(2), 2, theme::WELD);
+        }
         let scale = if r.h >= 44 { 2 } else { 1 };
-        let label = fit(label, (r.w / (8 * scale)).max(1) as usize);
-        self.draw.text_centered(r, scale, color, &label);
+        let label = fit(label, ((r.w - 12) / (8 * scale)).max(1) as usize);
+        let text_r = if down {
+            Rect::new(r.x + 1, r.y + 2, r.w, r.h)
+        } else {
+            r
+        };
+        self.draw.text_centered(text_r, scale, text, &label);
         let by_enter =
             primary && enabled && self.input.enter && !self.enter_taken && self.focus.is_none();
         if by_enter {
@@ -268,14 +390,20 @@ impl Ui {
         let (clicked, _) = self.click(id, r);
         let hot = self.hovered(r);
         let boxr = Rect::new(r.x, r.y + (r.h - 22) / 2, 22, 22);
-        self.draw.rect(boxr, theme::FIELD);
         self.draw
-            .border(boxr, 2, if hot { theme::TEXT } else { theme::PANEL_EDGE });
+            .rect(boxr, if hot { theme::WELD } else { theme::INK });
+        self.draw.rect(boxr.inset(2), theme::FIELD_CLOTH);
         if *value {
-            self.draw.rect(boxr.inset(5), theme::ACCENT);
+            // A cross-stitch in madder.
+            for i in 0..12 {
+                let (a, b) = (boxr.x + 5 + i, boxr.y + 5 + i);
+                self.draw.rect(Rect::new(a, b, 3, 3), theme::MADDER);
+                self.draw
+                    .rect(Rect::new(boxr.right() - 8 - i, b, 3, 3), theme::MADDER);
+            }
         }
         self.draw
-            .text(r.x + 32, r.y + (r.h - 16) / 2, 1, theme::TEXT, label);
+            .text(r.x + 32, r.y + (r.h - 16) / 2, 1, theme::INK, label);
         if clicked {
             *value = !*value;
         }
@@ -307,27 +435,29 @@ impl Ui {
             }
         }
         self.draw
-            .text(r.x, r.y + (r.h - 16) / 2, 1, theme::TEXT, label);
-        self.draw.rect(track, theme::FIELD);
+            .text(r.x, r.y + (r.h - 16) / 2, 1, theme::INK, label);
+        self.draw.rect(track.inset(-2), theme::INK);
+        self.draw.rect(track, theme::FIELD_CLOTH);
         self.draw.rect(
             Rect::new(track.x, track.y, track.w * i32::from(*value) / 100, track.h),
-            theme::ACCENT,
+            theme::WOAD,
         );
         let knob_x = track.x + track.w * i32::from(*value) / 100;
-        let knob = Rect::new(knob_x - 5, r.y + (r.h - 22) / 2, 10, 22);
+        let knob = Rect::new(knob_x - 7, r.y + (r.h - 24) / 2, 14, 24);
+        self.draw.rect(knob, theme::INK);
         self.draw.rect(
-            knob,
+            knob.inset(2),
             if hot || self.active.is(id) {
-                theme::TEXT
+                theme::WELD_HI
             } else {
-                theme::MUTED
+                theme::WELD
             },
         );
         self.label_right(
             r.right(),
             r.y + (r.h - 16) / 2,
             1,
-            theme::MUTED,
+            theme::INK_MUTED,
             &format!("{}%", *value),
         );
         changed
@@ -344,33 +474,61 @@ impl Ui {
         let hot = self.hovered(r);
         let n = options.len();
         *index = (*index).min(n - 1);
+        self.draw.rect(r, theme::INK);
         self.draw.rect(
-            r,
+            r.inset(2),
             if down {
-                theme::BUTTON_DOWN
+                theme::CLOTH_DOWN
             } else if hot {
-                theme::BUTTON_HOT
+                theme::CLOTH_HOT
             } else {
-                theme::BUTTON
+                theme::CLOTH
             },
         );
+        if hot {
+            self.draw.border(r.inset(2), 2, theme::WELD);
+        }
         let arrow = r.h.min(36);
-        self.draw
-            .text_centered(Rect::new(r.x, r.y, arrow, r.h), 1, theme::MUTED, "<");
-        self.draw.text_centered(
-            Rect::new(r.right() - arrow, r.y, arrow, r.h),
-            1,
-            theme::MUTED,
-            ">",
-        );
+        // Which arrow the mouse is over lights up.
+        let over_back = hot && self.input.mouse.0 < r.x + arrow;
+        let over_next = hot && self.input.mouse.0 >= r.right() - arrow;
+        for (box_r, back, lit) in [
+            (Rect::new(r.x, r.y, arrow, r.h), true, over_back),
+            (
+                Rect::new(r.right() - arrow, r.y, arrow, r.h),
+                false,
+                over_next,
+            ),
+        ] {
+            let c = if lit { theme::MADDER } else { theme::INK };
+            let (cx, cy) = (box_r.x + box_r.w / 2, box_r.y + box_r.h / 2);
+            // A small triangle: its tip points the way the arrow steps.
+            for i in 0..5 {
+                let h = if back { 2 + 2 * i } else { 10 - 2 * i };
+                self.draw
+                    .rect(Rect::new(cx - 4 + i * 2, cy - h / 2, 2, h), c);
+            }
+        }
         let mid = Rect::new(r.x + arrow, r.y, r.w - 2 * arrow, r.h);
-        let text = if label.is_empty() {
-            options[*index].to_string()
+        let value = options[*index];
+        let chars = (mid.w / 8).max(1) as usize;
+        let ty = mid.y + (mid.h - 16) / 2;
+        if label.is_empty() {
+            let text = fit(value, chars);
+            self.draw.text_centered(mid, 1, theme::INK, &text);
         } else {
-            format!("{label}: {}", options[*index])
-        };
-        let text = fit(&text, (mid.w / 8).max(1) as usize);
-        self.draw.text_centered(mid, 1, theme::TEXT, &text);
+            // The label in the muted ink, the value in the strong one.
+            let lab = format!("{label}: ");
+            let total = fit(&format!("{lab}{value}"), chars);
+            let x = mid.x + (mid.w - text_width(&total, 1)) / 2;
+            let split = lab.chars().count().min(total.chars().count());
+            let (a, b): (String, String) = (
+                total.chars().take(split).collect(),
+                total.chars().skip(split).collect(),
+            );
+            self.draw.text(x, ty, 1, theme::INK_MUTED, &a);
+            self.draw.text(x + text_width(&a, 1), ty, 1, theme::INK, &b);
+        }
         if !clicked {
             return false;
         }
@@ -447,18 +605,21 @@ impl Ui {
                 self.enter_taken |= owns_enter;
             }
         }
-        self.draw.rect(r, theme::FIELD);
-        self.draw.border(
-            r,
-            2,
-            if focused {
-                theme::ACCENT
-            } else if hot {
-                theme::MUTED
-            } else {
-                theme::PANEL_EDGE
-            },
-        );
+        let edge = if focused {
+            theme::WOAD
+        } else if hot {
+            theme::WELD
+        } else {
+            theme::INK
+        };
+        self.draw.rect(r, edge);
+        self.draw.rect(r.inset(2), theme::FIELD_CLOTH);
+        // A shaded top edge makes it look sunk into the cloth.
+        self.draw
+            .rect(Rect::new(r.x + 2, r.y + 2, r.w - 4, 2), theme::LINEN_DK);
+        if focused {
+            self.draw.border(r.inset(2), 1, theme::WOAD);
+        }
         let y = r.y + (r.h - 16) / 2;
         let visible = (r.w - 20) / 8;
         if value.is_empty() && !focused {
@@ -466,7 +627,7 @@ impl Ui {
                 r.x + 10,
                 y,
                 1,
-                theme::DISABLED,
+                theme::PLACEHOLDER,
                 &fit(placeholder, visible.max(1) as usize),
             );
         } else {
@@ -474,10 +635,10 @@ impl Ui {
             let count = value.chars().count() as i32;
             let skip = (count - (visible - 1)).max(0) as usize;
             let shown: String = value.chars().skip(skip).collect();
-            self.draw.text(r.x + 10, y, 1, theme::TEXT, &shown);
+            self.draw.text(r.x + 10, y, 1, theme::INK, &shown);
             if focused {
                 let cursor_x = r.x + 10 + shown.chars().count() as i32 * 8;
-                self.draw.rect(Rect::new(cursor_x, y, 2, 16), theme::ACCENT);
+                self.draw.rect(Rect::new(cursor_x, y, 2, 16), theme::MADDER);
             }
         }
         (changed, submitted)
@@ -489,15 +650,20 @@ impl Ui {
         let (clicked, _) = self.click(id, r);
         let hot = self.hovered(r);
         let fill = if selected {
-            [60, 52, 44, 255]
+            theme::LINEN_HI
         } else if hot {
-            theme::BUTTON_HOT
+            theme::CLOTH_HOT
         } else {
-            theme::BUTTON
+            theme::CLOTH
         };
-        self.draw.rect(r, fill);
+        self.draw.rect(r, theme::INK);
+        self.draw.rect(r.inset(2), fill);
         if selected {
-            self.draw.border(r, 2, theme::ACCENT);
+            self.draw.border(r.inset(2), 2, theme::WELD);
+            self.draw
+                .rect(Rect::new(r.x + 2, r.y + 2, 6, r.h - 4), theme::WOAD);
+        } else if hot {
+            self.draw.border(r.inset(2), 1, theme::WELD);
         }
         clicked
     }
@@ -510,11 +676,36 @@ impl Ui {
         } else {
             (false, false)
         };
-        self.draw.rect(r, color);
         let hot = clickable && self.hovered(r);
         self.draw
-            .border(r, 2, if hot { theme::TEXT } else { theme::PANEL_EDGE });
+            .rect(r, if hot { theme::WELD } else { theme::INK });
+        self.draw.rect(r.inset(2), color);
         clicked
+    }
+}
+
+/// The stitched border: dashes of madder, woad, weld and wode wool in turn
+/// along the outline of `r`.
+fn stitch(draw: &mut DrawList, r: Rect) {
+    const DYES: [Color; 4] = [theme::MADDER, theme::WOAD, theme::WELD, theme::WODE];
+    const DASH: i32 = 8;
+    const STEP: i32 = 12;
+    let mut n = 0;
+    let mut x = r.x + 4;
+    while x + DASH <= r.right() - 4 {
+        let c = DYES[n % 4];
+        draw.rect(Rect::new(x, r.y, DASH, 2), c);
+        draw.rect(Rect::new(x, r.bottom() - 2, DASH, 2), c);
+        x += STEP;
+        n += 1;
+    }
+    let mut y = r.y + 4;
+    while y + DASH <= r.bottom() - 4 {
+        let c = DYES[n % 4];
+        draw.rect(Rect::new(r.x, y, 2, DASH), c);
+        draw.rect(Rect::new(r.right() - 2, y, 2, DASH), c);
+        y += STEP;
+        n += 1;
     }
 }
 
@@ -781,5 +972,132 @@ mod tests {
         );
         ui.text_field(r, &mut s, 8, "");
         assert!(!ui.text_focused());
+    }
+
+    fn solid_colors(ui: &Ui) -> Vec<Color> {
+        ui.draw
+            .quads
+            .iter()
+            .filter(|q| q.glyph == crate::draw::SOLID)
+            .map(|q| q.color)
+            .collect()
+    }
+
+    /// WCAG relative luminance contrast of two colours.
+    fn contrast(a: Color, b: Color) -> f32 {
+        let lum = |c: Color| {
+            let f = |v: u8| {
+                let v = f32::from(v) / 255.0;
+                if v <= 0.03928 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2])
+        };
+        let (x, y) = (lum(a), lum(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    #[test]
+    fn a_panel_is_linen_cloth_with_a_stitched_four_dye_border() {
+        let mut ui = Ui::new();
+        ui.begin_frame(UiInput::default(), (800, 600));
+        ui.panel(Rect::new(20, 20, 400, 300));
+        let colors = solid_colors(&ui);
+        assert!(colors.contains(&theme::INK) && colors.contains(&theme::LINEN));
+        for dye in [theme::MADDER, theme::WOAD, theme::WELD, theme::WODE] {
+            assert!(colors.contains(&dye), "stitch dye {dye:?} missing");
+        }
+    }
+
+    #[test]
+    fn a_banner_hangs_below_its_anchor_and_holds_the_title() {
+        let mut ui = Ui::new();
+        ui.begin_frame(UiInput::default(), (800, 600));
+        let body = ui.banner(50, 40, 2, "Lobby");
+        assert_eq!((body.x, body.y), (50, 40));
+        assert!(body.w >= text_width("Lobby", 2));
+        // The swallow-tail reaches below the body.
+        let lowest = ui
+            .draw
+            .quads
+            .iter()
+            .map(|q| i32::from(q.pos[1]) + i32::from(q.size[1]))
+            .max()
+            .unwrap();
+        assert!(lowest > body.bottom());
+        // Title in linen on madder.
+        assert!(
+            ui.draw
+                .quads
+                .iter()
+                .any(|q| q.glyph != crate::draw::SOLID && q.color == theme::LINEN)
+        );
+        assert!(contrast(theme::LINEN, theme::MADDER) > 4.5);
+    }
+
+    #[test]
+    fn the_header_puts_a_hint_beside_the_banner() {
+        let mut ui = Ui::new();
+        ui.begin_frame(UiInput::default(), (1280, 720));
+        let panel = Rect::new(100, 80, 800, 500);
+        let banner = ui.header(panel, "Settings", "Changes are saved when you go back.");
+        assert!(banner.y < panel.y, "the banner hangs from the top edge");
+        let hint_x = ui
+            .draw
+            .quads
+            .iter()
+            .filter(|q| q.glyph != crate::draw::SOLID && q.color == theme::INK_MUTED)
+            .map(|q| i32::from(q.pos[0]))
+            .min()
+            .expect("a hint");
+        assert!(hint_x > banner.right());
+    }
+
+    #[test]
+    fn button_states_read_differently() {
+        let draw = |enabled: bool, style: ButtonStyle, mouse: (i32, i32), down: bool| {
+            let mut ui = Ui::new();
+            ui.begin_frame(
+                UiInput {
+                    mouse,
+                    pressed: down,
+                    ..Default::default()
+                },
+                (800, 600),
+            );
+            ui.button(Rect::new(10, 10, 140, 44), "Go", style, enabled);
+            ui.draw.quads
+        };
+        let away = (500, 500);
+        let normal = draw(true, ButtonStyle::Normal, away, false);
+        let hot = draw(true, ButtonStyle::Normal, (20, 20), false);
+        let down = draw(true, ButtonStyle::Normal, (20, 20), true);
+        let off = draw(false, ButtonStyle::Normal, (20, 20), false);
+        let primary = draw(true, ButtonStyle::Primary, away, false);
+        assert_ne!(normal, hot);
+        assert_ne!(hot, down);
+        assert_ne!(normal, off);
+        let fills = |q: &[crate::draw::Quad]| -> Vec<Color> {
+            q.iter()
+                .filter(|q| q.glyph == crate::draw::SOLID)
+                .map(|q| q.color)
+                .collect()
+        };
+        assert!(fills(&hot).contains(&theme::WELD), "hover shows a weld rim");
+        assert!(fills(&primary).contains(&theme::PRIMARY));
+        assert!(!fills(&normal).contains(&theme::PRIMARY));
+        // Text is ink on cloth (readable), pale and soft when disabled.
+        let ink = |q: &[crate::draw::Quad], c: Color| {
+            q.iter()
+                .any(|q| q.glyph != crate::draw::SOLID && q.color == c)
+        };
+        assert!(ink(&normal, theme::INK) && ink(&off, theme::DISABLED_INK));
+        assert!(ink(&primary, theme::LINEN));
+        assert!(contrast(theme::INK, theme::CLOTH) > 7.0);
+        assert!(contrast(theme::LINEN, theme::PRIMARY) > 4.5);
+        assert!(contrast(theme::INK_MUTED, theme::LINEN) > 4.5);
     }
 }

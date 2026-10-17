@@ -1,0 +1,174 @@
+// Guide text for the Ember Clans (format: docs/17-unit-rosters.md#guide-data,
+// docs/08-ui-ux.md#guide). Numbers are not written here: the Guide reads them
+// from data/rosters/ember_clans.ron. Every building and unit in the roster
+// needs an entry (a test checks), summaries are at most 350 characters and
+// taglines at most 80, plain ASCII.
+//
+// buildings: name, summary, notes. A note is (what, benefit) for a main
+// building's tier upgrade (named by the building it makes) or "Research".
+// units: name, tagline, summary. Units, summoned units and heroes.
+(
+    faction: EmberClans,
+    buildings: [
+        (
+            name: "Clan Hall",
+            summary: "Your starting base: Hands drop Grub and Marrow here, it trains new Hands, and regiments reinforce beside it. It is Fortified, so rams hit it for triple damage. Upgrade it to the Castle Keep once income allows; that opens samurai, cavalry, rocket carts and a second hero.",
+            notes: [
+                ("Castle Keep", "The gate to the mid game: samurai, cavalry, rocket carts, War Kites and a second hero. It costs Marrow, so claim a Marrow vein first."),
+            ],
+        ),
+        (
+            name: "Castle Keep",
+            summary: "The Clan Hall's second tier. It keeps working as a hall while it upgrades and raises your supply cap. It unlocks the Stables and Kite Loft and every tier-2 regiment. Upgrade again for monsters once your army is paying for itself.",
+            notes: [
+                ("Daimyo's Citadel", "The late game: the Oni-Bound monster, the third hero and the top upgrades (not designed yet). Expensive, so upgrade when you hold a second base."),
+            ],
+        ),
+        (
+            name: "Daimyo's Citadel",
+            summary: "The final tier of the main building. It raises the supply cap again, lets the Ancestor Shrine bind the Oni-Bound and opens the third hero slot. Nothing is left to upgrade, so spend on armies and defence from here.",
+            notes: [],
+        ),
+        (
+            name: "Outpost Hall",
+            summary: "A cheaper hall for expansions: a drop-off for Grub and Marrow and a reinforcement point beside a far seep or vein. It trains nothing and cannot be upgraded, so it is a forward base rather than a second home. Build it when home seeps run low or to claim Marrow.",
+            notes: [],
+        ),
+        (
+            name: "Farmstead",
+            summary: "Housing: every regiment uses supply, and each Farmstead raises the cap. Cheap and quick to raise, so build one before you hit the cap, not after, and keep them away from the front where raiders will burn them.",
+            notes: [],
+        ),
+        (
+            name: "Granary",
+            summary: "A Grub drop-off to build beside seeps so Hands walk less; put one at every far seep. It is also meant to research the Clans' economy upgrades, but no research is designed yet, so for now it is a shorter walk and nothing more.",
+            notes: [
+                ("Research", "Economy upgrades are planned for the Granary. No research, costs or times are designed or built yet, so nothing can be bought here today."),
+            ],
+        ),
+        (
+            name: "Dojo",
+            summary: "The infantry barracks: Yari spearmen and Yumi archers at tier 1, Katana Samurai at tier 2. Regiments reinforce beside it, so raise it near the front. It is your first military building and the one you will build most; without it you have no army.",
+            notes: [],
+        ),
+        (
+            name: "Stables",
+            summary: "Trains Mounted Samurai (shock cavalry) and Yabusame Riders (horse archers). Tier 2 and needs Marrow. Regiments reinforce beside it. Cavalry ride down archers, artillery and routing troops; keep spears nearby for the enemy's own horse.",
+            notes: [],
+        ),
+        (
+            name: "Ember Workshop",
+            summary: "Builds Battering Rams at tier 1 and Ember Rocket Carts at tier 2, so it is your only siege and artillery. Raise one before you attack a base: rams are how you break Fortified halls, towers and walls.",
+            notes: [],
+        ),
+        (
+            name: "Kite Loft",
+            summary: "Builds War Kites, the Clans' only flyers: fast scouts that see far and set structures burning. Tier 2 and needs Marrow. Build one to scout, to hunt workers and artillery, or to burn walls out from under a defender.",
+            notes: [],
+        ),
+        (
+            name: "Ancestor Shrine",
+            summary: "Hires and revives heroes and holds the Honor Edicts; each finished Shrine earns a point of Honor every 30 seconds. Build it early, since heroes lead your army and Honor is the Clans' faction power. At tier 3 it binds the Oni-Bound.",
+            notes: [],
+        ),
+        (
+            name: "Forge",
+            summary: "Meant to research weapon and armour upgrades. No upgrades are designed or built yet, so today it does nothing you can buy. Plan one after your first military building, ready for when research arrives.",
+            notes: [
+                ("Research", "Weapon and armour upgrades are planned for the Forge. No research, costs or times are designed or built yet, so nothing can be bought here today."),
+            ],
+        ),
+        (
+            name: "Watchtower",
+            summary: "Two archers that shoot ground and air. A cheap deterrent for seeps and approaches: it will not stop an army, but it punishes lone raiders and flyers. It is Fortified, so rams and fire still beat it.",
+            notes: [],
+        ),
+        (
+            name: "Palisade",
+            summary: "One wall segment that blocks movement. Cheap and quick: close a choke point or screen archers. Fire Arrows burn it and rams break it, so walls buy time rather than stop a siege.",
+            notes: [],
+        ),
+        (
+            name: "Gate",
+            summary: "A wall segment that opens for your own and allied regiments. Put one in each wall line so your army can march out. Enemies must break it down like any wall.",
+            notes: [],
+        ),
+    ],
+    units: [
+        (
+            name: "Hands",
+            tagline: "Worker: gathers Grub and Marrow, builds and repairs.",
+            summary: "The Clans' worker. Carries 10 Grub or 5 Marrow a trip to a Clan Hall or Granary, and builds and repairs every Clan structure. Poor fighters, so keep them out of raids. Train a steady stream early and put them on every seep.",
+        ),
+        (
+            name: "Yari Ashigaru",
+            tagline: "Spear line: stops cavalry, braces to hold ground.",
+            summary: "The Clans' cheap, sturdy spear line. Reach lets the second rank fight, and Brace stops charges cold, so they anchor your front and answer cavalry. They lose to archers, heavy infantry and artillery, so keep Yumi behind them and build them first, in numbers.",
+        ),
+        (
+            name: "Yumi Ashigaru",
+            tagline: "Archers: volleys at range, Fire Arrows burn buildings.",
+            summary: "Archers who shoot ground and air. Fire Arrows set structures alight for extra damage at the cost of a slower reload. They shred infantry in the open but are weak in melee and die to cavalry, so keep them behind spears or walls.",
+        ),
+        (
+            name: "Battering Ram",
+            tagline: "Siege: triple damage to Fortified buildings.",
+            summary: "A covered ram that only harms structures (triple against Fortified halls, towers and walls) and takes half damage from ranged volleys. It cannot fight regiments, so escort it with spears. Build one or two before assaulting a base; cavalry and heavy infantry catch it.",
+        ),
+        (
+            name: "Katana Samurai",
+            tagline: "Elite heavy infantry: a Kiai shout shakes enemy morale.",
+            summary: "Elite swordsmen with strong attack and defence. Kiai drains the morale of enemies in contact or within 6 tiles and lifts their own. They beat light infantry and spears but fear archers and monsters. Tier 2 and Marrow: your shock core once the Keep stands.",
+        ),
+        (
+            name: "Mounted Samurai",
+            tagline: "Shock cavalry: huge charge, rides down routers.",
+            summary: "Heavy shock cavalry with the Clans' biggest charge bonus, and Wedge adds more. Ride Down adds 50% damage to routing regiments, so they finish a broken line. Spears and braced lines stop them; hit archers, artillery and flanks instead.",
+        ),
+        (
+            name: "Yabusame Riders",
+            tagline: "Horse archers: shoot on the move, skirmish by default.",
+            summary: "Horse archers who loose volleys while moving, at reduced accuracy. They skirmish by default: hit, withdraw, repeat. Good for picking off archers and chasing workers, weak when pinned in melee. Fast enough to run from spears.",
+        ),
+        (
+            name: "Ember Rocket Cart",
+            tagline: "Artillery: long-range area fire that bleeds morale.",
+            summary: "Long-range artillery. Each salvo bursts over 3 tiles and costs the regiments it hits extra morale. It cannot fire at targets closer than 10 tiles and can hit your own troops, so keep it behind a line of spears. Deadly to packed infantry, helpless once cavalry arrives.",
+        ),
+        (
+            name: "War Kite",
+            tagline: "Flyer: sees 18 tiles, burns structures.",
+            summary: "A fast flying scout that sees 18 tiles instead of the usual 12 and drops fire pots that set structures burning. Fragile, but only archers and other flyers can answer it. Use it to scout, to snipe workers and artillery, and to burn walls.",
+        ),
+        (
+            name: "Oni-Bound",
+            tagline: "Monster: terror aura, breaks its chains without a hero.",
+            summary: "A bound giant with huge hit points, crushing blows and a Terror Aura that bleeds enemy morale within 10 tiles. With no Clan hero within 20 tiles for 20 seconds it breaks its chains and attacks anything, so keep a hero close. Focused archers and heroes counter it. Tier 3.",
+        ),
+        (
+            name: "Spectral Samurai",
+            tagline: "Summoned samurai: last 60 s and never rout.",
+            summary: "Called by the Ancestral Return Edict at a Shrine or hero. They fight like Katana Samurai but never rout, cost no supply and fade after 60 seconds. They cannot be trained, so spend the Honor on a decisive fight rather than in advance.",
+        ),
+        (
+            name: "Fire Spirit",
+            tagline: "Summoned flame spirit: ranged bolts that set fires.",
+            summary: "Summoned by the Onmyoji's Fire Spirit ability. A single fast spirit with ranged bolts that set structures burning. It lasts 30 to 50 seconds by rank and never routs. Use it to burn buildings or harass archers; it cannot be trained.",
+        ),
+        (
+            name: "The Daimyo",
+            tagline: "Hero commander: rallies routers, bolsters defence.",
+            summary: "A mounted commander who holds the army together: Rally ends routs, his aura raises melee defence, and the Shogun's Banner makes every Clan regiment steadier and faster. He can lock an enemy hero in a duel. Hire him first if your army is large.",
+        ),
+        (
+            name: "The Ronin",
+            tagline: "Hero duelist: blinks through lines, regains health alone.",
+            summary: "A lone duelist with big melee damage. Iaijutsu Dash blinks through a line of enemies, Wind Cut hits a cone, and he heals when no friend is near. Thousand Cuts makes him untouchable while he carves nearby foes. Hunt archers and enemy heroes with him.",
+        ),
+        (
+            name: "The Onmyoji",
+            tagline: "Hero mystic: fire spirits, wards and scouting.",
+            summary: "A fragile mystic. He calls Fire Spirits, wards your troops against volleys, reveals hidden and burrowed units, and his ultimate Kitsune Storm burns and unnerves everything inside. Keep him behind the line; he counters archers and Brood tunnelers.",
+        ),
+    ],
+)

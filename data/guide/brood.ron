@@ -1,0 +1,137 @@
+// Guide text for the Brood. Format and rules: see ember_clans.ron.
+(
+    faction: Brood,
+    buildings: [
+        (
+            name: "Hive",
+            summary: "Your starting base. It holds 3 larvae and spawns one every 12 seconds, and every regiment hatches from a larva, so larvae often limit your army before Grub does. Its root-veins carry Grub from your seeps. Upgrade to the Great Hive for evolutions, flyers and artillery.",
+            notes: [
+                ("Great Hive", "The gate to the mid game: the Chrysalis Chamber's evolutions, Drone-Moths, the Broodmother Bulk and a second hero. Upgrading uses no Gnawer, but it costs Marrow."),
+            ],
+        ),
+        (
+            name: "Great Hive",
+            summary: "The Hive's second tier. It keeps spawning larvae while it upgrades, raises your supply cap, and unlocks the Chrysalis Chamber, Moth Roost and Gorge. Upgrade again for the Colossus Maw once your economy is solid.",
+            notes: [
+                ("Throne Hive", "The late game: the Colossus Maw monster, the third hero and the top upgrades (not designed yet). Costly in Grub and Marrow, so build it when you hold a second base."),
+            ],
+        ),
+        (
+            name: "Throne Hive",
+            summary: "The final tier of the main building. It raises the supply cap again, lets the Gorge hatch the Colossus Maw and opens the third hero slot. Nothing is left to upgrade, so spend on larvae, armies and defence.",
+            notes: [],
+        ),
+        (
+            name: "Pustule",
+            summary: "Housing that also carries the root-veins 8 tiles further, so far seeps keep delivering Grub. Kill one and every seep beyond it stops delivering, so guard the chain. Build a line of them to expand, and a few extra for supply.",
+            notes: [],
+        ),
+        (
+            name: "Hatchery Pit",
+            summary: "Holds 3 more larvae and spawns its own every 12 seconds. Each pit raises how fast you can field regiments. Build a few when Grub piles up while the Hive has no larvae left.",
+            notes: [],
+        ),
+        (
+            name: "Chrysalis Chamber",
+            summary: "Unlocks evolutions: tier-1 regiments can cocoon into their tier-2 forms anywhere on the field. Tier 2, and each evolution costs extra Grub and Marrow and 15 seconds in the cocoon. Build it to turn swarms into archers, burrowers, reapers or shellbacks.",
+            notes: [],
+        ),
+        (
+            name: "Moth Roost",
+            summary: "Lets larvae hatch into Drone-Moths: fast flyers whose Spore Bombs spoil enemy archers' accuracy and whose antennae detect burrowed units. Tier 2 and needs Marrow. Build one to scout, to hunt artillery or to reveal stealth.",
+            notes: [],
+        ),
+        (
+            name: "Gorge",
+            summary: "Lets larvae hatch into Broodmother Bulks, your long-range artillery, and at tier 3 the Colossus Maw. Tier 2 and needs Marrow. Build it once the front is steady and you want to outrange defenders or crack open a base.",
+            notes: [],
+        ),
+        (
+            name: "Spine Mound",
+            summary: "Flings spines at ground and air. A cheap static guard for vein edges, Pustules and your Hive. It is Living, so it regrows while on root-veins, but it will not stop an army. Pair with Shellbacks and Chitin Guard.",
+            notes: [],
+        ),
+        (
+            name: "Queen's Chamber",
+            summary: "Hatches and revives heroes. Build it early: the Queen-in-Waiting, the Devourer and the Whisperer lead the brood and each turns a fight. Heroes cost Marrow too, so keep some in reserve for a replacement.",
+            notes: [],
+        ),
+    ],
+    units: [
+        (
+            name: "Gnawer",
+            tagline: "Worker: burrows into seeps, or is spent to grow a building.",
+            summary: "The Brood's worker. Burrow In sends it into a seep (5 at most), hidden and safe, delivering Grub down the vein network. Grow Structure uses it up to start a building, so every building costs a Gnawer as well as Grub. Hatch plenty early.",
+        ),
+        (
+            name: "Skitterlings",
+            tagline: "Cheap swarm infantry; evolve into Spitters or Burrowers.",
+            summary: "A fast, cheap swarm of 32 with a good charge. Swarm Instinct cuts the morale lost to casualties by 30%. They run down archers and artillery but lose to heavy infantry and spears. Evolve them at the Chrysalis Chamber once tier 2 arrives.",
+        ),
+        (
+            name: "Chitin Guard",
+            tagline: "Shielded line infantry; evolve into Reapers or Shellbacks.",
+            summary: "Tough shielded infantry with the best defence of the Brood's tier-1 troops. Hunker adds defence at half speed. A solid anchor in front of ranged units. Evolve them into Mantid Reapers for offence or Shellbacks for defence. Weak to ranged fire and monsters.",
+        ),
+        (
+            name: "Reclaimer",
+            tagline: "Support: eats corpses for Grub, mends regiments.",
+            summary: "A support unit. Digest eats a corpse every half second for 2 Grub each, and Mending Ooze slowly heals friendly regiments out of combat. Follow the army to turn battlefields into income. Poor in a fight and costs 2 supply, so protect it.",
+        ),
+        (
+            name: "Spitters",
+            tagline: "Evolved acid ranged unit: strips melee defence.",
+            summary: "Evolved from Skitterlings. Acid cuts the melee defence of regiments they hit (stacking twice), softening a line for your melee troops. Ranged units punish infantry in the open but die to cavalry and flyers. Evolve a few behind your Chitin Guard.",
+        ),
+        (
+            name: "Burrowers",
+            tagline: "Evolved skirmishers: tunnel past cliffs and ambush.",
+            summary: "Evolved from Skitterlings. Tunnel hides them and crosses cliffs and rib-ridges (slowly, and they cannot fight). Ambush makes their first 3 seconds after surfacing count as rear hits. Raid archers, artillery or a far seep. Drone-Moths and detectors reveal them.",
+        ),
+        (
+            name: "Mantid Reapers",
+            tagline: "Evolved spear line: deadly to cavalry and monsters.",
+            summary: "Evolved from Chitin Guard. Heavy damage, spear reach, and 30% more against monsters on top of the spear bonus against cavalry. Less armour than the Guard, so keep them beside shields. Evolve a block when the enemy fields horse or monsters.",
+        ),
+        (
+            name: "Shellbacks",
+            tagline: "Evolved bulwark: roots in place, spines hit flyers.",
+            summary: "Evolved from Chitin Guard. Very slow and very hard to hurt; Root locks them in place for more defence and longer spine range, but their spines can only target flyers. A living anti-air wall for your base or a choke point, not an attacker.",
+        ),
+        (
+            name: "Drone-Moths",
+            tagline: "Flyers: spore bombs cut accuracy, detect burrowed.",
+            summary: "Fast flyers hatched at a Moth Roost. Spore Bombs cut the ranged accuracy of regiments hit, and their antennae detect burrowed and hidden units. Good for scouting and for hunting artillery and workers. Archers and other flyers answer them.",
+        ),
+        (
+            name: "Broodmother Bulk",
+            tagline: "Artillery: larva sacs that hatch Spawnlings.",
+            summary: "A huge long-range artillery beast. Each larva sac bursts over 2 tiles (it can hit friends) and hatches a Spawnlings regiment at the impact for 20 seconds. Great against packed infantry, defenceless once cavalry or flyers reach it, so screen it.",
+        ),
+        (
+            name: "Colossus Maw",
+            tagline: "Monster: devours models to heal, terror aura.",
+            summary: "A tier-3 monster. Devour swallows 3 models of a non-monster regiment it is fighting and heals it, and its Terror Aura bleeds enemy morale within 10 tiles. It crushes infantry; focused ranged fire and heroes bring it down. Hatched at the Gorge.",
+        ),
+        (
+            name: "Spawnlings",
+            tagline: "Summoned swarm: short-lived and never rout.",
+            summary: "Hatched by Larva Sacs, Spawn Brood and Swarm Tide. A small, fast swarm that never routs and lasts 20 to 30 seconds. They cost no supply and cannot be trained; use them to pin enemies and soak arrows while your main force closes.",
+        ),
+        (
+            name: "The Queen-in-Waiting",
+            tagline: "Hero mother: hatches Spawnlings, heals, speeds the brood.",
+            summary: "A support hero. Spawn Brood hatches extra regiments beside her, Royal Jelly heals a regiment, and Pheromone Trail speeds your troops. Swarm Tide makes the whole brood fight harder without losing morale. Keep her alive: losing a hero shakes nearby Brood regiments.",
+        ),
+        (
+            name: "The Devourer",
+            tagline: "Hero bruiser: eats models to heal, erupts from below.",
+            summary: "A tough front-line brute. Gorge eats a model of a regiment it fights and heals; Grow makes it bigger with each kill; Burrow Charge tunnels in and erupts as a charge. Maw of the Titan kills a dozen models or smashes a monster or hero.",
+        ),
+        (
+            name: "The Whisperer",
+            tagline: "Hero controller: takes over regiments, sows confusion.",
+            summary: "A fragile controller. Mind-Spore takes over a small enemy or creep regiment for a time, Confusion Cloud makes enemies fight each other, and Hive Sight lets every Pustule reveal the ground around it. Puppet Army turns every routing enemy against its own side.",
+        ),
+    ],
+)
