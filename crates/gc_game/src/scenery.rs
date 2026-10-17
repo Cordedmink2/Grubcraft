@@ -34,6 +34,10 @@ pub fn load(renderer: &mut gc_render::Renderer) -> Result<SceneryModels, String>
     Ok(SceneryModels::from_pack(&scenery))
 }
 
+/// At most this many gathering spots are drawn (a big map has a few
+/// hundred), so they never crowd the scenery out of the buffer.
+const MAX_NODES: usize = 4096;
+
 /// Tiles per chunk side.
 const CHUNK: u32 = 16;
 /// Half a chunk's diagonal, in tiles.
@@ -115,6 +119,8 @@ catalogue! {
     Crag "crag" Rock 1 true,
     Slab "slab" Rock 1 true,
     BoneRibs "bone-ribs" Rock 1 true,
+    GrubSeep "grub-seep" Rock 1 true,
+    MarrowVein "marrow-vein" Rock 1 true,
 }
 
 impl Model {
@@ -181,6 +187,12 @@ impl SceneryModels {
 
     fn id(&self, m: Model) -> Option<u16> {
         self.ids[m as usize]
+    }
+
+    /// Whether the pack has both gathering-spot models, so Conquest's
+    /// seeps and veins are drawn as models (else as the old boxes).
+    fn has_nodes(&self) -> bool {
+        self.id(Model::GrubSeep).is_some() && self.id(Model::MarrowVein).is_some()
     }
 
     /// Whether the pack has any model of `list`.
@@ -390,6 +402,17 @@ struct Chunk {
 /// A building footprint: north-west tile, width and depth.
 type Rect = (i32, i32, u8, u8);
 
+/// A Conquest gathering spot to draw as a model this frame: a Grub seep
+/// or Marrow vein, at `at` (x, ground height, y), shrunk to `scale` as it
+/// runs down and tinted by `shade` (128 as baked, lower darker).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NodeLook {
+    pub marrow: bool,
+    pub at: Vec3,
+    pub scale: f32,
+    pub shade: u8,
+}
+
 /// A chunk picked for this frame.
 struct Near {
     /// Tiles from the focus to its nearest edge, about.
@@ -413,6 +436,10 @@ pub struct Scenery {
     occupied_chunks: Vec<bool>,
     rects: Vec<Rect>,
     spare: Vec<Rect>,
+    /// The gathering spots, set each frame ([`Scenery::set_nodes`]), and
+    /// scratch for this frame's: the batch bin and spot of each one seen.
+    nodes: Vec<NodeLook>,
+    node_bins: Vec<(usize, usize)>,
     facings: [[f32; 2]; 256],
     // Scratch, kept between frames.
     near: Vec<Near>,
@@ -445,6 +472,8 @@ impl Scenery {
             occupied_chunks: vec![false; (side * side) as usize],
             rects: Vec::new(),
             spare: Vec::new(),
+            nodes: Vec::new(),
+            node_bins: Vec::new(),
             facings: std::array::from_fn(|i| {
                 let a = i as f32 / 256.0 * std::f32::consts::TAU;
                 [a.cos(), a.sin()]
@@ -510,6 +539,21 @@ impl Scenery {
         }
     }
 
+    /// The gathering spots to draw with the next frames, replacing the
+    /// last list. Ignored when the pack lacks their models.
+    pub fn set_nodes(&mut self, nodes: impl Iterator<Item = NodeLook>) {
+        self.nodes.clear();
+        if self.models.has_nodes() {
+            self.nodes.extend(nodes.take(MAX_NODES));
+        }
+    }
+
+    /// Whether [`Scenery::frame`] draws the gathering spots: the pack has
+    /// their models and this map has scenery at all.
+    pub fn draws_nodes(&self) -> bool {
+        self.models.has_nodes() && !self.instances.is_empty()
+    }
+
     /// The scenery near the camera's ground point `focus`, the camera
     /// `distance` back, sorted into batches by model and level of detail:
     /// trees, rocks and bushes, and grass and pebbles unless `grass` is
@@ -522,7 +566,7 @@ impl Scenery {
         cull: &Cull,
     ) -> (&[SceneryInstance], &[SceneryBatch]) {
         self.batches.clear();
-        if self.chunks.is_empty() {
+        if self.instances.is_empty() {
             return (&[], &self.batches);
         }
         let reach =
@@ -563,6 +607,8 @@ impl Scenery {
             chunks,
             occupied,
             occupied_chunks,
+            nodes,
+            node_bins,
             facings,
             near,
             counts,
@@ -601,6 +647,30 @@ impl Scenery {
         counts.fill(0);
         let mut total = 0;
         let mut taken = 0;
+        // Gathering spots first: few, and they matter for play. Each one
+        // the camera or the sun sees goes in its model's bin.
+        node_bins.clear();
+        for (k, n) in nodes.iter().enumerate() {
+            let model = if n.marrow {
+                Model::MarrowVein
+            } else {
+                Model::GrubSeep
+            };
+            let Some(id) = models.id(model).map(usize::from) else {
+                continue;
+            };
+            // A sphere round the whole model, from its base to its top.
+            let (radius, half) = (models.info[id].radius, models.info[id].height / 2.0);
+            let centre = n.at + Vec3::Y * half * n.scale;
+            if !cull.sees(centre, (radius + half) * n.scale) {
+                continue;
+            }
+            let d = Vec2::new(n.at.x, n.at.z).distance(focus);
+            let bin = id * LODS + usize::from(lod_for(1, d.hypot(distance)));
+            counts[bin] += 1;
+            total += 1;
+            node_bins.push((bin, k));
+        }
         for (i, n) in near.iter().enumerate() {
             // At most what its classes in reach hold (buildings may hide
             // some): too many, and this chunk and every one farther go.
@@ -633,6 +703,19 @@ impl Scenery {
                 });
             }
             at += count;
+        }
+        for &(bin, k) in node_bins.iter() {
+            let n = &nodes[k];
+            let slot = cursor[bin] as usize;
+            cursor[bin] += 1;
+            // Turned by where it lies, so no two look the same way.
+            let turn = (n.at.x * 37.0 + n.at.z * 91.0) as i64 as u8;
+            instances[slot] = SceneryInstance {
+                pos: [n.at.x, n.at.z],
+                facing: facings[usize::from(turn)],
+                scale: n.scale,
+                tint: [n.shade, n.shade, n.shade, 0],
+            };
         }
         for n in &near[..taken] {
             visit(n, &mut |p, bin, origin| {
@@ -1215,6 +1298,48 @@ mod tests {
         // Far from everything: nothing.
         let (i3, b3) = s.frame(Vec2::new(-900.0, -900.0), 0.0, true, &Cull::EVERYTHING);
         assert!(i3.is_empty() && b3.is_empty());
+    }
+
+    #[test]
+    fn gathering_spots_are_drawn_as_their_models() {
+        let w = World::new();
+        let models = models();
+        let mut s = w.build(7, &models);
+        assert!(s.draws_nodes());
+        let focus = Vec2::new(20.0, 20.0);
+        let before = s.frame(focus, 10.0, true, &Cull::EVERYTHING).0.len();
+        let look = |x: f32, marrow, scale| NodeLook {
+            marrow,
+            at: Vec3::new(x, 0.0, 20.0),
+            scale,
+            shade: 140,
+        };
+        s.set_nodes([look(20.0, false, 1.0), look(24.0, true, 0.4)].into_iter());
+        let (i, b) = s.frame(focus, 10.0, true, &Cull::EVERYTHING);
+        let (i, b) = (i.to_vec(), b.to_vec());
+        assert_eq!(i.len(), before + 2);
+        check_batches(&s, &i, &b);
+        // Each spot is in its own model's batch, at its size.
+        let found = |model: Model, scale: f32| {
+            let id = models.id(model).unwrap();
+            b.iter().filter(|b| b.model == id).any(|b| {
+                i[b.first as usize..(b.first + b.count) as usize]
+                    .iter()
+                    .any(|x| x.scale == scale && x.tint[0] == 140)
+            })
+        };
+        assert!(found(Model::GrubSeep, 1.0) && found(Model::MarrowVein, 0.4));
+        // Even with nothing else near, they are drawn; a pack without
+        // their models draws none (the game falls back to boxes).
+        assert_eq!(
+            s.frame(Vec2::new(-900.0, -900.0), 0.0, true, &Cull::EVERYTHING)
+                .0
+                .len(),
+            2
+        );
+        let mut bare = w.build(7, &pack(&[("oak-a", 4.5, 1.4)]));
+        bare.set_nodes([look(20.0, false, 1.0)].into_iter());
+        assert!(!bare.draws_nodes() && bare.nodes.is_empty());
     }
 
     #[test]

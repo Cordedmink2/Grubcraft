@@ -816,6 +816,8 @@ dependencies = [
  "gc_ui",
  "glam",
  "pollster",
+ "ron",
+ "serde",
  "tracy-client",
  "winit",
 ]

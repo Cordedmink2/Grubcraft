@@ -13,8 +13,10 @@
 pub mod alerts;
 pub mod conquest;
 pub mod draw;
+pub mod guide;
 pub mod hero;
 pub mod hud;
+pub mod icons;
 pub mod lobby;
 pub mod menu;
 pub mod powers;
@@ -23,6 +25,7 @@ pub mod ui;
 pub mod viewer;
 
 pub use draw::{Color, DrawList, Quad, Rect};
+pub use icons::Icon;
 pub use lobby::{LocalNetwork, MatchStart, Network};
 pub use menu::{Menu, MenuAction, ReplayEntry, Screen};
 pub use settings::Settings;

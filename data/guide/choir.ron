@@ -1,0 +1,119 @@
+// Guide text for the Shard Choir. Format and rules: see ember_clans.ron.
+(
+    faction: Choir,
+    buildings: [
+        (
+            name: "Spire",
+            summary: "Your starting base. It builds Tuners and Conductors and powers buildings within 8 tiles; almost every other Choir building needs power, so build around it. Upgrade through the Cathedral and Grand Organ for walkers, cavalry, flyers and monsters.",
+            notes: [
+                ("Cathedral", "The mid game: Harmonic Walkers, Glass Striders, the Skyglass Loom's Skyglass, the Conductor and a second hero. It costs Marrow, so build a Siphon first."),
+            ],
+        ),
+        (
+            name: "Cathedral",
+            summary: "The Spire's second tier. It keeps working while it upgrades, raises your supply cap and unlocks the Skyglass Loom and every tier-2 regiment. Upgrade again for the Monolith once your chords are running.",
+            notes: [
+                ("Grand Organ", "The late game: the Monolith monster, the third hero and the top upgrades (not designed yet). Expensive, so upgrade once several chords pay your way."),
+            ],
+        ),
+        (
+            name: "Grand Organ",
+            summary: "The final tier of the main building. It raises the supply cap again, lets the Forge of Facets build the Monolith and opens the third hero slot. Nothing is left to upgrade, so spend on chords, armies and defence.",
+            notes: [],
+        ),
+        (
+            name: "Resonator",
+            summary: "Tunes a seep within 4 tiles to make Grub with no workers, powers buildings within 6 tiles, and links with Resonators within 14 tiles. Three linked Resonators make a chord that speeds the seeps inside it and charges Resonance. Build them in triangles at your seeps.",
+            notes: [],
+        ),
+        (
+            name: "Siphon",
+            summary: "A Resonator built against a Marrow vein (within 3 tiles): it draws Marrow with no workers, and also links chords and powers buildings. Build one on every Marrow vein you hold; tier-2 buildings and units cost Marrow.",
+            notes: [],
+        ),
+        (
+            name: "Forge of Facets",
+            summary: "Builds every Choir regiment that walks: Shardlings, Prism Lancers, Harmonic Walkers, Glass Striders and the Monolith. Needs power. It is the heart of your army, so raise it inside a powered field as soon as the economy runs.",
+            notes: [],
+        ),
+        (
+            name: "Harmonics Lab",
+            summary: "Meant to research Choir upgrades. No upgrades are designed or built yet, so today it does nothing you can buy. Needs power. Plan one for when research arrives.",
+            notes: [
+                ("Research", "Upgrades are planned for the Harmonics Lab. No research, costs or times are designed or built yet, so nothing can be bought here today."),
+            ],
+        ),
+        (
+            name: "Skyglass Loom",
+            summary: "Builds Skyglass, the Choir's flyers. Tier 2, needs Marrow and power. Build one to win the air, to hunt artillery and archers, or to counter enemy flyers: Skyglass deal extra damage to air regiments.",
+            notes: [],
+        ),
+        (
+            name: "Bell Tower",
+            summary: "A beam tower that hits ground and air. Every 20 seconds it tolls and silences enemy abilities within 10 tiles for 5 seconds, which shuts down hero spells and unit powers at your gates. Needs power, so keep it inside a field.",
+            notes: [],
+        ),
+        (
+            name: "Sanctum of Echoes",
+            summary: "Builds and restores heroes: the Maestro, the Refractor and the Hollow Bell. Needs power. Build it early; the Maestro boosts chords and the others turn fights. Heroes cost Marrow, so keep some in reserve for a replacement.",
+            notes: [],
+        ),
+    ],
+    units: [
+        (
+            name: "Tuner",
+            tagline: "Builder: raises and mends structures, does not gather.",
+            summary: "The Choir's worker. It builds Choir structures inside a Resonator's field and repairs them, but does not gather: Resonators and Siphons make your income. Train a few to build and mend, not a swarm.",
+        ),
+        (
+            name: "Shardlings",
+            tagline: "Crystal swarm infantry: each death bursts for damage.",
+            summary: "Fast crystal infantry. Shatter bursts each fallen model into shards that hurt enemies within 1.5 tiles, so crushing them costs the enemy. They run down archers and artillery but lose to heavy infantry. Cheap, so they screen your Prism Lancers.",
+        ),
+        (
+            name: "Prism Lancers",
+            tagline: "Beam ranged unit: volleys split through Crystal allies.",
+            summary: "Crystal archers who fire beams. A volley that passes through an allied Crystal regiment splits into two weaker volleys at the nearest enemies behind it, so stand them behind Shardlings. Good against infantry in the open; weak to cavalry and flyers.",
+        ),
+        (
+            name: "Harmonic Walkers",
+            tagline: "Heavy crystal infantry: Sonic Pulse knocks lines back.",
+            summary: "Armoured walkers. Sonic Pulse hits a cone: enemies are knocked back 3 tiles, lose morale and have their melee defence cut while they re-form. Use it to break a charge or open a line. Heavy infantry beat light units and spears; ranged fire and monsters beat them.",
+        ),
+        (
+            name: "Glass Striders",
+            tagline: "Cavalry: Phase Charge blinks into contact.",
+            summary: "Fast crystal cavalry. Phase Charge blinks straight into an enemy regiment and counts as a full-speed charge. Strong against archers and artillery behind a screen; spears and braced lines stop them. Needs Marrow and power.",
+        ),
+        (
+            name: "Skyglass",
+            tagline: "Flyers: extra damage to other flyers.",
+            summary: "Fast crystal flyers. Glint adds 50% damage against air regiments, making them the Choir's answer to enemy flyers, and they raid artillery and workers. Archers and other air units are their enemies. Built at a Skyglass Loom.",
+        ),
+        (
+            name: "Conductor",
+            tagline: "Support: a mobile Resonator that heals Crystal regiments.",
+            summary: "A support unit built at the Spire. Mobile Resonator anchors it in 3 seconds, after which it links chords, powers structures and tunes a seep like a Resonator. Its Tuning Fork aura slowly heals Crystal regiments. Fragile, so keep it behind the line.",
+        ),
+        (
+            name: "Monolith",
+            tagline: "Monster: sonic beam breaks buildings, terror aura.",
+            summary: "A slow tier-3 monster. Its Sonic Beam deals triple damage to structures at range, and its Terror Aura bleeds enemy morale within 10 tiles. Bring it to siege a base. Focused ranged fire and heroes bring it down. Built at the Forge of Facets.",
+        ),
+        (
+            name: "The Maestro",
+            tagline: "Hero of economy: boosts chords and army reload.",
+            summary: "An economy hero. Crescendo speeds reloading and adds melee attack, Retune moves a Resonator instantly, Harmony adds Grub to chords near him, and Symphony doubles your chords' Grub for a time. Keep him near your chords, not in the front.",
+        ),
+        (
+            name: "The Refractor",
+            tagline: "Hero of damage: splits beams, reflects volleys.",
+            summary: "A damage hero. Split Beam sends his volleys at several targets, Mirror Shield reflects incoming volleys back, Lens lets a non-Crystal regiment refract beams, and Prismatic Lance cuts a line through everything in it. Pair with Prism Lancers.",
+        ),
+        (
+            name: "The Hollow Bell",
+            tagline: "Hero of control: stuns, silences, shatters morale.",
+            summary: "A control hero. Toll stuns a regiment, Silence switches off abilities in an area, Echo Step blinks him across the field, and Deafening Peal drops the morale of every enemy regiment in range at once. Time Peal for the moment your charge lands.",
+        ),
+    ],
+)

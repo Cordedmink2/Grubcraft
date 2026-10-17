@@ -3,6 +3,9 @@
 //! bar.
 //! Docs: docs/08-ui-ux.md#screen-layout-1080p-reference.
 //!
+//! The look is a Bayeux tapestry: linen cloth, ink outlines and stitched
+//! borders in madder, woad, weld and wode wool (docs/08-ui-ux.md#visual-style).
+//!
 //! Like the menus this knows nothing about the GPU or the simulation. Each
 //! frame the game describes what to show ([`HudData`]) and what the mouse
 //! did ([`HudInput`]); [`Hud::frame`] draws into a [`DrawList`] and returns
@@ -12,19 +15,20 @@
 
 use crate::alerts::{self, AlertData};
 use crate::conquest::{self, Block, NodeDot, StructurePanel, TopBar};
-use crate::draw::{CELL_W, Color, DrawList, Rect, fit, text_width};
+use crate::draw::{CELL_W, Color, DrawList, Rect, fit, mix, text_width, wrap};
 use crate::hero::{self, HeroPanel};
+use crate::icons::{self, Icon};
 use crate::powers::{self, PowerButton};
 use crate::ui::{Press, theme};
 
 /// Height of the bottom bar, in UI pixels.
 pub const BAR_HEIGHT: i32 = 168;
 /// Height of the top bar (Conquest), in UI pixels.
-pub const TOP_BAR_HEIGHT: i32 = 26;
+pub const TOP_BAR_HEIGHT: i32 = 36;
 const MARGIN: i32 = 8;
 /// Width kept free at the bar's right end for the command grid: room for
-/// 7 characters a slot ("300/100").
-const GRID_WIDTH: i32 = 276;
+/// 9 characters a slot ("Formation").
+const GRID_WIDTH: i32 = 348;
 const CARD_MIN_W: i32 = 48;
 const CARD_MAX_W: i32 = 84;
 const CARD_GAP: i32 = 4;
@@ -38,6 +42,8 @@ pub const GRID_KEYS: [char; GRID_SLOTS] =
 /// A hero's four abilities take the A, S, D and F slots.
 pub const HERO_SLOT_FIRST: usize = 4;
 const GRID_GAP: i32 = 4;
+/// A button must be hovered this long before its tooltip shows, in ms.
+pub const TOOLTIP_DELAY_MS: u64 = 350;
 /// Two clicks on a card within this long are a double-click.
 const DOUBLE_CLICK_MS: u64 = 400;
 
@@ -45,8 +51,9 @@ const DOUBLE_CLICK_MS: u64 = 400;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HudLayout {
     pub bar: Rect,
-    /// The top bar (Conquest); None while it is hidden.
-    pub top: Option<Rect>,
+    /// The top bar: the status strip, the Help button and, in Conquest, the
+    /// economy.
+    pub top: Rect,
     /// The screen between the top bar, if any, and the bottom bar.
     pub field: Rect,
     pub minimap: Rect,
@@ -56,11 +63,11 @@ pub struct HudLayout {
 }
 
 impl HudLayout {
-    pub fn new(screen: (i32, i32), top_bar: bool) -> HudLayout {
+    pub fn new(screen: (i32, i32)) -> HudLayout {
         let (w, h) = screen;
         let bar = Rect::new(0, (h - BAR_HEIGHT).max(0), w, BAR_HEIGHT.min(h));
-        let top = top_bar.then(|| Rect::new(0, 0, w, TOP_BAR_HEIGHT));
-        let field_y = top.map_or(0, |r| r.bottom());
+        let top = Rect::new(0, 0, w, TOP_BAR_HEIGHT.min(h));
+        let field_y = top.bottom();
         let field = Rect::new(0, field_y, w, (bar.y - field_y).max(0));
         let side = bar.h - 2 * MARGIN;
         let minimap = Rect::new(bar.x + MARGIN, bar.y + MARGIN, side, side);
@@ -178,15 +185,131 @@ pub enum SlotState {
 /// One button of the command grid.
 #[derive(Clone, Debug, Default)]
 pub struct GridSlot<'a> {
-    /// At most 6 characters.
+    /// The button's readable name ("Formation"); at most 9 characters fit.
     pub label: &'a str,
     /// A second, smaller line, e.g. the current formation.
     pub detail: &'a str,
     pub state: SlotState,
+    /// The picture on the button.
+    pub icon: Icon,
+    /// One line for the tooltip; empty gives the name and key alone.
+    pub tip: &'a str,
+}
+
+/// What the selected regiments are, for the selection panel in the tray.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Selection<'a> {
+    /// The regiment's name, or "3 regiments" for a mixed selection.
+    pub name: &'a str,
+    /// The side's colour: the banner's cloth.
+    pub color: [u8; 3],
+    /// The picture on the banner.
+    pub icon: Icon,
+    /// How many regiments are selected.
+    pub regiments: u16,
+    /// Soldiers standing and soldiers at full strength, summed.
+    pub models: u32,
+    pub max_models: u32,
+    /// Morale points, 0 to 100 (the mean of a selection).
+    pub morale: u8,
+    pub state: CardState,
+    /// The formation they stand in; empty when it varies or is not known.
+    pub formation: &'a str,
+}
+
+/// The top bar's status strip: what you are playing and how fast.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StatusStrip<'a> {
+    /// "Sandbox", "Field Battle", "Replay" ...
+    pub mode: &'a str,
+    /// The side commanded, e.g. "Red".
+    pub side: &'a str,
+    pub side_color: [u8; 3],
+    /// "1x", "0.5x" ...
+    pub speed: &'a str,
+    pub paused: bool,
+    /// Match time.
+    pub clock_secs: Option<u32>,
+}
+
+/// One key and what it does, for the Marshal's Scroll.
+pub type HelpKey = (&'static str, &'static str);
+
+/// The keys of the Marshal's Scroll, in groups. The scroll reads this.
+pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
+    (
+        "Orders",
+        &[
+            ("L-click", "Select a regiment"),
+            ("L-drag", "Box select"),
+            ("R-click", "March or attack"),
+            ("R-drag", "Draw the line"),
+            ("Q", "Move, then click"),
+            ("W", "Attack, then click"),
+            ("R or F", "Next formation"),
+            ("Z", "Brace spears"),
+            ("V", "Fall back"),
+            ("Ctrl+1-9", "Save a group"),
+            ("1-9", "Recall a group"),
+            ("Space", "Jump to alert"),
+            ("Esc", "Cancel, or menu"),
+        ],
+    ),
+    (
+        "View",
+        &[
+            ("Arrows", "Pan the camera"),
+            ("Wheel", "Zoom"),
+            ("Alt+Mid", "Rotate the view"),
+            (", .", "Turn the view"),
+            ("Home", "Reset rotation"),
+            ("Y", "Ride with banner"),
+            ("G", "Show blocked ground"),
+            ("L", "AI lens"),
+            ("C", "Credits"),
+            ("M  N", "Mute  music"),
+            ("F11", "Dev overlay"),
+            ("H or F1", "This scroll"),
+            ("U", "Guide"),
+            ("F1", "Idle worker"),
+        ],
+    ),
+    (
+        "Sandbox",
+        &[
+            ("Tab", "Next side"),
+            ("I", "Computer plays side"),
+            ("P", "Pause"),
+            ("- =", "Slower, faster"),
+            ("B", "Place regiments"),
+            ("[ ]", "Choose the type"),
+            ("K", "Place buildings"),
+            ("Del", "Remove under mouse"),
+            ("Shift+Del", "Clear the field"),
+            ("T", "Tune stats"),
+            ("Shift+R", "Reload data"),
+            ("Shift+V", "Show hidden"),
+            ("Shift+H", "Hero preview"),
+        ],
+    ),
+];
+
+/// The Marshal's Scroll, when it is open.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HelpScroll<'a> {
+    /// Live lines under the keys: what the computer players are doing, the
+    /// formation, what is being placed.
+    pub notes: &'a [String],
 }
 
 pub struct HudData<'a> {
     pub grid: &'a [GridSlot<'a>; GRID_SLOTS],
+    /// The top bar's mode, side, speed and clock.
+    pub status: StatusStrip<'a>,
+    /// The selected regiments, for the panel in the tray.
+    pub selection: Option<Selection<'a>>,
+    /// The Marshal's Scroll; `None` while it is closed.
+    pub help: Option<HelpScroll<'a>>,
     /// The selected hero, once there are heroes (docs/05-combat.md#heroes).
     pub hero: Option<HeroPanel<'a>>,
     pub minimap: MinimapData<'a>,
@@ -222,6 +345,8 @@ const WIDGET_CARD: u32 = 4 << 24;
 pub(crate) const WIDGET_ALERT: u32 = 5 << 24;
 pub(crate) const WIDGET_QUEUE: u32 = 6 << 24;
 pub(crate) const WIDGET_POWER: u32 = 7 << 24;
+pub(crate) const WIDGET_HELP: u32 = 8 << 24;
+pub(crate) const WIDGET_GUIDE: u32 = 9 << 24;
 
 /// What the mouse did since the last frame, in UI pixels.
 #[derive(Clone, Copy, Debug, Default)]
@@ -260,6 +385,10 @@ pub enum HudEvent {
     /// A faction power's button was clicked (its place in
     /// [`HudData::powers`]).
     Power(usize),
+    /// The `? Help` button was clicked: open or close the Marshal's Scroll.
+    ToggleHelp,
+    /// The Guide button was clicked: open the Guide.
+    OpenGuide,
 }
 
 #[derive(Default)]
@@ -272,29 +401,85 @@ pub struct Hud {
     press: Press,
     /// The top bar, alert badges and buttons over the battlefield as last drawn.
     over: Vec<Rect>,
+    /// The button the mouse rests on and since when (ms), for tooltips.
+    hover: Option<(u32, u64)>,
+    /// A tooltip to show once the mouse has rested long enough, this frame.
+    tip: Option<Tip>,
+    /// Where the tooltip was last drawn.
+    tooltip: Option<Rect>,
+}
+
+/// Widget id of the Help button's tooltip; grid slots use their index.
+const TIP_HELP: u32 = 100;
+const TIP_GUIDE: u32 = 101;
+
+/// What a tooltip says, about the button `id` at `anchor`.
+#[derive(Clone, Debug)]
+struct Tip {
+    id: u32,
+    anchor: Rect,
+    name: String,
+    key: String,
+    text: String,
+    note: String,
 }
 
 /// A button's background, edge and text colours: dim while it can't be
-/// used, lit under the mouse (`hot`) and orange while it waits for a click.
+/// used, lit under the mouse (`hot`) and weld yellow while it waits for a
+/// click.
 pub(crate) fn slot_colors(state: SlotState, hot: bool) -> (Color, Color, Color) {
     match state {
-        SlotState::Off | SlotState::Blocked => (theme::FIELD, theme::PANEL_EDGE, theme::DISABLED),
-        SlotState::Ready if hot => (theme::BUTTON_HOT, theme::PANEL_EDGE, theme::TEXT),
-        SlotState::Ready => (theme::BUTTON, theme::PANEL_EDGE, theme::TEXT),
-        SlotState::Armed => (theme::PRIMARY, theme::ACCENT, theme::TEXT),
+        SlotState::Off | SlotState::Blocked => (
+            mix(theme::LINEN, theme::LINEN_DK, 0.35),
+            dim_ink(),
+            mix(theme::INK, theme::LINEN, 0.5),
+        ),
+        SlotState::Ready if hot => (
+            mix(theme::LINEN_DK, theme::LINEN, 0.5),
+            theme::INK,
+            theme::INK,
+        ),
+        SlotState::Ready => (theme::LINEN_DK, theme::INK, theme::INK),
+        SlotState::Armed => (theme::WELD, theme::INK, theme::INK),
     }
+}
+
+/// Ink faded into the linen: a disabled outline.
+pub(crate) fn dim_ink() -> Color {
+    mix(theme::INK, theme::LINEN, 0.6)
+}
+
+/// Ink faded a little: secondary text on linen.
+pub(crate) fn muted_ink() -> Color {
+    mix(theme::INK, theme::LINEN, 0.3)
+}
+
+/// The lighter linen of panels set into the bar.
+pub(crate) fn linen_light() -> Color {
+    mix(theme::LINEN, [255, 250, 230, 255], 0.45)
 }
 
 pub(crate) fn rgb(c: [u8; 3]) -> Color {
     [c[0], c[1], c[2], 255]
 }
 
+/// A meter with an ink outline: `frac` of it filled in `color`.
+pub(crate) fn ink_meter(draw: &mut DrawList, r: Rect, frac: f32, color: Color) {
+    draw.rect(r, theme::INK);
+    draw.meter(r.inset(2), frac, color, theme::LINEN_DK);
+}
+
 impl Hud {
     /// Whether a click at `mouse` belongs to the HUD rather than the world.
     pub fn wants(&self, screen: (i32, i32), mouse: (i32, i32)) -> bool {
         self.dragging
-            || HudLayout::new(screen, false).bar.contains(mouse.0, mouse.1)
+            || HudLayout::new(screen).bar.contains(mouse.0, mouse.1)
             || self.over.iter().any(|r| r.contains(mouse.0, mouse.1))
+    }
+
+    /// Where the tooltip was drawn this frame, if there is one.
+    pub fn tooltip_rect(&self) -> Option<Rect> {
+        self.tooltip
     }
 
     /// Lay out and draw the bar, and report what was clicked.
@@ -306,15 +491,11 @@ impl Hud {
         data: &HudData,
         events: &mut Vec<HudEvent>,
     ) {
-        let layout = HudLayout::new(screen, data.top.is_some());
-        draw.rect(
-            layout.bar,
-            [theme::PANEL[0], theme::PANEL[1], theme::PANEL[2], 255],
-        );
-        draw.rect(
-            Rect::new(0, layout.bar.y, layout.bar.w, 2),
-            theme::PANEL_EDGE,
-        );
+        let layout = HudLayout::new(screen);
+        self.tip = None;
+        draw.rect(layout.bar, theme::LINEN);
+        draw.rect(Rect::new(0, layout.bar.y, layout.bar.w, 3), theme::INK);
+        draw.stitch_row(0, layout.bar.y + 5, layout.bar.w, 2);
         self.minimap(draw, &layout, input, &data.minimap, events);
         self.tray(draw, &layout, input, data, events);
         if let Some(deploy) = data.deployment {
@@ -323,10 +504,7 @@ impl Hud {
             self.grid(draw, &layout, input, data.grid, events);
         }
         self.over.clear();
-        if let Some((bar, t)) = layout.top.zip(data.top.as_ref()) {
-            conquest::draw_top_bar(draw, bar, t);
-            self.over.push(bar);
-        }
+        self.top_bar(draw, &layout, input, data, events);
         if let Some(h) = &data.hero {
             hero::draw(draw, layout.bar.y, h, &mut self.over);
         }
@@ -348,7 +526,244 @@ impl Hud {
             &mut self.over,
             events,
         );
+        if let Some(scroll) = &data.help {
+            let top = if data.powers.is_empty() { 8 } else { 54 };
+            if let Some(r) = draw_scroll(draw, layout.field, top, scroll) {
+                self.over.push(r);
+            }
+        }
+        self.finish_tooltip(draw, screen, input);
         self.press.end_frame(input.left_released);
+    }
+
+    /// Show the tooltip a button asked for once the mouse has rested on it
+    /// for [`TOOLTIP_DELAY_MS`]; forget the rest when it moves away.
+    fn finish_tooltip(&mut self, draw: &mut DrawList, screen: (i32, i32), input: HudInput) {
+        self.tooltip = None;
+        let Some(tip) = self.tip.take() else {
+            self.hover = None;
+            return;
+        };
+        let since = match self.hover {
+            Some((id, since)) if id == tip.id => since,
+            _ => {
+                self.hover = Some((tip.id, input.now_ms));
+                input.now_ms
+            }
+        };
+        if input.now_ms.wrapping_sub(since) < TOOLTIP_DELAY_MS {
+            return;
+        }
+        const WRAP: usize = 30;
+        const PAD: i32 = 9;
+        let body: Vec<String> = if tip.text.is_empty() {
+            Vec::new()
+        } else {
+            wrap(&tip.text, WRAP)
+        };
+        let head = format!("{}  [{}]", tip.name, tip.key);
+        let chars = body
+            .iter()
+            .map(|l| l.chars().count())
+            .chain([head.chars().count(), tip.note.chars().count()])
+            .max()
+            .unwrap_or(1);
+        let lines = 1 + body.len() + usize::from(!tip.note.is_empty());
+        let w = chars as i32 * CELL_W + 2 * PAD;
+        let h = lines as i32 * 18 + 2 * PAD - 2;
+        // Above the button; below it when there is no room above; always
+        // wholly on the screen.
+        let mut y = tip.anchor.y - h - 6;
+        if y < 4 {
+            y = tip.anchor.bottom() + 6;
+        }
+        let x = (tip.anchor.right() - w).clamp(4, (screen.0 - w - 4).max(4));
+        let y = y.clamp(4, (screen.1 - h - 4).max(4));
+        let r = Rect::new(x, y, w, h);
+        draw.shadow(r, 3);
+        draw.boxed(r, linen_light(), 2);
+        draw.border(r.inset(3), 1, theme::WELD);
+        let mut ty = r.y + PAD - 1;
+        draw.text_bold(r.x + PAD, ty, 1, theme::MADDER, &tip.name);
+        let key = format!("[{}]", tip.key);
+        draw.text(
+            r.right() - PAD - text_width(&key, 1),
+            ty,
+            1,
+            theme::WOAD,
+            &key,
+        );
+        for line in &body {
+            ty += 18;
+            draw.text(r.x + PAD, ty, 1, theme::INK, line);
+        }
+        if !tip.note.is_empty() {
+            ty += 18;
+            draw.text(r.x + PAD, ty, 1, muted_ink(), &tip.note);
+        }
+        self.tooltip = Some(r);
+    }
+
+    /// The top bar: the economy (Conquest), then the status chips and the
+    /// Help button from the right.
+    fn top_bar(
+        &mut self,
+        draw: &mut DrawList,
+        layout: &HudLayout,
+        input: HudInput,
+        data: &HudData,
+        events: &mut Vec<HudEvent>,
+    ) {
+        let bar = layout.top;
+        self.over.push(bar);
+        draw.rect(bar, theme::LINEN);
+        draw.rect(Rect::new(0, bar.bottom() - 3, bar.w, 3), theme::INK);
+        draw.stitch_row(0, bar.bottom() - 8, bar.w, 2);
+        let band = Rect::new(0, 0, bar.w, bar.h - 8);
+        let chip_h = 24;
+        let chip_y = band.y + (band.h - chip_h) / 2;
+        let text_y = chip_y + (chip_h - 16) / 2;
+        let mut right = bar.right() - MARGIN;
+        let gap = 6;
+
+        // Help: always the right-most.
+        let help = Rect::new(right - 76, chip_y, 76, chip_h);
+        right = help.x - gap;
+        let hot = help.contains(input.mouse.0, input.mouse.1);
+        let (clicked, down) = self.press.widget(
+            WIDGET_HELP,
+            help,
+            input.mouse,
+            input.left_pressed,
+            input.left_released,
+        );
+        if clicked {
+            events.push(HudEvent::ToggleHelp);
+        }
+        let open = data.help.is_some();
+        let fill = match (down, hot || open) {
+            (true, _) => mix(theme::WELD, theme::INK, 0.2),
+            (_, true) => mix(theme::WELD, [255, 240, 190, 255], 0.4),
+            _ => theme::WELD,
+        };
+        draw.boxed(help, fill, 2);
+        icons::icon(
+            draw,
+            Rect::new(help.x + 7, help.y + 6, 12, 12),
+            Icon::Help,
+            theme::INK,
+        );
+        draw.text_bold(help.x + 24, text_y, 1, theme::INK, "Help");
+        // Open, the scroll itself is the explanation (and sits just below).
+        if hot && !open {
+            self.tip = Some(Tip {
+                id: TIP_HELP,
+                anchor: help,
+                name: "Help".into(),
+                key: "H or F1".into(),
+                text: "Open or close the Marshal's Scroll, the list of keys.".into(),
+                note: String::new(),
+            });
+        }
+
+        // Guide: just left of Help.
+        let guide = Rect::new(right - 84, chip_y, 84, chip_h);
+        right = guide.x - gap;
+        let hot = guide.contains(input.mouse.0, input.mouse.1);
+        let (clicked, down) = self.press.widget(
+            WIDGET_GUIDE,
+            guide,
+            input.mouse,
+            input.left_pressed,
+            input.left_released,
+        );
+        if clicked {
+            events.push(HudEvent::OpenGuide);
+        }
+        let fill = match (down, hot) {
+            (true, _) => mix(theme::WELD, theme::INK, 0.2),
+            (_, true) => mix(theme::WELD, [255, 240, 190, 255], 0.4),
+            _ => theme::WELD,
+        };
+        draw.boxed(guide, fill, 2);
+        icons::icon(
+            draw,
+            Rect::new(guide.x + 7, guide.y + 6, 12, 12),
+            Icon::Book,
+            theme::INK,
+        );
+        draw.text_bold(guide.x + 24, text_y, 1, theme::INK, "Guide");
+        if hot {
+            self.tip = Some(Tip {
+                id: TIP_GUIDE,
+                anchor: guide,
+                name: "Guide".into(),
+                key: "U".into(),
+                text: "Every building and troop: its role, stats and upgrades.".into(),
+                note: String::new(),
+            });
+        }
+
+        // Status chips, from the right.
+        let st = data.status;
+        let chip = |draw: &mut DrawList, right: &mut i32, icon: Icon, text: &str, dye: Color| {
+            let w = 12 + 8 * 2 + 4 + text_width(text, 1) + if icon == Icon::None { -16 } else { 0 };
+            let r = Rect::new(*right - w, chip_y, w, chip_h);
+            draw.boxed(r, theme::LINEN_DK, 2);
+            let mut x = r.x + 8;
+            if icon != Icon::None {
+                icons::icon(draw, Rect::new(x, r.y + 6, 12, 12), icon, dye);
+                x += 16;
+            }
+            draw.text_bold(x, text_y, 1, theme::INK, text);
+            *right = r.x - gap;
+        };
+        if let Some(secs) = st.clock_secs {
+            chip(
+                draw,
+                &mut right,
+                Icon::None,
+                &conquest::clock(secs),
+                theme::INK,
+            );
+        }
+        if !st.speed.is_empty() || st.paused {
+            let (icon, text) = if st.paused {
+                (Icon::Pause, "paused")
+            } else {
+                (Icon::Play, st.speed)
+            };
+            chip(
+                draw,
+                &mut right,
+                icon,
+                text,
+                if st.paused {
+                    theme::MADDER
+                } else {
+                    theme::WOAD
+                },
+            );
+        }
+        if !st.mode.is_empty() {
+            let text = if st.side.is_empty() {
+                st.mode.to_string()
+            } else {
+                format!("{}: {}", st.mode, st.side)
+            };
+            let w = 8 + 14 + 6 + text_width(&text, 1) + 8;
+            let r = Rect::new(right - w, chip_y, w, chip_h);
+            draw.boxed(r, theme::LINEN_DK, 2);
+            let swatch = Rect::new(r.x + 8, r.y + 5, 14, 14);
+            draw.boxed(swatch, rgb(st.side_color), 2);
+            draw.text_bold(swatch.right() + 6, text_y, 1, theme::INK, &text);
+            right = r.x - gap;
+        }
+
+        if let Some(t) = &data.top {
+            let area = Rect::new(MARGIN, band.y, (right - MARGIN).max(0), band.h);
+            conquest::draw_resources(draw, area, t);
+        }
     }
 
     fn grid(
@@ -374,8 +789,9 @@ impl Hud {
                 cell_h,
             );
             let on = slot.state != SlotState::Off;
-            let hot = slot.state == SlotState::Ready && cell.contains(input.mouse.0, input.mouse.1);
-            let (clicked, _) = self.press.widget(
+            let over = cell.contains(input.mouse.0, input.mouse.1);
+            let hot = slot.state == SlotState::Ready && over;
+            let (clicked, down) = self.press.widget(
                 WIDGET_SLOT + i as u32,
                 cell,
                 input.mouse,
@@ -386,29 +802,60 @@ impl Hud {
             if clicked && on {
                 events.push(HudEvent::Command(i));
             }
-            let (back, edge, text) = slot_colors(slot.state, hot);
-            draw.rect(cell, back);
-            draw.border(cell, 1, edge);
+            if over && !slot.label.is_empty() {
+                self.tip = Some(Tip {
+                    id: i as u32,
+                    anchor: cell,
+                    name: slot.label.to_string(),
+                    key: GRID_KEYS[i].to_string(),
+                    text: slot.tip.to_string(),
+                    note: match slot.state {
+                        SlotState::Off => "Not available now".to_string(),
+                        SlotState::Blocked | SlotState::Ready | SlotState::Armed => {
+                            slot.detail.to_string()
+                        }
+                    },
+                });
+            }
+            let (mut back, edge, text) = slot_colors(slot.state, hot);
+            if down && on {
+                back = mix(back, theme::INK, 0.18);
+            }
+            draw.boxed(cell, back, 2);
             let inner = cell.inset(3);
             let chars = (inner.w / 8).max(1) as usize;
             let mut key = [0u8; 4];
+            let key_color = if on { theme::MADDER } else { edge };
             draw.text(
                 inner.x,
-                inner.y,
+                inner.y - 2,
                 1,
-                theme::MUTED,
+                key_color,
                 GRID_KEYS[i].encode_utf8(&mut key),
             );
-            let label_y = inner.y + 16;
-            draw.text(inner.x, label_y, 1, text, &fit(slot.label, chars));
-            if !slot.detail.is_empty() {
-                draw.text(
-                    inner.x,
-                    label_y + 14,
-                    1,
-                    theme::MUTED,
-                    &fit(slot.detail, chars),
+            if slot.detail.is_empty() {
+                // Icon over name.
+                let room = Rect::new(inner.x, inner.y, inner.w, inner.h - 18);
+                let mid = Rect::new(room.x + (room.w - 24) / 2, room.y + 1, 24, room.h.min(24));
+                icons::icon(draw, mid, slot.icon, text);
+                let label = fit(slot.label, chars);
+                let ly = inner.bottom() - 16;
+                let lx = inner.x + (inner.w - text_width(&label, 1)) / 2;
+                draw.text(lx, ly, 1, text, &label);
+            } else {
+                // A second line: a small icon in the corner.
+                icons::icon(
+                    draw,
+                    Rect::new(inner.right() - 12, inner.y, 12, 12),
+                    slot.icon,
+                    text,
                 );
+                let label = fit(slot.label, chars);
+                let lx = inner.x + (inner.w - text_width(&label, 1)) / 2;
+                draw.text(lx, inner.y + 12, 1, text, &label);
+                let detail = fit(slot.detail, chars);
+                let dx = inner.x + (inner.w - text_width(&detail, 1)) / 2;
+                draw.text(dx, inner.y + 26, 1, mix(text, theme::LINEN, 0.3), &detail);
             }
         }
     }
@@ -440,6 +887,9 @@ impl Hud {
             events.push(HudEvent::Order(at(mx, my)));
         }
 
+        // A weld-yellow frame round the map, like a framed panel of cloth.
+        draw.rect(r.inset(-5), theme::WELD);
+        draw.border(r.inset(-5), 2, theme::INK);
         draw_terrain(draw, r, m.terrain);
 
         let to_screen = |p: [f32; 2]| -> (i32, i32) {
@@ -473,9 +923,9 @@ impl Hud {
         }
         for (i, &a) in m.view.iter().enumerate() {
             let b = m.view[(i + 1) % m.view.len()];
-            line(draw, r, to_screen(a), to_screen(b), theme::TEXT);
+            line(draw, r, to_screen(a), to_screen(b), [255, 250, 230, 255]);
         }
-        draw.border(r, 2, theme::PANEL_EDGE);
+        draw.border(r, 2, theme::INK);
     }
 
     fn tray(
@@ -487,23 +937,38 @@ impl Hud {
         events: &mut Vec<HudEvent>,
     ) {
         let r = layout.tray;
-        let inner = r.inset(6);
+        let inner = r.inset(8);
         if inner.w < CARD_MIN_W {
             return;
         }
-        draw.border(r, 2, theme::PANEL_EDGE);
+        draw.boxed(r, linen_light(), 2);
         if let Some(s) = &data.structure {
-            draw.text(inner.x, inner.y, 1, theme::MUTED, data.tray_title);
+            draw.text_bold(inner.x, inner.y - 2, 1, theme::MADDER, data.tray_title);
             let row = Rect::new(inner.x, inner.y + 20, inner.w, inner.h - 20);
             conquest::draw_structure(draw, &mut self.press, row, input, s, events);
             return;
         }
-        if data.cards.is_empty() {
-            draw.text_centered(r, 1, theme::DISABLED, "Select a regiment");
+        let mut cards_x = inner.x;
+        let show_cards =
+            !data.cards.is_empty() && (data.selection.is_none() || data.cards.len() > 1);
+        if let Some(sel) = &data.selection {
+            let want = if show_cards { 310 } else { 460 };
+            let w = want.min(if show_cards {
+                inner.w * 45 / 100
+            } else {
+                inner.w
+            });
+            draw_selection(draw, Rect::new(inner.x, inner.y, w, inner.h), sel);
+            cards_x = inner.x + w + 10;
+        } else if data.cards.is_empty() {
+            draw.text_centered(r, 1, muted_ink(), "Click a regiment to command it");
             return;
         }
-        draw.text(inner.x, inner.y, 1, theme::MUTED, data.tray_title);
-        let row = Rect::new(inner.x, inner.y + 20, inner.w, inner.h - 20);
+        if !show_cards || inner.right() - cards_x < CARD_MIN_W {
+            return;
+        }
+        draw.text_bold(cards_x, inner.y - 2, 1, theme::MADDER, data.tray_title);
+        let row = Rect::new(cards_x, inner.y + 20, inner.right() - cards_x, inner.h - 20);
         let (card_w, shown) = card_fit(row.w, data.cards.len());
         for (i, card) in data.cards.iter().take(shown).enumerate() {
             let rect = Rect::new(
@@ -540,9 +1005,232 @@ impl Hud {
         if shown < data.cards.len() {
             let more = format!("+{}", data.cards.len() - shown);
             let x = row.right() - text_width(&more, 1);
-            draw.text(x.max(inner.x), inner.y, 1, theme::ACCENT, &more);
+            draw.text_bold(x.max(cards_x), inner.y - 2, 1, theme::WOAD, &more);
         }
     }
+}
+
+/// A pennant: `fill` cloth with a swallowtail point, outlined in ink.
+fn banner(draw: &mut DrawList, r: Rect, fill: Color) {
+    let shape = |draw: &mut DrawList, r: Rect, color: Color| {
+        let tail = (r.w * 2 / 3).min(r.h / 2);
+        draw.rect(Rect::new(r.x, r.y, r.w, r.h - tail), color);
+        for t in 0..tail {
+            let half = r.w * (tail - t) / (2 * tail);
+            let cx = r.x + r.w / 2;
+            draw.rect(
+                Rect::new(cx - half, r.y + r.h - tail + t, half * 2, 1),
+                color,
+            );
+        }
+    };
+    shape(draw, r, theme::INK);
+    shape(draw, r.inset(3), fill);
+}
+
+/// The selection panel: a banner in the side's colour with the unit's
+/// picture, its name and numbers, and bars for health and morale.
+fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
+    let banner_rect = Rect::new(r.x, r.y, 50, r.h.min(124));
+    banner(draw, banner_rect, rgb(s.color));
+    let ink = if luma(s.color) > 140 {
+        theme::INK
+    } else {
+        theme::LINEN
+    };
+    icons::icon(
+        draw,
+        Rect::new(banner_rect.x + 7, banner_rect.y + 12, 36, 28),
+        s.icon,
+        ink,
+    );
+    let x = banner_rect.right() + 12;
+    let w = (r.right() - x).max(0);
+    if w < 80 {
+        return;
+    }
+    let chars = (w / CELL_W) as usize;
+    let mut y = r.y;
+    // The name big when it fits, otherwise at normal size.
+    if (s.name.chars().count() as i32) * CELL_W * 2 <= w {
+        draw.text_bold(x, y, 2, theme::INK, s.name);
+        y += 34;
+    } else {
+        draw.text_bold(x, y + 8, 1, theme::INK, &fit(s.name, chars));
+        y += 34;
+    }
+    let count = if s.regiments > 1 {
+        format!("{} regiments, {} soldiers", s.regiments, s.models)
+    } else {
+        format!("{} of {} soldiers", s.models, s.max_models)
+    };
+    draw.text(x, y - 4, 1, muted_ink(), &fit(&count, chars));
+    y += 20;
+
+    let label_w = 9 * CELL_W;
+    let pct_w = 5 * CELL_W;
+    let bar_x = x + label_w;
+    let bar_w = (w - label_w - pct_w).max(20);
+    let health = s.models as f32 / s.max_models.max(1) as f32;
+    let (morale_label, morale_color) = match s.state {
+        CardState::Steady => ("Morale", theme::WOAD),
+        CardState::Wavering => ("Wavering", theme::WELD),
+        CardState::Routing => ("Routing", theme::MADDER),
+    };
+    for (label, frac, color) in [
+        ("Health", health, health_color(health)),
+        (morale_label, f32::from(s.morale) / 100.0, morale_color),
+    ] {
+        draw.text_bold(x, y - 3, 1, theme::INK, label);
+        ink_meter(draw, Rect::new(bar_x, y, bar_w, 12), frac, color);
+        let pct = format!("{}%", (frac * 100.0).round() as i32);
+        draw.text(bar_x + bar_w + 8, y - 3, 1, muted_ink(), &pct);
+        y += 22;
+    }
+    if !s.formation.is_empty() {
+        draw.text(
+            x,
+            y,
+            1,
+            muted_ink(),
+            &fit(&format!("Formation: {}", s.formation), chars),
+        );
+    }
+}
+
+/// The Marshal's Scroll: the keys in groups, then live notes. Drawn at the
+/// right of `field`, `top` pixels down. Returns its rectangle.
+fn draw_scroll(draw: &mut DrawList, field: Rect, top: i32, scroll: &HelpScroll) -> Option<Rect> {
+    const PAD: i32 = 18;
+    const ROW: i32 = 18;
+    const GAP: i32 = 22;
+    let widths: Vec<(i32, i32)> = HELP_GROUPS
+        .iter()
+        .map(|(_, keys)| {
+            let k = keys
+                .iter()
+                .map(|(k, _)| k.chars().count())
+                .max()
+                .unwrap_or(1);
+            let d = keys
+                .iter()
+                .map(|(_, d)| d.chars().count())
+                .max()
+                .unwrap_or(1);
+            ((k as i32 + 1) * CELL_W, d as i32 * CELL_W)
+        })
+        .collect();
+    let col_w: Vec<i32> = widths.iter().map(|(k, d)| k + d).collect();
+    let avail = field.w - 16;
+    // As many columns as fit: three, two or one.
+    let columns = [3usize, 2, 1]
+        .into_iter()
+        .find(|&c| {
+            let rows_w = (0..c)
+                .map(|i| {
+                    (i..HELP_GROUPS.len())
+                        .step_by(c)
+                        .map(|g| col_w[g])
+                        .max()
+                        .unwrap_or(0)
+                })
+                .sum::<i32>();
+            rows_w + (c as i32 - 1) * GAP + 2 * PAD <= avail
+        })
+        .unwrap_or(1);
+    let column_w: Vec<i32> = (0..columns)
+        .map(|i| {
+            (i..HELP_GROUPS.len())
+                .step_by(columns)
+                .map(|g| col_w[g])
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+    let inner_w = column_w.iter().sum::<i32>() + (columns as i32 - 1) * GAP;
+    let w = (inner_w + 2 * PAD).min(avail);
+    if w < 120 {
+        return None;
+    }
+    // Leave the idle-worker button's corner clear.
+    let room = field.h - top - 8 - 44;
+    let r = Rect::new(field.right() - 8 - w, field.y + top, w, room.max(0));
+    // The tallest column decides the height: its groups stacked.
+    let heights: Vec<i32> = (0..columns)
+        .map(|i| {
+            (i..HELP_GROUPS.len())
+                .step_by(columns)
+                .map(|g| 24 + HELP_GROUPS[g].1.len() as i32 * ROW)
+                .sum()
+        })
+        .collect();
+    let keys_h = heights.iter().copied().max().unwrap_or(0);
+    let chars = ((inner_w) / CELL_W).max(1) as usize;
+    // The keys come first; the notes get what room is left.
+    let spare = room - (2 * PAD + 26 + keys_h + 4) - 24;
+    let fits = (spare / 16).clamp(0, 8) as usize;
+    let notes: Vec<String> = scroll
+        .notes
+        .iter()
+        .flat_map(|n| wrap(n, chars))
+        .take(fits)
+        .collect();
+    let notes_h = if notes.is_empty() {
+        0
+    } else {
+        24 + notes.len() as i32 * 16
+    };
+    let h = (2 * PAD + 26 + keys_h + notes_h + 4).min(room);
+    if h < 80 {
+        return None;
+    }
+    let r = Rect::new(r.x, r.y, w, h);
+    draw.shadow(r, 4);
+    let content = draw.cloth(r, theme::LINEN);
+    let _ = content;
+    let x0 = r.x + PAD;
+    let mut y = r.y + PAD - 4;
+    draw.text_bold(x0, y, 1, theme::MADDER, "THE MARSHAL'S SCROLL");
+    let hint = "H or F1 closes";
+    draw.text(
+        r.right() - PAD - text_width(hint, 1),
+        y,
+        1,
+        muted_ink(),
+        hint,
+    );
+    y += 26;
+    let limit = r.bottom() - PAD - notes_h;
+    let mut col_x = x0;
+    for (c, cw) in column_w.iter().enumerate() {
+        let mut cy = y;
+        for g in (c..HELP_GROUPS.len()).step_by(columns) {
+            let (name, keys) = HELP_GROUPS[g];
+            draw.text_bold(col_x, cy, 1, theme::WOAD, name);
+            draw.rect(Rect::new(col_x, cy + 17, *cw, 1), theme::INK);
+            cy += 24;
+            for (key, what) in keys {
+                if cy + 16 > limit {
+                    break;
+                }
+                draw.text_bold(col_x, cy, 1, theme::MADDER, key);
+                draw.text(col_x + widths[g].0, cy, 1, theme::INK, what);
+                cy += ROW;
+            }
+        }
+        col_x += cw + GAP;
+    }
+    if !notes.is_empty() {
+        let mut ny = r.bottom() - PAD - notes_h + 4;
+        draw.text_bold(x0, ny, 1, theme::WOAD, "Now");
+        draw.rect(Rect::new(x0, ny + 17, inner_w, 1), theme::INK);
+        ny += 24;
+        for line in &notes {
+            draw.text(x0, ny, 1, theme::INK, line);
+            ny += 16;
+        }
+    }
+    Some(r)
 }
 
 /// The deployment phase, where the command grid will be: time left, what
@@ -555,36 +1243,37 @@ fn deploy_panel(
     deploy: DeployStatus,
     events: &mut Vec<HudEvent>,
 ) {
-    let inner = r.inset(6);
+    let inner = r.inset(8);
     // The Ready button shows on any screen; the words only where they fit.
     if inner.w < CELL_W * 6 {
         return;
     }
-    draw.border(r, 2, theme::ACCENT);
+    draw.boxed(r, linen_light(), 2);
+    draw.border(r.inset(3), 1, theme::WELD);
     let left = format!(
         "{}:{:02} left",
         deploy.seconds_left / 60,
         deploy.seconds_left % 60
     );
     let chars = (inner.w / CELL_W).max(1) as usize;
-    draw.text(
+    draw.text_bold(
         inner.x,
         inner.y,
         1,
-        theme::ACCENT,
+        theme::MADDER,
         &fit("DEPLOYMENT", chars),
     );
-    draw.text(inner.x, inner.y + 20, 1, theme::TEXT, &fit(&left, chars));
+    draw.text(inner.x, inner.y + 20, 1, theme::INK, &fit(&left, chars));
     let hint = if deploy.ready {
         "Waiting for the others."
     } else {
         "Right-drag to place."
     };
-    draw.text(inner.x, inner.y + 40, 1, theme::MUTED, &fit(hint, chars));
+    draw.text(inner.x, inner.y + 40, 1, muted_ink(), &fit(hint, chars));
     let button = Rect::new(inner.x, inner.bottom() - 44, inner.w, 44);
     if deploy.ready {
-        draw.rect(button, theme::BUTTON_DOWN);
-        draw.text_centered(button, 1, theme::GOOD, "Ready");
+        draw.boxed(button, theme::LINEN_DK, 2);
+        draw.text_centered(button, 1, theme::WODE, "Ready");
         return;
     }
     let hot = button.contains(input.mouse.0, input.mouse.1);
@@ -595,18 +1284,19 @@ fn deploy_panel(
         input.left_pressed,
         input.left_released,
     );
-    draw.rect(
+    draw.boxed(
         button,
         if down {
-            theme::PRIMARY_DOWN
+            mix(theme::WELD, theme::INK, 0.2)
         } else if hot {
-            theme::PRIMARY_HOT
+            mix(theme::WELD, [255, 240, 190, 255], 0.4)
         } else {
-            theme::PRIMARY
+            theme::WELD
         },
+        2,
     );
     let scale = if inner.w >= CELL_W * 2 * 6 { 2 } else { 1 };
-    draw.text_centered(button, scale, theme::TEXT, "Ready");
+    draw.text_centered(button, scale, theme::INK, "Ready");
     if clicked {
         events.push(HudEvent::Ready);
     }
@@ -625,56 +1315,60 @@ fn card_fit(width: i32, n: usize) -> (i32, usize) {
 
 fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
     let back = if hot {
-        theme::BUTTON_HOT
+        mix(theme::LINEN_DK, theme::LINEN, 0.5)
     } else {
-        theme::BUTTON
+        theme::LINEN_DK
     };
-    draw.rect(r, back);
-    let edge = if c.selected {
-        theme::ACCENT
-    } else {
-        theme::PANEL_EDGE
-    };
-    draw.border(r, if c.selected { 2 } else { 1 }, edge);
-    let inner = r.inset(3);
+    draw.boxed(r, back, 2);
+    if c.selected {
+        draw.border(r.inset(2), 2, theme::WELD);
+    }
+    let inner = r.inset(5);
 
     // The portrait: a team-coloured square with the unit's initial, until
     // there is art for it.
     let portrait = Rect::new(inner.x, inner.y, inner.w, inner.w.min(inner.h / 2));
     draw_portrait(draw, portrait, c.color, &c.name, 2);
     if c.engaged {
-        draw.border(portrait, 2, theme::BAD);
+        draw.border(portrait, 2, theme::MADDER);
     }
     let chars = (inner.w / 8).max(1) as usize;
     let mut y = portrait.bottom() + 3;
-    draw.text(inner.x, y, 1, theme::TEXT, &fit(&c.name, chars));
+    draw.text(inner.x, y, 1, theme::INK, &fit(&c.name, chars));
     y += 18;
 
     // Model count, then morale.
-    let bar = |draw: &mut DrawList, y: i32, frac: f32, color: Color| {
-        draw.meter(Rect::new(inner.x, y, inner.w, 6), frac, color, theme::FIELD);
-    };
     let health = f32::from(c.models) / f32::from(c.max_models.max(1));
-    bar(draw, y, health, health_color(health));
-    y += 9;
+    ink_meter(
+        draw,
+        Rect::new(inner.x, y, inner.w, 8),
+        health,
+        health_color(health),
+    );
+    y += 10;
     let morale_color = match c.state {
-        CardState::Steady => [96, 156, 230, 255],
-        CardState::Wavering => theme::WARN,
-        CardState::Routing => theme::BAD,
+        CardState::Steady => theme::WOAD,
+        CardState::Wavering => theme::WELD,
+        CardState::Routing => theme::MADDER,
     };
-    bar(draw, y, f32::from(c.morale) / 100.0, morale_color);
-    y += 9;
+    ink_meter(
+        draw,
+        Rect::new(inner.x, y, inner.w, 8),
+        f32::from(c.morale) / 100.0,
+        morale_color,
+    );
+    y += 10;
     if c.state == CardState::Routing {
         let label = Rect::new(portrait.x, portrait.bottom() - 18, portrait.w, 16);
-        draw.rect(label, [20, 22, 28, 220]);
-        draw.text_centered(label, 1, theme::BAD, "ROUT");
+        draw.rect(label, theme::INK);
+        draw.text_centered(label, 1, theme::LINEN, "ROUT");
     }
     let count = c.models.to_string();
     draw.text(
         inner.right() - text_width(&count, 1),
         y - 2,
         1,
-        theme::MUTED,
+        muted_ink(),
         &count,
     );
 }
@@ -684,22 +1378,28 @@ pub(crate) fn luma(c: [u8; 3]) -> u32 {
 }
 
 /// A team-coloured square `r` with the first letter of `name` on it, until
-/// there is art. The letter is dark on a light colour.
+/// there is art, in an ink frame. The letter is dark on a light colour.
 pub(crate) fn draw_portrait(draw: &mut DrawList, r: Rect, color: [u8; 3], name: &str, scale: i32) {
     draw.rect(r, rgb(color));
     if let Some(initial) = name.chars().next() {
         let ink = if luma(color) > 140 {
-            [20, 22, 28, 255]
+            theme::INK
         } else {
-            theme::TEXT
+            theme::LINEN
         };
         draw.text_centered(r, scale, ink, &initial.to_string());
     }
+    draw.border(r, 2, theme::INK);
 }
 
-/// Green for a healthy meter, red once `frac` drops under about a third.
+/// Wode green for a healthy meter, madder red once `frac` drops under about
+/// a third.
 pub(crate) fn health_color(frac: f32) -> Color {
-    if frac < 0.35 { theme::BAD } else { theme::GOOD }
+    if frac < 0.35 {
+        theme::MADDER
+    } else {
+        theme::WODE
+    }
 }
 
 /// The ground picture filling `r` (a blank field when there is none). The
@@ -745,6 +1445,7 @@ fn line(draw: &mut DrawList, clip: Rect, a: (i32, i32), b: (i32, i32), color: Co
 mod tests {
     use super::*;
     use crate::conquest::{GRUB_NODE, QUEUE_SLOT_MAX_W, QueueItem, STRUCT_CARD_W};
+    use crate::draw::SOLID;
 
     const SCREEN: (i32, i32) = (1280, 760);
 
@@ -799,9 +1500,13 @@ mod tests {
                 2 => SlotState::Blocked,
                 _ => SlotState::Off,
             },
+            ..GridSlot::default()
         });
         let data = HudData {
             grid: &grid,
+            status: StatusStrip::default(),
+            selection: None,
+            help: None,
             minimap: MinimapData {
                 map_tiles: 256.0,
                 terrain: &t,
@@ -827,13 +1532,16 @@ mod tests {
 
     #[test]
     fn the_ready_button_ends_your_deployment() {
-        let l = HudLayout::new(SCREEN, false);
+        let l = HudLayout::new(SCREEN);
         let button = (l.grid.x + l.grid.w / 2, l.grid.bottom() - 20);
         let t = terrain();
         let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
         let frame = |ready, input| {
             let data = HudData {
                 grid: &grid,
+                status: StatusStrip::default(),
+                selection: None,
+                help: None,
                 minimap: MinimapData {
                     map_tiles: 256.0,
                     terrain: &t,
@@ -871,7 +1579,7 @@ mod tests {
 
     #[test]
     fn hud_buttons_fire_on_release_over_the_same_button() {
-        let l = HudLayout::new(SCREEN, false);
+        let l = HudLayout::new(SCREEN);
         let ready = (l.grid.x + l.grid.w / 2, l.grid.bottom() - 20);
         let t = terrain();
         let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
@@ -879,6 +1587,9 @@ mod tests {
         let mut frame = |input| {
             let data = HudData {
                 grid: &grid,
+                status: StatusStrip::default(),
+                selection: None,
+                help: None,
                 minimap: MinimapData {
                     map_tiles: 256.0,
                     terrain: &t,
@@ -925,7 +1636,7 @@ mod tests {
     #[test]
     fn a_grid_button_fires_on_release_not_press() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN, false);
+        let l = HudLayout::new(SCREEN);
         let spot = (l.grid.x + 6, l.grid.y + 6);
         let at = |left_pressed, left_released| HudInput {
             mouse: spot,
@@ -957,6 +1668,9 @@ mod tests {
         };
         let data = HudData {
             grid: &grid,
+            status: StatusStrip::default(),
+            selection: None,
+            help: None,
             hero: Some(hero),
             minimap: MinimapData {
                 map_tiles: 256.0,
@@ -974,7 +1688,7 @@ mod tests {
             structure: None,
             powers: &[],
         };
-        let l = HudLayout::new(SCREEN, false);
+        let l = HudLayout::new(SCREEN);
         let over_panel = (30, l.bar.y - 40);
         let mut hud = Hud::default();
         assert!(!hud.wants(SCREEN, over_panel), "no panel drawn yet");
@@ -990,7 +1704,7 @@ mod tests {
     #[test]
     fn layout_pieces_do_not_overlap_and_stay_on_screen() {
         for screen in [(1280, 760), (1920, 1080), (1024, 600)] {
-            let l = HudLayout::new(screen, false);
+            let l = HudLayout::new(screen);
             for r in [l.minimap, l.tray, l.grid] {
                 assert!(r.x >= 0 && r.bottom() <= screen.1 && r.right() <= screen.0);
                 assert!(l.bar.contains(r.x, r.y));
@@ -1003,7 +1717,7 @@ mod tests {
     #[test]
     fn minimap_click_jumps_to_that_spot() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN, false);
+        let l = HudLayout::new(SCREEN);
         let mid = (l.minimap.x + l.minimap.w / 2, l.minimap.y + l.minimap.h / 2);
         let (ev, _) = run(
             &mut hud,
@@ -1026,7 +1740,7 @@ mod tests {
     #[test]
     fn dragging_follows_the_mouse_off_the_minimap_until_release() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN, false);
+        let l = HudLayout::new(SCREEN);
         let at = |mouse| HudInput {
             mouse,
             ..HudInput::default()
@@ -1046,23 +1760,24 @@ mod tests {
             ev,
             vec![HudEvent::Jump([256.0 * 4.0 / l.minimap.w as f32, 0.0])]
         );
-        assert!(hud.wants(SCREEN, (0, 0)));
+        let field = (0, TOP_BAR_HEIGHT + 20);
+        assert!(hud.wants(SCREEN, field));
         run(
             &mut hud,
             HudInput {
                 left_released: true,
-                ..at((0, 0))
+                ..at(field)
             },
             &[],
             &[],
         );
-        assert!(!hud.wants(SCREEN, (0, 0)));
+        assert!(!hud.wants(SCREEN, field));
     }
 
     #[test]
     fn right_click_on_the_minimap_orders() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN, false);
+        let l = HudLayout::new(SCREEN);
         let (ev, _) = run(
             &mut hud,
             HudInput {
@@ -1086,7 +1801,7 @@ mod tests {
     #[test]
     fn clicking_a_card_selects_and_double_click_centres() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN, false);
+        let l = HudLayout::new(SCREEN);
         let cards = [card(7), card(9)];
         let click = |ms, shift| HudInput {
             mouse: (l.tray.x + 20, l.tray.y + 40),
@@ -1134,7 +1849,7 @@ mod tests {
     #[test]
     fn only_a_ready_or_blocked_button_reports_a_click() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN, false);
+        let l = HudLayout::new(SCREEN);
         let cell_w = (l.grid.w - 3 * GRID_GAP) / GRID_COLS as i32;
         let cell_h = (l.grid.h - 2 * GRID_GAP) / GRID_ROWS as i32;
         let at = |col: i32, row: i32| HudInput {
@@ -1181,12 +1896,24 @@ mod tests {
         }
     }
 
-    /// How many quads of `colour` sit inside the top bar.
+    /// How many glyphs of `colour` sit inside the top bar.
     fn in_top_bar(draw: &DrawList, colour: Color) -> usize {
         draw.quads
             .iter()
-            .filter(|q| i32::from(q.pos[1]) < TOP_BAR_HEIGHT && q.color == colour)
+            .filter(|q| {
+                i32::from(q.pos[1]) < TOP_BAR_HEIGHT && q.color == colour && q.glyph != SOLID
+            })
             .count()
+    }
+
+    /// Values are drawn bold, which is the glyph twice.
+    fn bold(text: &str) -> usize {
+        2 * text.len()
+    }
+
+    /// The top bar's ink text: labels in muted ink, values in ink.
+    fn text_quads(d: &DrawList) -> usize {
+        in_top_bar(d, theme::INK) + in_top_bar(d, muted_ink())
     }
 
     fn with_top(top: TopBar) -> Extras<'static> {
@@ -1197,48 +1924,44 @@ mod tests {
     }
 
     #[test]
-    fn the_top_bar_is_drawn_only_when_given_and_keeps_the_mouse() {
+    fn the_top_bar_is_always_there_but_the_economy_only_when_given() {
         let mouse = (400, 5);
         let mut hud = Hud::default();
-        let (_, draw) = run(&mut hud, HudInput::default(), &[], &[]);
+        let (_, plain) = run(&mut hud, HudInput::default(), &[], &[]);
         assert!(
-            draw.quads
-                .iter()
-                .all(|q| i32::from(q.pos[1]) >= TOP_BAR_HEIGHT)
-        );
-        assert!(!hud.wants(SCREEN, mouse));
-
-        let (_, draw) = run_with(&mut hud, HudInput::default(), &[], &[], with_top(top_bar()));
-        assert!(
-            draw.quads
+            plain
+                .quads
                 .iter()
                 .any(|q| q.pos == [0, 0] && q.size == [SCREEN.0 as u16, TOP_BAR_HEIGHT as u16])
         );
         assert!(hud.wants(SCREEN, mouse));
         assert!(hud.wants(SCREEN, (0, TOP_BAR_HEIGHT - 1)));
         assert!(!hud.wants(SCREEN, (400, TOP_BAR_HEIGHT + 4)), "the field");
-        // Hidden again: the click is the world's.
-        run(&mut hud, HudInput::default(), &[], &[]);
-        assert!(!hud.wants(SCREEN, mouse));
+
+        let (_, rich) = run_with(&mut hud, HudInput::default(), &[], &[], with_top(top_bar()));
+        assert!(
+            text_quads(&rich) > text_quads(&plain),
+            "Grub, Marrow, Supply"
+        );
+        assert!(hud.wants(SCREEN, mouse));
     }
 
     #[test]
-    fn supply_at_the_cap_turns_red_and_upkeep_shows_in_amber() {
+    fn supply_at_the_cap_turns_red() {
         let mut hud = Hud::default();
         let mut bar = |top| run_with(&mut hud, HudInput::default(), &[], &[], with_top(top)).1;
         let roomy = bar(top_bar());
-        assert_eq!(in_top_bar(&roomy, theme::BAD), 0);
-        assert_eq!(in_top_bar(&roomy, theme::WARN), 0);
+        assert_eq!(in_top_bar(&roomy, theme::MADDER), 0);
         let full = bar(TopBar {
             supply_used: 90,
             ..top_bar()
         });
-        assert_eq!(in_top_bar(&full, theme::BAD), "90/90".len());
+        assert_eq!(in_top_bar(&full, theme::MADDER), bold("90/90"));
         let taxed = bar(TopBar {
             upkeep_percent: 80,
             ..top_bar()
         });
-        assert_eq!(in_top_bar(&taxed, theme::WARN), "80%".len());
+        assert_eq!(in_top_bar(&taxed, theme::MADDER), bold("80%"));
     }
 
     #[test]
@@ -1251,19 +1974,18 @@ mod tests {
             larva_room: 6,
             ..top_bar()
         });
-        let text_quads = |d: &DrawList| in_top_bar(d, theme::TEXT) + in_top_bar(d, theme::MUTED);
         assert_eq!(
             text_quads(&brood),
-            text_quads(&plain) + "Larvae".len() + "2/6".len()
+            text_quads(&plain) + "Larvae".len() + bold("2/6")
         );
-        // None ready: the count turns amber.
+        // None ready: the count turns red.
         let empty = bar(TopBar {
             larvae: 0,
             larva_room: 3,
             ..top_bar()
         });
-        assert_eq!(in_top_bar(&empty, theme::WARN), "0/3".len());
-        assert_eq!(in_top_bar(&plain, theme::WARN), 0);
+        assert_eq!(in_top_bar(&empty, theme::MADDER), bold("0/3"));
+        assert_eq!(in_top_bar(&plain, theme::MADDER), 0);
     }
 
     #[test]
@@ -1271,7 +1993,6 @@ mod tests {
         let mut hud = Hud::default();
         let mut bar = |top| run_with(&mut hud, HudInput::default(), &[], &[], with_top(top)).1;
         let plain = bar(top_bar());
-        let text_quads = |d: &DrawList| in_top_bar(d, theme::TEXT) + in_top_bar(d, theme::MUTED);
         let choir = bar(TopBar {
             resonance: 37,
             chords: 2,
@@ -1279,7 +2000,7 @@ mod tests {
         });
         assert_eq!(
             text_quads(&choir),
-            text_quads(&plain) + "Resonance".len() + "37/100".len() + "Chords".len() + "2".len()
+            text_quads(&plain) + "Resonance".len() + bold("37/100") + "Chords".len() + bold("2")
         );
         // A charge left with no chord standing still shows, without a count.
         let spent = bar(TopBar {
@@ -1288,7 +2009,7 @@ mod tests {
         });
         assert_eq!(
             text_quads(&spent),
-            text_quads(&plain) + "Resonance".len() + "5/100".len()
+            text_quads(&plain) + "Resonance".len() + bold("5/100")
         );
         // A full meter turns green.
         let full = bar(TopBar {
@@ -1296,8 +2017,8 @@ mod tests {
             chords: 1,
             ..top_bar()
         });
-        assert_eq!(in_top_bar(&full, theme::GOOD), "100/100".len());
-        assert_eq!(in_top_bar(&plain, theme::GOOD), 0);
+        assert_eq!(in_top_bar(&full, theme::WODE), bold("100/100"));
+        assert_eq!(in_top_bar(&plain, theme::WODE), 0);
     }
 
     #[test]
@@ -1305,14 +2026,13 @@ mod tests {
         let mut hud = Hud::default();
         let mut bar = |top| run_with(&mut hud, HudInput::default(), &[], &[], with_top(top)).1;
         let plain = bar(top_bar());
-        let text_quads = |d: &DrawList| in_top_bar(d, theme::TEXT) + in_top_bar(d, theme::MUTED);
         let clans = bar(TopBar {
             honor: Some(40),
             ..top_bar()
         });
         assert_eq!(
             text_quads(&clans),
-            text_quads(&plain) + "Honor".len() + "40/100".len()
+            text_quads(&plain) + "Honor".len() + bold("40/100")
         );
         let empty = bar(TopBar {
             honor: Some(0),
@@ -1320,15 +2040,328 @@ mod tests {
         });
         assert_eq!(
             text_quads(&empty),
-            text_quads(&plain) + "Honor".len() + "0/100".len()
+            text_quads(&plain) + "Honor".len() + bold("0/100")
         );
         // A full meter turns green.
         let full = bar(TopBar {
             honor: Some(100),
             ..top_bar()
         });
-        assert_eq!(in_top_bar(&full, theme::GOOD), "100/100".len());
-        assert_eq!(in_top_bar(&clans, theme::GOOD), 0);
+        assert_eq!(in_top_bar(&full, theme::WODE), bold("100/100"));
+        assert_eq!(in_top_bar(&clans, theme::WODE), 0);
+    }
+
+    /// A frame with the mouse at `mouse` and the clock at `now_ms`.
+    fn hover(hud: &mut Hud, mouse: (i32, i32), now_ms: u64) -> DrawList {
+        let input = HudInput {
+            mouse,
+            now_ms,
+            ..HudInput::default()
+        };
+        run(hud, input, &[], &[]).1
+    }
+
+    #[test]
+    fn a_tooltip_waits_for_the_mouse_to_rest_then_names_the_button() {
+        let mut hud = Hud::default();
+        let l = HudLayout::new(SCREEN);
+        // The Move button (slot 0), whose label is "Move".
+        let spot = (l.grid.x + 10, l.grid.y + 10);
+        hover(&mut hud, spot, 1_000);
+        assert!(hud.tooltip_rect().is_none(), "not at once");
+        hover(&mut hud, spot, 1_000 + TOOLTIP_DELAY_MS - 1);
+        assert!(hud.tooltip_rect().is_none(), "not yet");
+        let draw = hover(&mut hud, spot, 1_000 + TOOLTIP_DELAY_MS);
+        let tip = hud.tooltip_rect().expect("shown after the delay");
+        assert!(tip.x >= 0 && tip.y >= 0 && tip.right() <= SCREEN.0 && tip.bottom() <= SCREEN.1);
+        assert!(
+            !tip.contains(spot.0, spot.1) || tip.y < l.grid.y,
+            "clear of the button"
+        );
+        // The key in brackets is drawn, in the tooltip's heading colour.
+        let glyph = |c: char| u32::from(c as u8 - b' ');
+        assert!(draw.quads.windows(3).any(|w| w[0].glyph == glyph('[')
+            && w[1].glyph == glyph('Q')
+            && w[2].glyph == glyph(']')));
+        // Moving to another button starts the wait again.
+        let other = (l.grid.x + l.grid.w - 10, l.grid.y + 10);
+        hover(&mut hud, other, 5_000);
+        assert!(hud.tooltip_rect().is_none());
+        // Off the buttons: gone.
+        hover(&mut hud, (400, 100), 6_000);
+        hover(&mut hud, (400, 100), 9_000);
+        assert!(hud.tooltip_rect().is_none());
+    }
+
+    #[test]
+    fn a_tooltip_at_a_screen_corner_stays_on_the_screen() {
+        for screen in [(1280, 760), (640, 400), (1920, 1080)] {
+            let l = HudLayout::new(screen);
+            let t = terrain();
+            let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot {
+                label: "Fall back",
+                tip: "Back out of the fight in good order, taking one parting blow.",
+                state: SlotState::Ready,
+                ..GridSlot::default()
+            });
+            let mut hud = Hud::default();
+            for now in [0, TOOLTIP_DELAY_MS + 1] {
+                let data = HudData {
+                    grid: &grid,
+                    status: StatusStrip::default(),
+                    selection: None,
+                    help: None,
+                    hero: None,
+                    minimap: MinimapData {
+                        map_tiles: 256.0,
+                        terrain: &t,
+                        dots: &[],
+                        view: &[],
+                        nodes: &[],
+                        blocks: &[],
+                    },
+                    cards: &[],
+                    tray_title: "",
+                    deployment: None,
+                    alerts: AlertData::default(),
+                    top: None,
+                    structure: None,
+                    powers: &[],
+                };
+                let input = HudInput {
+                    // The last button, in the bar's bottom-right corner.
+                    mouse: (l.grid.right() - 4, l.grid.bottom() - 4),
+                    now_ms: now,
+                    ..HudInput::default()
+                };
+                let (mut draw, mut events) = (DrawList::default(), Vec::new());
+                hud.frame(&mut draw, screen, input, &data, &mut events);
+            }
+            let tip = hud.tooltip_rect().expect("a tooltip");
+            assert!(
+                tip.x >= 0 && tip.y >= 0 && tip.right() <= screen.0 && tip.bottom() <= screen.1,
+                "{tip:?} on {screen:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_help_button_reports_a_click_and_the_scroll_takes_the_mouse() {
+        let mut hud = Hud::default();
+        // The button is the right-most thing in the top bar.
+        let button = (SCREEN.0 - 30, TOP_BAR_HEIGHT / 2 - 4);
+        let click = HudInput {
+            mouse: button,
+            left_pressed: true,
+            left_released: true,
+            ..HudInput::default()
+        };
+        let (ev, _) = run(&mut hud, click, &[], &[]);
+        assert_eq!(ev, vec![HudEvent::ToggleHelp]);
+
+        let field_spot = (SCREEN.0 - 100, 150);
+        assert!(!hud.wants(SCREEN, field_spot), "scroll closed: the world's");
+        let mut data_with_scroll = |notes: &[String]| {
+            let t = terrain();
+            let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
+            let data = HudData {
+                grid: &grid,
+                status: StatusStrip::default(),
+                selection: None,
+                help: Some(HelpScroll { notes }),
+                hero: None,
+                minimap: MinimapData {
+                    map_tiles: 256.0,
+                    terrain: &t,
+                    dots: &[],
+                    view: &[],
+                    nodes: &[],
+                    blocks: &[],
+                },
+                cards: &[],
+                tray_title: "",
+                deployment: None,
+                alerts: AlertData::default(),
+                top: None,
+                structure: None,
+                powers: &[],
+            };
+            let (mut draw, mut events) = (DrawList::default(), Vec::new());
+            hud.frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);
+            draw
+        };
+        let notes = ["SANDBOX, commanding red (player 1)".to_string()];
+        let open = data_with_scroll(&notes);
+        assert!(
+            hud.wants(SCREEN, field_spot),
+            "scroll open: it takes clicks"
+        );
+        assert!(!hud.wants(SCREEN, (20, 300)), "the field beside it");
+        // The title and every group heading are on it.
+        let has = |d: &DrawList, text: &str| {
+            let g: Vec<u32> = text
+                .chars()
+                .filter(|c| *c != ' ')
+                .map(|c| u32::from(c as u8 - b' '))
+                .collect();
+            d.quads
+                .windows(g.len())
+                .any(|w| w.iter().map(|q| q.glyph).eq(g.iter().copied()))
+        };
+        assert!(has(&open, "THE MARSHAL'S SCROLL"));
+        for (name, keys) in HELP_GROUPS {
+            assert!(has(&open, name), "{name}");
+            for (key, what) in keys {
+                assert!(has(&open, key.trim()) && has(&open, what), "{key} {what}");
+            }
+        }
+        assert!(has(&open, "commanding red"), "the live notes");
+    }
+
+    #[test]
+    fn help_lists_every_key_once_per_group_and_fits_a_720p_field() {
+        for (name, keys) in HELP_GROUPS {
+            let mut seen = std::collections::HashSet::new();
+            assert!(
+                keys.iter().all(|(k, _)| seen.insert(*k)),
+                "{name} repeats a key"
+            );
+        }
+        // At 1280x720 the scroll leaves the bar and top bar alone.
+        let mut hud = Hud::default();
+        let t = terrain();
+        let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
+        let data = HudData {
+            grid: &grid,
+            status: StatusStrip::default(),
+            selection: None,
+            help: Some(HelpScroll::default()),
+            hero: None,
+            minimap: MinimapData {
+                map_tiles: 256.0,
+                terrain: &t,
+                dots: &[],
+                view: &[],
+                nodes: &[],
+                blocks: &[],
+            },
+            cards: &[],
+            tray_title: "",
+            deployment: None,
+            alerts: AlertData::default(),
+            top: None,
+            structure: None,
+            powers: &[],
+        };
+        let screen = (1280, 720);
+        let (mut draw, mut events) = (DrawList::default(), Vec::new());
+        hud.frame(&mut draw, screen, HudInput::default(), &data, &mut events);
+        let l = HudLayout::new(screen);
+        let scroll = hud
+            .over
+            .iter()
+            .copied()
+            .find(|r| r.w > 400 && r.y >= l.top.bottom());
+        let scroll = scroll.expect("the scroll");
+        assert!(scroll.bottom() <= l.bar.y && scroll.right() <= screen.0 && scroll.x >= 0);
+    }
+
+    fn selection<'a>() -> Selection<'a> {
+        Selection {
+            name: "Yari Ashigaru",
+            color: [200, 60, 50],
+            icon: Icon::Spear,
+            regiments: 1,
+            models: 40,
+            max_models: 60,
+            morale: 80,
+            state: CardState::Steady,
+            formation: "Line",
+        }
+    }
+
+    /// A frame with `selection` and `cards`; its quads.
+    fn with_selection(sel: Option<Selection>, cards: &[Card]) -> DrawList {
+        let t = terrain();
+        let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
+        let data = HudData {
+            grid: &grid,
+            status: StatusStrip::default(),
+            selection: sel,
+            help: None,
+            hero: None,
+            minimap: MinimapData {
+                map_tiles: 256.0,
+                terrain: &t,
+                dots: &[],
+                view: &[],
+                nodes: &[],
+                blocks: &[],
+            },
+            cards,
+            tray_title: "Selected",
+            deployment: None,
+            alerts: AlertData::default(),
+            top: None,
+            structure: None,
+            powers: &[],
+        };
+        let (mut draw, mut events) = (DrawList::default(), Vec::new());
+        Hud::default().frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);
+        draw
+    }
+
+    #[test]
+    fn a_selection_shows_a_banner_in_the_sides_colour_with_its_name_and_count() {
+        let tray = HudLayout::new(SCREEN).tray;
+        let none = with_selection(None, &[]);
+        let one = with_selection(Some(selection()), &[card(1)]);
+        let in_tray = |d: &DrawList, c: Color| {
+            d.quads
+                .iter()
+                .filter(|q| {
+                    q.glyph == SOLID
+                        && q.color == c
+                        && tray.contains(i32::from(q.pos[0]), i32::from(q.pos[1]))
+                })
+                .count()
+        };
+        let side = rgb([200, 60, 50]);
+        assert_eq!(in_tray(&none, side), 0);
+        assert!(
+            in_tray(&one, side) > 5,
+            "the banner's cloth is in the side's colour"
+        );
+        let has = |d: &DrawList, text: &str| {
+            let g: Vec<u32> = text
+                .chars()
+                .filter(|c| *c != ' ')
+                .map(|c| u32::from(c as u8 - b' '))
+                .collect();
+            d.quads
+                .windows(g.len())
+                .any(|w| w.iter().map(|q| q.glyph).eq(g.iter().copied()))
+        };
+        assert!(has(&one, "Yari") && has(&one, "Ashigaru"));
+        assert!(has(&one, "40of60soldiers"));
+        assert!(has(&one, "Health") && has(&one, "Morale") && has(&one, "Formation:Line"));
+        assert!(has(&none, "Clickaregimenttocommandit"));
+        assert!(!has(&one, "Clickaregimenttocommandit"));
+        // A mixed selection counts regiments and soldiers.
+        let many = Selection {
+            name: "3 regiments",
+            regiments: 3,
+            models: 120,
+            ..selection()
+        };
+        let d = with_selection(Some(many), &[card(1), card(2), card(3)]);
+        assert!(has(&d, "3regiments,120soldiers"));
+        // Routing says so on the morale bar's label.
+        let broken = Selection {
+            state: CardState::Routing,
+            ..selection()
+        };
+        assert!(has(&with_selection(Some(broken), &[card(1)]), "Routing"));
     }
 
     #[test]
@@ -1405,7 +2438,7 @@ mod tests {
 
     /// A point inside queue slot `i` of the tray.
     fn queue_slot(i: i32) -> (i32, i32) {
-        let row = HudLayout::new(SCREEN, false).tray.inset(6);
+        let row = HudLayout::new(SCREEN).tray.inset(6);
         let step = QUEUE_SLOT_MAX_W + conquest::CARD_GAP;
         (
             row.x + STRUCT_CARD_W + conquest::CARD_GAP + 10 + i * step,
@@ -1433,7 +2466,7 @@ mod tests {
         assert!(with_cards.quads.iter().any(|q| q.color == red));
         assert!(!with_panel.quads.iter().any(|q| q.color == red));
         // A click where the card was selects nothing now.
-        let l = HudLayout::new(SCREEN, false);
+        let l = HudLayout::new(SCREEN);
         let click = HudInput {
             mouse: (l.tray.x + 20, l.tray.y + 40),
             left_pressed: true,
@@ -1486,7 +2519,7 @@ mod tests {
         };
         let mut hud = Hud::default();
         let top = Some(TopBar::default());
-        let field = HudLayout::new(SCREEN, top.is_some()).field;
+        let field = HudLayout::new(SCREEN).field;
         let spot = (field.x + 60, field.y + 20);
         let click = HudInput {
             mouse: spot,

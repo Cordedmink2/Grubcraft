@@ -31,5 +31,9 @@
         (name: "crag", source: "shared:grubcraft/scenery/crag/crag.glb", family: "rock", sway: 0.0),
         (name: "slab", source: "shared:grubcraft/scenery/slab/slab.glb", family: "rock", sway: 0.0),
         (name: "bone-ribs", source: "shared:grubcraft/scenery/bone-ribs/bone-ribs.glb", family: "rock", sway: 0.0),
+        // Conquest's gathering spots, drawn where the economy's nodes are
+        // (not placed by land): a Grub seep and a Marrow vein.
+        (name: "grub-seep", source: "shared:grubcraft/scenery/grub-seep/grub-seep.glb", family: "rock", sway: 0.0),
+        (name: "marrow-vein", source: "shared:grubcraft/scenery/marrow-vein/marrow-vein.glb", family: "rock", sway: 0.0),
     ],
 )

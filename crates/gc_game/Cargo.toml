@@ -38,6 +38,8 @@ gc_sim.workspace = true
 gc_ui.workspace = true
 glam.workspace = true
 pollster.workspace = true
+ron.workspace = true
+serde.workspace = true
 winit.workspace = true
 tracy-client = { version = "0.18", optional = true }
 

@@ -5,18 +5,21 @@ use gc_sim::events::Event;
 use gc_sim::formation::GroupOrder;
 use gc_sim::{MoraleState, PlayerId, StructureHandle};
 use gc_ui::DrawList;
+use gc_ui::Icon;
 use gc_ui::alerts::{Alert, AlertData, AlertKind};
 use gc_ui::conquest::{Block, NodeDot, QUEUE_SLOTS, QueueItem, StructurePanel, TopBar, Tuning};
 use gc_ui::hero::{HeroAbility, HeroPanel};
 use gc_ui::hud::{
-    Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, Hud, HudData,
-    HudEvent, HudInput, MinimapData, MinimapTerrain, SlotState,
+    Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, HelpScroll, Hud,
+    HudData, HudEvent, HudInput, MinimapData, MinimapTerrain, Selection, SlotState, StatusStrip,
 };
 use gc_ui::powers::{POWER_KEYS, PowerButton};
 use glam::{Vec2, Vec3};
 
+use crate::conquest_card::Action;
 use crate::{Running, from_fx_vec, fx_vec, sounds};
 use gc_map::{Kind, Map};
+use gc_match::battle::party_name;
 
 /// Cells per side of the minimap's ground picture: 48 up to a 384-tile
 /// map, then one for every 8 tiles, up to 80 (a 768 map's cells are
@@ -58,8 +61,50 @@ pub const SLOT_FALL_BACK: usize = 11;
 // Run (C) shares its key with the sandbox's credits tool, which moves when
 // the order arrives.
 const LABELS: [&str; GRID_SLOTS] = [
-    "Move", "Attack", "Hold", "Form", "Skill1", "Skill2", "Skill3", "Ultim", "Brace", "Charge",
-    "Run", "Back",
+    "Move",
+    "Attack",
+    "Hold",
+    "Formation",
+    "Skill 1",
+    "Skill 2",
+    "Skill 3",
+    "Ultimate",
+    "Brace",
+    "Charge",
+    "Run",
+    "Fall back",
+];
+
+/// The picture on each battle slot.
+const ICONS: [Icon; GRID_SLOTS] = [
+    Icon::Move,
+    Icon::Attack,
+    Icon::Hold,
+    Icon::Formation,
+    Icon::Ring,
+    Icon::Ring,
+    Icon::Ring,
+    Icon::Ultimate,
+    Icon::Brace,
+    Icon::Charge,
+    Icon::Run,
+    Icon::FallBack,
+];
+
+/// One line on each battle slot's tooltip.
+const TIPS: [&str; GRID_SLOTS] = [
+    "March the selected regiments to a spot. Then click the ground.",
+    "Send the selection against an enemy. Then click the enemy.",
+    "Stand and fight where you are. Not in the game yet.",
+    "Change the formation: Line, Tight, Loose, Shield wall.",
+    "A hero ability. Needs a hero.",
+    "A hero ability. Needs a hero.",
+    "A hero ability. Needs a hero.",
+    "A hero's ultimate. Needs a hero.",
+    "Spears and pikes brace against a charge. Press again to stand.",
+    "Charge at the run for a heavier first blow. Not in the game yet.",
+    "Run at full pace, tiring as you go. Not in the game yet.",
+    "Back out of the fight in good order, taking one parting blow.",
 ];
 
 /// An alert stays this long (in sim ticks, so a paused game keeps it) after
@@ -136,6 +181,8 @@ pub struct HudState {
     alerts: Vec<Alert>,
     /// Dev preview of the hero panel (Shift+H); there are no heroes yet.
     hero_preview: bool,
+    /// The Marshal's Scroll is open (H, F1 or the Help button).
+    help: bool,
 }
 
 impl HudState {
@@ -174,6 +221,10 @@ impl HudState {
     /// Whether a hero is on show, and so owns the A, S, D and F keys.
     pub fn hero_shown(&self) -> bool {
         self.hero_preview
+    }
+
+    pub fn help_open(&self) -> bool {
+        self.help
     }
 
     pub fn toggle_hero_preview(&mut self) {
@@ -381,6 +432,103 @@ const _: () = assert!(gc_ui::conquest::RESONANCE_FULL == gc_sim::chords::MAX_RES
 const _: () = assert!(gc_ui::conquest::HONOR_FULL == gc_sim::honor::MAX_HONOR);
 
 impl Running {
+    /// The mode, for the top bar's status strip.
+    fn mode_label(&self) -> &'static str {
+        if self.watching.is_some() {
+            "Replay"
+        } else if self.battle.is_none() && self.online.is_none() {
+            "Sandbox"
+        } else if self.conquest_units {
+            "Conquest"
+        } else {
+            "Field Battle"
+        }
+    }
+
+    /// Open or close the Marshal's Scroll.
+    pub fn toggle_help(&mut self) {
+        self.hud.help = !self.hud.help;
+        self.sandbox.dirty = true;
+    }
+
+    /// F1: closes the scroll if it is open, else the next idle worker while
+    /// there is one, else opens the scroll.
+    pub fn f1_key(&mut self) {
+        // With the scroll open, F1 closes it like the scroll's own hint says.
+        let idle = !self.hud.help
+            && self.conquest_units
+            && self.watching.is_none()
+            && self.idle_workers(self.sandbox.side).next().is_some();
+        if idle {
+            self.next_idle_worker();
+        } else {
+            self.toggle_help();
+        }
+    }
+
+    /// The selected regiments as one panel: the banner's name, numbers
+    /// and picture. `None` with nothing selected.
+    fn selection_info(&self, side: PlayerId) -> Option<(String, Selection<'static>)> {
+        let mut n = 0u16;
+        let (mut models, mut max_models, mut morale) = (0u32, 0u32, 0u32);
+        let mut state = CardState::Steady;
+        let (mut unit, mut same, mut icon, mut same_icon) = (None, true, Icon::Sword, true);
+        let mut color = crate::color_of(&self.parties, side);
+        for &h in &self.selected {
+            let Some(r) = self.world.regiments.get(h).filter(|r| r.owner == side) else {
+                continue;
+            };
+            let stats = &self.units.stats[r.unit as usize];
+            let this = if stats.range.raw() > 0 {
+                Icon::Bow
+            } else if stats.reach {
+                Icon::Spear
+            } else {
+                Icon::Sword
+            };
+            if n == 0 {
+                (unit, icon) = (Some(r.unit), this);
+                color = crate::color_of(&self.parties, r.owner);
+            } else {
+                same &= unit == Some(r.unit);
+                same_icon &= icon == this;
+            }
+            n += 1;
+            models += u32::from(r.models);
+            max_models += u32::from(stats.models);
+            morale += u32::from(r.morale_points);
+            state = match (state, r.morale) {
+                (_, MoraleState::Routing | MoraleState::Shattered) | (CardState::Routing, _) => {
+                    CardState::Routing
+                }
+                (_, MoraleState::Wavering) | (CardState::Wavering, _) => CardState::Wavering,
+                _ => CardState::Steady,
+            };
+        }
+        if n == 0 {
+            return None;
+        }
+        let name = match unit {
+            Some(u) if same => self.units.names[u as usize].clone(),
+            _ => format!("{n} regiments"),
+        };
+        let selection = Selection {
+            name: "",
+            color,
+            icon: if same_icon { icon } else { Icon::Flag },
+            regiments: n,
+            models,
+            max_models,
+            morale: (morale / u32::from(n)) as u8,
+            state,
+            formation: match self.selection_formation() {
+                Some(Some(f)) => f.name(),
+                _ => "",
+            },
+        };
+        Some((name, selection))
+    }
+
     /// `side`'s idle workers. A worker that only builds (the Choir's Tuner)
     /// has nothing to gather, so standing about is not idling.
     fn idle_workers(&self, side: PlayerId) -> impl Iterator<Item = gc_sim::RegimentHandle> + '_ {
@@ -486,6 +634,25 @@ impl Running {
                 gc_ui::Rect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1))
             });
 
+        let selection = (!self.selected.is_empty())
+            .then(|| self.selection_info(side))
+            .flatten();
+        let help_notes = if self.hud.help {
+            self.help_notes()
+        } else {
+            Vec::new()
+        };
+        let mode = self.mode_label();
+        let side_name = party_name(&self.parties, side);
+        let speed = format!("{}x", crate::SPEEDS[self.speed]);
+        let status = StatusStrip {
+            mode,
+            side: &side_name,
+            side_color: crate::color_of(&self.parties, side),
+            speed: &speed,
+            paused: self.paused,
+            clock_secs: Some(tick / gc_sim::TICKS_PER_SECOND),
+        };
         let hud = &mut self.hud;
         // A power being aimed needs no selection, unless it shifts one (see
         // `drop_stale_power`).
@@ -595,6 +762,8 @@ impl Running {
         let ready = |on: bool| if on { SlotState::Ready } else { SlotState::Off };
         let mut grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|i| GridSlot {
             label: LABELS[i],
+            icon: ICONS[i],
+            tip: TIPS[i],
             ..GridSlot::default()
         });
         grid[SLOT_MOVE].state = ready(has_orders);
@@ -613,6 +782,8 @@ impl Running {
             for (i, a) in h.abilities.iter().enumerate() {
                 let slot = &mut grid[HERO_SLOT_FIRST + i];
                 slot.label = a.short;
+                slot.icon = if i == 3 { Icon::Ultimate } else { Icon::Skill };
+                slot.tip = "A hero ability. Needs a rank to use.";
                 slot.detail = &ability_status[i];
                 slot.state =
                     ready(a.usable() && h.revive_secs.is_none() && self.watching.is_none());
@@ -630,10 +801,13 @@ impl Running {
         if let Some((card, states)) = card {
             for (i, slot) in grid.iter_mut().enumerate() {
                 if card.slots[i].is_some() {
+                    let (icon, tip) = card_look(card.slots[i]);
                     *slot = GridSlot {
                         label: &card_labels[i],
                         detail: &card_details[i],
                         state: states[i],
+                        icon,
+                        tip,
                     };
                 } else if card.whole {
                     *slot = GridSlot::default();
@@ -720,6 +894,9 @@ impl Running {
         hud.events.clear();
         let data = HudData {
             grid: &grid,
+            status,
+            selection: selection.as_ref().map(|(name, s)| Selection { name, ..*s }),
+            help: hud.help.then_some(HelpScroll { notes: &help_notes }),
             hero,
             minimap: MinimapData {
                 map_tiles: map,
@@ -806,6 +983,8 @@ impl Running {
                 }
             }
             HudEvent::IdleWorker => self.next_idle_worker(),
+            HudEvent::ToggleHelp => self.toggle_help(),
+            HudEvent::OpenGuide => self.open_guide(),
             // The queue gives back its last regiment, whichever is clicked.
             HudEvent::Unqueue(_) => self.untrain(),
             HudEvent::Ready => {
@@ -963,6 +1142,24 @@ impl Running {
     }
 }
 
+/// The picture and tooltip line of a Conquest card slot.
+fn card_look(action: Option<Action>) -> (Icon, &'static str) {
+    match action {
+        Some(Action::OpenBuild) => (Icon::Hammer, "Open the build menu for your workers."),
+        Some(Action::Lay(_)) => (
+            Icon::Hammer,
+            "A worker lays this building. Then click where.",
+        ),
+        Some(Action::Train(_)) => (Icon::Flag, "Train this regiment at the building."),
+        Some(Action::Upgrade(_)) => (Icon::Ultimate, "Raise the building to its next tier."),
+        Some(Action::CallOff) => (
+            Icon::FallBack,
+            "Call it off and get a part of the cost back.",
+        ),
+        None => (Icon::None, ""),
+    }
+}
+
 /// A line of help, centred just above the bar.
 fn draw_hint(draw: &mut DrawList, screen: (i32, i32), text: &str) {
     let scale = 1;
@@ -975,12 +1172,13 @@ fn draw_hint(draw: &mut DrawList, screen: (i32, i32), text: &str) {
         w + 2 * pad,
         h + pad,
     );
-    draw.rect(panel, [10, 12, 16, 190]);
+    draw.shadow(panel, 3);
+    draw.boxed(panel, gc_ui::ui::theme::LINEN, 2);
     draw.text(
         panel.x + pad,
         panel.y + pad / 2,
         scale,
-        [235, 238, 242, 255],
+        gc_ui::ui::theme::INK,
         text,
     );
 }

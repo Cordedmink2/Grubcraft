@@ -7,18 +7,21 @@
 //! Drawn above the bar's left end, over the battlefield.
 
 use crate::draw::{CELL_W, DrawList, Rect, fit, text_width};
-use crate::hud::{GRID_KEYS, HERO_SLOT_FIRST, draw_portrait, health_color};
+use crate::hud::{
+    GRID_KEYS, HERO_SLOT_FIRST, dim_ink, draw_portrait, health_color, ink_meter, linen_light,
+    muted_ink,
+};
 use crate::ui::theme;
 
-const WIDTH: i32 = 268;
-const HEIGHT: i32 = 104;
+const WIDTH: i32 = 284;
+const HEIGHT: i32 = 118;
 const MARGIN: i32 = 8;
 const PORTRAIT: i32 = 56;
 const ROW_H: i32 = 24;
 const ABILITY_W: i32 = 40;
 const ITEM_W: i32 = 24;
 const GAP: i32 = 3;
-const XP_COLOR: [u8; 4] = [150, 110, 220, 255];
+const XP_COLOR: [u8; 4] = theme::WOAD;
 
 /// One of a hero's four abilities (three basic and the ultimate).
 #[derive(Clone, Copy, Debug, Default)]
@@ -82,47 +85,47 @@ pub fn draw(draw: &mut DrawList, bar_top: i32, hero: &HeroPanel, over: &mut Vec<
         return;
     }
     over.push(r);
-    draw.rect(r, [theme::PANEL[0], theme::PANEL[1], theme::PANEL[2], 235]);
-    draw.border(r, 1, theme::PANEL_EDGE);
+    draw.shadow(r, 3);
+    draw.cloth(r, theme::LINEN);
 
-    let portrait = Rect::new(r.x + 6, r.y + 6, PORTRAIT, PORTRAIT);
+    let portrait = Rect::new(r.x + 10, r.y + 10, PORTRAIT, PORTRAIT);
     if let Some(secs) = hero.revive_secs {
-        draw.rect(portrait, theme::FIELD);
-        draw.text_centered(portrait, 1, theme::BAD, "DEAD");
+        draw.rect(portrait, theme::LINEN_DK);
+        draw.text_centered(portrait, 1, theme::MADDER, "DEAD");
         let t = format!("{}:{:02}", secs / 60, secs % 60);
         let below = Rect::new(portrait.x, portrait.bottom() - 18, portrait.w, 16);
-        draw.text_centered(below, 1, theme::MUTED, &t);
+        draw.text_centered(below, 1, muted_ink(), &t);
     } else {
         let name = hero.name.trim_start_matches("The ");
         draw_portrait(draw, portrait, hero.color, name, 3);
     }
-    draw.border(portrait, 1, theme::ACCENT);
+    draw.border(portrait, 2, theme::INK);
 
     let x = portrait.right() + 6;
-    let w = r.right() - 6 - x;
+    let w = r.right() - 10 - x;
     let chars = (w / CELL_W).max(1) as usize;
-    draw.text(x, r.y + 5, 1, theme::TEXT, &fit(hero.name, chars));
+    draw.text_bold(x, r.y + 9, 1, theme::INK, &fit(hero.name, chars));
     let sub = format!("Lv {} {}", hero.level, hero.role);
-    draw.text(x, r.y + 21, 1, theme::MUTED, &fit(&sub, chars));
+    draw.text(x, r.y + 25, 1, muted_ink(), &fit(&sub, chars));
     let hp_frac = hero.hp as f32 / hero.max_hp.max(1) as f32;
-    draw.meter(
-        Rect::new(x, r.y + 38, w, 8),
+    ink_meter(
+        draw,
+        Rect::new(x, r.y + 42, w, 10),
         hp_frac,
         health_color(hp_frac),
-        theme::FIELD,
     );
     let hp = format!("{}/{}", hero.hp, hero.max_hp);
     draw.meter(
-        Rect::new(x, r.y + 48, w, 4),
+        Rect::new(x, r.y + 54, w, 4),
         hero.xp,
         XP_COLOR,
-        theme::FIELD,
+        theme::LINEN_DK,
     );
-    draw.text(x, r.y + 54, 1, theme::MUTED, &fit(&hp, chars));
+    draw.text(x, r.y + 58, 1, muted_ink(), &fit(&hp, chars));
 
     // Ranks and cooldowns, then the three item slots.
-    let row_y = r.bottom() - 6 - ROW_H;
-    let mut cell_x = r.x + 6;
+    let row_y = r.bottom() - 10 - ROW_H;
+    let mut cell_x = r.x + 10;
     for (a, key) in hero
         .abilities
         .iter()
@@ -130,18 +133,17 @@ pub fn draw(draw: &mut DrawList, bar_top: i32, hero: &HeroPanel, over: &mut Vec<
     {
         let cell = Rect::new(cell_x, row_y, ABILITY_W, ROW_H);
         let (back, ink) = match (a.rank, a.cooldown_secs) {
-            (0, _) => (theme::FIELD, theme::DISABLED),
-            (_, 0) => (theme::BUTTON, theme::TEXT),
-            _ => (theme::BUTTON_DOWN, theme::MUTED),
+            (0, _) => (theme::LINEN, dim_ink()),
+            (_, 0) => (theme::LINEN_DK, theme::INK),
+            _ => (theme::LINEN_DK, muted_ink()),
         };
-        draw.rect(cell, back);
-        draw.border(cell, 1, theme::PANEL_EDGE);
+        draw.boxed(cell, back, 2);
         let mut k = [0u8; 4];
         draw.text(
             cell.x + 3,
             cell.y + 1,
             1,
-            theme::MUTED,
+            theme::MADDER,
             key.encode_utf8(&mut k),
         );
         // Short enough to clear the key letter: minutes from 100 seconds.
@@ -161,10 +163,9 @@ pub fn draw(draw: &mut DrawList, bar_top: i32, hero: &HeroPanel, over: &mut Vec<
     cell_x += GAP * 2;
     for item in hero.items {
         let cell = Rect::new(cell_x, row_y, ITEM_W, ROW_H);
-        draw.rect(cell, theme::FIELD);
-        draw.border(cell, 1, theme::PANEL_EDGE);
+        draw.boxed(cell, linen_light(), 2);
         if let Some(initial) = item.and_then(|n| n.chars().next()) {
-            draw.text_centered(cell, 1, theme::ACCENT, &initial.to_string());
+            draw.text_centered(cell, 1, theme::MADDER, &initial.to_string());
         }
         cell_x += ITEM_W + GAP;
     }

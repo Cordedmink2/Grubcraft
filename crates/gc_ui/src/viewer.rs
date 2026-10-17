@@ -272,7 +272,7 @@ impl Viewer {
 
     fn left_panel(&mut self, ui: &mut Ui, r: Rect, action: &mut ViewerAction) {
         ui.panel(r);
-        ui.label(r.x + 14, r.y + 12, 2, theme::TEXT, "Units");
+        ui.label(r.x + 14, r.y + 12, 2, theme::INK, "Units");
         // Faction tabs, two by two.
         let tab_w = (r.w - 28 - 8) / 2;
         let tabs_y = r.y + 44;
@@ -320,13 +320,13 @@ impl Viewer {
                 picked = Some(i);
             }
             let color = if e.clips.is_empty() {
-                theme::MUTED
+                theme::INK_MUTED
             } else {
-                theme::TEXT
+                theme::INK
             };
             let name = fit(&e.name, chars.saturating_sub(e.tag.len() + 2));
             ui.label(row.x + 8, row.y + 4, 1, color, &name);
-            ui.label_right(row.right() - 8, row.y + 4, 1, theme::MUTED, &e.tag);
+            ui.label_right(row.right() - 8, row.y + 4, 1, theme::INK_MUTED, &e.tag);
         }
         if let Some(i) = picked {
             self.select(i);
@@ -337,7 +337,7 @@ impl Viewer {
         } else {
             format!("{}-{} of {}", self.top + 1, shown, rows.len())
         };
-        ui.label(r.x + 14, count_y, 1, theme::MUTED, &text);
+        ui.label(r.x + 14, count_y, 1, theme::INK_MUTED, &text);
     }
 
     fn right_panel(&mut self, ui: &mut Ui, r: Rect) {
@@ -346,19 +346,19 @@ impl Viewer {
             return;
         };
         let faction = Faction::ALL[e.faction.min(Faction::ALL.len() - 1)];
-        ui.label(r.x + 12, r.y + 12, 1, theme::ACCENT, faction.name());
+        ui.label(r.x + 12, r.y + 12, 1, theme::MADDER, faction.name());
         ui.label(
             r.x + 12,
             r.y + 30,
             2,
-            theme::TEXT,
+            theme::INK,
             &fit(&e.name, ((r.w - 24) / (2 * CELL_W)) as usize),
         );
         ui.label(
             r.x + 12,
             r.y + 62,
             1,
-            theme::MUTED,
+            theme::INK_MUTED,
             &fit(&e.kind, TEXT_CHARS),
         );
         let tab_w = (r.w - 24 - 8) / 2;
@@ -389,13 +389,13 @@ impl Viewer {
             match line {
                 Line::Fact { label, text } => {
                     if let Some(label) = label {
-                        ui.label(r.x + 12, y, 1, theme::MUTED, label);
+                        ui.label(r.x + 12, y, 1, theme::INK_MUTED, label);
                     }
                     ui.label(
                         r.x + 12 + (LABEL_CHARS as i32 + 1) * CELL_W,
                         y,
                         1,
-                        theme::TEXT,
+                        theme::INK,
                         text,
                     );
                 }
@@ -407,7 +407,7 @@ impl Viewer {
                 r.x + 12,
                 r.bottom() - 22,
                 1,
-                theme::MUTED,
+                theme::INK_MUTED,
                 &format!(
                     "Wheel scrolls: lines {}-{} of {}",
                     self.scroll + 1,
@@ -493,7 +493,7 @@ fn stat_lines(e: &Entry) -> Vec<Line> {
 fn ability_lines(e: &Entry) -> Vec<Line> {
     if e.abilities.is_empty() {
         return vec![Line::Text {
-            color: theme::MUTED,
+            color: theme::INK_MUTED,
             text: "No abilities.".into(),
         }];
     }
@@ -501,23 +501,23 @@ fn ability_lines(e: &Entry) -> Vec<Line> {
     for (k, (name, how, effect)) in e.abilities.iter().enumerate() {
         if k > 0 {
             lines.push(Line::Text {
-                color: theme::TEXT,
+                color: theme::INK,
                 text: String::new(),
             });
         }
         lines.push(Line::Text {
-            color: theme::ACCENT,
+            color: theme::MADDER,
             text: fit(name, TEXT_CHARS),
         });
         for text in wrap(how, TEXT_CHARS) {
             lines.push(Line::Text {
-                color: theme::MUTED,
+                color: theme::INK_MUTED,
                 text,
             });
         }
         for text in wrap(effect, TEXT_CHARS) {
             lines.push(Line::Text {
-                color: theme::TEXT,
+                color: theme::INK,
                 text,
             });
         }
