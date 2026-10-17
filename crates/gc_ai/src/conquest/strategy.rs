@@ -25,9 +25,26 @@ pub struct Strategy {
     /// How soon it takes its first expansion, percent of the time its
     /// greed sets; `None` never expands until its seeps run low.
     pub expand_percent: Option<u8>,
+    /// How it sends a scout to look at its enemies.
+    pub scouting: Scouting,
+    /// Changes its opening to answer what its scout has seen of an
+    /// enemy's build (docs/18-ai.md, "Difficulty": "counters what it
+    /// scouts").
+    pub adapts: bool,
     /// What its opening changes while it lasts (docs/18-ai.md, "Steward"):
     /// the usual play outside one, see [`Strategy::opening`].
     pub early: Early,
+}
+
+/// How a level scouts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scouting {
+    /// Never sends a scout: it learns what its army runs into.
+    Never,
+    /// Sends one early look at the enemy starts, then stops.
+    Early,
+    /// Keeps a scout out all game, looking where it knows least.
+    Always,
 }
 
 /// The early-game rules an opening sets, for its first minutes.
@@ -96,6 +113,8 @@ impl Strategy {
                 counters: false,
                 opportunist: false,
                 expand_percent: None,
+                scouting: Scouting::Never,
+                adapts: false,
                 early: Early::USUAL,
             },
             Difficulty::Veteran => Strategy {
@@ -105,6 +124,8 @@ impl Strategy {
                 counters: false,
                 opportunist: false,
                 expand_percent: Some(100),
+                scouting: Scouting::Early,
+                adapts: false,
                 early: Early::USUAL,
             },
             Difficulty::General => Strategy {
@@ -114,6 +135,8 @@ impl Strategy {
                 counters: true,
                 opportunist: false,
                 expand_percent: Some(100),
+                scouting: Scouting::Always,
+                adapts: true,
                 early: Early::USUAL,
             },
             Difficulty::Warlord => Strategy {
@@ -123,6 +146,8 @@ impl Strategy {
                 counters: true,
                 opportunist: true,
                 expand_percent: Some(70),
+                scouting: Scouting::Always,
+                adapts: true,
                 early: Early::USUAL,
             },
         }
