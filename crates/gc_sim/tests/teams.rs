@@ -168,3 +168,55 @@ fn an_allys_rout_shakes_its_friends() {
     let after = w.regiments.get(mine).unwrap().morale_points;
     assert!(after + 5 <= before, "before {before}, after {after}");
 }
+
+#[test]
+fn a_player_hands_their_army_to_an_ally_and_takes_it_back() {
+    let mut w = world(&DRILL_UNITS, &TWO_V_TWO);
+    let spears = spawn(&mut w, 2, SPEARS, 50, 50, NORTH);
+    let enemy = spawn(&mut w, 1, SPEARS, 50, 20, SOUTH);
+    let order = |player, command| PlayerCommand { player, command };
+    let hand = |player, to| order(player, Command::HandOver { to });
+    let march = |player| {
+        order(
+            player,
+            Command::MoveTo {
+                regiment: spears,
+                target: FxVec2::from_ints(60, 50),
+                facing: None,
+                files: 0,
+                pace: gc_fixed::Fx::ZERO,
+            },
+        )
+    };
+    let untouched = w.state_hash();
+    // Nobody else orders player 2's spears, and an army can't go to an
+    // enemy; the refusals change nothing that is hashed.
+    let stats = w.tick(&[march(0), hand(2, 1), hand(2, 9)]);
+    assert_eq!(stats.commands_rejected, 3);
+    let mut same = world(&DRILL_UNITS, &TWO_V_TWO);
+    spawn(&mut same, 2, SPEARS, 50, 50, NORTH);
+    spawn(&mut same, 1, SPEARS, 50, 20, SOUTH);
+    same.tick(&[]);
+    assert_eq!(w.state_hash(), same.state_hash());
+    assert_ne!(untouched, w.state_hash());
+
+    // Handed to player 0, who now gives the orders and player 2 doesn't.
+    assert_eq!(w.tick(&[hand(2, 0)]).commands_applied, 1);
+    assert_eq!(w.stances().commander(2), 0);
+    same.tick(&[]);
+    assert_ne!(w.state_hash(), same.state_hash(), "who commands is hashed");
+    assert_eq!(w.tick(&[march(2)]).commands_rejected, 1);
+    let attack = order(
+        0,
+        Command::Attack {
+            regiment: spears,
+            target: enemy,
+        },
+    );
+    assert_eq!(w.tick(&[march(0), attack]).commands_applied, 2);
+
+    // Taken back.
+    assert_eq!(w.tick(&[hand(2, 2)]).commands_applied, 1);
+    assert_eq!(w.tick(&[march(0)]).commands_rejected, 1);
+    assert_eq!(w.tick(&[march(2)]).commands_applied, 1);
+}
