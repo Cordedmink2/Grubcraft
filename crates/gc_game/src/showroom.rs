@@ -240,7 +240,13 @@ impl Showroom {
         color: [u8; 3],
     ) {
         for (&model, &pos) in self.models.iter().zip(&self.layout.positions) {
-            if let Some((pose, flat)) = pose(&art.clips, model, self.hold, time) {
+            // A building has only its still pose: it never walks or falls.
+            let hold = if art.looks.is_still(model) {
+                Some(Clip::Play(Action::Idle))
+            } else {
+                self.hold
+            };
+            if let Some((pose, flat)) = pose(&art.clips, model, hold, time) {
                 stand(art, model, pos, ground(pos), 0.0, (pose, flat), color);
             }
         }

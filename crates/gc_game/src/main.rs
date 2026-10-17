@@ -2717,8 +2717,11 @@ impl Running {
                 // to it and swing their tools.
                 let site = (self.world.building_target(r.handle))
                     .and_then(|h| self.world.structures()?.get(h))
-                    .filter(|b| !b.finished() || b.hp < b.max_hp)
-                    .map(|b| buildings::centre_of(b.tile, b.width, b.depth));
+                    .filter(|b| !block.routing && (!b.finished() || b.hp < b.max_hp))
+                    .map(|b| {
+                        let reach = f32::from(b.width.max(b.depth)) / 2.0 + 2.0;
+                        (buildings::centre_of(b.tile, b.width, b.depth), reach)
+                    });
                 self.puppets
                     .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
                         let ground = heightmap.height_at(s.pos.x, s.pos.y);
@@ -2727,7 +2730,12 @@ impl Running {
                             return;
                         };
                         let seconds = time + s.phase * 4.0;
-                        let working = site.filter(|_| s.fight.is_none() && s.speed <= 0.25);
+                        // At the site and still: off on the way, they walk.
+                        let working = site
+                            .filter(|&(c, reach)| {
+                                s.fight.is_none() && s.speed <= 0.25 && s.pos.distance(c) <= reach
+                            })
+                            .map(|(c, _)| c);
                         let facing =
                             working.map_or(s.facing, |c| (c - s.pos).normalize_or(s.facing));
                         let pose = match s.fight {
@@ -4616,7 +4624,7 @@ impl Running {
             buildings::shown_to(self.sandbox.side, self.reveal_all),
             |s| {
                 let art = art.as_ref()?;
-                Some(art.heights[art.looks.model_of(s)?])
+                Some(art.looks.top(art.looks.model_of(s)?))
             },
             across,
             &mut self.instances,
@@ -4638,7 +4646,8 @@ impl Running {
             return;
         };
         let hm = &self.heightmap;
-        let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
+        // As the skinning shader clamps it, so the lift lands where meant.
+        let ground = |x, z| hm.height_at(x, z).max(hm.water_level() - 0.05);
         let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
         let time = self.puppets.time();
         for s in structures.iter().filter(|s| shown(s)) {
@@ -4647,7 +4656,8 @@ impl Running {
                 let (centre, top, lift) = buildings::model_spot(&s, &ground);
                 let at = Vec3::new(centre.x, top, centre.y);
                 let still = art.clips.pose(model, Action::Idle, time);
-                if let (Some(lod), Some(pose)) = (art.view.place(art.heights[model], at), still) {
+                let height = art.looks.top(model);
+                if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
                     let highlight = if picked == Some(s.handle) { 40 } else { 0 };
                     art.buckets[model * LODS + lod].push(SoldierInstance {
                         pos: centre.to_array(),

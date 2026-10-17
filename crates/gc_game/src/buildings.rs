@@ -239,6 +239,9 @@ pub struct Looks {
     stages: Vec<[Option<usize>; STAGES]>,
     /// By building type, its faction's worker model.
     crews: Vec<Option<usize>>,
+    /// By model, the top of a still model (a building's look) in tiles
+    /// above its floor, or `None` for a rigged soldier.
+    tops: Vec<Option<f32>>,
 }
 
 impl Looks {
@@ -250,7 +253,28 @@ impl Looks {
             crews: (table.factions.iter())
                 .map(|&f| models.by_name(worker_of(f)))
                 .collect(),
+            tops: (models.models.iter())
+                .map(|m| {
+                    let first = m.first_vertex as usize;
+                    let vertices = &models.vertices[first..first + m.vertex_count as usize];
+                    m.is_still().then(|| {
+                        let top = vertices.iter().map(|v| v.pos[1]).max().unwrap_or(0);
+                        f32::from(top.max(0)) / gc_assets::model::POSITION_SCALE
+                    })
+                })
+                .collect(),
         }
+    }
+
+    /// Whether `model` is a still model (a building's look).
+    pub fn is_still(&self, model: usize) -> bool {
+        self.tops.get(model).is_some_and(Option::is_some)
+    }
+
+    /// How tall the look `model` stands above its floor, in tiles: the
+    /// foundation is low, the finished building tall.
+    pub fn top(&self, model: usize) -> f32 {
+        self.tops.get(model).copied().flatten().unwrap_or(0.0)
     }
 
     fn stage(&self, building: BuildingId, stage: usize) -> Option<usize> {
@@ -280,8 +304,8 @@ impl Looks {
 }
 
 /// Where the upgrade crew of a `width` by `depth` footprint centred on
-/// `centre` stand, and the way each faces: along the front (south) edge and
-/// at the two front corners, turned to the walls.
+/// `centre` stand, and the way each faces: one at the front (south) edge and
+/// one on each side, turned to the walls.
 pub fn crew_spots(centre: Vec2, width: u8, depth: u8) -> [(Vec2, Vec2); UPGRADE_CREW] {
     let (hw, hd) = (f32::from(width) / 2.0 + 0.4, f32::from(depth) / 2.0 + 0.4);
     [

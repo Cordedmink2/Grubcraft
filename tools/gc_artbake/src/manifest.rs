@@ -127,7 +127,7 @@ pub fn check(opts: &Options) -> Result<(), String> {
     for src in &wanted {
         let key = format!("source {src}");
         let Some(value) = m.get(&key) else {
-            stale.push(format!("{src} is in models.ron but not in the manifest"));
+            stale.push(format!("{src} is in the config but not in the manifest"));
             continue;
         };
         let then = value.split(' ').next().unwrap_or_default();
@@ -155,7 +155,7 @@ pub fn check(opts: &Options) -> Result<(), String> {
             && !wanted.contains(&src)
         {
             stale.push(format!(
-                "{src} is in the manifest but no longer in models.ron"
+                "{src} is in the manifest but no longer in the config"
             ));
         }
     }
