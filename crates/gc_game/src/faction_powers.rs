@@ -12,8 +12,10 @@ use std::fmt::Write as _;
 use glam::Vec2;
 
 use gc_data::{Faction, PowerRecord};
+use gc_sim::structures::HONOR;
 use gc_sim::{
     BuildingId, Command, PowerEffect, PowerTarget, Refusal, RegimentHandle, StructureHandle,
+    StructureView,
 };
 use gc_ui::hud::SlotState;
 use gc_ui::powers::POWER_KEYS;
@@ -60,6 +62,8 @@ pub enum Aim {
     Building(BuildingId),
     /// Click a spot on the ground; the power covers this many tiles round it.
     Ground(u16),
+    /// Click one of your finished Shrines (buildings that earn Honor).
+    Shrine,
 }
 
 impl Aim {
@@ -72,6 +76,7 @@ impl Aim {
             PowerEffect::Grant { .. } => Some(Aim::Instant),
             PowerEffect::March { .. } => Some(Aim::Selection),
             PowerEffect::Steadfast { tiles } => Some(Aim::Ground(tiles)),
+            PowerEffect::Summon { .. } => Some(Aim::Shrine),
         }
     }
 
@@ -171,6 +176,7 @@ pub fn prompt(name: &str, aim: Aim, to: &str) -> String {
     match aim {
         Aim::Building(_) => format!("{name}: pick one of your {to}s"),
         Aim::Ground(_) => format!("{name}: pick a spot on the ground"),
+        Aim::Shrine => format!("{name}: pick one of your finished Shrines"),
         Aim::Unit | Aim::Instant | Aim::Selection => {
             format!("{name}: pick one of your buildings or regiments")
         }
@@ -197,9 +203,12 @@ pub fn pressed(aim: Aim, power: u8, selected: &[RegimentHandle]) -> Vec<Command>
         Aim::Selection => (selected.iter())
             .map(|&h| order(PowerTarget::Regiment(h)))
             .collect(),
-        Aim::Unit | Aim::Building(_) | Aim::Ground(_) => Vec::new(),
+        Aim::Unit | Aim::Building(_) | Aim::Ground(_) | Aim::Shrine => Vec::new(),
     }
 }
+
+/// Said when a summons has no room round the Shrine clicked.
+const NO_ROOM: &str = "No room round that Shrine.";
 
 /// The order that plants a power on the ground at `at` (in tiles).
 pub fn planted(power: u8, at: gc_fixed::FxVec2) -> Command {
@@ -382,6 +391,21 @@ impl Running {
                 .map(|at| planted(power, fx_vec(at)))
                 .into_iter()
                 .collect(),
+            Aim::Shrine => {
+                let Some(shrine) = self.shrine_at_cursor() else {
+                    return;
+                };
+                // The sim refuses a summons with no room for the regiment
+                // (and the order would be lost in lockstep), so ask first.
+                if !self.world.can_summon_at(self.sandbox.side, power, shrine) {
+                    self.say(NO_ROOM.into());
+                    return;
+                }
+                vec![Command::UsePower {
+                    power,
+                    target: PowerTarget::Structure(shrine),
+                }]
+            }
             Aim::Instant | Aim::Selection => Vec::new(),
         };
         if commands.is_empty() {
@@ -408,6 +432,17 @@ impl Running {
     fn resonator_at_cursor(&self, kind: BuildingId) -> Option<StructureHandle> {
         let side = self.sandbox.side;
         self.pick_building(|s| s.owner == side && s.finished() && s.building == kind)
+    }
+
+    /// One of your finished Shrines (buildings that earn Honor) under the
+    /// mouse.
+    fn shrine_at_cursor(&self) -> Option<StructureHandle> {
+        let side = self.sandbox.side;
+        let all = self.world.structures()?;
+        let honored = |s: &StructureView| {
+            (all.buildings().get(usize::from(s.building))).is_some_and(|b| b.flags & HONOR != 0)
+        };
+        self.pick_building(|s| s.owner == side && s.finished() && honored(s))
     }
 
     /// The ground a power being aimed would cover under the mouse: its
@@ -444,6 +479,7 @@ mod tests {
     const GRANT: PowerEffect = PowerEffect::Grant { grub: 300 };
     const MARCH: PowerEffect = PowerEffect::March { percent: 30 };
     const BANNER: PowerEffect = PowerEffect::Steadfast { tiles: 12 };
+    const RETURN: PowerEffect = PowerEffect::Summon { unit: 9 };
 
     fn regiment(index: u32) -> RegimentHandle {
         RegimentHandle {
@@ -482,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn the_clans_are_offered_their_three_edicts_paid_in_honor() {
+    fn the_clans_are_offered_their_four_edicts_paid_in_honor() {
         let data = crate::data::load();
         let edicts: Vec<_> = offered(data.powers, Some(Faction::EmberClans))
             .map(|i| &data.powers[usize::from(i)])
@@ -490,7 +526,12 @@ mod tests {
         let names: Vec<_> = edicts.iter().map(|p| p.name()).collect();
         assert_eq!(
             names,
-            ["Rice Tax", "Forced March", "Banner of the Ancestors"]
+            [
+                "Rice Tax",
+                "Forced March",
+                "Banner of the Ancestors",
+                "Ancestral Return"
+            ]
         );
         assert!(edicts.iter().all(|p| p.meter_name() == "Honor"));
         for p in offered(data.powers, Some(Faction::Choir)) {
@@ -507,8 +548,16 @@ mod tests {
         assert_eq!(Aim::of(GRANT), Some(Aim::Instant));
         assert_eq!(Aim::of(MARCH), Some(Aim::Selection));
         assert_eq!(Aim::of(BANNER), Some(Aim::Ground(12)));
+        assert_eq!(Aim::of(RETURN), Some(Aim::Shrine));
         // Only a grant and a march go off on the press.
-        for (effect, at_once) in [(HASTE, false), (SHIFT, false), (GRANT, true), (MARCH, true)] {
+        for (effect, at_once) in [
+            (HASTE, false),
+            (SHIFT, false),
+            (GRANT, true),
+            (MARCH, true),
+            (BANNER, false),
+            (RETURN, false),
+        ] {
             assert_eq!(Aim::of(effect).unwrap().at_once(), at_once, "{effect:?}");
         }
         assert!(!Aim::Ground(12).at_once());
@@ -521,6 +570,8 @@ mod tests {
         }
         assert_eq!(key_slot(KeyCode::KeyQ), None);
         assert_eq!(POWER_KEYS, ["F2", "F3", "F4", "F5"]);
+        // The Clans' fourth Edict is the one on F5.
+        assert_eq!(key_slot(KeyCode::F5), Some(3));
     }
 
     #[test]
@@ -536,6 +587,15 @@ mod tests {
             held(BANNER, None, 0),
             None,
             "a banner is aimed at the ground"
+        );
+        assert_eq!(
+            held(RETURN, None, 0),
+            None,
+            "a summons is aimed at a Shrine"
+        );
+        assert_eq!(
+            held(RETURN, Some(Refusal::NoShrine), 0),
+            Some(Hold::Refused(Refusal::NoShrine))
         );
         assert_eq!(
             held(GRANT, Some(Refusal::Price), 0),
@@ -651,6 +711,10 @@ mod tests {
             prompt("Banner of the Ancestors", aim(BANNER), ""),
             "Banner of the Ancestors: pick a spot on the ground"
         );
+        assert_eq!(
+            prompt("Ancestral Return", aim(RETURN), ""),
+            "Ancestral Return: pick one of your finished Shrines"
+        );
     }
 
     #[test]
@@ -708,7 +772,7 @@ mod tests {
         }
         assert!(pressed(Aim::Selection, 1, &[]).is_empty());
         // Aimed powers send nothing on the press.
-        for aim in [Aim::Unit, Aim::Building(3), Aim::Ground(12)] {
+        for aim in [Aim::Unit, Aim::Building(3), Aim::Ground(12), Aim::Shrine] {
             assert!(pressed(aim, 2, &picked).is_empty(), "{aim:?}");
         }
     }

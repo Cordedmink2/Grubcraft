@@ -45,6 +45,8 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 23: the summon power (22's powers have none) and the Clans' formation
+///   discipline bit among a unit's weapon flags (read as off);
 /// - 22: each power's meter, each player's meter, and the Edicts' powers
 ///   and targets (21's powers read as paid from Resonance, and its players
 ///   as all on Resonance);
@@ -73,7 +75,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 22;
+pub const FORMAT: u16 = 23;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -1426,6 +1428,14 @@ mod tests {
                 cooldown_ticks: 1800,
                 duration_ticks: 400,
                 effect: gc_sim::PowerEffect::Steadfast { tiles: 12 },
+            },
+            gc_sim::PowerStats {
+                tier: 3,
+                cost: 80,
+                meter: Meter::Honor,
+                cooldown_ticks: 3600,
+                duration_ticks: 1200,
+                effect: gc_sim::PowerEffect::Summon { unit: 1 },
             },
         ];
         let mut meters = [Meter::NotBuilt; MAX_PARTIES];

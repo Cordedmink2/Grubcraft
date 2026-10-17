@@ -1,7 +1,7 @@
 //! Honor: the Ember Clans' meter (docs/03-factions.md). Honor is spent on
-//! Edicts (Rice Tax, Forced March, Banner of the Ancestors), earned by
-//! Shrines and by routs, and lost when one of the Clans' own regiments
-//! routs.
+//! Edicts (Rice Tax, Forced March, Banner of the Ancestors, Ancestral
+//! Return), earned by Shrines and by routs, and lost when one of the Clans'
+//! own regiments routs.
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::honor::{FLED_HONOR, OUTNUMBERED_HONOR, ROUT_HONOR};
@@ -29,14 +29,16 @@ const SKITTERS: u16 = 2;
 /// Eight fearless spearmen: a smaller force than the skitterlings.
 const SQUAD: u16 = 3;
 
-/// The powers table: three Edicts paid from Honor, and one paid from
+/// The powers table: four Edicts paid from Honor, and one paid from
 /// Resonance.
 const RICE_TAX: u8 = 0;
 const FORCED_MARCH: u8 = 1;
 const BANNER: u8 = 2;
 const OVERCLOCK: u8 = 3;
+/// Calls up a regiment of skitterlings (who rout) for 2400 ticks.
+const RETURN: u8 = 4;
 
-const POWERS: [PowerStats; 4] = [
+const POWERS: [PowerStats; 5] = [
     PowerStats {
         tier: 1,
         cost: 20,
@@ -68,6 +70,14 @@ const POWERS: [PowerStats; 4] = [
         cooldown_ticks: 400,
         duration_ticks: 400,
         effect: PowerEffect::Haste { percent: 50 },
+    },
+    PowerStats {
+        tier: 1,
+        cost: 40,
+        meter: Meter::Honor,
+        cooldown_ticks: 1200,
+        duration_ticks: 2400,
+        effect: PowerEffect::Summon { unit: SKITTERS },
     },
 ];
 
@@ -157,14 +167,34 @@ fn buildings() -> [BuildingStats; 2] {
 /// A 64-tile open map in Conquest with no nodes, each player holding 100
 /// Grub, and the given meters for the first players (the rest have none).
 fn conquest(meters: &[Meter]) -> World {
-    let side = 64 * CELLS_PER_TILE as usize;
-    let nav = vec![1u8; side * side];
+    conquest_with(meters, &POWERS)
+}
+
+/// [`conquest`] with another powers table.
+fn conquest_with(meters: &[Meter], powers: &[PowerStats]) -> World {
+    conquest_on(meters, powers, &walled(|_, _| true))
+}
+
+/// The 64-tile map's nav costs with open ground (cost 1) where `open` says
+/// so for a tile, and blocked ground elsewhere.
+fn walled(open: impl Fn(i32, i32) -> bool) -> Vec<u8> {
+    let side = 64 * CELLS_PER_TILE;
+    (0..side * side)
+        .map(|i| {
+            let (x, y) = (i % side / CELLS_PER_TILE, i / side / CELLS_PER_TILE);
+            if open(x, y) { 1 } else { gc_sim::nav::BLOCKED }
+        })
+        .collect()
+}
+
+/// [`conquest_with`] on the nav costs `nav`.
+fn conquest_on(meters: &[Meter], powers: &[PowerStats], nav: &[u8]) -> World {
     let mut w = World::new(&MatchSetup {
         seed: 13,
         capacities: Capacities { regiments: 64 },
         units: &units(),
         map_tiles: 64,
-        nav: &nav,
+        nav,
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
@@ -179,7 +209,7 @@ fn conquest(meters: &[Meter]) -> World {
         structures: 32,
         nodes: &[],
         start,
-        powers: &POWERS,
+        powers,
         meters: by_player,
         ..ConquestSetup::default()
     }));
@@ -863,4 +893,403 @@ fn a_resonance_player_earns_no_honor_from_a_rout() {
     let (_, skitters) = engage(&mut w, SPEARS);
     until_routs(&mut w, skitters);
     assert_eq!(honor(&w, 0), 0, "no Honor for the winner");
+}
+
+/// An Ancestral Return world: `caster` has the Honor meter and 40 Honor
+/// with `powers` for its table, and a finished Shrine at tile (30, 30)
+/// (centre (31, 31)); the other player has Resonance and a Hall. Returns
+/// the world and that Shrine.
+fn return_world(caster: u8, powers: &[PowerStats]) -> (World, StructureHandle) {
+    return_world_on(caster, powers, &walled(|_, _| true))
+}
+
+/// [`return_world`] on the nav costs `nav`.
+fn return_world_on(caster: u8, powers: &[PowerStats], nav: &[u8]) -> (World, StructureHandle) {
+    let meters = if caster == 0 {
+        [Meter::Honor, Meter::Resonance]
+    } else {
+        [Meter::Resonance, Meter::Honor]
+    };
+    let mut w = conquest_on(&meters, powers, nav);
+    hall(&mut w, 0);
+    hall(&mut w, 1);
+    shrines(&mut w, caster, 10);
+    let altar = put_up(&mut w, caster, SHRINE, 30, 30);
+    until_honor(&mut w, caster, 40);
+    (w, altar)
+}
+
+/// The regiments of `player`, as handles.
+fn regiments_of(w: &World, player: u8) -> Vec<RegimentHandle> {
+    (w.regiments.iter())
+        .filter(|r| r.owner == player)
+        .map(|r| r.handle)
+        .collect()
+}
+
+/// The regiment `player` has now that they didn't have in `before`.
+fn raised(w: &World, player: u8, before: &[RegimentHandle]) -> RegimentHandle {
+    let now = regiments_of(w, player);
+    assert_eq!(now.len(), before.len() + 1, "exactly one regiment raised");
+    *now.iter().find(|h| !before.contains(h)).unwrap()
+}
+
+/// Ancestral Return, aimed at one of the caster's finished Shrines, puts a
+/// full regiment of its unit down beside it, facing away, for its Honor
+/// price, with a cooldown, and takes no supply.
+#[test]
+fn a_summons_raises_a_full_regiment_beside_the_shrine_for_its_honor() {
+    let (mut w, altar) = return_world(0, &POWERS);
+    let supply = w.bank(0).unwrap().supply_used;
+    let before = regiments_of(&w, 0);
+    assert_eq!((honor(&w, 0), w.can_use_power(0, RETURN)), (40, Ok(())));
+    let mut plain = return_world(0, &POWERS).0;
+
+    assert!(order(
+        &mut w,
+        0,
+        edict(RETURN, PowerTarget::Structure(altar))
+    ));
+    plain.tick(&[]);
+    let h = raised(&w, 0, &before);
+    let r = w.regiments.get(h).unwrap();
+    assert_eq!(r.unit, SKITTERS);
+    assert_eq!(r.models, units()[usize::from(SKITTERS)].models, "full");
+    assert_eq!(r.morale, gc_sim::MoraleState::Steady);
+    // The first spot round the 2x2 Shrine at (30, 30): four tiles south of
+    // its centre, facing south, away from it.
+    assert_eq!(r.position, FxVec2::from_ints(31, 35));
+    assert_eq!(r.facing, SOUTH);
+    assert_eq!(w.regiment_summoned(h), 2400, "its time starts at the cast");
+    assert_eq!(honor(&plain, 0) - honor(&w, 0), 40, "40 Honor spent");
+    assert!(w.power_cooling(0, RETURN) > 0, "and it cools down");
+    assert_eq!(w.bank(0).unwrap().supply_used, supply, "no supply taken");
+    assert_eq!(regiments_of(&plain, 0).len(), before.len());
+    assert_eq!(plain.regiment_summoned(h), 0);
+
+    // A second one at once is refused for the cooldown.
+    assert!(!order(
+        &mut w,
+        0,
+        edict(RETURN, PowerTarget::Structure(altar))
+    ));
+}
+
+/// A second summons while the first still stands goes beside it, on the
+/// next open spot round the Shrine, not on top of it.
+#[test]
+fn a_second_summons_takes_the_next_open_spot() {
+    let (mut w, altar) = return_world(0, &POWERS);
+    let first = {
+        let before = regiments_of(&w, 0);
+        assert!(order(
+            &mut w,
+            0,
+            edict(RETURN, PowerTarget::Structure(altar))
+        ));
+        raised(&w, 0, &before)
+    };
+    // Past the cooldown, with the Honor to pay again.
+    run(&mut w, 1200);
+    until_honor(&mut w, 0, 40);
+    let before = regiments_of(&w, 0);
+    assert!(order(
+        &mut w,
+        0,
+        edict(RETURN, PowerTarget::Structure(altar))
+    ));
+    let second = raised(&w, 0, &before);
+    let (a, b) = (position(&w, first), position(&w, second));
+    assert_ne!(a, b);
+    assert!((a - b).length() >= Fx::from_int(4), "not on top of it");
+    assert_eq!(a, FxVec2::from_ints(31, 35));
+}
+
+/// Ancestral Return is for the caster's own finished Shrines: anything
+/// else is refused and costs nothing.
+#[test]
+fn a_summons_is_refused_for_anything_but_an_own_finished_shrine() {
+    let mut w = conquest_with(&[Meter::Honor, Meter::Honor], &POWERS);
+    hall(&mut w, 0);
+    hall(&mut w, 1);
+    shrines(&mut w, 0, 10);
+    let theirs = put_up(&mut w, 1, SHRINE, 40, 20);
+    // A foundation of theirs... and of ours, laid by a worker.
+    let worker = spawn(&mut w, 0, WORKER, 20, 30, EAST);
+    assert!(order(
+        &mut w,
+        0,
+        Command::Build {
+            regiment: worker,
+            building: SHRINE,
+            tile: (24, 30),
+        }
+    ));
+    let foundation = at(&w, 24, 30).unwrap();
+    assert!(!w.structures().unwrap().get(foundation).unwrap().finished());
+    let gone = put_up(&mut w, 0, SHRINE, 50, 30);
+    assert!(order(
+        &mut w,
+        0,
+        Command::RemoveStructure { structure: gone }
+    ));
+    let own = put_up(&mut w, 0, SHRINE, 30, 30);
+    until_honor(&mut w, 0, 40);
+
+    let hall0 = at(&w, 2, 2).unwrap();
+    let regiments = regiments_of(&w, 0).len();
+    let refused = [
+        ("an enemy Shrine", PowerTarget::Structure(theirs)),
+        ("an unfinished Shrine", PowerTarget::Structure(foundation)),
+        ("a Hall", PowerTarget::Structure(hall0)),
+        ("a Shrine that is gone", PowerTarget::Structure(gone)),
+        ("a regiment", PowerTarget::Regiment(worker)),
+        ("the caster", PowerTarget::Caster),
+        ("a point", PowerTarget::Point(FxVec2::from_ints(31, 31))),
+    ];
+    for (what, target) in refused {
+        assert!(!order(&mut w, 0, edict(RETURN, target)), "{what}");
+        assert_eq!(honor(&w, 0), 40, "{what}: nothing spent");
+        assert_eq!(w.power_cooling(0, RETURN), 0, "{what}: no cooldown");
+        assert_eq!(regiments_of(&w, 0).len(), regiments, "{what}: none raised");
+    }
+    assert!(order(&mut w, 0, edict(RETURN, PowerTarget::Structure(own))));
+    assert_eq!(regiments_of(&w, 0).len(), regiments + 1);
+}
+
+/// Without the Honor, the tier or a Shrine the player has, a summons is
+/// refused like any Edict.
+#[test]
+fn a_summons_needs_its_honor() {
+    let (mut w, altar) = return_world(0, &POWERS);
+    // Spend the Honor on a Rice Tax's worth first: 40 - 20 is under 40.
+    assert!(order(&mut w, 0, edict(RICE_TAX, PowerTarget::Caster)));
+    assert!(honor(&w, 0) < 40);
+    assert_eq!(w.can_use_power(0, RETURN), Err(Refusal::Price));
+    assert!(!order(
+        &mut w,
+        0,
+        edict(RETURN, PowerTarget::Structure(altar))
+    ));
+}
+
+/// A fight where `caster` has summoned skitterlings that player
+/// `1 - caster`'s fearless spearmen attack, three tiles ahead of them.
+/// Returns the world, the summoned regiment and the spearmen.
+fn summoned_fight(caster: u8) -> (World, RegimentHandle, RegimentHandle) {
+    let (mut w, altar) = return_world(caster, &POWERS);
+    let before = regiments_of(&w, caster);
+    assert!(order(
+        &mut w,
+        caster,
+        edict(RETURN, PowerTarget::Structure(altar))
+    ));
+    let ghosts = raised(&w, caster, &before);
+    // They stand at (31, 35) facing south: the spears meet them there.
+    let spears = spawn(&mut w, 1 - caster, SPEARS, 31, 38, NORTH);
+    (w, ghosts, spears)
+}
+
+/// A summoned regiment never routs: the same skitterlings, raised the
+/// ordinary way and beaten the same way, run; the summoned ones stand and
+/// fight on (wavering) until they are destroyed or their time is up.
+#[test]
+fn a_summoned_regiment_never_routs() {
+    let mut control = conquest(&[Meter::Resonance, Meter::Honor]);
+    hall(&mut control, 0);
+    hall(&mut control, 1);
+    let ordinary = spawn(&mut control, 1, SKITTERS, 31, 35, SOUTH);
+    spawn(&mut control, 0, SPEARS, 31, 38, NORTH);
+    let met = control.tick_count();
+    let breaks_after = until_routs(&mut control, ordinary) - met;
+    assert!(breaks_after < 2400, "they would rout well within its time");
+
+    let (mut w, ghosts, _) = summoned_fight(1);
+    let cast = w.tick_count();
+    let (mut fought, mut still_there) = (false, false);
+    while w.tick_count() < cast + 2400 {
+        w.tick(&[]);
+        let Some(r) = w.regiments.get(ghosts) else {
+            break;
+        };
+        assert!(!r.morale.broken(), "routed at tick {}", w.tick_count());
+        fought |= r.engaged;
+        still_there |= w.tick_count() > cast + breaks_after + 40;
+    }
+    assert!(fought, "it fought");
+    assert!(still_there, "and was still fighting when the others broke");
+}
+
+/// A world where player 0 has summoned a regiment of spearmen for 200
+/// ticks beside a Shrine, with player 1's spearmen locked in with it.
+/// Returns it, the summoned regiment, the foes and player 0's regiments
+/// from before it was called.
+fn short_lived() -> (World, RegimentHandle, RegimentHandle, Vec<RegimentHandle>) {
+    let mut powers = POWERS;
+    powers[usize::from(RETURN)] = PowerStats {
+        duration_ticks: 200,
+        effect: PowerEffect::Summon { unit: SPEARS },
+        ..POWERS[usize::from(RETURN)]
+    };
+    let (mut w, altar) = return_world(0, &powers);
+    let before = regiments_of(&w, 0);
+    assert!(order(
+        &mut w,
+        0,
+        edict(RETURN, PowerTarget::Structure(altar))
+    ));
+    let ghosts = raised(&w, 0, &before);
+    let spears = spawn(&mut w, 1, SPEARS, 31, 38, NORTH);
+    (w, ghosts, spears, before)
+}
+
+/// Its time up, a summoned regiment is gone: the regiment fighting it is
+/// let go (nothing left locked with it), and the handle is stale. One
+/// tick earlier it is still there. Two worlds do the same, bit for bit.
+#[test]
+fn a_summoned_regiment_vanishes_when_its_time_is_up_and_its_foes_let_go() {
+    let (mut w, ghosts, spears, before) = short_lived();
+    // The spawn of the foe took a tick: 199 ticks of the 200 are left.
+    let mut engaged = false;
+    while w.regiment_summoned(ghosts) > 1 {
+        w.tick(&[]);
+        engaged |= w.regiments.get(spears).is_some_and(|r| r.engaged);
+        assert!(w.regiments.get(ghosts).is_some(), "gone early");
+    }
+    assert!(engaged, "locked with the summoned regiment");
+    assert!(w.regiments.get(ghosts).unwrap().engaged);
+    w.tick(&[]);
+    assert!(w.regiments.get(ghosts).is_none(), "gone when it is up");
+    assert_eq!(w.regiment_summoned(ghosts), 0);
+    assert!(!w.regiments.get(spears).unwrap().engaged, "the foe let go");
+    assert_eq!(regiments_of(&w, 0), before);
+
+    let (mut again, ..) = short_lived();
+    while again.tick_count() < w.tick_count() {
+        again.tick(&[]);
+    }
+    assert_eq!(w.state_hash(), again.state_hash());
+}
+
+/// The summoned regiment's time is part of the state hash.
+#[test]
+fn a_summoned_regiments_time_is_in_the_state_hash() {
+    let (mut a, ..) = short_lived();
+    let (mut b, ..) = short_lived();
+    assert_eq!(a.state_hash(), b.state_hash());
+    run(&mut a, 1);
+    run(&mut b, 1);
+    assert_eq!(a.state_hash(), b.state_hash());
+    // One that is cast a tick later has a different time left, so a
+    // different hash at the same tick.
+    let (mut c, altar) = {
+        let mut powers = POWERS;
+        powers[usize::from(RETURN)].duration_ticks = 201;
+        powers[usize::from(RETURN)].effect = PowerEffect::Summon { unit: SPEARS };
+        return_world(0, &powers)
+    };
+    assert!(order(
+        &mut c,
+        0,
+        edict(RETURN, PowerTarget::Structure(altar))
+    ));
+    spawn(&mut c, 1, SPEARS, 31, 38, NORTH);
+    run(&mut c, 1);
+    assert_ne!(a.state_hash(), c.state_hash());
+}
+
+/// Open ground that is blocked from tile row 37 south (but for the row
+/// the Honor Shrines stand on): the first spot round the Shrine, four tiles
+/// south of it, is open for a centre but too near the edge for the
+/// regiment's block.
+fn shore() -> Vec<u8> {
+    walled(|_, y| !(37..56).contains(&y))
+}
+
+/// A summoned regiment is settled clear of blocked ground, as a trained or
+/// rallied one is, not put down on a spot whose centre alone is open.
+#[test]
+fn a_summoned_regiment_stands_clear_of_blocked_ground() {
+    let (mut w, altar) = return_world_on(0, &POWERS, &shore());
+    let before = regiments_of(&w, 0);
+    assert!(w.can_summon_at(0, RETURN, altar));
+    assert!(order(
+        &mut w,
+        0,
+        edict(RETURN, PowerTarget::Structure(altar))
+    ));
+    let h = raised(&w, 0, &before);
+    let r = w.regiments.get(h).unwrap();
+    let stats = &units()[usize::from(SKITTERS)];
+    let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
+    let half = width.max(depth) / 2;
+    assert_ne!(
+        r.position,
+        FxVec2::from_ints(31, 35),
+        "not on the open edge"
+    );
+    assert!(
+        Fx::from_int(37) - r.position.y >= half,
+        "its whole block is on open ground: at {:?}, half a side {half:?}",
+        r.position
+    );
+}
+
+/// With open ground only in a strip four tiles wide, where a centre may
+/// stand but no block fits, a summons has no room: the room check says so, the order is refused, and nothing is
+/// spent.
+#[test]
+fn a_summons_with_no_room_for_the_block_is_refused_and_costs_nothing() {
+    let strips = walled(|x, y| {
+        (28..34).contains(&x) && (28..34).contains(&y)
+            || (29..33).contains(&x) && y < 56
+            || !(8..56).contains(&y)
+    });
+    let (mut w, altar) = return_world_on(0, &POWERS, &strips);
+    let before = regiments_of(&w, 0);
+    let honor_before = honor(&w, 0);
+    assert!(!w.can_summon_at(0, RETURN, altar));
+    assert!(!order(
+        &mut w,
+        0,
+        edict(RETURN, PowerTarget::Structure(altar))
+    ));
+    assert_eq!(regiments_of(&w, 0), before);
+    assert_eq!(honor(&w, 0), honor_before);
+    assert_eq!(w.can_use_power(0, RETURN), Ok(()), "and no cooldown starts");
+}
+
+/// A full regiment pool is no room either.
+#[test]
+fn a_summons_with_a_full_regiment_pool_is_refused() {
+    let (mut w, altar) = return_world(0, &POWERS);
+    assert!(w.can_summon_at(0, RETURN, altar));
+    for i in 0..200 {
+        let command = Command::SpawnRegiment {
+            unit: SQUAD,
+            position: FxVec2::from_ints(2 + i % 20 * 2, 40 + i / 20 * 2),
+            facing: EAST,
+        };
+        if !order(&mut w, 1, command) {
+            break;
+        }
+    }
+    let honor_before = honor(&w, 0);
+    assert!(!w.can_summon_at(0, RETURN, altar));
+    assert!(!order(
+        &mut w,
+        0,
+        edict(RETURN, PowerTarget::Structure(altar))
+    ));
+    assert_eq!(honor(&w, 0), honor_before);
+}
+
+/// The room check is for summons, and for the caster's own Shrines.
+#[test]
+fn the_room_check_is_only_for_a_summons_on_an_own_shrine() {
+    let (w, altar) = return_world(0, &POWERS);
+    assert!(w.can_summon_at(0, RETURN, altar));
+    assert!(!w.can_summon_at(1, RETURN, altar), "not their Shrine");
+    assert!(!w.can_summon_at(0, RICE_TAX, altar), "not a summons");
+    assert!(!w.can_summon_at(0, 99, altar), "no such power");
 }

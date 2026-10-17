@@ -26,6 +26,13 @@
 //!   [`PowerEffect::Steadfast`]'s tiles of the chosen point can't rout for
 //!   the duration (their morale bottoms out instead).
 //!
+//! - **Summon** (Ancestral Return): a full regiment of the power's unit
+//!   (the Clans' Spectral Samurai) takes the field beside one of the
+//!   caster's finished Shrines, facing away from it, for the duration. It
+//!   takes no supply, never routs, and vanishes when the time is up (see
+//!   [`Regiments::expire_summons`]). Heroes aren't in Conquest yet, so a
+//!   Shrine is the only place to call it.
+//!
 //! The powers table, when each player last used each power and the group
 //! order being paid for are in the state hash; what a power left on a
 //! building or regiment is, with it.
@@ -33,14 +40,14 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use gc_fixed::{Fx, FxVec2};
+use gc_fixed::{Angle, Fx, FxVec2};
 
 use crate::conquest::Conquest;
 use crate::hash::StateHasher;
 use crate::nav::Nav;
 use crate::regiments::Regiments;
 use crate::structures::{BuildingId, HONOR, Refusal, StructureHandle, Structures};
-use crate::{MAX_PARTIES, PlayerId, RegimentHandle};
+use crate::{Formation, MAX_PARTIES, PlayerId, RegimentHandle, UnitId, UnitStats};
 
 /// The longest a power's cooldown or effect lasts, in ticks (10 minutes).
 pub const MAX_POWER_TICKS: u32 = 10 * 60 * crate::TICKS_PER_SECOND;
@@ -56,6 +63,9 @@ const SHIFT_OUT: i32 = 3;
 const SHIFT_RING: i32 = 4;
 /// Rings of eight spots round the building a shift fills, nearest first.
 const SHIFT_RINGS: i32 = 5;
+/// How near another regiment's centre a summoned one isn't put down, in
+/// tiles, if there is room elsewhere round the building.
+const SUMMON_CLEAR: i32 = 5;
 /// How long after a group order (a shift or a march) is paid for more
 /// regiments in it ride on the payment, in ticks (a second).
 pub const RIDE_TICKS: u32 = crate::TICKS_PER_SECOND;
@@ -103,6 +113,9 @@ pub enum PowerEffect {
     /// The caster's regiments this many tiles from the chosen point can't
     /// rout.
     Steadfast { tiles: u16 },
+    /// A regiment of this unit type takes the field beside one of the
+    /// caster's finished buildings that earns Honor (a Shrine).
+    Summon { unit: UnitId },
 }
 
 impl PowerEffect {
@@ -110,7 +123,10 @@ impl PowerEffect {
     pub fn lasts(self) -> bool {
         matches!(
             self,
-            PowerEffect::Haste { .. } | PowerEffect::March { .. } | PowerEffect::Steadfast { .. }
+            PowerEffect::Haste { .. }
+                | PowerEffect::March { .. }
+                | PowerEffect::Steadfast { .. }
+                | PowerEffect::Summon { .. }
         )
     }
 }
@@ -189,6 +205,10 @@ impl PowerStats {
                 h.u8(5);
                 h.u16(tiles);
             }
+            PowerEffect::Summon { unit } => {
+                h.u8(6);
+                h.u16(unit);
+            }
         }
     }
 }
@@ -210,6 +230,17 @@ pub enum PowerTarget {
     },
     /// A point on the field, in tiles (a steadfast power).
     Point(FxVec2),
+}
+
+/// What using a power came to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Cast {
+    /// Refused: nothing was spent.
+    Refused,
+    /// Done.
+    Done,
+    /// Done, and this regiment took the field.
+    Raised(RegimentHandle),
 }
 
 /// The powers table and each player's use of it.
@@ -360,28 +391,55 @@ impl Conquest {
         Ok(stats)
     }
 
-    /// `player` uses `power` on `target` at `now`; false (and nothing
+    /// Whether `power`, if it summons, has room to put its regiment down
+    /// round `player`'s Shrine `shrine` (see [`summon_spot`]); the same
+    /// rule a use of it is refused by. Says nothing of the Honor.
+    pub(crate) fn can_summon_at(
+        &self,
+        regs: &Regiments,
+        nav: &Nav,
+        units: &[UnitStats],
+        player: PlayerId,
+        power: u8,
+        shrine: StructureHandle,
+    ) -> bool {
+        let Some(&PowerStats {
+            effect: PowerEffect::Summon { unit },
+            ..
+        }) = self.powers.stats.get(usize::from(power))
+        else {
+            return false;
+        };
+        units.get(usize::from(unit)).is_some_and(|stats| {
+            summon_spot(&self.structures, regs, nav, stats, player, shrine).is_some()
+        })
+    }
+
+    /// `player` uses `power` on `target` at `now`; refused (and nothing
     /// spent) if they can't.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn use_power(
         &mut self,
         regs: &mut Regiments,
         nav: &Nav,
+        units: &[UnitStats],
         player: PlayerId,
         power: u8,
         target: PowerTarget,
         now: u32,
-    ) -> bool {
+    ) -> Cast {
         let Some(&stats) = self.powers.stats.get(usize::from(power)) else {
-            return false;
+            return Cast::Refused;
         };
         let group = group_of(stats.effect, target);
         let riding = group.is_some_and(|key| self.powers.rides(player, power, key, now));
         if !riding && self.can_use_power(player, power, now).is_err() {
-            return false;
+            return Cast::Refused;
         }
         let p = usize::from(player);
         let joined = if riding { self.powers.grouped[p] } else { 0 };
         let lasts = effect_ticks(stats.duration_ticks);
+        let mut raised = None;
         let done = match (stats.effect, target) {
             (PowerEffect::Haste { percent }, PowerTarget::Structure(h)) => {
                 let structures = &mut self.structures;
@@ -433,10 +491,14 @@ impl Conquest {
                 }
                 steadied
             }
+            (PowerEffect::Summon { unit }, PowerTarget::Structure(h)) => {
+                raised = summon(&self.structures, regs, nav, units, player, unit, h, lasts);
+                raised.is_some()
+            }
             _ => false,
         };
         if !done {
-            return false;
+            return Cast::Refused;
         }
         if let Some(key) = group {
             self.powers.group[p] = Some((power, key));
@@ -453,7 +515,7 @@ impl Conquest {
                 self.powers.used_at[slot] = Some(now);
             }
         }
-        true
+        raised.map_or(Cast::Done, Cast::Raised)
     }
 }
 
@@ -484,10 +546,24 @@ fn shift(
     }) else {
         return false;
     };
+    let Some(at) = spots_round(structures, s)
+        .filter(|&at| nav.walkable(at))
+        .nth(usize::from(before))
+    else {
+        return false;
+    };
+    let facing = regs.facing[r];
+    regs.place(regiment, at, facing, 0).is_some_and(|i| {
+        regs.vanish_from_fight(i);
+        true
+    })
+}
+
+/// The spots round building slot `s`, nearest ring first, eight to a ring.
+fn spots_round(structures: &Structures, s: usize) -> impl Iterator<Item = FxVec2> + use<> {
     let foot = structures.footprint(s);
     let centre = structures.centre(s);
-    // The spots round the building, nearest ring first, eight to a ring.
-    let spots = (0..SHIFT_RINGS).flat_map(|ring| {
+    (0..SHIFT_RINGS).flat_map(move |ring| {
         let out = foot[2].max(foot[3]) / 2 + SHIFT_OUT + ring * SHIFT_RING;
         [
             (0, 1),
@@ -500,18 +576,66 @@ fn shift(
             (-1, 1),
         ]
         .map(|(x, y)| centre + FxVec2::new(Fx::from_int(x * out), Fx::from_int(y * out)))
-    });
-    let Some(at) = spots
-        .filter(|&at| nav.walkable(at))
-        .nth(usize::from(before))
-    else {
-        return false;
-    };
-    let facing = regs.facing[r];
-    regs.place(regiment, at, facing, 0).is_some_and(|i| {
-        regs.vanish_from_fight(i);
-        true
     })
+}
+
+/// Where and facing which way a regiment of `unit` would stand if
+/// `player`'s Shrine `shrine` summoned it: the nearest spot round the
+/// Shrine where open ground holds its whole block (a spot too near
+/// blocked ground is settled to ground that does, as a rallied regiment
+/// is, and one that can't be is out), with no other regiment close, else
+/// the nearest such spot. Facing away from the Shrine. `None` if `shrine`
+/// isn't one of their finished buildings that earn Honor, there is no
+/// such spot, or the regiment pool is full.
+fn summon_spot(
+    structures: &Structures,
+    regs: &Regiments,
+    nav: &Nav,
+    stats: &UnitStats,
+    player: PlayerId,
+    shrine: StructureHandle,
+) -> Option<(FxVec2, Angle)> {
+    let s = structures.resolve(shrine)?;
+    if !structures.finished_with(player, HONOR).any(|i| i == s) || regs.free.is_empty() {
+        return None;
+    }
+    let berth = Regiments::berth_of(stats, Formation::Line, stats.files, stats.models);
+    let near = u64::from(Fx::from_int(SUMMON_CLEAR).raw().unsigned_abs());
+    let crowded = |at: FxVec2| {
+        (0..regs.alive.len())
+            .any(|r| regs.alive[r] && (regs.position[r] - at).length_sq_raw() <= near * near)
+    };
+    let mut room = spots_round(structures, s)
+        .filter(|&at| nav.walkable(at))
+        .map(|at| nav.settle(at, berth))
+        .filter(|&at| nav.fits(at, berth));
+    let first = room.next()?;
+    let at = core::iter::once(first)
+        .chain(room)
+        .find(|&at| !crowded(at))
+        .unwrap_or(first);
+    Some((at, Angle::of_vec(at - structures.centre(s))))
+}
+
+/// Put a regiment of `unit` down beside `player`'s finished Shrine `shrine`
+/// for `lasts` ticks, where [`summon_spot`] says. `None` if there is no
+/// room for it.
+#[allow(clippy::too_many_arguments)]
+fn summon(
+    structures: &Structures,
+    regs: &mut Regiments,
+    nav: &Nav,
+    units: &[UnitStats],
+    player: PlayerId,
+    unit: UnitId,
+    shrine: StructureHandle,
+    lasts: u16,
+) -> Option<RegimentHandle> {
+    let stats = units.get(usize::from(unit))?;
+    let (at, facing) = summon_spot(structures, regs, nav, stats, player, shrine)?;
+    let h = regs.spawn(player, unit, at, facing, stats)?;
+    regs.summoned_left[h.index as usize] = lasts;
+    Some(h)
 }
 
 /// A lasting effect's ticks, as a building's or regiment's count of them.
@@ -614,6 +738,29 @@ impl Regiments {
     /// Regiment `h`'s haste: ticks left, 0 for none.
     pub fn haste_left(&self, h: RegimentHandle) -> u16 {
         self.resolve(h).map_or(0, |i| self.haste_left[i])
+    }
+
+    /// Regiment `h`'s time as a summoned regiment: ticks left before it
+    /// vanishes, 0 for one that isn't summoned.
+    pub fn summoned_left(&self, h: RegimentHandle) -> u16 {
+        self.resolve(h).map_or(0, |i| self.summoned_left[i])
+    }
+
+    /// A tick of every summoned regiment's time goes by. Each whose time
+    /// is up is gone: `leaving` is told its slot, then it is out of any
+    /// fight, with nobody left locked with it, and freed.
+    pub(crate) fn expire_summons(&mut self, mut leaving: impl FnMut(usize)) {
+        for i in 0..self.alive.len() {
+            if !self.alive[i] || self.summoned_left[i] == 0 {
+                continue;
+            }
+            self.summoned_left[i] -= 1;
+            if self.summoned_left[i] == 0 {
+                leaving(i);
+                self.vanish_from_fight(i);
+                self.despawn(self.handle(i));
+            }
+        }
     }
 }
 

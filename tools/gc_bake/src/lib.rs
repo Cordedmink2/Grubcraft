@@ -11,8 +11,8 @@ use gc_assets::{Kind, PackWriter, table_bytes};
 use gc_data::conquest::{BUILDING_SCHEMA, CONQUEST_UNIT_SCHEMA, POWER_SCHEMA};
 use gc_data::{
     ANGLE_STEPS_PER_TURN, BUILDINGS_PATH, CONQUEST_UNITS_PATH, Faction, MANIFEST_PATH, NAME_BYTES,
-    POWERS_PATH, UNIT_SCHEMA, UNITS_PATH, UnitRecord, WEAPON_REACH, WEAPON_SHIELD,
-    WEAPON_SWING_ROOM,
+    POWERS_PATH, UNIT_SCHEMA, UNITS_PATH, UnitRecord, WEAPON_DISCIPLINE, WEAPON_REACH,
+    WEAPON_SHIELD, WEAPON_SWING_ROOM,
 };
 use gc_fixed::Fx;
 use rosters::{FactionDef, Stats};
@@ -209,7 +209,8 @@ fn unit_record(file: &Path, def: &Stats, points: u16) -> Result<UnitRecord, Bake
         },
         weapons: (u8::from(def.reach) * WEAPON_REACH)
             | (u8::from(def.swing_room) * WEAPON_SWING_ROOM)
-            | (u8::from(def.shield) * WEAPON_SHIELD),
+            | (u8::from(def.shield) * WEAPON_SHIELD)
+            | (u8::from(def.discipline) * WEAPON_DISCIPLINE),
         points,
         reserved: 0,
     };
@@ -340,7 +341,7 @@ mod tests {
         let hex: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,
-            "d48b1376625cd7c6e40514d22830123631f9843cd4baca5a57ea7d66866dcc23"
+            "af4e9842f94b999d04b32e297551fbdc20ef64566fddf3605c3cc10291f6442c"
         );
     }
 
@@ -463,6 +464,55 @@ mod tests {
 
         let err = bake_with("brood.ron", brood.replace("Brood Hall", "EmberClans Hall"));
         assert!(err.contains("EmberClans Hall: defined twice"), "{err}");
+
+        // A summon needs a summoned unit of the faction's own.
+        let call = |unit: &str| {
+            brood.replace(
+                r#"meter: (name: "Meter", max: 1, abilities: [])"#,
+                &format!(
+                    r#"meter: (name: "Meter", max: 1, abilities: [(name: "Call", kind: Active,
+                    effect: "x", primitives: [Summon], cost: 5, tier: 1, cooldown: 5.0,
+                    duration: 5.0, built: Some(Summon("{unit}")))])"#
+                ),
+            )
+        };
+        let err = bake_with("brood.ron", call("Brood Hand"));
+        assert!(
+            err.contains("Call: Brood Hand is not a summoned unit"),
+            "{err}"
+        );
+        let err = bake_with("brood.ron", call("Nobody"));
+        assert!(err.contains("Call: Nobody is not a summoned unit"), "{err}");
+    }
+
+    /// A unit's `discipline: true`, or a roster unit's "Formation
+    /// Discipline" passive, bakes as the discipline weapon bit.
+    #[test]
+    fn bakes_formation_discipline() {
+        let drilled = ONE.replace("morale: 50", "morale: 50, discipline: true");
+        let baked = bake(&temp_data(&drilled)).unwrap();
+        let store = aligned(&baked.pack);
+        let bytes = &bytemuck::cast_slice::<u128, u8>(&store)[..baked.pack.len()];
+        let pack = Pack::parse(bytes).unwrap();
+        let u = GameData::from_pack(&pack).unwrap().units[0];
+        assert!(u.discipline());
+        assert_eq!(u.weapons, WEAPON_DISCIPLINE);
+
+        let roster = small_roster("Brood").replace(
+            "abilities: [],\n",
+            r#"abilities: [(name: "Formation Discipline", kind: Passive, effect: "x",
+                primitives: [ModifyStat])],"#,
+        );
+        let dir = temp_data(ONE);
+        std::fs::write(dir.join("rosters").join("brood.ron"), roster).unwrap();
+        let baked = bake(&dir).unwrap();
+        let store = aligned(&baked.pack);
+        let bytes = &bytemuck::cast_slice::<u128, u8>(&store)[..baked.pack.len()];
+        let pack = Pack::parse(bytes).unwrap();
+        let data = GameData::from_pack(&pack).unwrap();
+        let hand = |n: &str| (data.conquest_units.iter()).find(|u| u.stats.name() == n);
+        assert!(hand("Brood Hand").unwrap().stats.discipline());
+        assert!(!hand("Choir Hand").unwrap().stats.discipline());
     }
 
     #[test]

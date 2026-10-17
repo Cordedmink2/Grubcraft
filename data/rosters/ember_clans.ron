@@ -36,8 +36,10 @@
 // simulation does in `built`: Haste(percent faster for the duration),
 // Shift("building": regiments step to one of the caster's of that name),
 // Grant(Grub gained at once), March(percent faster marching for the
-// duration) or Steadfast (the caster's regiments within the radius of the
-// chosen point can't rout for the duration).
+// duration), Steadfast (the caster's regiments within the radius of the
+// chosen point can't rout for the duration) or Summon("unit": a regiment of
+// that summoned unit takes the field beside one of the caster's Shrines for
+// the duration).
 (
     faction: EmberClans,
     meter: (
@@ -86,6 +88,7 @@
                 duration: 60.0,
                 effect: "Summon a Spectral Samurai regiment at a Shrine or hero for 60 s.",
                 primitives: [Summon],
+                built: Some(Summon("Spectral Samurai")),
             ),
         ],
     ),

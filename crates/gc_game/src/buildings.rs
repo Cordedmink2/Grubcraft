@@ -862,8 +862,10 @@ pub enum Aura {
     Haste,
     /// Forced march: amber, a little further out.
     March,
-    /// Steadfast: pale gold, furthest out, so all three show at once.
+    /// Steadfast: pale gold, further out still, so they show at once.
     Steadfast,
+    /// A summoned regiment: spectral violet, furthest out.
+    Spectral,
 }
 
 impl Aura {
@@ -873,6 +875,16 @@ impl Aura {
             Aura::Haste => (HASTE_COLOR, AURA_REACH),
             Aura::March => (MARCH_COLOR, AURA_REACH + AURA_STEP),
             Aura::Steadfast => (STEADFAST_COLOR, AURA_REACH + 2.0 * AURA_STEP),
+            Aura::Spectral => (SPECTRAL_COLOR, AURA_REACH + 3.0 * AURA_STEP),
+        }
+    }
+
+    /// Its ribbon's brightness for a `base` glow: a summoned regiment's
+    /// aura is the faintest, since it shows the whole time.
+    fn glow(self, base: u8) -> u8 {
+        match self {
+            Aura::Spectral => base / 2,
+            _ => base,
         }
     }
 }
@@ -881,6 +893,7 @@ impl Aura {
 /// stands than the one before.
 const MARCH_COLOR: [u8; 3] = [255, 165, 50];
 const STEADFAST_COLOR: [u8; 3] = [255, 225, 130];
+const SPECTRAL_COLOR: [u8; 3] = [170, 140, 255];
 const AURA_STEP: f32 = 0.35;
 
 /// Outline a regiment's block (`width` across its `facing`, `depth` along
@@ -894,6 +907,7 @@ pub fn push_regiment_aura(
     out: &mut Vec<BoxInstance>,
 ) {
     let (colour, reach) = aura.look();
+    let glow = aura.glow(glow);
     let half = (width / 2.0 + reach, depth / 2.0 + reach);
     let corners = block_corners(centre, facing, half);
     for (i, &from) in corners.iter().enumerate() {
@@ -1498,16 +1512,21 @@ mod tests {
             out
         };
         let reach = |out: &[BoxInstance]| out.iter().map(|b| b.pos[0].abs()).fold(0.0f32, f32::max);
-        let (haste, march, steady) = (
+        let (haste, march, steady, ghost) = (
             outline(Aura::Haste),
             outline(Aura::March),
             outline(Aura::Steadfast),
+            outline(Aura::Spectral),
         );
         assert!(reach(&haste) < reach(&march) && reach(&march) < reach(&steady));
+        assert!(reach(&steady) < reach(&ghost));
         let colour = |out: &[BoxInstance]| out[0].color;
-        assert_ne!(colour(&haste), colour(&march));
-        assert_ne!(colour(&march), colour(&steady));
-        assert_ne!(colour(&haste), colour(&steady));
+        let colours = [&haste, &march, &steady, &ghost].map(|o| colour(o));
+        for (i, a) in colours.iter().enumerate() {
+            for b in &colours[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
     }
 
     #[test]

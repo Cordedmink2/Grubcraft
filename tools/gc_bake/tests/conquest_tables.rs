@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use gc_assets::Pack;
 use gc_data::conquest::{
     BUILDING_DROP_OFF_GRUB, BUILDING_HONOR, Class, METER_HONOR, METER_RESONANCE, NONE, POWER_GRANT,
-    POWER_HASTE, POWER_MARCH, POWER_NOT_BUILT, POWER_SHIFT, POWER_STEADFAST,
+    POWER_HASTE, POWER_MARCH, POWER_NOT_BUILT, POWER_SHIFT, POWER_STEADFAST, POWER_SUMMON,
 };
-use gc_data::{Faction, GameData};
+use gc_data::{Faction, GameData, WEAPON_DISCIPLINE};
 
 fn data_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
@@ -191,8 +191,8 @@ fn overclock_and_phase_shift_bake_as_the_choirs_resonance_powers() {
     });
 }
 
-/// Rice Tax, Forced March and Banner of the Ancestors bake as the Clans'
-/// Honor Edicts; Ancestral Return is not built yet.
+/// Rice Tax, Forced March, Banner of the Ancestors and Ancestral Return
+/// bake as the Clans' Honor Edicts.
 #[test]
 fn the_clans_edicts_bake_as_honor_powers() {
     with_real_data(|data| {
@@ -241,13 +241,54 @@ fn the_clans_edicts_bake_as_honor_powers() {
             (35, 2, 1800, 400)
         );
         let ret = edict("Ancestral Return");
-        assert!(!ret.built());
-        assert_eq!(ret.meter_name(), "");
         assert_eq!(banner.meter_name(), "Honor");
+        assert_eq!((ret.effect, ret.meter), (POWER_SUMMON, METER_HONOR));
+        assert_eq!(
+            (ret.cost, ret.tier, ret.cooldown_ticks, ret.duration_ticks),
+            (80, 3, 3600, 1200)
+        );
+        // It summons the Spectral Samurai, by their place in the unit table.
+        let spectral = (data.conquest_units.iter())
+            .position(|u| u.stats.name() == "Spectral Samurai")
+            .expect("no Spectral Samurai");
+        assert_eq!(usize::from(ret.arg), spectral);
+        let u = &data.conquest_units[spectral];
+        assert_eq!(u.stats.faction(), Faction::EmberClans);
+        assert_eq!((u.tier, u.supply, u.trained_at), (0, 0, NONE), "summoned");
+        assert_eq!(u.stats.morale, 0, "never routs");
         let shrine = (data.buildings.iter())
             .find(|b| b.name() == "Ancestor Shrine")
             .expect("no Ancestor Shrine");
         assert_ne!(shrine.flags & BUILDING_HONOR, 0, "a Shrine earns Honor");
+    });
+}
+
+/// A unit with the "Formation Discipline" passive bakes with the discipline
+/// weapon bit, and no other Conquest unit has it. The Field Battle regiments
+/// that have it in `units.ron` agree.
+#[test]
+fn formation_discipline_bakes_as_a_unit_trait() {
+    with_real_data(|data| {
+        let with: Vec<&str> = (data.conquest_units.iter())
+            .filter(|u| u.stats.discipline())
+            .map(|u| u.stats.name())
+            .collect();
+        assert_eq!(with, ["Yari Ashigaru", "Yumi Ashigaru", "Katana Samurai"]);
+        for u in data.conquest_units {
+            assert_eq!(
+                u.stats.weapons & WEAPON_DISCIPLINE != 0,
+                u.stats.discipline()
+            );
+            if u.stats.discipline() {
+                assert_eq!(u.stats.faction(), Faction::EmberClans, "{}", u.stats.name());
+            }
+        }
+        // Field Battles read the same trait from `units.ron`.
+        let field: Vec<&str> = (data.units.iter())
+            .filter(|u| u.discipline())
+            .map(gc_data::UnitRecord::name)
+            .collect();
+        assert_eq!(field, ["Yari Ashigaru", "Yumi Ashigaru"]);
     });
 }
 

@@ -221,6 +221,7 @@ fn read_stats(r: &mut Reader) -> Option<UnitStats> {
         reach: false,
         swing_room: false,
         shield: false,
+        discipline: false,
     }
     .with_weapons(r.u8()?)
 }

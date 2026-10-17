@@ -128,18 +128,18 @@ fn fingerprint(replay: &Replay) -> u64 {
 /// that other builds and old replays know: this table then fails, and is
 /// updated from the test's output.
 const PINNED: (u32, &[(&str, u64)]) = (
-    19,
+    20,
     &[
-        ("conquest-ribcage-1v1", 0x8beaa90f44bde993),
-        ("field-1v1", 0xea1ba96c7ba8fa1a),
-        ("field-2v2", 0x20b78c3f358f20f6),
-        ("field-8000pt-2v2", 0xe531baa691f2aa96),
-        ("field-brace-1v1", 0x012e04fff97fd607),
-        ("field-champions-1v1", 0x360f24b59d14ec73),
-        ("field-deploy-1v1", 0x3a7b06317f5fedce),
-        ("field-handover-2v2", 0xc93193a40558b3a7),
-        ("field-woods-1v1", 0xfdba794eb848e018),
-        ("sandbox-tuning", 0xe5570dadc1d9cbfe),
+        ("conquest-ribcage-1v1", 0xed327d9e13b369b8),
+        ("field-1v1", 0xdc899e16b2a1820b),
+        ("field-2v2", 0x83a2aab65261e05a),
+        ("field-8000pt-2v2", 0x2fdbfe270f91c84d),
+        ("field-brace-1v1", 0xfafd5cf8764c88df),
+        ("field-champions-1v1", 0xe55b4a6dc7628461),
+        ("field-deploy-1v1", 0xf6bbcbf720cfa7fd),
+        ("field-handover-2v2", 0x11c59394c92a19d2),
+        ("field-woods-1v1", 0xd5f1914f8e0de682),
+        ("sandbox-tuning", 0x0a56efcc8c7a00d4),
     ],
 );
 

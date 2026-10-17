@@ -212,6 +212,9 @@ pub enum Built {
     /// The caster's regiments within the ability's radius of the chosen
     /// point can't rout for the duration.
     Steadfast,
+    /// A regiment of the named summoned unit takes the field beside one of
+    /// the caster's Shrines for the duration.
+    Summon(String),
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -322,6 +325,10 @@ pub struct Stats {
     pub swing_room: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub shield: bool,
+    /// Clans: more melee defence standing still in close order. A roster
+    /// unit gets it from its "Formation Discipline" ability instead.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub discipline: bool,
     /// Cost in a Field Battle army's points budget. `data/units.ron` sets it
     /// (above 0); the rosters leave it out, which reads as 0.
     #[serde(default, skip_serializing_if = "is_zero")]

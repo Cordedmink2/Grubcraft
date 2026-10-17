@@ -101,6 +101,7 @@ pub fn power_of(p: &gc_data::PowerRecord) -> gc_sim::PowerStats {
             cq::POWER_GRANT => PowerEffect::Grant { grub: p.arg },
             cq::POWER_MARCH => PowerEffect::March { percent: small },
             cq::POWER_STEADFAST => PowerEffect::Steadfast { tiles: p.arg },
+            cq::POWER_SUMMON => PowerEffect::Summon { unit: p.arg },
             _ => PowerEffect::NotBuilt,
         },
     }
@@ -1341,7 +1342,7 @@ mod tests {
             assert_eq!(meter_of(n as u8), meter, "{name}");
         }
         assert_eq!(Meter::from_u8(cq::METER_NAMES.len() as u8), None);
-        for effect in 0..=cq::POWER_STEADFAST {
+        for effect in 0..=cq::POWER_SUMMON {
             let p = gc_data::PowerRecord {
                 effect,
                 arg: 1,

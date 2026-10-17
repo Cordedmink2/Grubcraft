@@ -45,6 +45,7 @@ pub fn stats_of(u: &UnitRecord) -> UnitStats {
         reach: u.reach(),
         swing_room: u.swing_room(),
         shield: u.shield(),
+        discipline: u.discipline(),
     }
 }
 
@@ -86,4 +87,22 @@ pub(crate) fn test_data() -> &'static GameData<'static> {
         let pack = gc_assets::Pack::parse(&bytes[..pack.len()]).expect("baked pack");
         GameData::from_pack(&pack).expect("baked data")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Field Battles get the Clans' formation discipline from `units.ron`:
+    /// the two Ashigaru have it, nobody else does.
+    #[test]
+    fn field_battle_units_carry_formation_discipline() {
+        let data = test_data();
+        let tables = Tables::new(data);
+        let with: Vec<&str> = (data.units.iter().zip(&tables.units))
+            .filter(|(_, s)| s.discipline)
+            .map(|(u, _)| u.name())
+            .collect();
+        assert_eq!(with, ["Yari Ashigaru", "Yumi Ashigaru"]);
+    }
 }

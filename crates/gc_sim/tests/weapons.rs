@@ -421,3 +421,154 @@ fn formation_is_part_of_the_state() {
     assert!(form(&mut b, 0, rb, Formation::Line));
     assert_ne!(a.state_hash(), b.state_hash());
 }
+
+/// The Clans' formation discipline: 15% of the regiment's own melee
+/// defence more, but only standing still in Tight order or a shield wall
+/// (on the shield wall's front: its flanks are guarded by nothing).
+#[test]
+fn formation_discipline_adds_its_defence_only_still_and_in_close_order() {
+    let stats = |discipline| UnitStats {
+        discipline,
+        shield: true,
+        ..DRILL_UNITS[0]
+    };
+    let (plain, drilled) = (stats(false), stats(true));
+    let defence = |u: &UnitStats, f, front, still| u.melee_defence_in(f, front, still);
+    // Unit 0 has 45 defence: 15% is 6 (rounded down).
+    for (f, front, still, plain_defence) in [
+        (Formation::Tight, true, true, 55),
+        (Formation::Tight, false, true, 55),
+        (Formation::ShieldWall, true, true, 55),
+    ] {
+        assert_eq!(defence(&plain, f, front, still), plain_defence);
+        assert_eq!(
+            defence(&drilled, f, front, still),
+            plain_defence + 6,
+            "{f:?}"
+        );
+        // Marching, it has none of it.
+        assert_eq!(
+            defence(&drilled, f, front, false),
+            plain_defence,
+            "{f:?} moving"
+        );
+    }
+    // Neither bonus guards a shield wall's flanks.
+    assert_eq!(defence(&drilled, Formation::ShieldWall, false, true), 45);
+    // No close order, no discipline.
+    for f in [Formation::Line, Formation::Loose] {
+        for front in [true, false] {
+            assert_eq!(
+                defence(&drilled, f, front, true),
+                defence(&plain, f, front, true),
+                "{f:?}"
+            );
+        }
+    }
+    // A feeble defence still gains a point.
+    let weak = UnitStats {
+        melee_defence: 5,
+        discipline: true,
+        ..DRILL_UNITS[0]
+    };
+    assert_eq!(
+        weak.melee_defence_in(Formation::Tight, true, true),
+        5 + 10 + 1
+    );
+    assert_eq!(weak.melee_defence_in(Formation::Tight, true, false), 5 + 10);
+}
+
+/// In a fight, a disciplined regiment standing still in Tight order takes
+/// fewer casualties than the same regiment without the trait; in a Line
+/// or Loose order (no bonus) it takes exactly as many.
+#[test]
+fn formation_discipline_saves_soldiers_standing_in_tight_order_and_only_there() {
+    let taken = |discipline, formation, from| {
+        let drilled = move |u: &mut UnitStats| {
+            u.discipline = discipline;
+            u.shield = true;
+            u.turn_rate = 0;
+        };
+        melee(drilled, formation, Formation::Line, from, FIGHT).2
+    };
+    let (plain, drilled) = (
+        taken(false, Formation::Tight, AHEAD),
+        taken(true, Formation::Tight, AHEAD),
+    );
+    // 61 against 55 defence: the foe's blows land 19% of the time, not 25%.
+    let ratio = drilled as f32 / plain as f32;
+    assert!(
+        (0.55..0.95).contains(&ratio),
+        "tight: plain {plain}, drilled {drilled}"
+    );
+    let (plain, drilled) = (
+        taken(false, Formation::ShieldWall, AHEAD),
+        taken(true, Formation::ShieldWall, AHEAD),
+    );
+    assert!(drilled < plain, "wall: plain {plain}, drilled {drilled}");
+    for f in [Formation::Line, Formation::Loose] {
+        assert_eq!(
+            taken(true, f, AHEAD),
+            taken(false, f, AHEAD),
+            "{f:?} gets nothing"
+        );
+    }
+    // Hit from the flank, a shield wall has no discipline either.
+    assert_eq!(
+        taken(true, Formation::ShieldWall, RIGHT),
+        taken(false, Formation::ShieldWall, RIGHT)
+    );
+}
+
+/// Told to march, even locked in melee, a disciplined regiment loses its
+/// bonus: it takes exactly the casualties of the same regiment without it.
+#[test]
+fn formation_discipline_is_lost_while_marching() {
+    let taken = |discipline, ordered| {
+        let units = units(|u| {
+            u.discipline = discipline;
+            u.turn_rate = 0;
+        });
+        let mut w = world(&units);
+        let me = spawn(&mut w, 0, TESTED, 100, 100, NORTH);
+        let foe = spawn(&mut w, 1, DUMMY, 100, 90, SOUTH);
+        assert!(form(&mut w, 0, me, Formation::Tight));
+        assert!(march(&mut w, 1, foe, 100, 100, Fx::ONE));
+        until_engaged(&mut w, me);
+        if ordered {
+            // Straight on at the foe, at a crawl: a march that goes nowhere.
+            assert!(march(&mut w, 0, me, 100, 90, Fx::from_ratio(1, 100)));
+        }
+        let before = hp(&w, me);
+        run(&mut w, FIGHT);
+        before - hp(&w, me)
+    };
+    assert!(taken(true, false) < taken(false, false), "still: it helps");
+    assert_eq!(
+        taken(true, true),
+        taken(false, true),
+        "marching: it doesn't"
+    );
+}
+
+/// What the screen and the AI read (`RegimentView::still`) is the sim's own
+/// rule: a regiment locked in a fight is still, though it keeps turning to
+/// face its foe; one told to march is not.
+#[test]
+fn a_regiment_in_a_fight_is_still_in_its_view_and_a_marching_one_is_not() {
+    let units = units(|u| u.discipline = true);
+    let mut w = world(&units);
+    let me = spawn(&mut w, 0, TESTED, 100, 100, NORTH);
+    let foe = spawn(&mut w, 1, DUMMY, 100, 90, SOUTH);
+    assert!(form(&mut w, 0, me, Formation::Tight));
+    assert!(march(&mut w, 1, foe, 100, 100, Fx::ONE));
+    let view = |w: &World| w.regiments.get(me).unwrap();
+    assert!(view(&w).still, "standing before the fight");
+    until_engaged(&mut w, me);
+    run(&mut w, 10);
+    let fighting = view(&w);
+    assert!(fighting.engaged && fighting.still, "{fighting:?}");
+    // Told to march, it isn't, even locked in melee.
+    assert!(march(&mut w, 0, me, 100, 90, Fx::from_ratio(1, 100)));
+    assert!(!view(&w).still);
+}

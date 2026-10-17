@@ -173,8 +173,9 @@ fn check(
     let cap = i32::from(fresh(stats)) * (full + i32::from(regs.models[i])) / (2 * full)
         + i32::from(regs.party_morale[regs.owner[i] as usize]);
     let morale = (i32::from(regs.morale[i]) + tenths).clamp(0, cap.max(1)) as i16;
-    // Steadfast (see [`crate::powers`]), it holds at the edge of breaking.
-    let morale = if regs.steadfast_left[i] > 0 {
+    // Steadfast, or summoned (see [`crate::powers`]), it holds at the edge
+    // of breaking.
+    let morale = if regs.cant_rout(i) {
         morale.max(1)
     } else {
         morale

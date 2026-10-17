@@ -249,7 +249,9 @@ fn live_units_are_in_the_rosters() {
 }
 
 /// A regiment in both `data/units.ron` and a roster has the same stats in
-/// each, field for field. Points are left out: the rosters don't set them.
+/// each, field for field. Points are left out: the rosters don't set them,
+/// and the discipline trait a roster unit has as an ability is `discipline:
+/// true` in `units.ron`.
 #[test]
 fn live_unit_stats_match_the_rosters() {
     /// Each field as RON text, split from the struct's text: `ron::Value`
@@ -282,7 +284,12 @@ fn live_unit_stats_match_the_rosters() {
     let mut rosters = BTreeMap::new();
     for &(file, _) in ROSTERS {
         let r = load(file);
-        let stats = r.units.into_iter().map(|u| u.stats);
+        // A roster unit has the discipline trait from its ability.
+        let stats = r.units.into_iter().map(|u| Stats {
+            discipline: u.stats.discipline
+                || u.abilities.iter().any(|a| a.name == "Formation Discipline"),
+            ..u.stats
+        });
         let heroes = r.heroes.into_iter().map(|h| h.stats);
         rosters.extend(stats.chain(heroes).map(|s| (s.name.clone(), s)));
     }

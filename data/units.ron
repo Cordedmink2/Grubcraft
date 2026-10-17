@@ -23,7 +23,9 @@
 // fights too, at half weight, and they strike at once when lines meet).
 // swing_room: true for big swinging weapons (cramped in Tight order, no
 // defence lost in Loose). shield: true lets a regiment form a shield wall.
-// All of them are off unless written.
+// discipline: true gives the Clans' Formation Discipline (+15% of its melee
+// defence standing still in Tight order or a shield wall; a roster unit has it
+// from its "Formation Discipline" ability). All of them are off unless written.
 //
 // points: what the regiment costs from a Field Battle army's points budget
 // (Skirmish 2,000, Battle 4,000, Grand Battle 8,000; docs/06-game-modes.md).
@@ -49,6 +51,7 @@
         charge_bonus: 20,
         morale: 60,
         reach: true,
+        discipline: true,
         points: 400,
     ),
     (
@@ -121,6 +124,7 @@
         charge_bonus: 5,
         morale: 50,
         ranged: Some((range: 30.0, damage: 4, reload: 4.0, accuracy: 32)),
+        discipline: true,
         points: 400,
     ),
 ]

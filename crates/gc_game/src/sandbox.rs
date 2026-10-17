@@ -104,6 +104,11 @@ pub const TUNABLES: &[Tunable] = &[
         nudge: |s, d| s.shield = d > 0,
     },
     Tunable {
+        label: "formation discipline",
+        show: |s| yes_no(s.discipline),
+        nudge: |s, d| s.discipline = d > 0,
+    },
+    Tunable {
         label: "hit points",
         show: |s| format!("{} (new regiments)", s.hp_per_model),
         nudge: |s, d| s.hp_per_model = count(s.hp_per_model, d).max(1),

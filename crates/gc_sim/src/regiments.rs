@@ -277,6 +277,9 @@ regiment_fields! {
     march: u8 = 0,
     /// Ticks left that it can't rout (see [`crate::powers`]).
     steadfast_left: u16 = 0,
+    /// Ticks left of a summoned regiment's life (see [`crate::powers`]);
+    /// 0 for one that isn't summoned. It never routs while it lasts.
+    summoned_left: u16 = 0,
 }
 
 impl Regiments {
@@ -615,11 +618,29 @@ impl Regiments {
     pub(crate) fn berth(&self, units: &[UnitStats], i: usize) -> u8 {
         let stats = &units[self.unit[i] as usize];
         let files = self.frontage[i].max(self.files[i]);
-        let (w, d) = stats.block_size_in(self.formation[i], files, self.models[i]);
+        Self::berth_of(stats, self.formation[i], files, self.models[i])
+    }
+
+    /// The berth of a block of `models` soldiers of `stats` in `files`
+    /// files in `formation` (see [`Regiments::berth`]).
+    pub(crate) fn berth_of(stats: &UnitStats, formation: Formation, files: u16, models: u16) -> u8 {
+        let (w, d) = stats.block_size_in(formation, files, models);
         // Half the side in cells is the side in tiles (2 cells a tile),
         // rounded up, plus one cell.
         let cells = w.max(d).ceil_int() + 1;
         cells.clamp(i32::from(nav::CLEARANCE), i32::from(nav::MAX_BERTH)) as u8
+    }
+
+    /// Whether slot `i` is standing, not marching (it may be fighting).
+    /// What the formation discipline bonus and its readouts go by.
+    pub(crate) fn still(&self, i: usize) -> bool {
+        self.target[i].is_none()
+    }
+
+    /// Whether slot `i` can't rout: steadfast, or a summoned regiment (see
+    /// [`crate::powers`]).
+    pub(crate) fn cant_rout(&self, i: usize) -> bool {
+        self.steadfast_left[i] > 0 || self.summoned_left[i] > 0
     }
 
     /// Slot `i` narrows into a deeper column where the ground beside it
@@ -824,6 +845,7 @@ impl Regiments {
             formation: self.formation[i],
             models: self.models[i],
             moving: self.target[i].is_some() || self.target_facing[i].is_some(),
+            still: self.still(i),
             engaged: self.engaged[i].is_some(),
             charge: self.charge[i],
             morale: self.morale_state[i],
@@ -1045,6 +1067,9 @@ pub struct RegimentView {
     pub models: u16,
     /// Walking or turning to an ordered facing.
     pub moving: bool,
+    /// Not marching: standing, turning or fighting. Formation discipline
+    /// goes by this, not `moving` (see [`Regiments::still`]).
+    pub still: bool,
     /// Fighting in melee.
     pub engaged: bool,
     /// Ticks of charge bonus left: it hit home at speed within the last

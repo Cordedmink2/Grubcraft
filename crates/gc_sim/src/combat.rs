@@ -1370,7 +1370,10 @@ impl Combat {
                 Side::Rear => 100 * u64::from(files.min(models).div_ceil(2)),
             };
             let side = them.side_facing(me.centre);
-            let defence = defender.melee_defence_in(regs.formation[j], side == Side::Front);
+            // Not marching: a disciplined regiment holds its ground (see
+            // `UnitStats::melee_defence_in`).
+            let defence =
+                defender.melee_defence_in(regs.formation[j], side == Side::Front, regs.still(j));
             let hit = hit_percent(i32::from(attacker.melee_attack), defence) as u128;
             let charge = 100
                 + u128::from(regs.charge_bonus[i]) * u128::from(regs.charge[i])

@@ -51,6 +51,7 @@ pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource};
 pub use fork::Standing;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
+use powers::Cast;
 pub use powers::{Meter, PowerEffect, PowerStats, PowerTarget};
 pub use production::Production;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
@@ -98,7 +99,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 19;
+pub const SIM_VERSION: u32 = 20;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -200,6 +201,9 @@ pub enum Formation {
 
 /// Melee defence a regiment gains in Tight order or a shield wall.
 pub const TIGHT_DEFENCE: i32 = 10;
+/// Percent of its own melee defence a disciplined regiment adds standing
+/// still in Tight order or a shield wall (rounded down, at least 1).
+pub const DISCIPLINE_PERCENT: i32 = 15;
 /// Melee defence a regiment loses in Loose order (unless its weapons
 /// need room to swing).
 pub const LOOSE_DEFENCE: i32 = 10;
@@ -280,6 +284,7 @@ impl Formation {
 pub const WEAPON_REACH: u8 = 1;
 pub const WEAPON_SWING_ROOM: u8 = 2;
 pub const WEAPON_SHIELD: u8 = 4;
+pub const WEAPON_DISCIPLINE: u8 = 8;
 
 /// What the simulation needs from a regiment type's definition. The game
 /// builds these from the baked data tables (`gc_data`); tests build them by
@@ -327,6 +332,10 @@ pub struct UnitStats {
     pub swing_room: bool,
     /// Shields: may form a shield wall.
     pub shield: bool,
+    /// The Clans' formation discipline: [`DISCIPLINE_PERCENT`] more melee
+    /// defence standing still in close order (see
+    /// [`UnitStats::melee_defence_in`]).
+    pub discipline: bool,
 }
 
 impl UnitStats {
@@ -384,15 +393,18 @@ impl UnitStats {
         bit(self.reach, WEAPON_REACH)
             | bit(self.swing_room, WEAPON_SWING_ROOM)
             | bit(self.shield, WEAPON_SHIELD)
+            | bit(self.discipline, WEAPON_DISCIPLINE)
     }
 
     /// The same stats with the weapon flags `bits` (as [`Self::weapons`]
     /// gives them); `None` if a bit is unknown.
     pub fn with_weapons(self, bits: u8) -> Option<UnitStats> {
-        (bits & !(WEAPON_REACH | WEAPON_SWING_ROOM | WEAPON_SHIELD) == 0).then_some(UnitStats {
+        let known = WEAPON_REACH | WEAPON_SWING_ROOM | WEAPON_SHIELD | WEAPON_DISCIPLINE;
+        (bits & !known == 0).then_some(UnitStats {
             reach: bits & WEAPON_REACH != 0,
             swing_room: bits & WEAPON_SWING_ROOM != 0,
             shield: bits & WEAPON_SHIELD != 0,
+            discipline: bits & WEAPON_DISCIPLINE != 0,
             ..self
         })
     }
@@ -441,17 +453,29 @@ impl UnitStats {
         }
     }
 
-    /// Melee defence in `formation` against a blow on its `front` or not:
-    /// its own, plus what close order gives or gaps cost. A shield wall
-    /// guards its front only.
-    pub fn melee_defence_in(&self, formation: Formation, front: bool) -> i32 {
+    /// Melee defence in `formation` against a blow on its `front` or not,
+    /// `still` meaning it isn't marching: its own, plus what close order
+    /// gives or gaps cost. A shield wall guards its front only. A
+    /// disciplined regiment standing still in close order has
+    /// [`DISCIPLINE_PERCENT`] more of its own, at least 1 (a shield wall's
+    /// flanks get neither bonus).
+    pub fn melee_defence_in(&self, formation: Formation, front: bool, still: bool) -> i32 {
         i32::from(self.melee_defence)
             + match formation {
                 Formation::ShieldWall if !front => 0,
-                f if f.close() => TIGHT_DEFENCE,
+                f if f.close() => TIGHT_DEFENCE + self.discipline_bonus(still),
                 Formation::Loose if !self.swing_room => -LOOSE_DEFENCE,
                 _ => 0,
             }
+    }
+
+    /// What formation discipline adds to melee defence (in close order).
+    fn discipline_bonus(&self, still: bool) -> i32 {
+        if self.discipline && still {
+            (i32::from(self.melee_defence) * DISCIPLINE_PERCENT / 100).max(1)
+        } else {
+            0
+        }
     }
 }
 
@@ -1021,6 +1045,14 @@ impl World {
     /// world, bit for bit, on every platform.
     pub fn tick(&mut self, commands: &[PlayerCommand]) -> TickStats {
         let mut stats = TickStats::default();
+        // Summoned regiments whose time is up are gone before anything else
+        // happens (not told as losses, like a removed regiment).
+        let conquest = &mut self.conquest;
+        self.regiments.expire_summons(|i| {
+            if let Some(c) = conquest {
+                c.stop_work(i);
+            }
+        });
         for pc in commands {
             if self.apply(pc) {
                 stats.commands_applied += 1;
@@ -1413,22 +1445,49 @@ impl World {
         let Some(c) = &mut self.conquest else {
             return false;
         };
-        let used = c.use_power(
+        let cast = c.use_power(
             &mut self.regiments,
             &self.nav,
+            &self.units,
             player,
             power,
             target,
             self.tick,
         );
-        if let (true, PowerTarget::Shift { regiment, .. }) = (used, target)
+        if let (Cast::Done, PowerTarget::Shift { regiment, .. }) = (cast, target)
             && let Some(r) = self.regiments.resolve(regiment)
         {
             c.stop_work(r);
             self.vision
                 .start(&self.regiments, &self.units, &self.terrain, r);
         }
-        used
+        // A summoned regiment looks about it from where it stands.
+        if let Cast::Raised(h) = cast {
+            self.vision.start(
+                &self.regiments,
+                &self.units,
+                &self.terrain,
+                h.index as usize,
+            );
+        }
+        cast != Cast::Refused
+    }
+
+    /// Whether faction power `power`, a summons, has room to put its
+    /// regiment down round `player`'s Shrine `shrine`: the room check a
+    /// use of it is refused by (the Honor and cooldown aside, see
+    /// [`World::can_use_power`]). False for any other power.
+    pub fn can_summon_at(&self, player: PlayerId, power: u8, shrine: StructureHandle) -> bool {
+        self.conquest.as_ref().is_some_and(|c| {
+            c.can_summon_at(
+                &self.regiments,
+                &self.nav,
+                &self.units,
+                player,
+                power,
+                shrine,
+            )
+        })
     }
 
     /// The faction powers of this Conquest match (none outside one).
@@ -1471,6 +1530,12 @@ impl World {
     /// Ticks left that regiment `h` can't rout (see [`powers`]).
     pub fn regiment_steadfast(&self, h: RegimentHandle) -> u16 {
         self.regiments.steadfast_left(h)
+    }
+
+    /// Ticks left of regiment `h`'s life as a summoned regiment (see
+    /// [`powers`]): 0 for one that isn't summoned.
+    pub fn regiment_summoned(&self, h: RegimentHandle) -> u16 {
+        self.regiments.summoned_left(h)
     }
 
     /// `player`'s faction meter in this Conquest match.

@@ -313,6 +313,7 @@ const _: () = assert!(
     gc_data::WEAPON_REACH == gc_sim::WEAPON_REACH
         && gc_data::WEAPON_SWING_ROOM == gc_sim::WEAPON_SWING_ROOM
         && gc_data::WEAPON_SHIELD == gc_sim::WEAPON_SHIELD
+        && gc_data::WEAPON_DISCIPLINE == gc_sim::WEAPON_DISCIPLINE
         && gc_data::MAX_MASS == gc_sim::Mass::Heavy as u8
 );
 
@@ -859,8 +860,8 @@ fn formation_hint(f: Formation) -> String {
 fn fighter_of(stats: &UnitStats, r: &gc_sim::RegimentView) -> Fighter {
     Fighter {
         attack: i32::from(stats.melee_attack),
-        defence: stats.melee_defence_in(r.formation, true),
-        flank_defence: stats.melee_defence_in(r.formation, false),
+        defence: stats.melee_defence_in(r.formation, true, r.still),
+        flank_defence: stats.melee_defence_in(r.formation, false, r.still),
         sharpness: (gc_sim::combat::heart_percent(r.morale)
             * stats.weapon_room_percent(r.formation)
             / 100) as u32,
@@ -2661,13 +2662,18 @@ impl Running {
                     r.handle.index,
                 );
             }
-            // A hasted, marching or steadfast regiment glows round its block.
+            // A hasted, marching, steadfast or summoned regiment glows round
+            // its block, the summoned ones faintly.
             let auras = [
                 (buildings::Aura::Haste, self.world.regiment_haste(r.handle)),
                 (buildings::Aura::March, self.world.regiment_march(r.handle)),
                 (
                     buildings::Aura::Steadfast,
                     self.world.regiment_steadfast(r.handle),
+                ),
+                (
+                    buildings::Aura::Spectral,
+                    self.world.regiment_summoned(r.handle),
                 ),
             ];
             for (aura, left) in auras {

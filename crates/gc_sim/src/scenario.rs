@@ -39,6 +39,7 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         reach: false,
         swing_room: false,
         shield: false,
+        discipline: false,
     },
     UnitStats {
         speed: Fx::from_int(4),
@@ -61,6 +62,7 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         reach: false,
         swing_room: false,
         shield: false,
+        discipline: false,
     },
     UnitStats {
         speed: Fx::from_ratio(13, 4),
@@ -83,6 +85,7 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         reach: false,
         swing_room: false,
         shield: false,
+        discipline: false,
     },
     UnitStats {
         speed: Fx::from_ratio(5, 2),
@@ -105,6 +108,7 @@ pub const DRILL_UNITS: [UnitStats; 4] = [
         reach: false,
         swing_room: false,
         shield: false,
+        discipline: false,
     },
 ];
 

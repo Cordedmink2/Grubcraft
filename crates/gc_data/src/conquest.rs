@@ -21,9 +21,9 @@ pub const POWERS_PATH: &str = "data/powers";
 pub const BUILDING_SCHEMA: u32 = 6;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
-pub const CONQUEST_UNIT_SCHEMA: u32 = 3;
+pub const CONQUEST_UNIT_SCHEMA: u32 = 4;
 /// Bump whenever [`PowerRecord`]'s layout or meaning changes.
-pub const POWER_SCHEMA: u32 = 2;
+pub const POWER_SCHEMA: u32 = 3;
 /// An index field that names nothing.
 pub const NONE: u16 = u16::MAX;
 /// Largest footprint side, in tiles (docs/21: buildings are 2×2 to 5×5,
@@ -302,9 +302,12 @@ impl ConquestUnitRecord {
 }
 
 /// Whether a power of `effect` lasts a while (its duration): a haste, a
-/// march or a steadfast power.
+/// march, a steadfast power or a summons.
 pub fn power_lasts(effect: u8) -> bool {
-    matches!(effect, POWER_HASTE | POWER_MARCH | POWER_STEADFAST)
+    matches!(
+        effect,
+        POWER_HASTE | POWER_MARCH | POWER_STEADFAST | POWER_SUMMON
+    )
 }
 
 /// [`PowerRecord::meter`]: the faction meter a power is paid from.
@@ -330,6 +333,10 @@ pub const POWER_MARCH: u8 = 4;
 /// The caster's regiments within `arg` tiles of the chosen point can't
 /// rout for the duration.
 pub const POWER_STEADFAST: u8 = 5;
+/// A regiment of unit type `arg` (an index into the Conquest unit table)
+/// takes the field beside one of the caster's finished Shrines for the
+/// duration.
+pub const POWER_SUMMON: u8 = 6;
 /// The most percent faster a haste or a march makes anything.
 pub const MAX_POWER_PERCENT: u16 = 100;
 /// The widest a steadfast power reaches, in tiles.
@@ -389,8 +396,14 @@ impl PowerRecord {
 }
 
 /// The rules every power record satisfies on its own; `buildings` is the
-/// number of buildings, for [`PowerRecord::to_building`].
-pub fn validate_power(p: &PowerRecord, buildings: usize) -> Result<(), &'static str> {
+/// number of buildings and `units` the Conquest unit table, for the records
+/// that name one (a summons names a unit of the power's own faction that
+/// nothing trains).
+pub fn validate_power(
+    p: &PowerRecord,
+    buildings: usize,
+    units: &[ConquestUnitRecord],
+) -> Result<(), &'static str> {
     validate_name(&p.name)?;
     if Faction::from_u8(p.faction).is_none() {
         return Err("unknown faction");
@@ -398,7 +411,7 @@ pub fn validate_power(p: &PowerRecord, buildings: usize) -> Result<(), &'static 
     if p.tier == 0 || p.tier > MAX_TIER {
         return Err("tier is 1 to 3");
     }
-    if p.meter > METER_HONOR || p.effect > POWER_STEADFAST || p.pad != 0 {
+    if p.meter > METER_HONOR || p.effect > POWER_SUMMON || p.pad != 0 {
         return Err("unknown meter or effect");
     }
     if p.built() && p.meter == METER_NOT_BUILT {
@@ -408,13 +421,18 @@ pub fn validate_power(p: &PowerRecord, buildings: usize) -> Result<(), &'static 
         return Err("cooldown and duration are at most 10 minutes");
     }
     if power_lasts(p.effect) != (p.duration_ticks > 0) {
-        return Err("a haste, a march or a steadfast power lasts a while, and nothing else does");
+        return Err(
+            "a haste, a march, a steadfast power or a summons lasts a while, and nothing else does",
+        );
     }
     let arg_ok = match p.effect {
         POWER_NOT_BUILT => p.arg == 0,
         POWER_HASTE | POWER_MARCH => (1..=MAX_POWER_PERCENT).contains(&p.arg),
         POWER_SHIFT => usize::from(p.arg) < buildings,
         POWER_GRANT => p.arg > 0,
+        POWER_SUMMON => units.get(usize::from(p.arg)).is_some_and(|u| {
+            u.trained_at == NONE && u.evolves_from == NONE && u.stats.faction == p.faction
+        }),
         _ => (1..=MAX_POWER_TILES).contains(&p.arg),
     };
     if !arg_ok {
@@ -544,5 +562,56 @@ mod tests {
         assert_eq!(align_of::<ConquestUnitRecord>(), 4);
         assert_eq!(size_of::<PowerRecord>(), 48);
         assert_eq!(align_of::<PowerRecord>(), 4);
+    }
+
+    /// A summons of `Faction::EmberClans` naming unit 1 of `units`.
+    fn summons() -> PowerRecord {
+        let mut p = PowerRecord::zeroed();
+        p.name[0] = b'R';
+        p.faction = Faction::EmberClans as u8;
+        p.tier = 3;
+        p.cost = 80;
+        p.meter = METER_HONOR;
+        p.effect = POWER_SUMMON;
+        p.duration_ticks = 1200;
+        p.arg = 1;
+        p
+    }
+
+    /// Two units of `faction`: unit 0 is trained at building 0, unit 1
+    /// nowhere, and evolves from nothing.
+    fn units(faction: Faction) -> [ConquestUnitRecord; 2] {
+        let mut u = ConquestUnitRecord::zeroed();
+        u.stats.faction = faction as u8;
+        u.trained_at = NONE;
+        u.evolves_from = NONE;
+        [ConquestUnitRecord { trained_at: 0, ..u }, u]
+    }
+
+    #[test]
+    fn a_summons_names_a_unit_nothing_trains() {
+        let p = summons();
+        assert_eq!(validate_power(&p, 2, &units(Faction::EmberClans)), Ok(()));
+        // Out of the table.
+        let p_far = PowerRecord { arg: 2, ..p };
+        assert!(validate_power(&p_far, 2, &units(Faction::EmberClans)).is_err());
+        // A trained unit.
+        let p_trained = PowerRecord { arg: 0, ..p };
+        assert!(validate_power(&p_trained, 2, &units(Faction::EmberClans)).is_err());
+        // An evolved unit.
+        let mut evolved = units(Faction::EmberClans);
+        evolved[1].evolves_from = 0;
+        assert!(validate_power(&p, 2, &evolved).is_err());
+    }
+
+    #[test]
+    fn a_summons_names_a_unit_of_its_own_faction() {
+        let p = summons();
+        assert!(validate_power(&p, 2, &units(Faction::Brood)).is_err());
+        let theirs = PowerRecord {
+            faction: Faction::Brood as u8,
+            ..p
+        };
+        assert_eq!(validate_power(&theirs, 2, &units(Faction::Brood)), Ok(()));
     }
 }

@@ -153,6 +153,10 @@ impl Writer {
                 self.u8(5);
                 self.var(u64::from(tiles));
             }
+            PowerEffect::Summon { unit } => {
+                self.u8(6);
+                self.var(u64::from(unit));
+            }
         }
     }
 
@@ -454,6 +458,7 @@ impl<'a> Reader<'a> {
             reach: false,
             swing_room: false,
             shield: false,
+            discipline: false,
         }
         .with_weapons(self.u8()?)
     }
@@ -511,7 +516,7 @@ impl<'a> Reader<'a> {
     }
 
     /// A faction power as file format `format` (21 on) wrote it: before 22,
-    /// every power was paid from Resonance.
+    /// every power was paid from Resonance, and summons came with 23.
     pub fn power(&mut self, format: u16) -> Option<PowerStats> {
         Some(PowerStats {
             tier: self.u8()?,
@@ -537,6 +542,9 @@ impl<'a> Reader<'a> {
                 },
                 5 => PowerEffect::Steadfast {
                     tiles: self.var_as()?,
+                },
+                6 if format >= 23 => PowerEffect::Summon {
+                    unit: self.var_as()?,
                 },
                 _ => return None,
             },
