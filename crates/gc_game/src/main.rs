@@ -3471,6 +3471,7 @@ impl Running {
                 &self.heightmap,
                 &conquest::factions(start),
                 start.settings.tempo,
+                conquest::victories(start.settings.victory),
             )),
             _ => None,
         };
@@ -3859,10 +3860,12 @@ impl Running {
     /// How the battle ended, once it has, and news of the champions.
     fn battle_news(&self) -> Option<String> {
         let battle = self.battle.as_ref()?;
-        match (&battle.outcome, &battle.champions) {
-            (Some(o), Some(c)) => Some(format!("{o}\n{c}")),
-            (o, c) => o.clone().or_else(|| c.clone()),
-        }
+        let lines: Vec<&str> = [&battle.outcome, &battle.champions, &battle.throne]
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
     /// Once one side alone has held the field long enough, say who won.
@@ -3875,6 +3878,9 @@ impl Running {
             if let Some(outcome) = &battle.outcome {
                 logln!("grubcraft: {outcome}");
             }
+            self.sandbox.dirty = true;
+        }
+        if battle.watch_throne(&self.world, &self.parties) {
             self.sandbox.dirty = true;
         }
         if battle.herald(&self.world, &self.parties, &self.units.names) {
@@ -4565,6 +4571,7 @@ impl Running {
             buildings::push_rally(&self.world, h, colour, &mut self.instances);
         }
         buildings::push_nodes(&self.world, &mut self.instances);
+        buildings::push_heart(&self.world, parties, &mut self.instances);
     }
 
     /// A plate under the cursor the size of the regiment B would place.

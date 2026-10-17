@@ -21,7 +21,7 @@ use gc_replay::{Recorder, Replay};
 use gc_sim::structures::Role;
 use gc_sim::{
     BuildingId, Capacities, Command, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, Resource,
-    TICKS_PER_SECOND, UnitId, World,
+    TICKS_PER_SECOND, UnitId, Victories, World,
 };
 use gc_ui::lobby::Tempo;
 
@@ -166,7 +166,14 @@ impl Match {
             ground: map.ground(),
             champions: false,
         };
-        let plan = conquest::plan(&table, &data, &map, &FACTIONS, Tempo::Swift);
+        let plan = conquest::plan(
+            &table,
+            &data,
+            &map,
+            &FACTIONS,
+            Tempo::Swift,
+            Victories::BOTH,
+        );
         let mut world = World::new(&setup);
         assert!(world.conquest(&plan.setup()));
         let rec = Recorder::new(&setup, &world, String::new()).conquest(plan);

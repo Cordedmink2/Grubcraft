@@ -17,7 +17,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use gc_replay::{EXTENSION, Replay};
-use gc_sim::TICKS_PER_SECOND;
+use gc_sim::{TICKS_PER_SECOND, Win};
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -202,11 +202,13 @@ fn info(file: &Path) -> bool {
         None => println!("  sim version unknown (before format 7)"),
     }
     if let Some(v) = h.result {
-        println!(
-            "  party {} held the field, decided {} into the match",
-            v.holder,
-            clock(v.tick)
-        );
+        let how = match v.by {
+            Win::Field => format!("party {} held the field", v.holder),
+            Win::Annihilation => format!("party {} was the last standing", v.holder),
+            Win::Heart => format!("party {} held the Titan's Heart", v.holder),
+            Win::Draw => "nobody was left standing".to_string(),
+        };
+        println!("  {how}, decided {} into the match", clock(v.tick));
     }
     if let Some(tick) = h.desync_tick {
         println!("  desync report: out of sync with the host from tick {tick}");
@@ -252,6 +254,20 @@ fn info(file: &Path) -> bool {
             c.gather_percent,
             c.build_percent
         );
+        let won_by = match (c.victories.annihilation, c.victories.heart) {
+            (true, true) => "Annihilation or the Titan's Heart",
+            (true, false) => "Annihilation",
+            (false, true) => "the Titan's Heart",
+            (false, false) => "holding the field (sandbox)",
+        };
+        let heart = c.heart.map_or(String::new(), |at| {
+            format!(
+                ", the Heart at ({}, {})",
+                at.x.floor_int(),
+                at.y.floor_int()
+            )
+        });
+        println!("  won by {won_by}{heart}");
     }
     for (p, (regiments, soldiers)) in spawned.iter().enumerate() {
         let team = replay

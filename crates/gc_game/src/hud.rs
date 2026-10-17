@@ -450,6 +450,15 @@ impl Running {
                     selected: picked_structure == Some(s.handle),
                 }));
         }
+        if let Some(heart) = self.world.heart() {
+            let at = from_fx_vec(heart.at);
+            let width = crate::buildings::HEART_BASE;
+            hud.blocks.push(Block {
+                rect: [at.x - width / 2.0, at.y - width / 2.0, width, width],
+                color: crate::buildings::heart_color(&heart, &self.parties),
+                selected: false,
+            });
+        }
         for &h in shown {
             let Some(r) = self.world.regiments.get(h) else {
                 continue;

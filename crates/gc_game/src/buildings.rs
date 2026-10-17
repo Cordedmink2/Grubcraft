@@ -7,9 +7,11 @@ use gc_data::{Faction, GameData};
 use gc_render::{BoxInstance, MAX_BOX_INSTANCES};
 use gc_sim::structures::{Armour, Role, TowerAttack};
 use gc_sim::{
-    BuildingId, BuildingStats, ConquestSetup, ConquestUnit, PlayerId, Refusal, Resource,
+    BuildingId, BuildingStats, ConquestSetup, ConquestUnit, HeartView, PlayerId, Refusal, Resource,
     StructureHandle, StructureView, World,
 };
+
+use crate::Party;
 use gc_ui::conquest::node_color;
 use glam::{Vec2, Vec3};
 
@@ -48,6 +50,12 @@ const NODE_WIDTH: f32 = 1.8;
 const NODE_LEAST: f32 = 40.0;
 /// Seeps and veins glow in their minimap colours; dry ones don't.
 const NODE_GLOW: u8 = 90;
+/// The Titan's Heart: its stone and the plinth under it, in tiles.
+const HEART_WIDTH: f32 = 1.6;
+const HEART_HEIGHT: f32 = 3.2;
+pub const HEART_BASE: f32 = 3.5;
+const HEART_COLOR: [u8; 3] = [150, 20, 70];
+const HEART_GLOW: u8 = 140;
 /// The selected building's white rim: one tile beyond its footprint, this
 /// thick (tiles).
 const PLATE: f32 = 0.08;
@@ -320,6 +328,37 @@ pub fn push_nodes(world: &World, out: &mut Vec<BoxInstance>) {
             lift: 0.0,
         });
     }
+}
+
+/// The Titan's Heart's colour: its holder's while held, else red.
+pub fn heart_color(heart: &HeartView, parties: &[Party]) -> [u8; 3] {
+    (heart.held).map_or(HEART_COLOR, |(p, _)| crate::color_of(parties, p))
+}
+
+/// The Titan's Heart: a stone, dim until it can be held, glowing after.
+pub fn push_heart(world: &World, parties: &[Party], out: &mut Vec<BoxInstance>) {
+    let Some(heart) = world.heart() else {
+        return;
+    };
+    if out.len() + 2 > MAX_BOX_INSTANCES {
+        return;
+    }
+    let [r, g, b] = heart_color(&heart, parties);
+    let pos = crate::from_fx_vec(heart.at).to_array();
+    out.push(BoxInstance {
+        pos,
+        facing: [0.0, 1.0],
+        size: [HEART_BASE, 0.3, HEART_BASE],
+        color: [60, 40, 40, 0],
+        lift: 0.0,
+    });
+    out.push(BoxInstance {
+        pos,
+        facing: [0.0, 1.0],
+        size: [HEART_WIDTH, HEART_HEIGHT, HEART_WIDTH],
+        color: [r, g, b, if heart.open { HEART_GLOW } else { 0 }],
+        lift: 0.0,
+    });
 }
 
 /// A flag where building `h` sends what it trains, if it has a rally point.
