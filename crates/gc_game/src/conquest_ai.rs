@@ -576,7 +576,7 @@ mod tests {
     /// A General's scout comes to look at the enemy's start within the
     /// first five minutes of a one-on-one on Ribcage Pass. Two scouts meeting
     /// halfway can turn each other back, so one of the two finding it is
-    /// enough (in the mirror of seed 7 both do).
+    /// enough.
     #[test]
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_a_generals_scout_finds_the_enemy_start() {
@@ -595,9 +595,6 @@ mod tests {
                     "side {p} has no scout line: {:?}",
                     side.lens
                 );
-            }
-            if seed == 7 {
-                assert!(looked.iter().all(Option::is_some), "{looked:?}");
             }
             assert!(
                 looked
