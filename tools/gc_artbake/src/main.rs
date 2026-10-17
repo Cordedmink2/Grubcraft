@@ -1148,8 +1148,9 @@ mod tests {
         assert_eq!((bones, weights), ([5, 0, 0, 0], [255, 0, 0, 0]));
     }
 
-    /// The repo's own CC0 model (the Skitterlings, from the alien bug),
-    /// baked in memory with the budgets in the real `models.ron`.
+    /// The repo's own CC0 alien bug (it was the Skitterlings' stand-in until
+    /// the Brood's own models replaced it; it stays as the baker's test model),
+    /// baked in memory with the budgets it had in `models.ron`.
     fn bake_alien_bug() -> (Vec<u8>, ModelTables, ModelConfig) {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let opts = Options {
@@ -1160,12 +1161,20 @@ mod tests {
             report: false,
             check: false,
         };
-        let text = std::fs::read_to_string(&opts.config).unwrap();
-        let mut config: Config = ron::from_str(&text).unwrap();
-        config
-            .models
-            .retain(|m| m.source == "repo:cc0/alien-bug-cdmir/alien-bug.glb");
-        assert_eq!(config.models.len(), 1, "models.ron lost the alien bug");
+        let mut config: Config = ron::from_str(
+            r#"(models: [(
+                name: "Alien Bug",
+                source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+                height: 0.7,
+                team: [],
+                team_hue: Some((0.0, 30.0, 0.5)),
+                clips: {
+                    "Idle": "Idle", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001",
+                },
+                lod_triangles: (1200, 500, 220, 90),
+            )])"#,
+        )
+        .unwrap();
         let (bytes, tables) = bake_pack(&config, &opts).unwrap();
         (bytes, tables, config.models.remove(0))
     }

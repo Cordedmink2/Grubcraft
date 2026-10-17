@@ -31,7 +31,8 @@ The soldier and unit models baked into `assets/models.pak` (see `assets-src/mode
 | Shard Choir models (Tuner, Shardlings, Prism Lancers, Harmonic Walkers, Glass Striders, Conductor, The Maestro, The Refractor, The Hollow Bell), crystal bodies made for Grubcraft on the Farmer's rig (Ultimate Modular Men) | Grubcraft; rig and clips by Quaternius | CC0 | Those units |
 | Skyglass and Monolith, made for Grubcraft (fully custom bodies, rigs and clips) | Grubcraft | CC0 | Those units |
 | Horse with its clips (Ultimate Animated Animals), rebuilt as crystal under the Glass Striders | Quaternius | CC0 | Glass Striders |
-| Alien Bug | CDmir | CC0 | Skitterlings |
+| Alien Bug | CDmir | CC0 | Baker test model only (no longer a unit's model) |
+| Brood models (Gnawer, Skitterlings, Chitin Guard, Reclaimer, Spitters, Burrowers, Mantid Reapers, Shellbacks, Drone-Moths, Broodmother Bulk, Colossus Maw, Spawnlings, The Queen-in-Waiting, The Devourer, The Whisperer), made for Grubcraft in Blender (fully custom bodies, rigs and clips) | Grubcraft | CC0 | Those units |
 
 The stand-ins are simplified and recoloured by the baker (team colours, fewer triangles).
 

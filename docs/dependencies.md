@@ -52,7 +52,7 @@ These run in `gc_bake` and in `gc_game`'s build script (and in the game itself o
 
 | Asset | Used by | Licence |
 |---|---|---|
-| Soldier models (`assets/models.pak`) | Soldiers on the field | CC0: the Yari Ashigaru and the Ember Clans models made for Grubcraft on Quaternius's Farmer (the archer's bow clips from Quaternius's Ranger, the Onmyoji's casting clips from Quaternius's Wizard, the riders' horses Quaternius's Horse and Horse_White), Quaternius (Alien, Orc Skull) and CDmir (Alien Bug); listed in `CREDITS.md` and on the in-game credits screen |
+| Soldier models (`assets/models.pak`) | Soldiers on the field | CC0: the Yari Ashigaru and the Ember Clans models made for Grubcraft on Quaternius's Farmer (the archer's bow clips from Quaternius's Ranger, the Onmyoji's casting clips from Quaternius's Wizard, the riders' horses Quaternius's Horse and Horse_White), the Carrion Concord and Brood models made for Grubcraft (the Brood's on their own insect rigs), Quaternius (Alien, Orc Skull) and CDmir (Alien Bug, baker test only); listed in `CREDITS.md` and on the in-game credits screen |
 | Sound effects and music loops (`assets/audio/sounds.gcsnd`) | Game audio | Synthesised by `tools/gc_sfx`; original work, no third-party licence. Except the 16 battle cries, layered from CC0 recordings and one CC-BY 3.0 clip (credited on the credits screen); sources in `assets/audio/README.md` |
 | Glyphs rasterised from DejaVu Sans Mono (`crates/gc_render/src/debug_font.rs`) | Dev overlay text | Bitstream Vera / DejaVu licence: free to use, modify and redistribute, including embedded; the fonts' names may not be reused for modified versions. Copyright (c) 2003 Bitstream, Inc. (Bitstream Vera); DejaVu changes are in the public domain |
 

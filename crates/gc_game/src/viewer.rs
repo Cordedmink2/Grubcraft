@@ -470,21 +470,13 @@ mod tests {
         assert_eq!(shown.len(), CATALOG.len());
         assert_eq!(looks.len(), CATALOG.len());
         let at = |name: &str| CATALOG.iter().position(|c| c.name == name).unwrap();
-        // The Yari Ashigaru and the Ronin have models; the Brood's untouched
-        // units do not.
+        // Every roster unit has a model now.
         let yari = &shown[at("Yari Ashigaru")];
         assert!(yari.clips.contains(&"Idle") && yari.clips.contains(&"Fall"));
         let look = looks[at("Yari Ashigaru")].as_ref().unwrap();
         assert_eq!(look.clips.len(), yari.clips.len());
         assert!(look.reach > 0.2 && look.height > 0.5);
         assert!(looks[at("War Kite")].as_ref().unwrap().flying);
-        let without: Vec<&str> = CATALOG
-            .iter()
-            .zip(&looks)
-            .filter(|(_, l)| l.is_none())
-            .map(|(c, _)| c.name)
-            .collect();
-        assert!(!without.is_empty());
         for (e, l) in shown.iter().zip(&looks) {
             assert_eq!(
                 e.clips.is_empty(),

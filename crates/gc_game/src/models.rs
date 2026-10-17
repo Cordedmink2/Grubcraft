@@ -267,9 +267,11 @@ mod tests {
             [(hit.first_row + hit.frames - 1) as u16; 2]
         );
 
-        // A model without a death clip lies flat while knocked down.
+        // A model without a death clip lies flat while knocked down (every
+        // model has one now, so take the Skitterlings' away).
         let bug = models.by_name("Skitterlings").unwrap();
-        assert!(models.clip(bug, ClipKind::Die).is_none());
+        let mut clips = Clips::new(&models);
+        clips.die[bug] = None;
         assert!(clips.fight(bug, Move::Down(0.5), 0.0).unwrap().1);
         assert!(!clips.fight(bug, Move::Down(0.05), 0.0).unwrap().1);
     }

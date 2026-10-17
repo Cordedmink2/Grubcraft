@@ -59,13 +59,13 @@ Free CC0 art gets us **placeholder-grade fantasy soldiers, monsters, castles, te
 
 | Need | Candidate | Source / licence | Notes |
 |---|---|---|---|
-| Skitterlings, Chitin Guard bodies | **Ant (rigged, animated)** | [OpenGameArt, mujtabaio](https://opengameart.org/content/ant-3d-model-rigging-animated-low-poly-ish), CC0 | Only confirmed CC0 insect. `.blend` only, walk clip listed |
-| Monsters, Colossus Maw, Reclaimer stand-ins | **Ultimate Monsters** (50, animated) | [Quaternius](https://quaternius.com/packs/ultimatemonsters.html), CC0 | Index tags mention bee and demon; contents to be checked |
+| Skitterlings, Chitin Guard bodies (superseded 2026-10-17: the whole Brood roster is made for Grubcraft, see [23](24-brood-models.md)) | **Ant (rigged, animated)** | [OpenGameArt, mujtabaio](https://opengameart.org/content/ant-3d-model-rigging-animated-low-poly-ish), CC0 | Only confirmed CC0 insect. `.blend` only, walk clip listed |
+| Monsters, Colossus Maw, Reclaimer stand-ins (superseded 2026-10-17, see [23](24-brood-models.md)) | **Ultimate Monsters** (50, animated) | [Quaternius](https://quaternius.com/packs/ultimatemonsters.html), CC0 | Index tags mention bee and demon; contents to be checked |
 | | Easy Enemy Pack (5) | [Quaternius](https://quaternius.com/packs/easyenemy.html), CC0 | Index tags mention bee, wasp, spider; unconfirmed |
 | | Cute Animated Monsters (21) | [Quaternius](https://quaternius.com/packs/cutemonsters.html), CC0 | Tone is too cute for the Brood, maybe for Gnawers |
 | | Animated Monster Pack (4) | [Quaternius](https://quaternius.com/packs/animatedmonster.html), CC0 | |
 | Hive, Pustule, cocoon, veins | Not found | | Procedural: ovoid blobs plus the vein decals from [09](09-art-and-audio.md). Cheapest to build ourselves |
-| Moths, Mantid Reapers, Shellbacks | Not found | | Model ourselves in Blender (insect bodies are easy in low poly) |
+| Moths, Mantid Reapers, Shellbacks | Not found | | Modelled ourselves in Blender (done 2026-10-17, see [23](24-brood-models.md)) |
 
 ## Shared: terrain, sky, sound
 
