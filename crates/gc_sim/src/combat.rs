@@ -188,7 +188,7 @@ pub enum Side {
 
 impl Side {
     /// Damage multiplier, percent, for blows landing on this side.
-    pub fn damage_percent(self) -> u64 {
+    pub const fn damage_percent(self) -> u64 {
         match self {
             Side::Front => 100,
             Side::Flank => 140,

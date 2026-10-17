@@ -710,10 +710,7 @@ impl UnitTable {
             data_stats: stats.clone(),
             stats,
             names: units.iter().map(|u| u.name().to_string()).collect(),
-            factions: units
-                .iter()
-                .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
-                .collect(),
+            factions: units.iter().map(|u| u.faction()).collect(),
             points: units.iter().map(|u| u32::from(u.points)).collect(),
             models: models.map_or_else(Vec::new, |m| {
                 units.iter().map(|u| m.by_name(u.name())).collect()
@@ -1103,7 +1100,7 @@ impl App {
             .zip(&units.names)
             .map(|(u, name)| gc_ui::lobby::RosterUnit {
                 name: name.clone(),
-                faction: gc_ui::lobby::Faction::ALL[u.faction() as usize],
+                faction: u.faction(),
                 points: u32::from(u.points),
             })
             .collect();
@@ -4446,17 +4443,18 @@ impl Running {
         if let Some(f) = self.parties.get(side as usize).and_then(|p| p.faction) {
             return f;
         }
-        let mut counts = [0u32; 4];
+        const N: usize = gc_ai::Faction::ALL.len();
+        let mut counts = [0u32; N];
         for r in self.world.regiments.iter().filter(|r| r.owner == side) {
             if let Some(f) = self.units.factions.get(r.unit as usize) {
-                counts[f.index() as usize] += 1;
+                counts[f.index()] += 1;
             }
         }
-        let best = (0..4).max_by_key(|&f| (counts[f], 4 - f)).unwrap_or(0);
+        let best = (0..N).max_by_key(|&f| (counts[f], N - f)).unwrap_or(0);
         if counts[best] == 0 {
-            gc_ai::Faction::from_index(side)
+            gc_ai::Faction::ALL[usize::from(side) % N]
         } else {
-            gc_ai::Faction::from_index(best as u8)
+            gc_ai::Faction::ALL[best]
         }
     }
 

@@ -25,43 +25,15 @@ pub const PLAYER_COLORS: [(&str, [u8; 3]); MAX_PLAYERS] = [
 /// How many colours there are; colour indices wrap round [`PLAYER_COLORS`].
 pub const COLORS: u8 = PLAYER_COLORS.len() as u8;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Faction {
-    EmberClans,
-    Brood,
-    Choir,
-    CarrionConcord,
-}
+pub use gc_data::Faction;
 
-impl Faction {
-    pub const ALL: [Faction; 4] = [
-        Faction::EmberClans,
-        Faction::Brood,
-        Faction::Choir,
-        Faction::CarrionConcord,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Faction::EmberClans => "Ember Clans",
-            Faction::Brood => "Brood",
-            Faction::Choir => "Choir",
-            Faction::CarrionConcord => "Carrion Concord",
-        }
-    }
-
-    /// How hard the faction is to play, as docs/08-ui-ux.md rates it.
-    pub fn difficulty(self) -> &'static str {
-        match self {
-            Faction::EmberClans => "easy",
-            Faction::Brood => "medium",
-            Faction::Choir => "hard",
-            Faction::CarrionConcord => "medium-hard",
-        }
-    }
-
-    pub fn index(self) -> usize {
-        Faction::ALL.iter().position(|&f| f == self).unwrap_or(0)
+/// How hard a faction is to play, as docs/08-ui-ux.md rates it.
+pub fn faction_difficulty(f: Faction) -> &'static str {
+    match f {
+        Faction::EmberClans => "easy",
+        Faction::Brood => "medium",
+        Faction::Choir => "hard",
+        Faction::CarrionConcord => "medium-hard",
     }
 }
 

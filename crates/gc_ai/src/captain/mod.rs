@@ -44,7 +44,7 @@ use helpers::*;
 pub use helpers::{describe_margin, fits, gap_between};
 
 use gc_fixed::Pcg32;
-use gc_sim::{MoraleState, PlayerId, RegimentHandle};
+use gc_sim::{MoraleState, PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 use std::cmp::Ordering;
 
@@ -289,14 +289,14 @@ const FOCUS_REACH: f32 = 6.0;
 const COUNTER_TILES: f32 = 12.0;
 /// Forming up ends when this share of the army is in place, or after this long.
 const FORMED_SHARE: f32 = 0.75;
-const FORM_TICKS: u32 = 15 * 20;
+const FORM_TICKS: u32 = 15 * TICKS_PER_SECOND;
 /// Shortest time between switching from holding to advancing or back.
-const POSTURE_TICKS: u32 = 3 * 20;
+const POSTURE_TICKS: u32 = 3 * TICKS_PER_SECOND;
 /// Falling back: how far, and how long losing must last before it does.
 const WITHDRAW_TILES: f32 = 25.0;
 /// Only with the enemy front at least this far off, tiles.
 const WITHDRAW_GAP: f32 = 35.0;
-const WITHDRAW_AFTER_TICKS: u32 = 4 * 20;
+const WITHDRAW_AFTER_TICKS: u32 = 4 * TICKS_PER_SECOND;
 /// Keeping out of two other sides' fight, it falls back only with the
 /// enemy front at least this far off, tiles.
 const SHY_GAP: f32 = 20.0;
@@ -316,7 +316,7 @@ const WITHDRAWALS: u32 = 2;
 const LOSING: f32 = -0.25;
 /// Picking ground: how often it looks (ticks), and only with the enemy
 /// front at least this far off (tiles).
-const GROUND_TICKS: u32 = 3 * 20;
+const GROUND_TICKS: u32 = 3 * TICKS_PER_SECOND;
 const GROUND_GAP: f32 = 20.0;
 /// How far it looks for better ground: tiles to either side, back and
 /// forward from where the line stands.
@@ -351,7 +351,7 @@ const CROSS_MARGIN: f32 = 0.3;
 /// a closer fight than this.
 const BAIT_MARGIN: f32 = -0.15;
 /// Longest it waits for two other sides to come to blows, ticks.
-const ONLOOK_TICKS: u32 = 90 * 20;
+const ONLOOK_TICKS: u32 = 90 * TICKS_PER_SECOND;
 
 /// One of the Captain's regiments.
 #[derive(Clone, Copy, Debug)]
@@ -834,7 +834,7 @@ impl Captain {
         // two seconds.
         let now = ctx.view.tick;
         match self.distance_then {
-            Some((then, was)) if now >= then + 2 * 20 => {
+            Some((then, was)) if now >= then + 2 * TICKS_PER_SECOND => {
                 let towards_us = -dir.normalize_or_zero();
                 self.closing = (their_c - was).dot(towards_us) / ((now - then) as f32 / TICKS);
                 self.distance_then = Some((now, their_c));

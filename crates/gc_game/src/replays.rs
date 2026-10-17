@@ -108,7 +108,7 @@ pub fn players(parties: &[Party]) -> Vec<Player> {
         .map(|p| Player {
             name: p.name.clone(),
             color: p.color,
-            faction: p.faction.map(gc_ai::Faction::index),
+            faction: p.faction.map(|f| f.index() as u8),
         })
         .collect()
 }
@@ -121,7 +121,8 @@ pub fn parties(header: &Header) -> Vec<Party> {
         .map(|p| Party {
             name: p.name.clone(),
             color: p.color,
-            faction: p.faction.map(gc_ai::Faction::from_index),
+            // A number no faction has (a newer build's) reads as unknown.
+            faction: p.faction.and_then(gc_ai::Faction::from_u8),
         })
         .collect()
 }
@@ -284,7 +285,7 @@ mod tests {
             Party {
                 name: "Red (Mario)".into(),
                 color: [1, 2, 3],
-                faction: Some(gc_ai::Faction::from_index(1)),
+                faction: Some(gc_ai::Faction::Brood),
             },
             Party {
                 name: "Blue (AI 2)".into(),
@@ -331,7 +332,7 @@ mod tests {
         assert_eq!(later[1].title, listed[1].title);
         assert_eq!(later[1].path, listed[1].path);
         let back = parties(&Replay::load(&listed[1].path).unwrap().header);
-        assert_eq!(back[0].faction, Some(gc_ai::Faction::from_index(1)));
+        assert_eq!(back[0].faction, Some(gc_ai::Faction::Brood));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

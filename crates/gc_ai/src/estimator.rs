@@ -23,24 +23,27 @@
 //! microseconds) and approximate; the AI re-runs it every second. Its
 //! coefficients are checked against real sim battles in `tests/estimator.rs`.
 
+use gc_sim::combat::Side;
+use gc_sim::morale;
+
 use crate::perception::{Class, Perception, Seen};
 
 /// Longest fight the model plays out, in seconds.
 pub const HORIZON: f32 = 240.0;
 const STEP: f32 = 0.5;
-/// Morale points lost per 1% of strength lost (the sim's 9 tenths).
-const MORALE_PER_PERCENT: f32 = 0.9;
+/// Morale points lost per 1% of strength lost.
+const MORALE_PER_PERCENT: f32 = morale::CASUALTY_TENTHS_PER_PERCENT as f32 / morale::SCALE as f32;
 /// A side breaks a little before its average morale reaches zero: its
 /// shakiest regiments rout first and every rout costs its neighbours 8
 /// points.
 const BREAK_AT: f32 = 6.0;
 /// Melee damage multiplier for regiments that reach a flank.
-const FLANK_DAMAGE: f32 = 1.4;
+const FLANK_DAMAGE: f32 = Side::Flank.damage_percent() as f32 / 100.0;
 /// Morale drains in the sim, points per second.
-const OUTNUMBERED_2: f32 = 2.0;
-const OUTNUMBERED_3: f32 = 4.0;
-const HALF_STRENGTH: f32 = 2.0;
-const FLANK_SHOCK: f32 = 3.0;
+const OUTNUMBERED_2: f32 = morale::OUTNUMBERED_2 as f32;
+const OUTNUMBERED_3: f32 = morale::OUTNUMBERED_3 as f32;
+const HALF_STRENGTH: f32 = morale::HALF_STRENGTH_DRAIN as f32;
+const FLANK_SHOCK: f32 = morale::FLANK_SHOCK as f32;
 /// A charge adds its bonus to the first blows, fading over three seconds:
 /// on average worth this many seconds of blows at the full bonus.
 const CHARGE_SECONDS: f32 = 1.5;
@@ -171,12 +174,16 @@ impl Force {
         if self.front_damage <= 0.0 {
             return 0.0;
         }
-        // Each soldier's chance is 50 + attack - defence, clamped; using the
-        // damage-weighted average attack keeps this one division.
+        // Using the damage-weighted average attack keeps this one division.
         let attack = self.front_damage_attack / self.front_damage;
-        let hit = (50.0 + attack - defence).clamp(10.0, 90.0) / 100.0;
-        self.front_damage * hit
+        self.front_damage * hit_chance(attack, defence)
     }
+}
+
+/// The sim's [`gc_sim::combat::hit_percent`] for averaged stats, as a
+/// fraction.
+fn hit_chance(attack: f32, defence: f32) -> f32 {
+    (50.0 + attack - defence).clamp(10.0, 90.0) / 100.0
 }
 
 /// What the estimator expects.
@@ -384,5 +391,20 @@ fn hurt(s: &mut Fighting, f: &Force, damage: f32, drain: f32, t: f32) {
     }
     if s.hp <= 0.5 {
         s.broken_at = Some(t);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hit_chance;
+
+    #[test]
+    fn hit_chance_is_the_sims() {
+        for attack in -20..=80 {
+            for defence in -20..=80 {
+                let sim = gc_sim::combat::hit_percent(attack, defence) as f32 / 100.0;
+                assert_eq!(hit_chance(attack as f32, defence as f32), sim);
+            }
+        }
     }
 }

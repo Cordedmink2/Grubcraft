@@ -718,6 +718,7 @@ dependencies = [
 name = "gc_ai"
 version = "0.1.0"
 dependencies = [
+ "gc_data",
  "gc_fixed",
  "gc_platform",
  "gc_sim",
@@ -787,6 +788,7 @@ dependencies = [
  "bytemuck",
  "gc_assets",
  "gc_fixed",
+ "serde",
 ]
 
 [[package]]
@@ -914,6 +916,7 @@ dependencies = [
 name = "gc_ui"
 version = "0.1.0"
 dependencies = [
+ "gc_data",
  "gc_platform",
  "ron",
  "serde",
