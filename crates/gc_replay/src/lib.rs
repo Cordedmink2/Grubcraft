@@ -1404,7 +1404,8 @@ mod tests {
                             p,
                             Command::Rally {
                                 structure: h,
-                                at: FxVec2::from_ints(32, 32),
+                                // Each in front of its own hall, apart.
+                                at: FxVec2::from_ints(32, if p == 0 { 16 } else { 44 }),
                             },
                         ));
                     }

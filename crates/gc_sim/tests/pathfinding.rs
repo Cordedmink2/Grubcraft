@@ -197,8 +197,10 @@ fn long_winding_routes_arrive() {
     move_to(&mut w, 0, r, 8, 57);
     let ticks = walk(&mut w, &nav, 64, r, 20 * 400);
     let end = w.regiments.get(r).unwrap().position;
+    // The goal is a tile and a half below a wall: the block, five tiles
+    // across, stands back from it by about as much again.
     assert!(
-        distance(end, FxVec2::from_ints(8, 57)) < Fx::ONE,
+        distance(end, FxVec2::from_ints(8, 57)) < Fx::from_int(2),
         "{end:?} after {ticks} ticks"
     );
     // Seven walls to wind through: more waypoints than one route holds.
@@ -331,10 +333,11 @@ fn same_map_same_hashes() {
 fn routes_across_open_country_keep_their_line_through_portals() {
     // A rock just short of the goal hides it, so the route goes through the
     // portal graph; on the open ground before it, the block should keep to
-    // its own line rather than funnel to wherever the portals sit (their
-    // middles are 8 tiles apart, so a neighbour could be marched into).
-    // Once marching south (across edges between sectors above and below)
-    // and once east (across edges between sectors side by side).
+    // one straight line, toward where it turns past the rock, rather than
+    // funnel to wherever the portals sit (their middles are 8 tiles apart,
+    // so a neighbour could be marched into). Once marching south (across
+    // edges between sectors above and below) and once east (across edges
+    // between sectors side by side).
     for east in [false, true] {
         let flip = |x: i32, y: i32| if east { (y, x) } else { (x, y) };
         let rock = |x: i32, y: i32| {
@@ -355,12 +358,124 @@ fn routes_across_open_country_keep_their_line_through_portals() {
             .filter(|p| along(p).0 < Fx::from_int(94))
             .collect();
         assert!(open_country.len() >= 2, "east {east}: {route:?}");
+        // The line from the start to the turn past the rock.
+        let start = along(&FxVec2::from_ints(sx, sy));
+        let turn = along(&route[open_country.len()]);
         for p in open_country {
+            let (a, b) = along(p);
+            let on_line = start.1 + (turn.1 - start.1) * ((a - start.0) / (turn.0 - start.0));
             assert!(
-                (along(p).1 - Fx::from_int(56)).abs() <= Fx::from_ratio(3, 2),
+                (b - on_line).abs() <= Fx::from_ratio(3, 4),
                 "east {east}: waypoint off the line: {route:?}"
             );
         }
+        // And it passes the rock with room for the block (a regiment of
+        // eight files is six tiles across): the turn keeps three tiles or
+        // more from the rock's side, tiles 53 to 57 across.
+        assert!(turn.1 >= Fx::from_int(60), "east {east}: {route:?}");
         walk(&mut w, &nav, 128, r, 20 * 200);
     }
+}
+
+/// Soldiers of every regiment standing on blocked ground on `nav` (a map
+/// `tiles` across), by their places in their blocks.
+fn soldiers_on_blocked(w: &World, nav: &[u8], tiles: i32) -> usize {
+    w.regiments
+        .iter()
+        .map(|r| {
+            let (fs, rs) = DRILL_UNITS[r.unit as usize].spacing(r.formation);
+            (0..r.models)
+                .filter(|&k| {
+                    let local = gc_sim::formation::slot_offset(k, r.files, r.models, fs, rs);
+                    let at = gc_sim::formation::local_to_world(r.position, r.facing, local);
+                    on_blocked(nav, tiles, at)
+                })
+                .count()
+        })
+        .sum()
+}
+
+#[test]
+fn blocks_swing_wide_round_corners() {
+    // A wall from the west edge to the middle of a 64-tile map: a block
+    // marching from the south-east to the north-west turns round its end
+    // (tile 32, rows 30 to 33). Its whole block, six tiles across, stays
+    // on open ground, not just its centre.
+    let nav = map(64, |x, y| (60..68).contains(&y) && x < 64);
+    let mut w = world_on(64, &nav, &DRILL_UNITS);
+    let r = spawn(&mut w, 0, SPEARS, 44, 50, NORTH);
+    move_to(&mut w, 0, r, 14, 12);
+    let mut worst = 0;
+    for _ in 0..20 * 60 {
+        w.tick(&[]);
+        worst = worst.max(soldiers_on_blocked(&w, &nav, 64));
+        if !w.regiments.get(r).unwrap().moving {
+            break;
+        }
+    }
+    let end = w.regiments.get(r).unwrap();
+    assert!(!end.moving, "{end:?}");
+    assert_eq!(worst, 0, "soldiers walked onto the wall");
+}
+
+#[test]
+fn blocks_narrow_into_a_column_through_a_gap_and_widen_after() {
+    // The gap in the wall is 6 tiles wide; a block of 8 files is 6 tiles
+    // across, so it narrows to pass, keeping every soldier off the wall,
+    // then widens back to its frontage beyond.
+    let nav = map(64, wall_with_gap);
+    let mut w = world_on(64, &nav, &DRILL_UNITS);
+    let r = spawn(&mut w, 0, SPEARS, 55, 50, NORTH);
+    move_to(&mut w, 0, r, 55, 12);
+    let (mut narrowest, mut worst) = (u16::MAX, 0);
+    for _ in 0..20 * 60 {
+        w.tick(&[]);
+        let v = w.regiments.get(r).unwrap();
+        narrowest = narrowest.min(v.files);
+        worst = worst.max(soldiers_on_blocked(&w, &nav, 64));
+        if !v.moving && v.files == v.frontage {
+            break;
+        }
+    }
+    let end = w.regiments.get(r).unwrap();
+    assert!(
+        distance(end.position, FxVec2::from_ints(55, 12)) < Fx::ONE,
+        "{end:?}"
+    );
+    assert!(narrowest < 8, "never narrowed: {narrowest}");
+    assert_eq!((end.files, end.frontage), (8, 8));
+    assert_eq!(worst, 0, "soldiers walked onto the wall");
+}
+
+#[test]
+fn blocks_file_through_a_gap_one_behind_another() {
+    // Three blocks abreast ordered through the gap together, to a column
+    // beyond it: they file through one behind another instead of pushing
+    // into each other, so nobody is thrown into disorder, and all get
+    // there. (Before, they piled into the gap together.)
+    let nav = map(64, wall_with_gap);
+    let mut w = world_on(64, &nav, &DRILL_UNITS);
+    let blocks: Vec<_> = (0..3)
+        .map(|k| spawn(&mut w, 0, SPEARS, 41 + 7 * k, 42, NORTH))
+        .collect();
+    // The nearest the gap goes first, so it goes furthest.
+    for (k, &r) in blocks.iter().enumerate() {
+        move_to(&mut w, 0, r, 55, 20 - 6 * k as i32);
+    }
+    let mut disordered = 0;
+    for _ in 0..20 * 120 {
+        w.tick(&[]);
+        disordered += blocks
+            .iter()
+            .filter(|&&r| w.regiments.get(r).unwrap().disorder > 0)
+            .count();
+        if blocks.iter().all(|&r| !w.regiments.get(r).unwrap().moving) {
+            break;
+        }
+    }
+    for (k, &r) in blocks.iter().enumerate() {
+        let v = w.regiments.get(r).unwrap();
+        assert!(!v.moving, "{k}: {v:?}");
+    }
+    assert_eq!(disordered, 0, "regiment-ticks in disorder");
 }

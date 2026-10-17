@@ -29,7 +29,9 @@ pub struct Standing {
     /// Centre of the block.
     pub position: FxVec2,
     pub facing: Angle,
-    /// Soldiers per rank (kept between 1 and `models`).
+    /// Soldiers per rank it was given (kept between 1 and `models`), not
+    /// what it may be squeezed to for now in tight ground: it narrows
+    /// again by itself there.
     pub files: u16,
     /// Line unless the unit can form this one.
     pub formation: Formation,
@@ -54,7 +56,7 @@ impl Standing {
             unit: view.unit,
             position: view.position,
             facing: view.facing,
-            files: view.files,
+            files: view.frontage,
             formation: view.formation,
             models: view.models,
             morale_points: view.morale_points,
@@ -137,7 +139,7 @@ impl World {
         let i = h.index as usize;
         let models = s.models.min(stats.models);
         r.models[i] = models;
-        r.files[i] = s.files.clamp(1, models);
+        r.set_frontage(i, s.files);
         if stats.can_form(s.formation) {
             r.formation[i] = s.formation;
         }

@@ -20,7 +20,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::{BLOCKED, CLEAR_CAP, Grid, SECTOR, Search};
+use super::{BLOCKED, CLEAR_CAP, GRAPH_BERTH, Grid, SECTOR, Search};
 
 impl Grid {
     /// Bring the grid up to date after the cells `x0..x1` × `y0..y1` (cell
@@ -139,7 +139,7 @@ impl Grid {
         for (u, &p) in partner.iter().enumerate() {
             let cell = self.node_cell[u];
             to.push(p);
-            cost.push(self.step_cost(cell, self.node_cell[p as usize], false));
+            cost.push(self.step_cost(cell, self.node_cell[p as usize], false, GRAPH_BERTH));
             let s = self.sector_of(cell) as usize;
             if dirty[s] {
                 self.link_in_sector(search, u, &mut to, &mut cost);

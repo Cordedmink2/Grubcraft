@@ -100,6 +100,8 @@ pub struct Seen {
     /// Width across the front and depth front to back, in tiles.
     pub width: f32,
     pub depth: f32,
+    /// Soldiers per rank it was given (it may be squeezed narrower for
+    /// now, in tight ground; `width` is what it is now).
     pub files: u16,
     pub formation: Formation,
     /// Soldiers standing, and at full strength.
@@ -268,7 +270,7 @@ impl Perception {
                 facing: angle_vec(r.facing),
                 width: fx(w),
                 depth: fx(d),
-                files: r.files,
+                files: r.frontage,
                 formation: r.formation,
                 models: r.models,
                 full: stats.models,

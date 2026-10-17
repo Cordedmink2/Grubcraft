@@ -1997,7 +1997,7 @@ impl Running {
                 continue;
             };
             let stats = &self.units.stats[r.unit as usize];
-            let files = if files == 0 { r.files } else { files };
+            let files = if files == 0 { r.frontage } else { files };
             let (width, depth) = stats.block_size_in(r.formation, files, r.models);
             self.instances.push(BoxInstance {
                 pos: from_fx_vec(target).to_array(),
@@ -2559,6 +2559,9 @@ impl Running {
             1.0
         };
         let ridden = self.ride.as_ref().map(|ride| ride.regiment);
+        // Soldiers stand only where a regiment could walk.
+        let nav = self.world.nav();
+        let firm = |p: Vec2| nav.standable(fx_vec(p));
         for r in self.world.regiments.iter().take_while(|_| !viewing) {
             // Enemies hidden in woods and tall grass aren't drawn (their
             // soldiers keep marching out of sight, below).
@@ -2605,7 +2608,7 @@ impl Running {
             };
             if !seen {
                 self.puppets
-                    .update(&block, r.owner, game_dt.as_secs_f32(), |_| {});
+                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |_| {});
                 continue;
             }
             if block.disorder > 0.0 {
@@ -2677,7 +2680,7 @@ impl Running {
                 });
                 // Keep the puppets marching (and falling) out of sight.
                 self.puppets
-                    .update(&block, r.owner, game_dt.as_secs_f32(), |_| {});
+                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |_| {});
                 continue;
             }
             if let Some(color) = banner {
@@ -2699,7 +2702,7 @@ impl Running {
                 let time = self.puppets.time();
                 let highlight = if selected { 70 } else { 0 };
                 self.puppets
-                    .update(&block, r.owner, game_dt.as_secs_f32(), |s| {
+                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
                         let ground = heightmap.height_at(s.pos.x, s.pos.y);
                         let at = glam::Vec3::new(s.pos.x, ground, s.pos.y);
                         let Some(lod) = view.place(height, at) else {
@@ -2742,7 +2745,7 @@ impl Running {
             let color = [cr, cg, cb, if selected { 70 } else { 0 }];
             let instances = &mut self.instances;
             self.puppets
-                .update(&block, r.owner, game_dt.as_secs_f32(), |s| {
+                .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
                     instances.push(BoxInstance {
                         pos: s.pos.to_array(),
                         facing: s.facing.to_array(),

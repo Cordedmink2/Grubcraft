@@ -54,6 +54,12 @@ impl Fx {
         self.0 >> FRAC_BITS
     }
 
+    /// Rounded up to a whole number.
+    #[inline]
+    pub const fn ceil_int(self) -> i32 {
+        self.0.wrapping_add((1 << FRAC_BITS) - 1) >> FRAC_BITS
+    }
+
     #[inline]
     pub const fn abs(self) -> Fx {
         Fx(self.0.wrapping_abs())
@@ -414,6 +420,9 @@ mod tests {
         assert_eq!(a / Fx::from_int(2), Fx::from_ratio(3, 2));
         assert_eq!((-a).floor_int(), -3);
         assert_eq!(Fx::from_ratio(-1, 2).floor_int(), -1);
+        assert_eq!(Fx::from_ratio(1, 2).ceil_int(), 1);
+        assert_eq!(Fx::from_ratio(-1, 2).ceil_int(), 0);
+        assert_eq!(a.ceil_int(), 3);
         assert_eq!(Fx::from_int(9).sqrt(), Fx::from_int(3));
         assert_eq!(Fx::from_int(-4).sqrt(), Fx::ZERO);
     }

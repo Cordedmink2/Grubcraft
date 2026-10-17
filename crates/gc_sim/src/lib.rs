@@ -91,7 +91,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 9;
+pub const SIM_VERSION: u32 = 10;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -917,8 +917,8 @@ impl World {
             &self.nav,
             self.map_tiles,
         );
-        self.nav.plan(&mut self.regiments);
-        self.combat.mark_holders(&self.regiments);
+        self.nav.plan(&mut self.regiments, &self.units);
+        self.combat.mark_holders(&self.regiments, &self.nav);
         self.regiments.step_movement(
             &mut self.nav,
             &self.terrain,
@@ -1071,6 +1071,8 @@ impl World {
                             },
                         );
                         if done {
+                            let i = regiment.index as usize;
+                            stand_back(&mut self.regiments, &self.units, &self.nav, i);
                             self.leave_off(regiment);
                         }
                         done
@@ -1292,6 +1294,8 @@ impl World {
                         pace: Fx::ZERO,
                     },
                 );
+                let i = h.index as usize;
+                stand_back(&mut self.regiments, &self.units, &self.nav, i);
             }
         }
         conquest.production.trained = trained;
@@ -1609,4 +1613,13 @@ pub mod streams {
     pub const WORLD: u64 = 1;
     pub const COMBAT: u64 = 2;
     pub const EVENTS: u64 = 3;
+}
+
+/// Slot `i` was just sent somewhere: if its block would hang over the
+/// water there, it stands back from the edge instead (see [`Nav::settle`]).
+fn stand_back(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, i: usize) {
+    if let Some(target) = regs.target[i] {
+        let berth = regs.berth(units, i);
+        regs.target[i] = Some(nav.settle(target, berth));
+    }
 }

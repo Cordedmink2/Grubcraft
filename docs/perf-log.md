@@ -2,6 +2,24 @@
 
 Before and after numbers from each milestone's performance pass ([12 · Performance](12-performance.md#the-loop)). Newest first.
 
+## Room for the whole block (2026-10-17)
+
+Routes now keep each block's whole width clear of deep water and cliffs, cost more near them, are pulled tight, and blocks queue behind friends and narrow into columns in fords ([10](10-architecture.md#pathfinding)). This is more work for the simulation on purpose, so the instruction baseline (`tools/gc_bench/baseline.json`) was re-blessed in the same PR.
+
+| Scenario (bench gate, instructions) | Before | After |
+|---|---|---|
+| `drill` (150 a player, 1,200 ticks) | 5.56 G | 7.08 G (+27%) |
+| `pathing-storm` | 2.48 G | 3.01 G (+22%) |
+| `field-8000pt-2v2` | 7.28 G | 8.42 G (+16%) |
+
+| Wall clock, cloud container, p99 | Before | After |
+|---|---|---|
+| `drill` (300 a player, 12,000 ticks) | 1.28 to 1.31 ms | 1.76 to 1.97 ms |
+| `pathing-storm` | 0.33 to 0.36 ms | 0.44 to 0.67 ms |
+| `field-8000pt-2v2` | 0.42 to 0.47 ms | 0.66 to 0.68 ms |
+
+**Where it goes** (drill, share of instructions): the sector search (`nav::Search::sector`) is now 23% (9% before), because a step near the banks costs more and the search looks wider for a roomier way; the friend-in-the-way scan and block overlaps another 17%. **Taken back already:** the wall cost comes from a table worked out once, the room across a block skips ahead by the clearance it finds, and the search finds each cell's weight once per cell instead of once per step; all three keep every hash. **Left for later:** a cheaper heuristic for the sector search near walls (the drill's p99 is within the 2 ms budget, CI's runners measure about two thirds of the container's time).
+
 ## The field remembers the fight (2026-10-16)
 
 Fallen soldiers now stay for the whole battle and spent arrows stay where they land ([09](09-art-and-audio.md#animation)). This is presentation only, so the simulation's tick time and every golden replay are unchanged.

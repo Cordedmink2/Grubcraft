@@ -87,7 +87,7 @@ impl GroupMember {
             handle: r.handle,
             position: r.position,
             facing: r.facing,
-            files: r.files,
+            files: r.frontage,
             models: r.models,
             file_spacing,
             rank_spacing,

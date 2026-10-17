@@ -3,10 +3,10 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::combat::{Combat, PATIENCE};
+use crate::combat::{Combat, OPEN_GROUND, PATIENCE};
 use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
-use crate::nav::Nav;
+use crate::nav::{self, Nav};
 use crate::state::State;
 use crate::terrain::Terrain;
 use crate::{Formation, PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
@@ -52,15 +52,24 @@ const TURN_BEFORE_MARCH: i32 = 0x2000;
 /// pace instead of wheeling round to face the way it walks.
 const SHUFFLE_DISTANCE: Fx = Fx::from_int(4);
 
-/// With nothing blocked within this many tiles there is always room to
-/// pass beside a friend, so the queuing check is skipped.
-const OPEN_GROUND: i32 = 10;
-
 /// Ticks between looks at whether the way ahead has cleared, while queuing.
 const RECHECK: u16 = 4;
 /// The most ticks a regiment marches without looking for friends in its
 /// way (see `clear`).
 const CLEAR_TICKS: u8 = 8;
+
+/// Ticks between steps of narrowing (see [`Regiments::squeeze`]), and
+/// between widening by a file once there is room again.
+const SQUEEZE_TICKS: u8 = 2;
+const WIDEN_TICKS: u8 = 6;
+/// Room kept between a squeezed block's outermost soldiers and blocked
+/// ground, in tiles.
+const SQUEEZE_MARGIN: Fx = Fx::from_ratio(1, 2);
+/// Room to spare, beyond that, before a squeezed block widens by a file.
+const WIDEN_SPARE: Fx = Fx::from_ratio(1, 2);
+/// How far beyond its front rank a marching block looks for narrowing
+/// ground, in tiles.
+const SQUEEZE_LOOK: Fx = Fx::from_int(2);
 
 /// Declares [`Regiments`] from one list of its per-regiment fields, each
 /// with the value a free slot holds, and from that list alone makes the
@@ -178,6 +187,12 @@ regiment_fields! {
     facing: Angle = Angle::ZERO,
     /// Soldiers per rank.
     files: u16 = 0,
+    /// The frontage it was given (soldiers per rank): `files` is narrower
+    /// while it squeezes through ground too tight for its block (see
+    /// [`Regiments::squeeze`]).
+    frontage: u16 = 0,
+    /// Ticks until it re-forms by another file, squeezing or widening.
+    reform: u8 = 0,
     /// How closely the soldiers stand.
     formation: Formation = Formation::Line,
     /// Soldiers still standing.
@@ -287,6 +302,7 @@ impl Regiments {
         self.position[i] = position;
         self.facing[i] = facing;
         self.files[i] = stats.files;
+        self.frontage[i] = stats.files;
         self.models[i] = stats.models;
         self.hp[i * MAX_MODELS as usize..][..stats.models as usize].fill(stats.hp_per_model);
         self.speed[i] = Fx::from_raw(stats.speed.raw() / TICKS_PER_SECOND as i32);
@@ -528,7 +544,7 @@ impl Regiments {
         self.held[i] = 0;
         self.clear[i] = 0;
         if order.files != 0 {
-            self.files[i] = order.files.clamp(1, self.models[i].max(1));
+            self.set_frontage(i, order.files);
         }
         let pace = Fx::from_raw(order.pace.raw() / TICKS_PER_SECOND as i32);
         self.pace[i] = if pace.raw() <= 0 {
@@ -552,10 +568,91 @@ impl Regiments {
         self.position[i] = position;
         self.facing[i] = facing;
         if files != 0 {
-            self.files[i] = files.clamp(1, self.models[i].max(1));
+            self.set_frontage(i, files);
         }
         self.halt(i);
         Some(i)
+    }
+
+    /// Slot `i` forms up `files` soldiers wide (it narrows again at once
+    /// if the ground is too tight for that).
+    pub(crate) fn set_frontage(&mut self, i: usize, files: u16) {
+        let files = files.clamp(1, self.models[i].max(1));
+        self.files[i] = files;
+        self.frontage[i] = files;
+        self.reform[i] = 0;
+    }
+
+    /// Cells a route should keep between slot `i`'s centre and blocked
+    /// ground: half the larger side of its block at its full frontage,
+    /// and half a tile more, between [`nav::CLEARANCE`] and
+    /// [`nav::MAX_BERTH`].
+    pub(crate) fn berth(&self, units: &[UnitStats], i: usize) -> u8 {
+        let stats = &units[self.unit[i] as usize];
+        let files = self.frontage[i].max(self.files[i]);
+        let (w, d) = stats.block_size_in(self.formation[i], files, self.models[i]);
+        // Half the side in cells is the side in tiles (2 cells a tile),
+        // rounded up, plus one cell.
+        let cells = w.max(d).ceil_int() + 1;
+        cells.clamp(i32::from(nav::CLEARANCE), i32::from(nav::MAX_BERTH)) as u8
+    }
+
+    /// Slot `i` narrows into a deeper column where the ground beside it
+    /// is too tight for its block (a ford, a pass, a gap between woods on
+    /// the edge of the water), a file at a time, looking a little ahead
+    /// while it marches; once there is room again it widens back to its
+    /// frontage, more slowly, so it doesn't flicker. Only while it marches
+    /// or is still narrowed, never in melee or braced.
+    fn squeeze(&mut self, i: usize, nav: &Nav, units: &[UnitStats]) {
+        let models = self.models[i].max(1);
+        let frontage = self.frontage[i].clamp(1, models);
+        let marching = self.target[i].is_some();
+        if (!marching && self.files[i] == frontage) || !nav.has_map() {
+            return;
+        }
+        if self.reform[i] > 0 {
+            self.reform[i] -= 1;
+            return;
+        }
+        let stats = &units[self.unit[i] as usize];
+        let (fs, rs) = stats.spacing(self.formation[i]);
+        let look = if marching { SQUEEZE_LOOK } else { Fx::ZERO };
+        // Open all round for the whole block at full frontage: no need to
+        // measure.
+        let (w, d) = formation::block_size(frontage, models, fs, rs);
+        let reach = (w + d) / 2 + look + SQUEEZE_MARGIN + WIDEN_SPARE;
+        let reach_tiles = reach
+            .ceil_int()
+            .min(i32::from(nav::CLEAR_CAP) / nav::CELLS_PER_TILE);
+        let files = self.files[i];
+        // The outermost soldiers stand half a spacing in from the block's
+        // edge.
+        let outer = |f: u16| Fx::from_raw(fs.raw() * i32::from(f - 1) / 2) + SQUEEZE_MARGIN;
+        // Room either side of the centre, unless open all round (then the
+        // whole frontage fits, however wide: the measure stops at
+        // `CLEAR_CAP`).
+        let room = (!nav.open_around(self.position[i], reach_tiles)).then(|| {
+            let half = formation::block_size(files, models, fs, rs).1 / 2;
+            nav.room_across(
+                self.position[i],
+                self.facing[i],
+                Fx::from_int(reach_tiles),
+                &[half + look, half, Fx::ZERO, -half],
+            )
+        });
+        let fits = |f: u16, spare: Fx| room.is_none_or(|room| outer(f) + spare <= room);
+        let fit = (1..=frontage)
+            .rev()
+            .find(|&f| fits(f, Fx::ZERO))
+            .unwrap_or(1);
+        if fit < files {
+            // Halve the gap each step: a sudden narrows closes quickly.
+            self.files[i] = files - (files - fit).div_ceil(2);
+            self.reform[i] = SQUEEZE_TICKS;
+        } else if fit > files && fits(files + 1, WIDEN_SPARE) {
+            self.files[i] = files + 1;
+            self.reform[i] = WIDEN_TICKS;
+        }
     }
 
     /// Slot `i` drops its orders: no move, no facing to turn to, no enemy.
@@ -681,6 +778,7 @@ impl Regiments {
             position: self.position[i],
             facing: self.facing[i],
             files: self.files[i],
+            frontage: self.frontage[i].clamp(1, self.models[i].max(1)),
             formation: self.formation[i],
             models: self.models[i],
             moving: self.target[i].is_some() || self.target_facing[i].is_some(),
@@ -729,6 +827,9 @@ impl Regiments {
             if self.target[i].is_none() {
                 self.held[i] = 0;
                 self.clear[i] = 0;
+            }
+            if self.engaged[i].is_none() && !self.braced[i] {
+                self.squeeze(i, nav, units);
             }
             let turn = self.turn[i];
             if self.engaged[i].is_some() {
@@ -790,7 +891,20 @@ impl Regiments {
                 if self.clear[i] > 0 {
                     self.clear[i] -= 1;
                 } else if !nav.open_around(here, OPEN_GROUND) {
-                    match combat.friend_in_the_way(self, units, stances, i, next) {
+                    let found = combat.friend_in_the_way(self, units, stances, i, next, dir);
+                    // Following a friend marching on ahead (its route goes
+                    // where this one's does, room beside it or not) uses
+                    // up no patience: the queue is moving.
+                    let following = |j: usize| {
+                        self.target[j].is_some()
+                            && self.engaged[j].is_none()
+                            && !(1..PATIENCE).contains(&self.held[j])
+                    };
+                    match found {
+                        Ok(j) if following(j) => {
+                            self.held[i] = self.held[i].max(1);
+                            continue;
+                        }
                         Ok(j) if !combat.room_beside(self, units, nav, i, j, dir) => {
                             self.held[i] = self.held[i].saturating_add(1);
                             continue;
@@ -872,6 +986,9 @@ pub struct RegimentView {
     pub facing: Angle,
     /// Soldiers per rank.
     pub files: u16,
+    /// Soldiers per rank it was given: more than `files` while it is
+    /// squeezed into a column through tight ground.
+    pub frontage: u16,
     /// How closely the soldiers stand.
     pub formation: Formation,
     /// Soldiers still standing.
