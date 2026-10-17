@@ -32,9 +32,11 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::path::Path;
 
+use gc_fixed::FxVec2;
 use gc_sim::{
     BuildingStats, Capacities, ConquestSetup, ConquestUnit, Ground, MAX_PARTIES, MatchSetup,
-    NodeSetup, PlayerCommand, TICKS_PER_SECOND, TickStats, UnitStats, Verdict, World,
+    NodeSetup, PlayerCommand, TICKS_PER_SECOND, TickStats, UnitStats, Verdict, Victories, Win,
+    World,
 };
 
 use codec::{Reader, Writer};
@@ -42,6 +44,8 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 14: how the battle was won (read as holding the field) and the
+///   Conquest victories and Titan's Heart (read as a sandbox: no victory);
 /// - 13: the fall back and brace commands;
 /// - 12: the Conquest setup (read as a Field Battle);
 /// - 11: the header's map choice (read as the Proving Ground);
@@ -55,7 +59,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 13;
+pub const FORMAT: u16 = 14;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -149,6 +153,8 @@ pub struct ConquestRecord {
     pub start: [(u32, u32); MAX_PARTIES],
     pub gather_percent: u32,
     pub build_percent: u32,
+    pub victories: Victories,
+    pub heart: Option<FxVec2>,
 }
 
 impl ConquestRecord {
@@ -161,6 +167,8 @@ impl ConquestRecord {
             start: setup.start,
             gather_percent: setup.gather_percent,
             build_percent: setup.build_percent,
+            victories: setup.victories,
+            heart: setup.heart,
         }
     }
 
@@ -173,6 +181,8 @@ impl ConquestRecord {
             start: self.start,
             gather_percent: self.gather_percent,
             build_percent: self.build_percent,
+            victories: self.victories,
+            heart: self.heart,
         }
     }
 
@@ -196,9 +206,15 @@ impl ConquestRecord {
         }
         w.var(u64::from(self.gather_percent));
         w.var(u64::from(self.build_percent));
+        w.bool(self.victories.annihilation);
+        w.bool(self.victories.heart);
+        w.bool(self.heart.is_some());
+        if let Some(at) = self.heart {
+            w.vec(at);
+        }
     }
 
-    fn read(r: &mut Reader) -> Option<ConquestRecord> {
+    fn read(r: &mut Reader, format: u16) -> Option<ConquestRecord> {
         // Counts are checked against the bytes left before allocating.
         let n: usize = r.var_as()?;
         let buildings = (0..n.min(r.remaining()))
@@ -220,14 +236,26 @@ impl ConquestRecord {
         for s in &mut start {
             *s = (r.var_as()?, r.var_as()?);
         }
+        let (gather_percent, build_percent) = (r.var_as()?, r.var_as()?);
+        let (victories, heart) = if format >= 14 {
+            let victories = Victories {
+                annihilation: r.bool()?,
+                heart: r.bool()?,
+            };
+            (victories, if r.bool()? { Some(r.vec()?) } else { None })
+        } else {
+            (Victories::default(), None)
+        };
         Some(ConquestRecord {
             buildings,
             units,
             structures,
             nodes,
             start,
-            gather_percent: r.var_as()?,
-            build_percent: r.var_as()?,
+            gather_percent,
+            build_percent,
+            victories,
+            heart,
         })
     }
 }
@@ -491,6 +519,7 @@ impl Replay {
             Some(v) => {
                 w.var(u64::from(v.holder) + 1);
                 w.var(u64::from(v.tick));
+                w.u8(v.by as u8);
             }
             None => w.var(0),
         }
@@ -758,7 +787,7 @@ impl Replay {
         }
         let champions = format >= 4 && r.bool()?;
         let conquest = if format >= 12 && info.conquest {
-            Some(ConquestRecord::read(r)?)
+            Some(ConquestRecord::read(r, format)?)
         } else {
             None
         };
@@ -898,6 +927,11 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
                     .ok()
                     .filter(|&p| usize::from(p) < gc_sim::MAX_PARTIES)?,
                 tick: r.var_as()?,
+                by: if format >= 14 {
+                    Win::from_u8(r.u8()?)?
+                } else {
+                    Win::Field
+                },
             }),
             None => None,
         }
@@ -1291,6 +1325,8 @@ mod tests {
             start,
             gather_percent: 150,
             build_percent: 75,
+            victories: Victories::BOTH,
+            heart: Some(FxVec2::from_ints(32, 32)),
         };
         let mut world = World::new(&setup);
         assert!(world.conquest(&conquest));
@@ -1741,6 +1777,7 @@ mod tests {
         replay.header.result = Some(Verdict {
             holder: 1,
             tick: 1234,
+            by: Win::Heart,
         });
         assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
     }

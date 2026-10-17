@@ -1,7 +1,7 @@
 //! Bake the game data (`data/*.ron`) into the asset pack embedded in the
 //! executable, so a build can never run with stale or mismatched data.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn main() {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -41,6 +41,14 @@ fn main() {
         );
     }
 
-    let out = Path::new(&std::env::var("OUT_DIR").unwrap()).join("grubcraft.pak");
-    std::fs::write(&out, &baked.pack).expect("write baked pack");
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    std::fs::write(out_dir.join("grubcraft.pak"), &baked.pack).expect("write baked pack");
+
+    // The unit viewer's catalog (units and heroes of every roster, in words).
+    let catalog = gc_bake::viewer::catalog(&data_dir).expect("unit viewer catalog");
+    std::fs::write(
+        out_dir.join("viewer_catalog.rs"),
+        gc_bake::viewer::catalog_source(&catalog),
+    )
+    .expect("write viewer catalog");
 }

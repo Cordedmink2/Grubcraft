@@ -8,14 +8,14 @@
 use gc_sim::PlayerCommand;
 use gc_ui::lobby::{
     Budget, Faction, GameMode, LobbySettings, MAX_ARMY, MAX_PLAYERS, OnDrop, Slot, SlotEdit,
-    SlotKind, Tempo, maps_for,
+    SlotKind, Tempo, Victory, maps_for,
 };
 
 use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 12;
+pub const PROTOCOL: u8 = 13;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -232,6 +232,10 @@ fn write_settings(w: &mut Writer, s: &LobbySettings) {
         .unwrap_or(0) as u8);
     w.u8(Budget::ALL.iter().position(|&b| b == s.budget).unwrap_or(0) as u8);
     w.bool(s.champions);
+    w.u8(Victory::ALL
+        .iter()
+        .position(|&v| v == s.victory)
+        .unwrap_or(0) as u8);
 }
 
 fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
@@ -243,6 +247,7 @@ fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
         on_drop: *OnDrop::ALL.get(r.u8()? as usize)?,
         budget: *Budget::ALL.get(r.u8()? as usize)?,
         champions: r.bool()?,
+        victory: *Victory::ALL.get(r.u8()? as usize)?,
     })
 }
 
@@ -642,6 +647,7 @@ mod tests {
                 mode: GameMode::Conquest,
                 map: 1,
                 tempo: Tempo::Epic,
+                victory: Victory::Heart,
                 ..grand.clone()
             },
             players: slots[..4].to_vec(),
@@ -690,6 +696,26 @@ mod tests {
         round_trip(Msg::Bye {
             reason: "bye".into(),
         });
+    }
+
+    #[test]
+    fn the_settings_carry_which_victories_count() {
+        for victory in Victory::ALL {
+            let settings = LobbySettings {
+                mode: GameMode::Conquest,
+                victory,
+                ..LobbySettings::default()
+            };
+            let mut w = Writer::new();
+            write_settings(&mut w, &settings);
+            // The victory is the last byte; a stranger's is refused.
+            let mut r = Reader::new(&w.buf);
+            assert_eq!(read_settings(&mut r), Some(settings));
+            assert!(r.is_empty());
+            let mut bad = w.buf.clone();
+            *bad.last_mut().unwrap() = Victory::ALL.len() as u8;
+            assert_eq!(read_settings(&mut Reader::new(&bad)), None);
+        }
     }
 
     #[test]

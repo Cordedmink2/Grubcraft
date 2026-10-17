@@ -387,6 +387,8 @@ impl Running {
                 self.describe_card(&c, &mut card_labels, &mut card_details),
             )
         });
+        let camera = self.active_camera();
+        let (view_proj, plane) = (camera.view_proj(), camera.ground_plane());
 
         let hud = &mut self.hud;
         if self.selected.is_empty() {
@@ -448,6 +450,15 @@ impl Running {
                     selected: picked_structure == Some(s.handle),
                 }));
         }
+        if let Some(heart) = self.world.heart() {
+            let at = from_fx_vec(heart.at);
+            let width = crate::buildings::HEART_BASE;
+            hud.blocks.push(Block {
+                rect: [at.x - width / 2.0, at.y - width / 2.0, width, width],
+                color: crate::buildings::heart_color(&heart, &self.parties),
+                selected: false,
+            });
+        }
         for &h in shown {
             let Some(r) = self.world.regiments.get(h) else {
                 continue;
@@ -472,9 +483,8 @@ impl Running {
             });
         }
         hud.view.clear();
-        for ndc in [(-1.0, 1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)] {
-            hud.view.push(view_corner(&self.camera, ndc, map));
-        }
+        // The minimap's outline is the ground the camera in use shows.
+        hud.view.extend(view_outline(view_proj, plane, map));
 
         let hero = hud
             .hero_preview
@@ -536,8 +546,6 @@ impl Running {
 
         hud.alerts.clear();
         if !hud.notes.is_empty() {
-            let view_proj = self.camera.view_proj();
-            let plane = self.camera.focus_height;
             hud.alerts.extend(hud.notes.iter().map(|n| Alert {
                 id: n.id,
                 kind: n.kind,
@@ -622,6 +630,16 @@ impl Running {
             .frame(&mut hud.draw, screen, input, &data, &mut hud.events);
         self.hud.card_labels = card_labels;
         self.hud.card_details = card_details;
+        if let Some(ride) = &self.ride {
+            let name = self
+                .world
+                .regiments
+                .get(ride.regiment)
+                .map_or("the regiment", |r| {
+                    self.units.names[r.unit as usize].as_str()
+                });
+            draw_ride_hint(&mut self.hud.draw, screen, name);
+        }
 
         upload_ui(
             &mut self.renderer,
@@ -693,7 +711,7 @@ impl Running {
         self.battle_press(slot);
     }
 
-    /// A battle grid slot: Move, Attack or Formation.
+    /// A battle grid slot: Move, Attack, Formation, Brace or Fall back.
     pub fn battle_press(&mut self, slot: usize) {
         if self.watching.is_some() || self.sandbox.placing || self.selected.is_empty() {
             return;
@@ -717,14 +735,17 @@ impl Running {
 
     /// The click after Q or W: send the selection there, or at the enemy there.
     pub fn finish_armed_order(&mut self) {
-        let (Some(armed), Some(p)) = (self.hud.armed, self.ground_under_cursor()) else {
+        let Some(armed) = self.hud.armed else {
             return;
         };
         // A click that finds nothing to attack keeps the order armed.
         match armed {
             Armed::Lay(b) => return self.finish_laying(b),
-            Armed::Move => self.issue_group_order(move_order(p)),
-            Armed::Attack => match self.enemy_at(p) {
+            Armed::Move => match self.ground_under_cursor() {
+                Some(p) => self.issue_group_order(move_order(p)),
+                None => return,
+            },
+            Armed::Attack => match self.enemy_under_cursor() {
                 Some(target) => self.issue_attack(target),
                 None => return,
             },
@@ -799,11 +820,35 @@ impl Running {
     }
 
     pub fn look_at(&mut self, p: Vec2) {
-        self.camera.focus = p.clamp(Vec2::ZERO, Vec2::splat(self.camera.map_size));
-        self.camera.focus_height = self
-            .heightmap
-            .height_at(self.camera.focus.x, self.camera.focus.y);
+        let focus = p.clamp(Vec2::ZERO, Vec2::splat(self.camera.map_size));
+        let height = self.heightmap.height_at(focus.x, focus.y);
+        let camera = self.camera_mut();
+        camera.focus = focus;
+        camera.focus_height = height;
     }
+}
+
+/// The line shown while riding with a regiment, centred just above the bar.
+fn draw_ride_hint(draw: &mut DrawList, screen: (i32, i32), name: &str) {
+    let text = format!("Riding with {name} - Y or Esc to return");
+    let scale = 1;
+    let w = gc_ui::draw::text_width(&text, scale);
+    let h = gc_ui::draw::text_height(scale);
+    let pad = 8;
+    let panel = gc_ui::Rect::new(
+        (screen.0 - w) / 2 - pad,
+        screen.1 - gc_ui::hud::BAR_HEIGHT - h - 3 * pad,
+        w + 2 * pad,
+        h + pad,
+    );
+    draw.rect(panel, [10, 12, 16, 190]);
+    draw.text(
+        panel.x + pad,
+        panel.y + pad / 2,
+        scale,
+        [235, 238, 242, 255],
+        &text,
+    );
 }
 
 /// A made-up Daimyo for looking at the panel and the grid it feeds: level 3,
@@ -851,18 +896,26 @@ fn project(view_proj: glam::Mat4, p: Vec3, screen: (i32, i32)) -> [f32; 2] {
     ]
 }
 
-/// Where the screen corner `ndc` looks at the ground, in tiles, clamped to
-/// the map. The ground is taken as flat at the focus's height.
-fn view_corner(camera: &crate::camera::RtsCamera, ndc: (f32, f32), map: f32) -> [f32; 2] {
-    let (origin, dir) = camera.ray(Vec2::new(ndc.0, ndc.1));
-    let plane = camera.focus_height;
-    let hit: Vec3 = if dir.y < -1e-4 {
-        origin + dir * ((plane - origin.y) / dir.y)
-    } else {
-        // Looking at the sky: far along the ray's heading instead.
-        origin + dir * 1000.0
-    };
-    [hit.x.clamp(0.0, map), hit.z.clamp(0.0, map)]
+/// Where the four screen corners look at the ground, in tiles, clamped to
+/// the map, through the camera with this `view_proj`. The ground is taken as
+/// flat at height `plane`.
+/// How far out the minimap outline puts a screen corner that looks at the
+/// sky, in tiles: about what a low camera shows clearly.
+const SKY_OUTLINE_TILES: f32 = 120.0;
+
+fn view_outline(view_proj: glam::Mat4, plane: f32, map: f32) -> [[f32; 2]; 4] {
+    let inv = view_proj.inverse();
+    [(-1.0, 1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)].map(|(x, y)| {
+        let (origin, dir) = crate::camera::unproject(inv, Vec2::new(x, y));
+        let hit: Vec3 = if dir.y < -1e-4 {
+            origin + dir * ((plane - origin.y) / dir.y)
+        } else {
+            // Looking at the sky (riding, the top corners do): a little way
+            // out along the ray's heading instead.
+            origin + Vec3::new(dir.x, 0.0, dir.z).normalize_or_zero() * SKY_OUTLINE_TILES
+        };
+        [hit.x.clamp(0.0, map), hit.z.clamp(0.0, map)]
+    })
 }
 
 #[cfg(test)]

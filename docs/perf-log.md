@@ -2,6 +2,24 @@
 
 Before and after numbers from each milestone's performance pass ([12 · Performance](12-performance.md#the-loop)). Newest first.
 
+## The field remembers the fight (2026-10-16)
+
+Fallen soldiers now stay for the whole battle and spent arrows stay where they land ([09](09-art-and-audio.md#animation)). This is presentation only, so the simulation's tick time and every golden replay are unchanged.
+
+**Memory:** the fallen are 24 bytes each, up to 32,768 (768 KB, over five times the grand battle's 6,052 soldiers). Stuck arrows are 24 bytes each, up to 24,576 (576 KB). Both live in the `present` tag, about 1.3 MB in all.
+
+**Draw cost:** only what the camera or the sun can see is drawn. A body lying down uses one level of detail coarser than a standing man at the same spot, and a plain 10-triangle box past the coarsest model. An arrow is two boxes. The living have first claim on the renderer's room for soldiers, and the arrows come last, into whatever box room is left.
+
+**Measured** with a temporary timer around the two push functions (since removed), in the cloud container, release build, on a sandbox scene with the camera over the dead. The container has no GPU, so only the CPU side is measured here; the frame rate there comes from software rendering and says nothing about a real graphics card.
+
+| Case | Corpses pushed, per frame | Arrows pushed, per frame |
+|---|---|---|
+| Empty field (before) | 0.8 us | 0.2 us |
+| 6,052 fallen and 12,000 arrows, all around the camera | 301 us | 262 us |
+| Worst case: 32,768 fallen and 24,576 arrows, all around the camera | 1.65 ms | 0.6 ms |
+
+The worst case is a pile far thicker than any real battle makes, and its 2.3 ms together is over the 1.0 ms presentation line (though well inside the frame's slack). A real field is mostly out of view, and the cost falls with it. To be checked on real hardware: if the GPU side of 30,000 lying bodies in one view proves too dear, lower `MAX_CORPSES` or raise `CORPSE_LOD_BIAS` in `gc_game`.
+
 ## M1 pass (2026-10-15)
 
 **Where it was measured:** the `drill` benchmark (four players with 300 regiments each on the ridged map), 3,000 ticks under Valgrind's callgrind, counting instructions. That count is exact and repeatable, unlike wall-clock time in the shared cloud container. Wall-clock numbers below are the median of several runs and move by ±15% between runs.

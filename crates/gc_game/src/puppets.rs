@@ -113,9 +113,16 @@ const DISORDER_DRIFT: f32 = 0.22;
 const DISORDER_RATE: f32 = 0.7;
 const DISORDER_LOOK: f32 = 0.9;
 const DISORDER_LOOK_RATE: f32 = 0.8;
-/// Fallen soldiers stay on the field this long, in seconds, then sink away.
-const CORPSE_SECONDS: f32 = 20.0;
+/// The fallen lie where they fell for the whole battle. When the field is
+/// full (the corpse capacity `Puppets::new` was given) the oldest sinks into
+/// the ground over this many seconds to make room, and at most this many
+/// sink at once; more than that, in a burst, just go.
 const CORPSE_SINK_SECONDS: f32 = 3.0;
+const MAX_SINKING: usize = 256;
+/// An arrow that killed a soldier sticks in him anywhere within this much
+/// of his length (along the way he lies) and of his width, in tiles.
+const LODGED_ALONG: f32 = 0.5;
+const LODGED_ASIDE: f32 = 0.2;
 /// Champions run out at this pace, in tiles per second: a little faster
 /// than the simulation allows for, so they are there when the duel starts.
 const CHAMPION_RUN: f32 = 5.5;
@@ -270,6 +277,19 @@ impl Act {
     }
 }
 
+/// A soldier lying where he fell, as the puppets keep him: 24 bytes, so a
+/// field of 32,768 of them is 768 KB.
+#[derive(Clone, Copy, Debug)]
+struct Fallen {
+    pos: Vec2,
+    facing: Vec2,
+    /// When he fell, in puppet time (later than now while he still stands,
+    /// waiting for the killing blow).
+    fell: f32,
+    unit: u16,
+    owner: u8,
+}
+
 /// A soldier lying where he fell.
 #[derive(Clone, Copy, Debug)]
 pub struct Corpse {
@@ -280,8 +300,17 @@ pub struct Corpse {
     /// Seconds since he fell; negative while he still stands, waiting for
     /// the killing blow.
     pub age: f32,
-    /// How far it has sunk into the ground, in tiles (0 while fresh).
+    /// How far it has sunk into the ground, from 0 (lying on it) to 1 (gone),
+    /// once it is the oldest on a full field and makes room for a new one.
     pub sink: f32,
+}
+
+/// An arrow that has just killed a soldier and stays in his body: where it
+/// stuck, and the way it flew.
+#[derive(Clone, Copy, Debug)]
+pub struct Lodged {
+    pub pos: Vec2,
+    pub dir: Vec2,
 }
 
 /// A champion's moves at a moment of his duel: what he is doing outside his
@@ -400,10 +429,22 @@ pub struct Puppets {
     /// Scratch for pairing: regiments in melee, and the enemies near one.
     fighting: Vec<u32>,
     near: Vec<u32>,
-    /// Fallen soldiers, a ring buffer; the oldest are reused first.
-    corpses: Vec<(Vec2, Vec2, u8, u16, f32)>,
+    /// The unit type of each regiment, for the colours and model of anyone
+    /// who falls when it is wiped out.
+    unit: Vec<u16>,
+    /// Fallen soldiers, a ring buffer; the oldest are replaced first, and
+    /// sink away while they go.
+    corpses: Vec<Fallen>,
     corpse_capacity: usize,
     next_corpse: usize,
+    /// Soldiers sinking out of sight to make room, and when each began.
+    sinking: Vec<(Fallen, f32)>,
+    /// Soldiers each regiment has lost to arrows this frame that have yet to
+    /// fall, and the way the volley that took them flew.
+    shot: Vec<u8>,
+    shot_dir: Vec<Vec2>,
+    /// Arrows that stuck in the bodies of soldiers who fell this frame.
+    lodged: Vec<Lodged>,
     time: f32,
     /// The last frame's step, in seconds.
     dt: f32,
@@ -435,9 +476,14 @@ impl Puppets {
             reeling: vec![f32::NEG_INFINITY; regiment_capacity * SLOTS],
             fighting: Vec::with_capacity(regiment_capacity),
             near: Vec::with_capacity(regiment_capacity),
+            unit: vec![0; regiment_capacity],
             corpses: Vec::with_capacity(corpse_capacity.max(1)),
             corpse_capacity: corpse_capacity.max(1),
             next_corpse: 0,
+            sinking: Vec::with_capacity(MAX_SINKING),
+            shot: vec![0; regiment_capacity],
+            shot_dir: vec![Vec2::X; regiment_capacity],
+            lodged: Vec::with_capacity(MAX_SINKING),
             time: 0.0,
             dt: 0.0,
             duel: None,
@@ -454,6 +500,86 @@ impl Puppets {
     pub fn advance(&mut self, dt: f32) {
         self.time += dt;
         self.dt = dt;
+        let time = self.time;
+        self.sinking
+            .retain(|&(_, from)| time - from < CORPSE_SINK_SECONDS);
+    }
+
+    /// Arrows from a volley flying along `dir` killed `lost` of regiment
+    /// `target`'s soldiers; the first that fall in the next update each keep
+    /// an arrow in them (see [`Puppets::drain_lodged`]).
+    pub fn shot_down(&mut self, target: RegimentHandle, dir: Vec2, lost: u16) {
+        let r = target.index as usize;
+        if lost > 0 && self.owner[r] == Some(target) {
+            self.shot[r] = self.shot[r].saturating_add(lost.min(u16::from(u8::MAX)) as u8);
+            self.shot_dir[r] = dir;
+        }
+    }
+
+    /// The arrows that stuck in soldiers who fell since the last call.
+    pub fn drain_lodged(&mut self) -> impl Iterator<Item = Lodged> + '_ {
+        self.lodged.drain(..)
+    }
+
+    /// Regiment `h` was wiped out: its last soldiers (the ones its final
+    /// update never saw fall, as the regiment is gone from the simulation
+    /// before the next one) drop where they stood. A regiment that is gone
+    /// for any other reason, taken off the field by the player, leaves
+    /// nobody.
+    pub fn wiped(&mut self, h: RegimentHandle) {
+        let r = h.index as usize;
+        if self.owner[r] != Some(h) {
+            return;
+        }
+        let base = r * SLOTS;
+        for k in 0..(self.models[r] as usize).min(SLOTS) {
+            let fallen = Fallen {
+                pos: self.pos[base + k],
+                facing: self.facing[base + k],
+                fell: self.time,
+                unit: self.unit[r],
+                owner: self.player[r],
+            };
+            self.lay(fallen);
+            self.lodge(h, k, &fallen);
+        }
+        self.owner[r] = None;
+        self.models[r] = 0;
+        self.shot[r] = 0;
+    }
+
+    /// If an arrow of regiment `h`'s last volley is still to find a man,
+    /// it stays in `fallen` (its `k`th to fall), somewhere along his length
+    /// and a little to one side.
+    fn lodge(&mut self, h: RegimentHandle, k: usize, fallen: &Fallen) {
+        let r = h.index as usize;
+        if self.shot[r] == 0 {
+            return;
+        }
+        self.shot[r] -= 1;
+        let along = unit_hash(h, k, 11) - 0.5;
+        let aside = unit_hash(h, k, 12) - 0.5;
+        let side = Vec2::new(-fallen.facing.y, fallen.facing.x);
+        self.lodged.push(Lodged {
+            pos: fallen.pos
+                + fallen.facing * (along * LODGED_ALONG)
+                + side * (aside * LODGED_ASIDE),
+            dir: self.shot_dir[r],
+        });
+    }
+
+    /// Lay a soldier on the field. When it is full the oldest sinks away to
+    /// make room.
+    fn lay(&mut self, fallen: Fallen) {
+        if self.corpses.len() < self.corpse_capacity {
+            self.corpses.push(fallen);
+            return;
+        }
+        let oldest = core::mem::replace(&mut self.corpses[self.next_corpse], fallen);
+        self.next_corpse = (self.next_corpse + 1) % self.corpse_capacity;
+        if self.sinking.len() < MAX_SINKING {
+            self.sinking.push((oldest, self.time));
+        }
     }
 
     /// Pair front-rank soldiers of fighting regiments with the nearest enemy
@@ -731,6 +857,8 @@ impl Puppets {
         } else {
             self.fall(block, owner, models);
         }
+        self.shot[r] = 0;
+        self.unit[r] = block.unit;
         self.charge[r] = block.charge;
         self.fighter[r] = block.fighter;
         self.models[r] = models as u16;
@@ -982,12 +1110,16 @@ impl Puppets {
                 ),
                 None => (self.time, self.facing[victim]),
             };
-            let corpse = (self.pos[victim], facing, owner, block.unit, fell);
-            if self.corpses.len() < self.corpse_capacity {
-                self.corpses.push(corpse);
-            } else {
-                self.corpses[self.next_corpse] = corpse;
-                self.next_corpse = (self.next_corpse + 1) % self.corpse_capacity;
+            let fallen = Fallen {
+                pos: self.pos[victim],
+                facing,
+                fell,
+                unit: block.unit,
+                owner,
+            };
+            self.lay(fallen);
+            if fell <= self.time {
+                self.lodge(block.handle, gone, &fallen);
             }
             self.pos[victim] = self.pos[last];
             self.vel[victim] = self.vel[last];
@@ -1026,22 +1158,27 @@ impl Puppets {
             .then_some((lost as usize, d.champion[w] as usize))
     }
 
-    /// Every fallen soldier still on the field.
+    /// Every fallen soldier still on the field, those making room for newer
+    /// ones last.
     pub fn corpses(&self) -> impl Iterator<Item = Corpse> + '_ {
-        self.corpses
-            .iter()
-            .filter_map(move |&(pos, facing, owner, unit, fell)| {
-                let age = self.time - fell;
-                let sink = (age - CORPSE_SECONDS) / CORPSE_SINK_SECONDS;
-                (sink < 1.0).then_some(Corpse {
-                    pos,
-                    facing,
-                    owner,
-                    unit,
-                    age,
-                    sink: sink.max(0.0),
-                })
-            })
+        let corpse = move |f: &Fallen, sink: f32| Corpse {
+            pos: f.pos,
+            facing: f.facing,
+            owner: f.owner,
+            unit: f.unit,
+            age: self.time - f.fell,
+            sink,
+        };
+        self.corpses.iter().map(move |f| corpse(f, 0.0)).chain(
+            self.sinking
+                .iter()
+                .map(move |(f, from)| corpse(f, (self.time - from) / CORPSE_SINK_SECONDS)),
+        )
+    }
+
+    /// How many fallen soldiers are on the field, sinking ones included.
+    pub fn corpse_count(&self) -> usize {
+        self.corpses.len() + self.sinking.len()
     }
 }
 
@@ -1349,13 +1486,107 @@ mod tests {
             assert_eq!((c.owner, c.sink), (2, 0.0));
         }
 
-        // The ring buffer keeps the newest; old corpses sink away.
+        // The fallen stay as long as the battle lasts, however long that is.
+        p.advance(3600.0);
+        assert_eq!(p.corpses().count(), 2);
+        assert!(p.corpses().all(|c| c.sink == 0.0));
+
+        // Once the field is full (three here) the oldest sink away to make
+        // room for the newest, and are gone three seconds later.
         block.models = 2;
         p.advance(0.016);
         p.update(&block, 2, 0.016, |_| {});
-        assert_eq!(p.corpses().count(), 3);
-        p.advance(CORPSE_SECONDS + CORPSE_SINK_SECONDS);
-        assert_eq!(p.corpses().count(), 0);
+        assert_eq!(p.corpse_count(), 6);
+        p.advance(CORPSE_SINK_SECONDS * 0.5);
+        let mut sinks: Vec<f32> = p.corpses().map(|c| c.sink).collect();
+        sinks.sort_by(f32::total_cmp);
+        assert_eq!(sinks[..3], [0.0; 3]);
+        assert!(
+            sinks[3..].iter().all(|s| (s - 0.5).abs() < 0.01),
+            "{sinks:?}"
+        );
+        p.advance(CORPSE_SINK_SECONDS);
+        assert_eq!(p.corpse_count(), 3);
+        assert!(p.corpses().all(|c| c.sink == 0.0));
+    }
+
+    #[test]
+    fn the_last_soldiers_of_a_wiped_out_regiment_fall() {
+        let mut p = Puppets::new(2, 16);
+        let block = Block {
+            handle: RegimentHandle {
+                index: 1,
+                generation: 0,
+            },
+            unit: 3,
+            centre: Vec2::new(5.0, 5.0),
+            facing: Vec2::NEG_Y,
+            files: 4,
+            models: 5,
+            file_spacing: 1.0,
+            rank_spacing: 1.0,
+            speed: 3.0,
+            engaged: true,
+            routing: false,
+            disorder: 0.0,
+            charge: 0,
+            fighter: Fighter::default(),
+        };
+        p.update(&block, 2, 0.016, |_| {});
+        // Gone from the simulation before the puppets saw a casualty: all
+        // five lie where they stood, and a second report adds nobody.
+        p.wiped(block.handle);
+        p.wiped(block.handle);
+        let fallen: Vec<Corpse> = p.corpses().collect();
+        assert_eq!(fallen.len(), 5);
+        assert!(fallen.iter().all(|c| c.owner == 2 && c.unit == 3));
+        assert!(fallen.iter().all(|c| c.pos.distance(block.centre) < 3.0));
+    }
+
+    #[test]
+    fn arrows_that_kill_stay_in_the_fallen() {
+        let mut p = Puppets::new(1, 16);
+        let mut block = Block {
+            handle: RegimentHandle {
+                index: 0,
+                generation: 0,
+            },
+            unit: 0,
+            centre: Vec2::ZERO,
+            facing: Vec2::NEG_Y,
+            files: 4,
+            models: 8,
+            file_spacing: 1.0,
+            rank_spacing: 1.0,
+            speed: 3.0,
+            engaged: false,
+            routing: false,
+            disorder: 0.0,
+            charge: 0,
+            fighter: Fighter::default(),
+        };
+        p.update(&block, 1, 0.016, |_| {});
+        // A volley from the east kills two of the three who fall; the third
+        // went to something else.
+        p.shot_down(block.handle, Vec2::NEG_X, 2);
+        block.models = 5;
+        p.advance(0.016);
+        p.update(&block, 1, 0.016, |_| {});
+        let lodged: Vec<Lodged> = p.drain_lodged().collect();
+        assert_eq!(lodged.len(), 2);
+        for l in &lodged {
+            assert_eq!(l.dir, Vec2::NEG_X);
+            assert!(p.corpses().any(|c| c.pos.distance(l.pos) < 0.6), "{l:?}");
+        }
+        assert_eq!(p.drain_lodged().count(), 0);
+        // Arrows that killed nobody this frame don't wait for later deaths.
+        p.shot_down(block.handle, Vec2::X, 3);
+        p.advance(0.016);
+        p.update(&block, 1, 0.016, |_| {});
+        block.models = 4;
+        p.advance(0.016);
+        p.update(&block, 1, 0.016, |_| {});
+        assert_eq!(p.drain_lodged().count(), 0);
     }
 
     const FRAME: f32 = 1.0 / 60.0;

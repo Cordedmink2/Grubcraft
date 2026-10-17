@@ -13,12 +13,12 @@ use gc_sim::economy::{SEEP_GRUB, VEIN_MARROW};
 use gc_sim::structures::Breaker;
 use gc_sim::{
     Command, ConquestSetup, ConquestUnit, MAX_PARTIES, NodeSetup, PlayerCommand, PlayerId,
-    Resource, World,
+    Resource, Victories, World,
 };
 use gc_ui::Settings;
 use gc_ui::lobby::{
     COLORS, CONQUEST_MAP_PLAYERS, Faction as LobbyFaction, GameMode, LobbySettings, MatchStart,
-    Slot, SlotKind, Tempo,
+    Slot, SlotKind, Tempo, Victory,
 };
 use glam::Vec2;
 
@@ -140,6 +140,7 @@ pub fn plan(
     map: &Map,
     factions: &[Faction],
     tempo: Tempo,
+    victories: Victories,
 ) -> ConquestRecord {
     let mut start = [(0, 0); MAX_PARTIES];
     for (s, &f) in start.iter_mut().zip(factions) {
@@ -153,7 +154,25 @@ pub fn plan(
         start,
         gather_percent: tempo.gather_percent(),
         build_percent: tempo.build_percent(),
+        victories,
+        heart: map
+            .objects_of(Kind::Heart)
+            .next()
+            .map(|o| tile_centre(o.at)),
     }
+}
+
+/// What the simulation plays a lobby's Victory setting for.
+pub fn victories(v: Victory) -> Victories {
+    Victories {
+        annihilation: v.annihilation(),
+        heart: v.heart(),
+    }
+}
+
+/// The middle of tile `at`.
+fn tile_centre((x, y): (i32, i32)) -> FxVec2 {
+    FxVec2::from_ints(x, y) + FxVec2::new(Fx::HALF, Fx::HALF)
 }
 
 /// The map's Grub seeps and Marrow veins, in the map's order, each at its
@@ -167,10 +186,9 @@ pub fn nodes_of(map: &Map) -> Vec<NodeSetup> {
                 Kind::MarrowVein => (Resource::Marrow, VEIN_MARROW),
                 _ => return None,
             };
-            let (x, y) = o.at;
             Some(NodeSetup {
                 resource,
-                at: FxVec2::from_ints(x, y) + FxVec2::new(Fx::HALF, Fx::HALF),
+                at: tile_centre(o.at),
                 amount,
             })
         })
@@ -345,7 +363,7 @@ mod tests {
             ground: map.ground(),
             champions: false,
         });
-        let plan = plan(&table, &data, map, factions, tempo);
+        let plan = plan(&table, &data, map, factions, tempo, Victories::default());
         assert!(world.conquest(&plan.setup()));
         (world, plan, table)
     }
@@ -527,5 +545,20 @@ mod tests {
         assert_eq!((s.gather_percent, s.build_percent), (150, 75));
         assert_eq!(s.nodes.len(), nodes_of(&map).len());
         assert!(s.nodes.len() >= 6);
+    }
+
+    #[test]
+    fn every_conquest_map_has_its_heart_in_the_middle() {
+        for choice in 0..CONQUEST_MAP_PLAYERS.len() {
+            let map = make_map(choice);
+            let both = Victories::BOTH;
+            let data = data();
+            let plan = plan(&Table::new(&data), &data, &map, &[], Tempo::Epic, both);
+            let at = plan.heart.expect("a Heart");
+            let middle = map.tiles as i32 / 2;
+            assert!((at.x.floor_int() - middle).abs() <= 2, "{at:?}");
+            assert!((at.y.floor_int() - middle).abs() <= 2, "{at:?}");
+            assert_eq!(plan.victories, both);
+        }
     }
 }

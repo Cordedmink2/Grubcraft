@@ -38,10 +38,71 @@ pub enum SoundId {
     MusicCalm = 11,
     /// Music, battle layer (loops, plays in step with the calm layer).
     MusicBattle = 12,
+    /// An Ember Clans regiment charges into contact: its war voice.
+    EmberCharge = 13,
+    /// An Ember Clans regiment breaks and runs: its war voice.
+    EmberRout = 14,
+    /// An Ember Clans regiment rallies: its war voice.
+    EmberRally = 15,
+    /// An Ember Clans regiment's champion wins the pre-battle duel; the regiment roars.
+    EmberVictory = 16,
+    /// A Brood regiment charges into contact: its war voice.
+    BroodCharge = 17,
+    /// A Brood regiment breaks and runs: its war voice.
+    BroodRout = 18,
+    /// A Brood regiment rallies: its war voice.
+    BroodRally = 19,
+    /// A Brood regiment's champion wins the pre-battle duel; the regiment roars.
+    BroodVictory = 20,
+    /// A Shard Choir regiment charges into contact: its war voice.
+    ChoirCharge = 21,
+    /// A Shard Choir regiment breaks and runs: its war voice.
+    ChoirRout = 22,
+    /// A Shard Choir regiment rallies: its war voice.
+    ChoirRally = 23,
+    /// A Shard Choir regiment's champion wins the pre-battle duel; the regiment roars.
+    ChoirVictory = 24,
+    /// A Carrion Concord regiment charges into contact: its war voice.
+    CarrionCharge = 25,
+    /// A Carrion Concord regiment breaks and runs: its war voice.
+    CarrionRout = 26,
+    /// A Carrion Concord regiment rallies: its war voice.
+    CarrionRally = 27,
+    /// A Carrion Concord regiment's champion wins the pre-battle duel; the regiment roars.
+    CarrionVictory = 28,
 }
 
 impl SoundId {
-    pub const COUNT: usize = 13;
+    /// The battle cries, by faction (Ember Clans, Brood, Shard Choir,
+    /// Carrion Concord) and by [`Cry`].
+    const CRIES: [[SoundId; 4]; 4] = [
+        [
+            SoundId::EmberCharge,
+            SoundId::EmberRout,
+            SoundId::EmberRally,
+            SoundId::EmberVictory,
+        ],
+        [
+            SoundId::BroodCharge,
+            SoundId::BroodRout,
+            SoundId::BroodRally,
+            SoundId::BroodVictory,
+        ],
+        [
+            SoundId::ChoirCharge,
+            SoundId::ChoirRout,
+            SoundId::ChoirRally,
+            SoundId::ChoirVictory,
+        ],
+        [
+            SoundId::CarrionCharge,
+            SoundId::CarrionRout,
+            SoundId::CarrionRally,
+            SoundId::CarrionVictory,
+        ],
+    ];
+
+    pub const COUNT: usize = 29;
 
     pub const ALL: [SoundId; SoundId::COUNT] = [
         SoundId::ArrowRelease,
@@ -57,6 +118,22 @@ impl SoundId {
         SoundId::UiAttack,
         SoundId::MusicCalm,
         SoundId::MusicBattle,
+        SoundId::EmberCharge,
+        SoundId::EmberRout,
+        SoundId::EmberRally,
+        SoundId::EmberVictory,
+        SoundId::BroodCharge,
+        SoundId::BroodRout,
+        SoundId::BroodRally,
+        SoundId::BroodVictory,
+        SoundId::ChoirCharge,
+        SoundId::ChoirRout,
+        SoundId::ChoirRally,
+        SoundId::ChoirVictory,
+        SoundId::CarrionCharge,
+        SoundId::CarrionRout,
+        SoundId::CarrionRally,
+        SoundId::CarrionVictory,
     ];
 
     pub fn from_u8(v: u8) -> Option<SoundId> {
@@ -66,6 +143,27 @@ impl SoundId {
     pub fn is_music(self) -> bool {
         matches!(self, SoundId::MusicCalm | SoundId::MusicBattle)
     }
+
+    /// The battle cry of a faction (0 Ember Clans, 1 Brood, 2 Shard Choir,
+    /// 3 Carrion Concord, the order of the game's factions; a larger number
+    /// wraps) for an event.
+    pub fn cry(faction: u8, cry: Cry) -> SoundId {
+        SoundId::CRIES[usize::from(faction % 4)][cry as usize]
+    }
+}
+
+/// What a regiment shouts about; each faction has its own voice for each.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Cry {
+    /// It charges into contact with the enemy.
+    Charge = 0,
+    /// It breaks and runs.
+    Rout = 1,
+    /// It rallies after a rout.
+    Rally = 2,
+    /// Its champion wins the duel between the lines.
+    Victory = 3,
 }
 
 /// One compressed clip, borrowed from the bank blob.
@@ -265,5 +363,20 @@ mod tests {
             assert_eq!(SoundId::from_u8(id as u8), Some(id));
         }
         assert_eq!(SoundId::from_u8(SoundId::COUNT as u8), None);
+    }
+
+    #[test]
+    fn every_faction_has_its_four_cries() {
+        let mut seen = Vec::new();
+        for faction in 0..4 {
+            for cry in [Cry::Charge, Cry::Rout, Cry::Rally, Cry::Victory] {
+                let id = SoundId::cry(faction, cry);
+                assert!(!id.is_music() && !seen.contains(&id));
+                seen.push(id);
+            }
+        }
+        assert_eq!(SoundId::cry(0, Cry::Charge), SoundId::EmberCharge);
+        assert_eq!(SoundId::cry(3, Cry::Victory), SoundId::CarrionVictory);
+        assert_eq!(SoundId::cry(5, Cry::Rout), SoundId::BroodRout, "wraps");
     }
 }

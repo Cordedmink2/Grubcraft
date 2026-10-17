@@ -8,8 +8,8 @@ use crate::hud::{MinimapTerrain, draw_terrain};
 use crate::lobby::{
     AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAX_ARMY,
     MAX_PLAYERS, MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile, RosterUnit,
-    SlotEdit, SlotKind, Tempo, army_points, field_map_tiles, fresh_map_seed, map_code, maps_for,
-    parse_map_code, thousands,
+    SlotEdit, SlotKind, Tempo, Victory, army_points, field_map_tiles, fresh_map_seed, map_code,
+    maps_for, parse_map_code, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -59,6 +59,8 @@ pub enum MenuAction {
     ListReplays,
     /// Watch the replay saved at this path.
     WatchReplay(PathBuf),
+    /// The Unit viewer button: the game should open the viewer.
+    OpenViewer,
     Quit,
 }
 
@@ -429,9 +431,11 @@ impl<N: Network> Menu<N> {
 
     fn main_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
         let (w, h) = ui.screen;
-        let button_h = 52;
-        let count = if self.in_match { 6 } else { 5 };
-        let total = 120 + count * (button_h + 14);
+        let count = if self.in_match { 7 } else { 6 };
+        // Up to 66 pixels for each button and its gap, less in a short window.
+        let step = ((h - 120 - 24) / count).clamp(40, 66);
+        let (button_h, gap) = (step - step / 5, step / 5);
+        let total = 120 + count * step;
         let area = centered(ui.screen, 360, total);
         let title = "GRUBCRAFT";
         let tw = crate::draw::text_width(title, 4);
@@ -446,7 +450,7 @@ impl<N: Network> Menu<N> {
             x: area.x + 30,
             y: area.y + 120,
             w: area.w - 60,
-            gap: 14,
+            gap,
         };
         let mut action = MenuAction::None;
         if self.in_match && ui.button(stack.next(button_h), "Resume", ButtonStyle::Primary, true) {
@@ -471,6 +475,14 @@ impl<N: Network> Menu<N> {
         if ui.button(stack.next(button_h), "Replays", ButtonStyle::Normal, true) {
             self.go(ui, Screen::Replays);
             action = MenuAction::ListReplays;
+        }
+        if ui.button(
+            stack.next(button_h),
+            "Unit viewer",
+            ButtonStyle::Normal,
+            true,
+        ) {
+            action = MenuAction::OpenViewer;
         }
         if ui.button(stack.next(button_h), "Settings", ButtonStyle::Normal, true) {
             self.go(ui, Screen::Settings);
@@ -501,9 +513,9 @@ impl<N: Network> Menu<N> {
     fn play_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
         let k = (ui.screen.1 as f32 / 720.0).clamp(0.72, 1.0);
         let sp = |n: i32| (n as f32 * k).round() as i32;
-        // Five host rows (map, map code, mode, tempo, password), then the
-        // Host and Back buttons, which keep a fixed pixel size.
-        let panel = centered(ui.screen, 880, sp(64 + 74 + 5 * 48 + 8) + 124);
+        // Six host rows (map, map code, mode, tempo, victory, password),
+        // then the Host and Back buttons, which keep a fixed pixel size.
+        let panel = centered(ui.screen, 880, sp(64 + 74 + 6 * 48 + 8) + 124);
         ui.panel(panel);
         ui.label(panel.x + 24, panel.y + 16, 2, theme::TEXT, "Play");
         let card_w = (panel.w - 72) / 2;
@@ -545,7 +557,9 @@ impl<N: Network> Menu<N> {
             None => ("Friends on your Wi-Fi see it automatically.", theme::MUTED),
         };
         ui.label(s.x, hint_y, 1, hint_color, hint);
-        // The map's picture sits beside the three rows below it.
+        // The map's picture sits beside the three rows below it (mode,
+        // tempo and victory); the password has the card's full width under
+        // them.
         let pv = 3 * sp(36) + 2 * sp(12);
         let preview_r = Rect::new(s.x + card_w - pv, s.y, pv, pv);
         s.w = card_w - pv - 12;
@@ -565,6 +579,15 @@ impl<N: Network> Menu<N> {
         if ui.stepper(s.next(sp(36)), "Tempo", &mut tempo, &tempo_names) {
             self.host.tempo = Tempo::ALL[tempo];
         }
+        let victory_names: Vec<&str> = Victory::ALL.iter().map(|v| v.name()).collect();
+        let mut victory = Victory::ALL
+            .iter()
+            .position(|&v| v == self.host.victory)
+            .unwrap_or(0);
+        if ui.stepper(s.next(sp(36)), "Victory", &mut victory, &victory_names) {
+            self.host.victory = Victory::ALL[victory];
+        }
+        s.w = card_w;
         let mut password = std::mem::take(&mut self.host_password);
         ui.text_field(s.next(sp(36)), &mut password, 24, "Password (optional)");
         self.host_password = password;
@@ -745,6 +768,10 @@ impl<N: Network> Menu<N> {
         // Champions may duel before a battle with a computer player: in the
         // footer, beside Leave.
         let champions_r = Rect::new(panel.x + 24 + 140 + 24, panel.bottom() - 52, 320, 44);
+        // Which victories count is a Conquest setting too, but the four
+        // columns above have no room for another stepper: it sits in the
+        // header, between the title and the host's name, clear of them.
+        let victory_r = Rect::new(panel.x + 140, panel.y + 8, 270, sp(36));
         const CHAMPIONS: &str = "Champions before AI battles";
         let mut changed = false;
         if lobby.is_host {
@@ -794,6 +821,17 @@ impl<N: Network> Menu<N> {
                 settings.on_drop = OnDrop::ALL[on_drop];
                 changed = true;
             }
+            if settings.mode == GameMode::Conquest {
+                let names: Vec<&str> = Victory::ALL.iter().map(|v| v.name()).collect();
+                let mut victory = Victory::ALL
+                    .iter()
+                    .position(|&v| v == settings.victory)
+                    .unwrap_or(0);
+                if ui.stepper(victory_r, "Victory", &mut victory, &names) {
+                    settings.victory = Victory::ALL[victory];
+                    changed = true;
+                }
+            }
             changed |= ui.toggle(champions_r, CHAMPIONS, &mut settings.champions);
         } else {
             for (i, text) in [
@@ -810,6 +848,10 @@ impl<N: Network> Menu<N> {
             .enumerate()
             {
                 ui.label_centered(slot_rect(i as i32), 1, theme::TEXT, text);
+            }
+            if settings.mode == GameMode::Conquest {
+                let text = format!("Victory: {}", settings.victory.name());
+                ui.label_centered(victory_r, 1, theme::TEXT, &text);
             }
             let on = if settings.champions { "on" } else { "off" };
             ui.label_centered(champions_r, 1, theme::MUTED, &format!("{CHAMPIONS}: {on}"));
@@ -1699,6 +1741,22 @@ mod tests {
     }
 
     #[test]
+    fn the_unit_viewer_button_asks_the_game_to_open_the_viewer() {
+        let mut h = Harness::new();
+        assert!(h.has("Unit viewer"));
+        let (x, y) = h.text_pos("Unit viewer");
+        h.frame(UiInput {
+            mouse: (x, y),
+            pressed: true,
+            released: true,
+            ..Default::default()
+        });
+        assert!(matches!(h.last, MenuAction::OpenViewer));
+        // The menu stays on the main screen; the game shows the viewer over it.
+        assert_eq!(h.menu.screen(), Screen::Main);
+    }
+
+    #[test]
     fn enter_opens_play_from_the_main_menu() {
         let mut h = Harness::new();
         h.key(|i| i.enter = true);
@@ -1758,6 +1816,68 @@ mod tests {
             }
             other => panic!("expected StartMatch, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_host_picks_which_conquest_victories_count() {
+        let mut h = Harness::new();
+        h.click("Play");
+        // The host card: both count unless the host says otherwise, and
+        // the stepper wraps through the three choices.
+        assert!(h.has("Victory: Both"));
+        h.click("Victory: Both");
+        assert!(h.has("Victory: Annihilation"));
+        h.click("Victory: Annihilation");
+        assert!(h.has("Victory: Titan's Heart"));
+        h.click("Victory: Titan's Heart");
+        assert!(h.has("Victory: Both"));
+        h.click("Victory: Both");
+        h.click_last("Host");
+        assert_eq!(h.menu.screen(), Screen::Lobby);
+        let victory = |h: &Harness| h.menu.net.lobby().unwrap().settings.victory;
+        assert_eq!(victory(&h), Victory::Annihilation);
+        // A Field Battle lobby has no Victory row; Conquest does.
+        assert!(!h.has("Victory: Annihilation"));
+        h.click("Mode:");
+        assert!(h.has("Mode: Conquest"));
+        assert!(h.has("Victory: Annihilation"));
+        h.click("Victory: Annihilation");
+        assert_eq!(victory(&h), Victory::Heart);
+        assert!(h.has("Victory: Titan's Heart"));
+        // It sits in the header, left of the host's name and above the
+        // settings row.
+        let (vx, vy) = h.text_pos("Victory: Titan's Heart");
+        let (hx, _) = h.text_pos("Host:");
+        let (_, my) = h.text_pos("Mode: Conquest");
+        assert!(vx + 88 < hx && vy < my);
+    }
+
+    #[test]
+    fn a_joiner_sees_which_conquest_victories_count_as_text() {
+        let mut local = LocalNetwork::new();
+        let settings = LobbySettings {
+            mode: GameMode::Conquest,
+            victory: Victory::Annihilation,
+            ..Default::default()
+        };
+        let host = Menu::new(LocalNetwork::new(), Settings::default(), None, "0.1.0").profile();
+        local.host(&host, settings, "").unwrap();
+        let mut lobby = local.lobby().unwrap().clone();
+        lobby.is_host = false;
+        lobby.slots[1] = {
+            let mut s = lobby.slots[0].clone();
+            s.name = "Guest".into();
+            s
+        };
+        lobby.local_slot = 1;
+        let mut menu = Menu::new(Guest(lobby), Settings::default(), None, "0.1.0");
+        let mut ui = Ui::new();
+        menu.show(Screen::Lobby);
+        ui.begin_frame(UiInput::default(), (1280, 760));
+        menu.frame(&mut ui);
+        ui.end_frame();
+        assert!(find_text(&ui.draw, "Victory: Annihilation").is_some());
+        assert!(find_text(&ui.draw, "Tempo: Standard").is_some());
     }
 
     #[test]
@@ -1882,7 +2002,7 @@ mod tests {
     fn conquest_can_be_hosted_on_its_own_maps() {
         let mut h = Harness::new();
         h.click("Play");
-        h.click("Mode: Field Battle");
+        h.click("Mode:");
         assert!(h.has("Mode: Conquest"));
         assert!(h.has("Map: Ribcage Pass"));
         h.click("Map: Ribcage Pass");
@@ -1890,7 +2010,7 @@ mod tests {
         // Back to Field Battle: the map stays in range.
         h.click("Mode: Conquest");
         assert!(h.has("Map: Random: Pass"));
-        h.click("Mode: Field Battle");
+        h.click("Mode:");
         h.click_last("Host");
         assert_eq!(h.menu.screen(), Screen::Lobby);
         let lobby = h.menu.net.lobby().unwrap();
@@ -2423,7 +2543,10 @@ mod tests {
 
     #[test]
     fn every_screen_draws_inside_the_window() {
-        for size in [(1280, 760), (853, 506), (1024, 600)] {
+        for (size, mode) in [(1280, 760), (853, 506), (1024, 600)]
+            .into_iter()
+            .flat_map(|size| [GameMode::FieldBattle, GameMode::Conquest].map(|m| (size, m)))
+        {
             let mut h = Harness::new();
             h.menu.set_roster(vec![RosterUnit {
                 name: "Yari Ashigaru".into(),
@@ -2432,7 +2555,14 @@ mod tests {
             }]);
             h.menu
                 .net
-                .host(&h.menu.profile(), LobbySettings::default(), "")
+                .host(
+                    &h.menu.profile(),
+                    LobbySettings {
+                        mode,
+                        ..Default::default()
+                    },
+                    "",
+                )
                 .unwrap();
             for screen in [
                 Screen::Main,
@@ -2450,7 +2580,7 @@ mod tests {
                     let bottom = i32::from(q.pos[1]) + i32::from(q.size[1]);
                     assert!(
                         right <= size.0 && bottom <= size.1,
-                        "{screen:?} {size:?} overflows: {q:?}"
+                        "{screen:?} {size:?} {mode:?} overflows: {q:?}"
                     );
                 }
             }

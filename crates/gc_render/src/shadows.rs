@@ -18,7 +18,7 @@ pub const SHADOW_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
 /// Shadows reach this far from the camera, in tiles: past the far corners
 /// of the view at the camera's widest zoom (260 tiles out at 55°, whose
 /// far corners are about 390 tiles away).
-const SHADOW_RANGE: f32 = 400.0;
+pub const SHADOW_RANGE: f32 = 400.0;
 /// The covered square's side is rounded up to this many tiles, so its
 /// texel size changes in steps as the view zooms rather than every frame.
 const SIDE_STEP: f32 = 16.0;
@@ -29,8 +29,15 @@ pub const SHADOW_FADE: f32 = 0.95;
 
 /// The sun's view and projection, and the size of one shadow texel in
 /// tiles, covering what `view_proj` shows of a map `map_size` tiles across
-/// whose ground lies between 0 and `max_height`. `sun` points toward the sun.
-pub fn sun_view_proj(view_proj: Mat4, sun: Vec3, map_size: f32, max_height: f32) -> (Mat4, f32) {
+/// whose ground lies between 0 and `max_height`, out to `range` tiles from
+/// the camera. `sun` points toward the sun.
+pub fn sun_view_proj(
+    view_proj: Mat4,
+    sun: Vec3,
+    map_size: f32,
+    max_height: f32,
+    range: f32,
+) -> (Mat4, f32) {
     // The ground the view can show: along each corner's ray, from where it
     // comes down to the highest ground to where it meets the lowest (or the
     // shadow range, if nearer).
@@ -46,7 +53,7 @@ pub fn sun_view_proj(view_proj: Mat4, sun: Vec3, map_size: f32, max_height: f32)
     {
         let near = at(x, y, 0.0);
         let ray = at(x, y, 1.0) - near;
-        let mut end = (SHADOW_RANGE / ray.length()).min(1.0);
+        let mut end = (range / ray.length()).min(1.0);
         let mut start = 0.0;
         if ray.y < 0.0 {
             end = end.min(-near.y / ray.y);
@@ -109,7 +116,7 @@ mod tests {
     fn the_shadow_map_covers_the_view_and_the_map_depth() {
         let sun = crate::SUN.normalize();
         let focus = Vec3::new(200.0, 0.0, 200.0);
-        let (m, _) = sun_view_proj(camera(focus), sun, 512.0, 40.0);
+        let (m, _) = sun_view_proj(camera(focus), sun, 512.0, 40.0, SHADOW_RANGE);
         for p in [
             focus,
             focus + Vec3::new(30.0, 0.0, 10.0),
@@ -133,7 +140,7 @@ mod tests {
         let eye = focus + Vec3::new(0.0, pitch.sin(), pitch.cos()) * 260.0;
         let view_proj =
             perspective(fov, 16.0 / 9.0, 1.0, 1080.0) * look_at_mat4(eye, focus, Vec3::Y);
-        let (m, _) = sun_view_proj(view_proj, crate::SUN.normalize(), 512.0, 40.0);
+        let (m, _) = sun_view_proj(view_proj, crate::SUN.normalize(), 512.0, 40.0, SHADOW_RANGE);
         let inv = view_proj.inverse();
         for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
             // Where the corner's ray meets the ground, and the highest ground.
@@ -152,8 +159,8 @@ mod tests {
         let sun = crate::SUN.normalize();
         let a = Vec3::new(200.0, 0.0, 200.0);
         let b = a + Vec3::new(3.37, 0.0, 1.91);
-        let (ma, ta) = sun_view_proj(camera(a), sun, 512.0, 40.0);
-        let (mb, tb) = sun_view_proj(camera(b), sun, 512.0, 40.0);
+        let (ma, ta) = sun_view_proj(camera(a), sun, 512.0, 40.0, SHADOW_RANGE);
+        let (mb, tb) = sun_view_proj(camera(b), sun, 512.0, 40.0, SHADOW_RANGE);
         assert_eq!(ta, tb);
         // A fixed world point lands on the same sub-texel spot in both.
         let p = Vec3::new(210.0, 5.0, 190.0);

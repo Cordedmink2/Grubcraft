@@ -39,8 +39,9 @@ The stand-ins are simplified and recoloured by the baker (team colours, fewer tr
 |---|---|---|---|
 | 3D Lowpoly Samurai with Animations | null-painter-error | [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/) | https://opengameart.org/content/3d-lowpoly-samurai-with-animations-fbx-format |
 | Spider [Animated] | PantherOne | [CC-BY 3.0](https://creativecommons.org/licenses/by/3.0/) | https://opengameart.org/content/spider-animated |
+| Battlecry (layered with other voices and pitched, in the Ember Clans' battle cries) | spookymodem | [CC-BY 3.0](https://creativecommons.org/licenses/by/3.0/) | https://opengameart.org/content/battlecry |
 
-If we change either model, say so in the credit ("adapted from ...").
+If we change either model, say so in the credit ("adapted from ..."). The battle cries are made by layering and pitching recordings, which the credit says.
 
 ## CC0 (credit welcome, not required)
 
@@ -51,5 +52,12 @@ If we change either model, say so in the credit ("adapted from ...").
 | Alien Bug (animated) | CDmir | https://opengameart.org/content/alien-bug-animated |
 | Ultimate Monsters, Easy Enemy Pack, LowPoly RPG Characters, Ultimate Modular Men | Quaternius (quaternius.com) | https://quaternius.com/packs |
 | Ground 054, Grass 001, Rock 035 textures | ambientCG (ambientcg.com) | https://ambientcg.com |
+| Voice Clip Pack - Male Adventurer RPG (Ember Clans battle cries) | wolfwoot / 2DPIXX | https://opengameart.org/content/voice-clip-pack-male-adventurer-rpg |
+| Zombie / Skeleton / Monster Voice Effects (Carrion Concord and Ember Clans battle cries) | ArcadeParty / Snabisch | https://opengameart.org/content/zombie-skeleton-monster-voice-effects |
+| Ghost Monster Voice Moaning & Growling, Insect or alien scream (Carrion Concord and Brood battle cries) | qubodup | https://opengameart.org/content/ghost-monster-voice-moaning-growling |
+| Undead Moans (Carrion Concord battle cries) | AntumDeluge | https://opengameart.org/content/undead-moans |
+| 80 CC0 creature SFX (Brood battle cries) | rubberduck / Chasersgaming | https://opengameart.org/content/80-cc0-creature-sfx |
+| Chant (Shard Choir battle cries) | christislord | https://opengameart.org/content/chant |
+| Bell dings/chimes (Shard Choir battle cries) | PWL | https://opengameart.org/content/bell-dingschimes |
 
 Full file lists, hashes and licence evidence: [assets-src/MANIFEST.md](assets-src/MANIFEST.md).

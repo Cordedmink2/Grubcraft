@@ -32,6 +32,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::conquest::ConquestUnit;
 use crate::nav::{CELLS_PER_TILE, CLEARANCE, Nav};
 use crate::regiments::{Order, Regiments};
+use crate::verdict::Mains;
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
 
 /// Index of a building type in the match's building table.
@@ -627,6 +628,22 @@ impl Structures {
     /// Live buildings in index order.
     pub fn iter(&self) -> impl Iterator<Item = StructureView> + '_ {
         self.standing().map(|i| self.view(i))
+    }
+
+    /// The parties with a main building finished, and with one going up.
+    pub(crate) fn mains(&self) -> Mains {
+        let mut m = Mains::default();
+        for i in self.standing() {
+            if self.stats_of(i).role == Role::Main {
+                let bit = 1 << self.owner[i];
+                if self.finished(i) {
+                    m.built |= bit;
+                } else {
+                    m.rising |= bit;
+                }
+            }
+        }
+        m
     }
 
     /// The slots of the buildings standing, in index order.

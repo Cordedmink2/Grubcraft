@@ -59,7 +59,13 @@ mod tests {
     #[test]
     fn credits_name_every_cc_by_author() {
         let lines = super::lines();
-        for author in ["null-painter-error", "PantherOne", "Quaternius", "CDmir"] {
+        for author in [
+            "null-painter-error",
+            "PantherOne",
+            "spookymodem",
+            "Quaternius",
+            "CDmir",
+        ] {
             assert!(
                 lines.iter().any(|l| l.contains(author)),
                 "{author} missing from {lines:#?}"

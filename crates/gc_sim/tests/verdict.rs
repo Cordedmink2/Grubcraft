@@ -4,7 +4,7 @@ use gc_fixed::{Angle, FxVec2};
 use gc_sim::scenario::DRILL_UNITS;
 use gc_sim::{
     Capacities, Command, Cover, HOLD_TICKS, MatchSetup, PlayerCommand, PlayerId, TICKS_PER_SECOND,
-    Verdict, World,
+    Verdict, Win, World,
 };
 
 fn world(cover: &[u8]) -> World {
@@ -81,6 +81,7 @@ fn the_field_held_long_enough_decides_the_battle_for_good() {
     let decided = Verdict {
         holder: 0,
         tick: since + HOLD_TICKS,
+        by: Win::Field,
     };
     assert_eq!(world.verdict(), Some(decided));
     // A new army arriving later doesn't undo it.

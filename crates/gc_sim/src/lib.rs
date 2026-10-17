@@ -53,7 +53,10 @@ pub use structures::{
     BuildingId, BuildingStats, Refusal, StructureHandle, StructureView, Structures,
 };
 pub use terrain::{Cover, Ground, Terrain};
-pub use verdict::{HOLD_TICKS, Verdict};
+pub use verdict::{
+    EXILE_TICKS, HEART_HOLD_TICKS, HEART_REACH, HEART_UNLOCK_TICKS, HOLD_TICKS, HeartView, Verdict,
+    Victories, Win,
+};
 pub use vision::Ambush;
 
 use champions::Champions;
@@ -88,7 +91,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 7;
+pub const SIM_VERSION: u32 = 8;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -706,6 +709,15 @@ impl World {
         }
         self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
         self.events.reserve(setup.structures as usize);
+        // A match played for a victory is won only that way; the sandbox's
+        // buildings leave holding the field as it was.
+        // The Heart counts only on a map that has it.
+        let mut v = setup.victories;
+        v.heart &= setup.heart.is_some();
+        if v.any() {
+            self.judge
+                .conquest(verdict::Throne::new(v, setup.heart, setup.build_percent));
+        }
         true
     }
 
@@ -955,7 +967,27 @@ impl World {
         self.tick += 1;
         self.judge
             .update(&self.regiments, &self.stances, &self.vision, self.tick);
+        self.judge_conquest();
         stats
+    }
+
+    /// Conquest's once-a-second look (see [`verdict`]): who still has a
+    /// main building, who is at the Heart, and who is out.
+    fn judge_conquest(&mut self) {
+        let Some(c) = &mut self.conquest else {
+            return;
+        };
+        let battle = self.deploy.battle_ticks(self.tick);
+        let out = self.judge.update_conquest(
+            &self.regiments,
+            || c.structures.mains(),
+            &self.stances,
+            self.tick,
+            battle,
+        );
+        if out != 0 {
+            c.eliminate(out, &mut self.regiments, &mut self.nav);
+        }
     }
 
     fn apply(&mut self, pc: &PlayerCommand) -> bool {
@@ -1379,9 +1411,27 @@ impl World {
         self.judge.verdict()
     }
 
+    /// The tick Conquest player `party` is out unless it lays a main
+    /// building first, while it has none ([`EXILE_TICKS`] after it lost
+    /// its last).
+    pub fn exiled(&self, party: PlayerId) -> Option<u32> {
+        self.judge.throne()?.exiled(party)
+    }
+
+    /// Whether Conquest player `party` is out of the match.
+    pub fn is_out(&self, party: PlayerId) -> bool {
+        self.judge.throne().is_some_and(|t| t.is_out(party))
+    }
+
+    /// The Titan's Heart, in a Conquest match played for it.
+    pub fn heart(&self) -> Option<HeartView> {
+        self.judge.throne()?.heart(self.battle_ticks())
+    }
+
     /// The party holding the field right now, if one is (see [`verdict`]).
     pub fn holding_the_field(&self) -> Option<PlayerId> {
-        if self.deploying() {
+        // Conquest's rulings don't count it.
+        if self.deploying() || self.judge.throne().is_some() {
             return None;
         }
         verdict::holding_the_field(&self.regiments, &self.stances, &self.vision)

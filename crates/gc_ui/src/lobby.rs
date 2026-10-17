@@ -121,6 +121,40 @@ impl Tempo {
     }
 }
 
+/// Which victories count in a Conquest match (docs/06-game-modes.md,
+/// "Victory conditions").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Victory {
+    /// Annihilation and the Titan's Heart both win.
+    Both,
+    /// Only destroying an opponent's main buildings wins.
+    Annihilation,
+    /// Only holding the Titan's Heart wins.
+    Heart,
+}
+
+impl Victory {
+    pub const ALL: [Victory; 3] = [Victory::Both, Victory::Annihilation, Victory::Heart];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Victory::Both => "Both",
+            Victory::Annihilation => "Annihilation",
+            Victory::Heart => "Titan's Heart",
+        }
+    }
+
+    /// Whether Annihilation wins the match.
+    pub fn annihilation(self) -> bool {
+        matches!(self, Victory::Both | Victory::Annihilation)
+    }
+
+    /// Whether the Titan's Heart wins the match.
+    pub fn heart(self) -> bool {
+        matches!(self, Victory::Both | Victory::Heart)
+    }
+}
+
 /// How well an AI player plays (docs/18-ai.md, "Difficulty"), easiest
 /// first. A slot's `ai_level` indexes this.
 pub const AI_LEVELS: [&str; 4] = ["Recruit", "Veteran", "General", "Warlord"];
@@ -278,6 +312,8 @@ pub struct LobbySettings {
     pub map_seed: u64,
     pub mode: GameMode,
     pub tempo: Tempo,
+    /// Conquest only: which victories count.
+    pub victory: Victory,
     /// If a player drops out of a network match.
     pub on_drop: OnDrop,
     /// Field Battle: points each side raises its army with.
@@ -294,6 +330,7 @@ impl Default for LobbySettings {
             map_seed: DEFAULT_MAP_SEED,
             mode: GameMode::FieldBattle,
             tempo: Tempo::Standard,
+            victory: Victory::Both,
             on_drop: OnDrop::Wait,
             budget: Budget::Battle,
             champions: true,
@@ -899,6 +936,20 @@ mod tests {
         assert_eq!(
             (Tempo::Swift.gather_percent(), Tempo::Swift.build_percent()),
             (150, 75)
+        );
+    }
+
+    #[test]
+    fn victory_says_which_victories_count() {
+        assert_eq!(LobbySettings::default().victory, Victory::Both);
+        let counts = Victory::ALL.map(|v| (v.name(), v.annihilation(), v.heart()));
+        assert_eq!(
+            counts,
+            [
+                ("Both", true, true),
+                ("Annihilation", true, false),
+                ("Titan's Heart", false, true),
+            ]
         );
     }
 

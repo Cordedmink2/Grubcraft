@@ -17,6 +17,6 @@ mod engine;
 pub mod mixer;
 pub mod queue;
 
-pub use bank::{Bank, BankError, Clip, ClipSource, SoundId, write_bank};
+pub use bank::{Bank, BankError, Clip, ClipSource, Cry, SoundId, write_bank};
 pub use engine::{Audio, AudioError};
 pub use mixer::{MAX_VOICES, Meter, Mixer};

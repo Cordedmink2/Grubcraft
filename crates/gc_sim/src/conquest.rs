@@ -14,6 +14,7 @@ use crate::structures::{
     Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, Refusal, Role, StructureHandle,
     Structures, Work,
 };
+use crate::verdict::Victories;
 use crate::{MAX_PARTIES, PlayerId, StateHasher, UnitId, UnitStats};
 
 /// What a Conquest match knows about each regiment type beyond its battle
@@ -69,8 +70,14 @@ pub struct ConquestSetup<'a> {
     /// Epic 80).
     pub gather_percent: u32,
     /// Tempo: building, upgrading and training take this percent of their
-    /// Standard time (Swift 75, Epic 120).
+    /// Standard time (Swift 75, Epic 120). The Titan's Heart unlocks after
+    /// this percent of its Standard wait too.
     pub build_percent: u32,
+    /// How the match is won; with neither, by holding the field as a Field
+    /// Battle is (the sandbox).
+    pub victories: Victories,
+    /// The middle of the Titan's Heart, in tiles, if the map has one.
+    pub heart: Option<FxVec2>,
 }
 
 impl ConquestSetup<'_> {
@@ -90,6 +97,8 @@ impl Default for ConquestSetup<'_> {
             start: [(0, 0); MAX_PARTIES],
             gather_percent: Self::STANDARD,
             build_percent: Self::STANDARD,
+            victories: Victories::default(),
+            heart: None,
         }
     }
 }
@@ -397,6 +406,24 @@ impl Conquest {
     pub(crate) fn stop_work(&mut self, r: usize) {
         self.structures.stop(r);
         self.economy.stop(r);
+    }
+
+    /// The parties in `out` leave the field: their regiments, then their
+    /// buildings.
+    pub(crate) fn eliminate(&mut self, out: u8, regs: &mut Regiments, nav: &mut Nav) {
+        for i in 0..regs.alive.len() {
+            if regs.alive[i] && out & (1 << regs.owner[i]) != 0 {
+                self.stop_work(i);
+                regs.despawn(regs.handle(i));
+            }
+        }
+        let gone: Vec<StructureHandle> = (self.structures.iter())
+            .filter(|s| out & (1 << s.owner) != 0)
+            .map(|s| s.handle)
+            .collect();
+        for h in gone {
+            self.structures.despawn(h, nav, regs);
+        }
     }
 
     /// The "structures" part of the state hash: the unit table and the

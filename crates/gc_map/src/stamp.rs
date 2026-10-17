@@ -43,6 +43,12 @@ fn turn_tile(mut p: Pos, tiles: i32, n: u32) -> Pos {
     p
 }
 
+/// The squared distance between two tiles.
+pub(crate) fn dist2(a: Pos, b: Pos) -> i32 {
+    let (dx, dy) = (a.0 - b.0, a.1 - b.1);
+    dx * dx + dy * dy
+}
+
 /// A tile and its turned copies under the symmetry, in the order the
 /// loader places them (a tile that turns onto itself appears again).
 pub(crate) fn tile_copies(p: Pos, sym: Symmetry, tiles: i32) -> Vec<Pos> {

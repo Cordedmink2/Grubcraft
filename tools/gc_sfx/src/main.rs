@@ -1,9 +1,12 @@
 //! Grubcraft sound generator.
 //!
 //! Every sound effect and music loop in the game is synthesised here, from
-//! scratch, so there is no third-party audio to license: the sounds are
-//! original work, released with the rest of the game. The output is the
-//! sound bank `assets/audio/sounds.gcsnd`, which `gc_game` embeds.
+//! scratch, and is original work, released with the rest of the game. The
+//! exception is the sixteen battle cries (`cries.rs`), which are layered
+//! from real recorded voices under `assets-src/voices/` (CC0, and one CC-BY
+//! clip that the credits screen credits; see `assets-src/MANIFEST.md`). The
+//! output is the sound bank `assets/audio/sounds.gcsnd`, which `gc_game`
+//! embeds.
 //!
 //! Run from the repository root:
 //!
@@ -14,15 +17,19 @@
 //! ```
 //!
 //! Next to the bank the tool writes `sounds.manifest` (baker version, bank
-//! hash and size). The recipes are the only source and the output is exactly
-//! reproducible, so `--check` re-synthesises the bank and compares it byte
-//! for byte with the committed file and its manifest. Bump [`BAKER_VERSION`]
-//! when a change to the tool, not to a recipe, changes the bytes.
+//! hash and size). The recipes and the committed recordings are the only
+//! sources and the output is exactly reproducible, so `--check`
+//! re-synthesises the bank and compares it byte for byte with the committed
+//! file and its manifest. Bump [`BAKER_VERSION`] when a change to the tool,
+//! not to a recipe, changes the bytes.
 //!
-//! Real recorded sounds (CC0 packs, custom recordings) can replace any of
-//! these later: the bank only cares about the clip, not where it came from.
+//! Real recorded sounds can replace any other sound too: the bank only cares
+//! about the clip, not where it came from (`voices.rs` reads WAV and layers
+//! and pitches takes).
 
+mod cries;
 mod synth;
+mod voices;
 
 use gc_assets::manifest::{Manifest, hash_hex};
 use gc_audio::{ClipSource, SoundId, write_bank};
@@ -97,7 +104,9 @@ fn main() {
 
 const MANIFEST_HEADER: &str = "Written by `cargo run -p gc_sfx` beside sounds.gcsnd and checked by\n\
     `cargo run -p gc_sfx -- --check` in CI. Do not edit by hand.\n\
-    The sounds are synthesised by tools/gc_sfx/src/synth.rs; there are no other sources.\n\
+    The sounds are synthesised by tools/gc_sfx/src/synth.rs, except the battle cries,\n\
+    which are layered by tools/gc_sfx/src/cries.rs from the recordings in\n\
+    assets-src/voices (sources and licences: assets-src/MANIFEST.md).\n\
     Hashes are XXH3-128.";
 
 fn manifest_path(bank: &Path) -> PathBuf {
@@ -109,7 +118,10 @@ fn manifest(blob: &[u8], clips: usize) -> Manifest {
     m.set("manifest", "1");
     m.set("baker", &format!("gc_sfx {BAKER_VERSION}"));
     m.set("clips", &clips.to_string());
-    m.set("sources", "none (synthesised)");
+    m.set(
+        "sources",
+        "synthesised; battle cries from assets-src/voices",
+    );
     m.set("bank", &hash_hex(blob));
     m.set("bank_bytes", &blob.len().to_string());
     m
