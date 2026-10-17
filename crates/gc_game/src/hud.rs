@@ -17,8 +17,12 @@ use glam::{Vec2, Vec3};
 use crate::{Running, from_fx_vec, fx_vec, sounds};
 use gc_map::Map;
 
-/// Cells per side of the minimap's ground picture.
-const TERRAIN_CELLS: usize = 48;
+/// Cells per side of the minimap's ground picture: 48 up to a 384-tile
+/// map, then one for every 8 tiles, up to 80 (a 768 map's cells are
+/// 9.6 tiles across).
+fn terrain_cells(tiles: u32) -> usize {
+    (tiles as usize / 8).clamp(48, 80)
+}
 
 /// A plain move to `p`: the units choose their own facing and frontage.
 pub fn move_order(p: Vec2) -> GroupOrder {
@@ -264,23 +268,28 @@ impl HudState {
 pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
     let tiles = hm.tiles;
     let n = tiles as f32;
-    MinimapTerrain::from_fn(TERRAIN_CELLS, |u, v| {
+    MinimapTerrain::from_fn(terrain_cells(tiles), |u, v| {
         let (x, z) = (u * n, v * n);
         let h = hm.height_at(x, z);
         if h < hm.water_level() {
             return [44, 84, 128, 255];
         }
-        let cover = hm
-            .cover
-            .get(z as usize * tiles as usize + x as usize)
-            .copied()
-            .map(gc_sim::Cover::from_u8);
+        let tile = z as usize * tiles as usize + x as usize;
+        let cover = hm.cover.get(tile).copied().map(gc_sim::Cover::from_u8);
         match cover {
+            Some(gc_sim::Cover::Wood) if hm.is_thicket(tile) => [20, 50, 30, 255],
             Some(gc_sim::Cover::Wood) => [34, 78, 44, 255],
             Some(gc_sim::Cover::Grass) => [104, 140, 70, 255],
             _ => {
                 // A few shades, so neighbouring cells merge into one rectangle.
                 let t = ((h / hm.max_height()).clamp(0.0, 1.0) * 6.0).round() / 6.0;
+                if let Some(land) = hm.land_at(tile) {
+                    // The land's own colour, lighter on high ground.
+                    let c = land.colour();
+                    let k = 0.85 + 0.35 * t;
+                    let shade = |v: u8| (f32::from(v) * k).min(255.0) as u8;
+                    return [shade(c[0]), shade(c[1]), shade(c[2]), 255];
+                }
                 let lerp = |a: f32, b: f32| (a + (b - a) * t) as u8;
                 [
                     lerp(120.0, 168.0),

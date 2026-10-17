@@ -94,7 +94,7 @@ Collected here so they're easy to find; detailed in [10 · Architecture](10-arch
 3. **Small shared textures.** Stand-in units and buildings are palette-coloured; textured soldiers share one 512 × 512 texture array, BC7-compressed to about 1 MB per material (4 MB as RGBA8).
 4. **Bone animation textures with four-bone skinning.** Kilobytes per unit type instead of megabytes.
 5. **One instanced draw per model and level of detail**, 36 bytes per soldier (16 bytes is a target).
-6. **Commander View.** Zooming out makes rendering *cheaper*.
+6. **Commander View.** Zooming out makes rendering *cheaper*. The terrain follows the same rule: each 32 × 32-tile chunk is drawn at one of four levels of detail by its distance from the eye (8,192, 2,048, 512 or 128 triangles), so the cost of the ground stops growing with the map's size once most of it is far away. The sun's shadow pass draws the same levels. `RenderStats` has the terrain triangles of both passes and the chunk count at each level.
 7. **Target: baked terrain lighting** for the fixed per-map sun, so only dynamic objects cast real-time shadows. Today the terrain also casts into the shadow map in real time; baking waits on a profile showing the shadow pass costs too much.
 8. **Zero-copy, GPU-ready asset packs,** compiled into the executable with `include_bytes!` and read in place.
 9. **Fixed pools, zero allocations per tick**, verified by test.

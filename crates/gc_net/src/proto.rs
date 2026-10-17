@@ -7,15 +7,15 @@
 
 use gc_sim::PlayerCommand;
 use gc_ui::lobby::{
-    Budget, Faction, GameMode, LobbySettings, MAX_ARMY, MAX_PLAYERS, OnDrop, Slot, SlotEdit,
-    SlotKind, Tempo, Victory, maps_for,
+    Budget, Faction, GameMode, LobbySettings, MAX_ARMY, MAX_PLAYERS, MapSize, OnDrop, Slot,
+    SlotEdit, SlotKind, Tempo, Victory, maps_for,
 };
 
 use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 13;
+pub const PROTOCOL: u8 = 14;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -236,6 +236,10 @@ fn write_settings(w: &mut Writer, s: &LobbySettings) {
         .iter()
         .position(|&v| v == s.victory)
         .unwrap_or(0) as u8);
+    w.u8(MapSize::ALL
+        .iter()
+        .position(|&z| z == s.map_size)
+        .unwrap_or(0) as u8);
 }
 
 fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
@@ -248,6 +252,7 @@ fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
         budget: *Budget::ALL.get(r.u8()? as usize)?,
         champions: r.bool()?,
         victory: *Victory::ALL.get(r.u8()? as usize)?,
+        map_size: *MapSize::ALL.get(r.u8()? as usize)?,
     })
 }
 

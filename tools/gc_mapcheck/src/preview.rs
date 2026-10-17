@@ -34,11 +34,16 @@ pub fn render(map: &Map, scale: i32) -> (u32, Vec<u8>) {
                 Ground::Blocked => [95, 95, 100],
                 Ground::Ford => [90, 150, 210],
                 g => {
-                    let shade = 70 + h / 3;
+                    // The land's colour, lighter on high ground.
+                    let shade = h / 3 - 40;
+                    let land = map.land.get(t).map_or(gc_map::def::Land::Meadow, |&b| {
+                        gc_map::def::Land::from_u8(b)
+                    });
+                    let [lr, lg, lb] = land.colour().map(i32::from);
                     let (r, gr, b) = if g == Ground::Steep {
-                        (shade + 20, shade, shade - 30)
+                        (lr + shade + 30, lg + shade, lb + shade - 10)
                     } else {
-                        (shade - 20, shade + 40, shade - 40)
+                        (lr + shade, lg + shade, lb + shade)
                     };
                     [
                         r.clamp(0, 255) as u8,
@@ -48,6 +53,9 @@ pub fn render(map: &Map, scale: i32) -> (u32, Vec<u8>) {
                 }
             };
             match Cover::from_u8(map.cover[t]) {
+                Cover::Wood if map.thicket.get(t) == Some(&true) => {
+                    c = [c[0] / 5, c[1] / 3, c[2] / 5];
+                }
                 Cover::Wood => c = [c[0] / 3, c[1] / 2, c[2] / 3],
                 Cover::Grass => c = [c[0] / 2 + 40, c[1] / 2 + 70, c[2] / 3],
                 Cover::Open => {}

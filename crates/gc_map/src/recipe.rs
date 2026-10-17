@@ -11,8 +11,8 @@
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    CoverKind, CoverOp, Kind, MapDef, Mode, Noise, Object, Pos, SetPiece, SetPieceKind, Shape,
-    SizeClass, Symmetry, TerrainOp,
+    BIG_MAP_TILES, CoverKind, CoverOp, Kind, MapDef, Mode, Noise, Object, Pos, SetPiece,
+    SetPieceKind, Shape, SizeClass, Symmetry, TerrainOp,
 };
 use crate::generate::{COVER_CLEAR_OF_STARTS, plateaus};
 
@@ -44,8 +44,8 @@ impl Recipe {
 }
 
 /// Ground level before the stamps, and the water line (sixteenths of a
-/// tile); the Conquest recipes share the water.
-const BASE: i32 = 48;
+/// tile); the Wilds share both, the Conquest recipes the water.
+pub(crate) const BASE: i32 = 48;
 pub(crate) const WATER: i32 = 24;
 /// Water this far under the line is a ford (shallower than the 0.35 tiles
 /// the walking rules allow), and this far is too deep to wade.
@@ -78,10 +78,19 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
         Recipe::Hill => w.hill(),
         Recipe::Open => w.open(),
     }
+    // A big map gets as many clumps for its area as a small one; the
+    // small sizes keep the counts their maps have always had.
+    let mut count = |lo, hi| {
+        if tiles < BIG_MAP_TILES {
+            w.range(lo, hi)
+        } else {
+            w.many(lo, hi)
+        }
+    };
     let (woods, meadows) = match recipe {
-        Recipe::Open => (w.range(4, 7), w.range(3, 5)),
-        Recipe::Hill => (w.range(3, 5), w.range(2, 4)),
-        Recipe::Pass | Recipe::Ford => (w.range(2, 4), w.range(2, 4)),
+        Recipe::Open => (count(4, 7), count(3, 5)),
+        Recipe::Hill => (count(3, 5), count(2, 4)),
+        Recipe::Pass | Recipe::Ford => (count(2, 4), count(2, 4)),
     };
     for _ in 0..woods {
         w.clump(CoverKind::Wood, &starts);
@@ -89,17 +98,6 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
     for _ in 0..meadows {
         w.clump(CoverKind::Grass, &starts);
     }
-    let objects = starts
-        .iter()
-        .enumerate()
-        .map(|(owner, &at)| Object {
-            kind: Kind::Start,
-            at,
-            owner: Some(owner as u8),
-            label: String::new(),
-            once: true,
-        })
-        .collect();
     MapDef {
         name: format!("{} {seed}", recipe.name()),
         size: SizeClass::Field(tiles),
@@ -110,18 +108,34 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
         noise: Some(noise),
         terrain: w.terrain,
         cover: w.cover,
-        objects,
+        land: Vec::new(),
+        objects: start_objects(&starts),
         set_pieces: w.set_pieces,
     }
+}
+
+/// A start object for each player, at `starts` in player order.
+pub(crate) fn start_objects(starts: &[Pos]) -> Vec<Object> {
+    starts
+        .iter()
+        .enumerate()
+        .map(|(owner, &at)| Object {
+            kind: Kind::Start,
+            at,
+            owner: Some(owner as u8),
+            label: String::new(),
+            once: true,
+        })
+        .collect()
 }
 
 /// Writes the first player's share of a map: the north half of a Field
 /// Battle map (the Conquest recipes use it too).
 pub(crate) struct Writer<'a> {
     pub(crate) rng: &'a mut Pcg32,
-    tiles: i32,
+    pub(crate) tiles: i32,
     /// The middle line, where the halves meet.
-    mid: i32,
+    pub(crate) mid: i32,
     /// Ground level before the stamps.
     pub(crate) base: i32,
     pub(crate) terrain: Vec<TerrainOp>,
@@ -147,6 +161,14 @@ impl<'a> Writer<'a> {
         lo + self.rng.below((hi - lo + 1) as u32) as i32
     }
 
+    /// How many of a thing to dress the ground with: `lo` to `hi` on a
+    /// 256-tile map, more or fewer with the map's area, so a big map is
+    /// as wooded or as rocky as a small one.
+    pub(crate) fn many(&mut self, lo: i32, hi: i32) -> i32 {
+        let k = self.range(lo, hi);
+        (k * self.tiles * self.tiles + 128 * 256) / (256 * 256)
+    }
+
     pub(crate) fn stamp(&mut self, shape: Shape, mode: Mode, height: i32, edge: i32) {
         self.terrain.push(TerrainOp {
             shape,
@@ -156,9 +178,27 @@ impl<'a> Writer<'a> {
         });
     }
 
+    pub(crate) fn cover(&mut self, shape: Shape, kind: CoverKind) {
+        self.cover.push(CoverOp { shape, kind });
+    }
+
     /// A flat, open place round a start.
-    fn flat(&mut self, at: Pos, r: i32, edge: i32) {
+    pub(crate) fn flat(&mut self, at: Pos, r: i32, edge: i32) {
         self.stamp(Shape::Disc { at, r }, Mode::Set, BASE, edge);
+    }
+
+    /// A wadeable ford of radius `r` at `at`.
+    pub(crate) fn ford(&mut self, at: Pos, r: i32) {
+        self.stamp(Shape::Disc { at, r }, Mode::Set, FORD, 3);
+    }
+
+    /// `count` whole numbers from `lo` to `hi`, each in its own stretch of
+    /// the range, so they spread out.
+    pub(crate) fn spread(&mut self, lo: i32, hi: i32, count: i32) -> Vec<i32> {
+        let band = (hi - lo) / count.max(1);
+        (0..count)
+            .map(|k| lo + band * k + self.range(band / 4, band * 3 / 4))
+            .collect()
     }
 
     /// Where the ways through the middle line go: the distances from the
@@ -168,14 +208,7 @@ impl<'a> Writer<'a> {
         let n = self.range(fewest, most);
         let centre = n % 2 == 1;
         let pairs = n / 2;
-        let reach = self.mid - 16;
-        let offsets = (0..pairs)
-            .map(|k| {
-                // Spread the pairs out, each in its own band.
-                let band = (reach - 12) / pairs.max(1);
-                12 + band * k + self.range(band / 4, band * 3 / 4)
-            })
-            .collect();
+        let offsets = self.spread(12, self.mid - 16, pairs);
         (offsets, centre)
     }
 
@@ -209,7 +242,7 @@ impl<'a> Writer<'a> {
         } else {
             (self.mid - offsets[0], self.mid)
         };
-        self.stamp(Shape::Disc { at, r: width + 1 }, Mode::Set, FORD, 3);
+        self.ford(at, width + 1);
         self.set_piece(SetPieceKind::Ford, at, "The ford");
         // A rise behind one of the gaps, to hold it from.
         let d = offsets.last().copied().unwrap_or(0);
@@ -248,7 +281,7 @@ impl<'a> Writer<'a> {
         let (a, b) = ((-4, self.mid), (self.mid, self.mid));
         self.stamp(Shape::Line { a, b, half_width }, Mode::Lower, DEEP, 4);
         for &at in &fords {
-            self.stamp(Shape::Disc { at, r }, Mode::Set, FORD, 3);
+            self.ford(at, r);
         }
         self.set_piece(SetPieceKind::Ford, fords[0], "The ford");
         // A rise above the first ford, far enough back that its slope
@@ -324,10 +357,7 @@ impl<'a> Writer<'a> {
                 dx * dx + dy * dy >= near * near
             });
             if clear {
-                self.cover.push(CoverOp {
-                    shape: Shape::Disc { at, r },
-                    kind,
-                });
+                self.cover(Shape::Disc { at, r }, kind);
                 return;
             }
         }

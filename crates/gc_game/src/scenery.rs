@@ -1,8 +1,10 @@
 //! Woods and tall grass on the field (docs/20-ambushes.md, "Reading it on
 //! screen"): a tree on about half the wood tiles (a trunk and two stacked
-//! canopy boxes, placed, sized and shaded by a hash of the tile), and a few
-//! low tufts on every tall-grass tile. Built once when the map loads, in
-//! square chunks, and drawn nearest the camera first.
+//! canopy boxes, placed, sized and shaded by a hash of the tile), a big
+//! dark tree and undergrowth on every thicket tile (woods too dense to
+//! march through), and a few low tufts on every tall-grass tile. Built once
+//! when the map loads, in square chunks, and drawn nearest the camera
+//! first.
 
 use gc_render::BoxInstance;
 use glam::Vec2;
@@ -34,8 +36,9 @@ pub struct Scenery {
 
 impl Scenery {
     /// The scenery for a map's cover layer (one byte per tile, as
-    /// `gc_sim::Ground::cover`); `seed` varies the trees between maps.
-    pub fn new(cover: &[u8], map_tiles: u32, seed: u64) -> Scenery {
+    /// `gc_sim::Ground::cover`) and its thicket (`gc_map::Map::thicket`,
+    /// empty if it has none); `seed` varies the trees between maps.
+    pub fn new(cover: &[u8], thicket: &[bool], map_tiles: u32, seed: u64) -> Scenery {
         let n = map_tiles;
         let side = n.div_ceil(CHUNK);
         let chunks = (side * side) as usize;
@@ -52,7 +55,11 @@ impl Scenery {
             for x in 0..n {
                 let chunk = ((y / CHUNK) * side + x / CHUNK) as usize;
                 let tile = Vec2::new(x as f32, y as f32);
-                match cover[(y * n + x) as usize] {
+                let i = (y * n + x) as usize;
+                match cover[i] {
+                    2 if thicket.get(i) == Some(&true) => {
+                        thicket_tree(&mut s.trees[chunk], tile, seed, x, y);
+                    }
                     2 => {
                         let h = hash(seed, x, y, 0);
                         if h % 100 < TREE_PERCENT {
@@ -157,6 +164,57 @@ fn tree(out: &mut Vec<BoxInstance>, tile: Vec2, seed: u64, x: u32, y: u32) {
     });
 }
 
+/// A thicket tile whose corner is `tile`: a big dark tree of a random
+/// height (so the crowns of a belt are a broken, shadowed mass, not a flat
+/// mat), a taller spire on some, and undergrowth filling the tile round it,
+/// so a belt of thicket reads as a wall.
+fn thicket_tree(out: &mut Vec<BoxInstance>, tile: Vec2, seed: u64, x: u32, y: u32) {
+    let h = hash(seed, x, y, 9);
+    let g = hash(seed, x, y, 10);
+    let at = tile + Vec2::new(0.3 + unit(h) * 0.4, 0.3 + unit(h >> 8) * 0.4);
+    let facing = angle(h >> 16);
+    let size = 1.5 + unit(h >> 24) * 0.8;
+    let tall = 1.1 + unit(g) * 1.0;
+    let lift = 0.9 + unit(g >> 8) * 0.8;
+    let shade = ((h >> 4) % 28) as u8;
+    let leaf = [26 + shade / 2, 50 + shade, 28 + shade / 3, 0];
+    let light = [leaf[0] + 10, leaf[1] + 14, leaf[2] + 6, 0];
+    out.push(BoxInstance {
+        pos: at.to_array(),
+        facing,
+        size: [0.3, lift + 0.4, 0.3],
+        color: [70, 52, 36, 0],
+        lift: 0.0,
+    });
+    out.push(BoxInstance {
+        pos: at.to_array(),
+        facing,
+        size: [size, tall, size],
+        color: leaf,
+        lift,
+    });
+    let top = lift + tall;
+    let spire = (g >> 16).is_multiple_of(3);
+    out.push(BoxInstance {
+        pos: at.to_array(),
+        facing,
+        size: if spire {
+            [size * 0.4, 1.4, size * 0.4]
+        } else {
+            [size * 0.65, 0.8, size * 0.65]
+        },
+        color: light,
+        lift: top,
+    });
+    out.push(BoxInstance {
+        pos: (tile + Vec2::splat(0.5)).to_array(),
+        facing: angle(h >> 12),
+        size: [1.1, 0.9, 1.1],
+        color: [leaf[0] - 6, leaf[1] - 10, leaf[2] - 4, 0],
+        lift: 0.0,
+    });
+}
+
 /// The `k`th tuft on the tall-grass tile whose corner is `tile`.
 fn tuft(out: &mut Vec<BoxInstance>, tile: Vec2, seed: u64, x: u32, y: u32, k: u32) {
     let h = hash(seed, x, y, 2 + k);
@@ -212,7 +270,7 @@ mod tests {
 
     #[test]
     fn trees_grow_in_woods_and_tufts_in_grass() {
-        let s = Scenery::new(&cover(), 64, 7);
+        let s = Scenery::new(&cover(), &[], 64, 7);
         let trees: usize = s.trees.iter().map(Vec::len).sum::<usize>() / 3;
         // About 55% of the 400 wood tiles.
         assert!((160..280).contains(&trees), "{trees} trees");
@@ -224,12 +282,27 @@ mod tests {
             assert!((10.0..30.0).contains(&x) && (10.0..30.0).contains(&y));
         }
         // No cover, no scenery.
-        assert_eq!(Scenery::new(&[], 64, 7).boxes(), 0);
+        assert_eq!(Scenery::new(&[], &[], 64, 7).boxes(), 0);
+    }
+
+    #[test]
+    fn every_thicket_tile_is_dense_with_trees() {
+        let cover = cover();
+        let mut thicket = vec![false; cover.len()];
+        for y in 10..20 {
+            for x in 10..30 {
+                thicket[y * 64 + x] = true;
+            }
+        }
+        let s = Scenery::new(&cover, &thicket, 64, 7);
+        let dense = s.trees.iter().flatten().filter(|b| b.pos[1] < 20.0).count();
+        // Four boxes on each of the 200 thicket tiles.
+        assert_eq!(dense, 200 * 4);
     }
 
     #[test]
     fn draws_what_is_near_the_camera_within_budget() {
-        let mut s = Scenery::new(&cover(), 64, 7);
+        let mut s = Scenery::new(&cover(), &[], 64, 7);
         let mut out = Vec::new();
         s.push(Vec2::new(20.0, 20.0), 10.0, true, &mut out);
         assert_eq!(out.len(), s.boxes());

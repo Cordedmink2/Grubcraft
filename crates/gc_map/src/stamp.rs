@@ -195,35 +195,61 @@ impl Map {
         let water = sample_of_sim(i64::from(def.water * SIXTEENTH));
         let mut map = Map::from_samples(tiles as u32, samples, water);
 
-        // Cover per tile, from the shape at the tile's centre.
+        // Cover per tile, from the shape at the tile's centre; thicket is
+        // woods that also blocks.
         let n = tiles as usize;
         let mut cover = vec![0u8; n * n];
+        // A layer only a map that uses it fills; empty otherwise.
+        let layer = |used: bool| if used { n * n } else { 0 };
+        let mut thicket =
+            vec![false; layer(def.cover.iter().any(|c| c.kind == CoverKind::Thicket))];
         for op in &def.cover {
             let byte = match op.kind {
                 CoverKind::Open => gc_sim::Cover::Open as u8,
                 CoverKind::Grass => gc_sim::Cover::Grass as u8,
-                CoverKind::Wood => gc_sim::Cover::Wood as u8,
+                CoverKind::Wood | CoverKind::Thicket => gc_sim::Cover::Wood as u8,
             };
-            for s in images(op.shape, def.symmetry, tiles) {
-                let (x0, x1, y0, y1) = reach(s, 0, last);
-                let tile_range = |a: i64, b: i64| (a / UNIT).max(0)..(b / UNIT + 1).min(n as i64);
-                for y in tile_range(y0, y1) {
-                    for x in tile_range(x0, x1) {
-                        let (px, py) = (x * UNIT + UNIT / 2, y * UNIT + UNIT / 2);
-                        if weight(s, 0, px, py) > 0 {
-                            cover[y as usize * n + x as usize] = byte;
-                        }
-                    }
+            let dense = op.kind == CoverKind::Thicket;
+            each_tile_in(op.shape, def.symmetry, tiles, |i| {
+                cover[i] = byte;
+                if let Some(t) = thicket.get_mut(i) {
+                    *t = dense;
                 }
-            }
+            });
+        }
+        // The land, painted in order.
+        let mut land = vec![0u8; layer(!def.land.is_empty())];
+        for op in &def.land {
+            each_tile_in(op.shape, def.symmetry, tiles, |i| land[i] = op.land as u8);
         }
         map.cover = cover;
+        map.thicket = thicket;
+        map.land = land;
         map.name.clone_from(&def.name);
         map.size = Some(def.size);
         map.players = def.players;
         map.objects = place_objects(def, tiles);
         map.set_pieces.clone_from(&def.set_pieces);
         map
+    }
+}
+
+/// Call `f` with each tile (as an index, row by row) whose centre lies in
+/// a shape or any of its turned copies.
+fn each_tile_in(shape: Shape, symmetry: Symmetry, tiles: i32, mut f: impl FnMut(usize)) {
+    let n = i64::from(tiles);
+    let last = n * UNIT;
+    for s in images(shape, symmetry, tiles) {
+        let (x0, x1, y0, y1) = reach(s, 0, last);
+        let tile_range = |a: i64, b: i64| (a / UNIT).max(0)..(b / UNIT + 1).min(n);
+        for y in tile_range(y0, y1) {
+            for x in tile_range(x0, x1) {
+                let (px, py) = (x * UNIT + UNIT / 2, y * UNIT + UNIT / 2);
+                if weight(s, 0, px, py) > 0 {
+                    f((y * n + x) as usize);
+                }
+            }
+        }
     }
 }
 
@@ -239,20 +265,32 @@ fn roll(field: &mut [i32], noise: Noise, symmetry: Symmetry, side: i64) {
     let per_swell = UNIT * i64::from(noise.scale.max(1));
     let copies = symmetry.copies() as i64;
     let turns = step_turns(symmetry);
-    // The noise at every tile, worked out once; a tile then averages it
-    // over its turned copies, so they all rise alike.
-    let mut swells = Vec::with_capacity((side * side) as usize);
-    for y in 0..side {
-        for x in 0..side {
-            swells.push(fbm.fbm(x * one / per_swell, y * one / per_swell, NOISE_OCTAVES));
+    // The noise at every sample, worked out once (0 to `one`); a sample
+    // then averages it over its turned copies, so they all rise alike.
+    // Most of a big map's making is here, so bands of rows are worked out
+    // side by side: each sample's noise depends only on where it is, so
+    // the heights are the same however many threads there are.
+    let mut swells = vec![0i32; (side * side) as usize];
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    let band = (side as usize).div_ceil(threads.clamp(1, 16)) * side as usize;
+    std::thread::scope(|scope| {
+        for (k, out) in swells.chunks_mut(band).enumerate() {
+            let fbm = &fbm;
+            scope.spawn(move || {
+                let first = (k * band) as i64;
+                for (i, v) in (first..).zip(out) {
+                    let (x, y) = (i % side, i / side);
+                    *v = fbm.fbm(x * one / per_swell, y * one / per_swell, NOISE_OCTAVES) as i32;
+                }
+            });
         }
-    }
+    });
     for y in 0..side {
         for x in 0..side {
             let mut sum = 0;
             let mut p = (x, y);
             for _ in 0..copies {
-                sum += swells[(p.1 * side + p.0) as usize];
+                sum += i64::from(swells[(p.1 * side + p.0) as usize]);
                 for _ in 0..turns {
                     p = (last - p.1, p.0);
                 }

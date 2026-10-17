@@ -1,7 +1,7 @@
 //! Recipes must make maps the checker passes. This sweeps a few seeds of
-//! each Field Battle recipe, at both sizes, of each Conquest recipe at
-//! each size, and of every kind of campaign battle map, through the
-//! checker. When a recipe is tuned, the build also looks at a few by hand,
+//! each Field Battle recipe, at both sizes, of the Wilds at each
+//! wildness and three sizes, of each Conquest recipe at each size, and of
+//! every kind of campaign battle map, through the checker. When a recipe is tuned, the build also looks at a few by hand,
 //! with `gc_mapcheck gen RECIPE SIZE SEED OUT.ron` (or `gc_mapcheck
 //! battle`), `gc_mapcheck check` and `gc_mapcheck png`.
 
@@ -10,7 +10,9 @@ use gc_map::SizeClass;
 use gc_map::battle::{DEFENDER, FORT_RADIUS, Region, battle_map};
 use gc_map::conquest::{self, CONQUEST_SIZES, ConquestRecipe};
 use gc_map::recipe::{Recipe, describe};
+use gc_map::wilds::{self, Wildness};
 use gc_mapcheck::Map;
+use gc_mapcheck::check::Search;
 use gc_mapcheck::map::Ground;
 use gc_mapcheck::{check, generate};
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
@@ -34,6 +36,83 @@ fn every_recipe_makes_maps_the_checker_passes() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+/// Every Wilds map, at every wildness and size from small to large, passes
+/// the checker (a sweep of 30 seeds of each passed when it was made).
+#[test]
+fn every_wilds_map_passes_the_checker() {
+    let jobs: Vec<(Wildness, i32, u64)> = Wildness::ALL
+        .into_iter()
+        .flat_map(|w| [256, 512, 768].map(|t| (w, t)))
+        .flat_map(|(w, t)| (1..=5).map(move |seed| (w, t, seed)))
+        .collect();
+    let failed = failures(&jobs, |&(wild, tiles, seed)| {
+        let report = check(&wilds::describe(tiles, seed, wild));
+        let e = report.errors.first()?;
+        Some(format!("{wild:?} {tiles} seed {seed}: {e}"))
+    });
+    assert!(
+        failed.is_empty(),
+        "{} Wilds maps failed the checker:\n{}",
+        failed.len(),
+        failed.join("\n")
+    );
+}
+
+/// Every lobby map at the big sizes (Standard and Large, for two to six
+/// players) is the size asked for, and its starts can all walk to each
+/// other (`gc_map`'s own tests do the Small sizes).
+#[test]
+fn every_lobby_map_joins_its_starts_at_the_big_sizes() {
+    let jobs: Vec<(usize, u32)> = (0..gc_map::FIELD_MAPS.len())
+        .flat_map(|choice| [512, 640, 768, 896].map(|tiles| (choice, tiles)))
+        .collect();
+    let failed = failures(&jobs, |&(choice, tiles)| {
+        let map = gc_map::FieldMap {
+            choice,
+            tiles,
+            seed: 1,
+        }
+        .make();
+        (!map.starts_joined() || map.tiles != tiles)
+            .then(|| format!("{} at {tiles}", gc_map::FIELD_MAPS[choice]))
+    });
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// On a wild map nobody marches straight at anybody: the way from a
+/// corner start to the opposite corner, to the corner straight across and
+/// to the neighbouring start winds round the barriers, at least a fifth
+/// (a tenth to a neighbour) longer than a straight line. (When this was
+/// written they were about 1.4, 1.45 and 1.25 times as long; plains are
+/// about 1.1, 1.1 and 1.)
+#[test]
+fn a_wild_maps_ways_wind() {
+    let jobs: Vec<(i32, u64)> = [512, 768]
+        .into_iter()
+        .flat_map(|t| (1..=4).map(move |seed| (t, seed)))
+        .collect();
+    let failed = failures(&jobs, |&(tiles, seed)| {
+        let map = Map::build(&wilds::describe(tiles, seed, Wildness::Wild));
+        let walk = map.walkable();
+        let from = map.start_of(0)?;
+        let search = Search::run(&map, &walk, from, None);
+        // Opposite corner, across, and the north neighbour (see
+        // `gc_map::plateaus`), with the least each must wind.
+        let mut slow = Vec::new();
+        for (to, least) in [(3, 1.2), (2, 1.2), (4, 1.1)] {
+            let at = map.start_of(to)?;
+            let straight = f64::from((at.0 - from.0).pow(2) + (at.1 - from.1).pow(2)).sqrt();
+            // `Search` counts ten to a tile.
+            let walked = f64::from(search.to_object(at)?) / 10.0;
+            if walked < straight * least {
+                slow.push(format!("to start {to}: {:.2}", walked / straight));
+            }
+        }
+        (!slow.is_empty()).then(|| format!("{tiles} seed {seed}: {}", slow.join(", ")))
+    });
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
 /// The share of seeds of each Conquest recipe and size that must make a

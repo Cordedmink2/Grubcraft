@@ -5,8 +5,9 @@
 //!
 //! - `cargo test -p gc_match --release team_table -- --ignored --nocapture`
 //! - `cargo test -p gc_match --release terrain_table -- --ignored --nocapture`
+//! - `cargo test -p gc_match --release big_map_table -- --ignored --nocapture`
 //!
-//! Both read `AI_LEVEL` (default General), `AI_BATTLES` and `AI_FROM` (the
+//! All three read `AI_LEVEL` (default General), `AI_BATTLES` and `AI_FROM` (the
 //! first seed, default 1). `AI_OFF=team_play` or `AI_OFF=read_ground` takes
 //! only that away from the old side (`AI_OFF=none`: nothing, new against
 //! new); `AI_OLD=1` plays old against old, to see where the field stands
@@ -245,6 +246,7 @@ fn battlefield(ground: Ground, seed: u64) -> Heightmap {
         noise: None,
         terrain,
         cover,
+        land: Vec::new(),
         objects: Vec::new(),
         set_pieces: Vec::new(),
     };
@@ -265,4 +267,58 @@ fn terrain_table() {
         (setup, battlefield(ground, seed), (seed % 2) as u8)
     });
     table.report(&format!("{ground:?}"), &results, 2);
+}
+
+/// Computer against computer on the big maps (Standard and Large map
+/// sizes): does the battle still happen and finish, how long the march
+/// takes, and what the simulation and the minds cost a tick there.
+/// They play on the Wilds, as wild as the seed picks, as a new lobby does.
+/// `AI_TILES` (default 512, 640, 768 and 896), `AI_MODE` (1v1, 2v2 or 3v3,
+/// default all three), `AI_LEVEL`, `AI_BATTLES` (default 2 a size and
+/// mode) and `AI_FROM`.
+#[test]
+#[ignore = "slow: battles on big maps, run by hand"]
+fn big_map_table() {
+    let table = Table::from_env(2);
+    let sizes: Vec<u32> = std::env::var("AI_TILES").map_or(vec![512, 640, 768, 896], |v| {
+        v.split(',').map(|t| t.parse().unwrap()).collect()
+    });
+    let modes: Vec<String> = std::env::var("AI_MODE")
+        .map_or(vec!["1v1".into(), "2v2".into(), "3v3".into()], |v| {
+            v.split(',').map(String::from).collect()
+        });
+    for &tiles in &sizes {
+        for mode in &modes {
+            let teams: &[u8] = match mode.as_str() {
+                "1v1" => &[0, 1],
+                "2v2" => &[0, 1, 0, 1],
+                _ => &[0, 1, 0, 1, 0, 1],
+            };
+            let who = vec![Some(table.level); teams.len()];
+            for seed in table.from..table.from + table.battles {
+                let t0 = std::time::Instant::now();
+                let map = gc_map::FieldMap {
+                    choice: gc_map::WILDS,
+                    tiles,
+                    seed,
+                }
+                .make();
+                let made = t0.elapsed();
+                let setup = lobby(&who, teams);
+                let t1 = std::time::Instant::now();
+                let played = play_on(&setup, seed, 20, map, |_| {});
+                let wall = t1.elapsed();
+                let ticks = f64::from(played.ticks.max(1));
+                let ai_ms = played.ai_time.as_secs_f64() * 1000.0 / ticks;
+                let sim_ms = (wall - played.ai_time).as_secs_f64() * 1000.0 / ticks;
+                println!(
+                    "{tiles} {mode} seed {seed}: holder {:?} after {} s; map {:.2} s; per tick sim {sim_ms:.3} ms, minds {ai_ms:.3} ms (worst {:.1} ms)",
+                    played.holder,
+                    played.ticks / gc_sim::TICKS_PER_SECOND,
+                    made.as_secs_f64(),
+                    played.ai_worst.as_secs_f64() * 1000.0,
+                );
+            }
+        }
+    }
 }

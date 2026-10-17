@@ -290,10 +290,12 @@ const RIDE_PITCH: f32 = 12.0 * std::f32::consts::PI / 180.0;
 /// Wider than the bird's-eye lens: close up, it gives the feeling of speed
 /// and of being surrounded.
 const RIDE_FOV_Y: f32 = 55.0 * std::f32::consts::PI / 180.0;
-/// Near and far planes. The far plane reaches across the whole map (its
-/// diagonal is about 360 tiles) because there is a horizon to see.
+/// Near and far planes. There is a horizon to see, so the far plane
+/// reaches past the haze (by 1,200 tiles it hides 95% of the ground) and
+/// past the biggest map's diagonal (896 tiles a side: about 1,270), so the
+/// ground fades out rather than stopping at an edge.
 const RIDE_NEAR: f32 = 0.5;
-const RIDE_FAR: f32 = 420.0;
+const RIDE_FAR: f32 = 1300.0;
 /// How far from the eye the sun's shadow map reaches while riding, in
 /// tiles. The bird's-eye camera spreads the map's texels over what it sees
 /// (up to 400 tiles out); a low camera sees a long strip of ground, so

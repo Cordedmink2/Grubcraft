@@ -1062,7 +1062,7 @@ impl App {
             None => make_map(first_key),
         });
         tagged_alloc::scope(Tag::Render, || {
-            renderer.set_terrain(&terrain_of(&heightmap));
+            set_terrain(&mut renderer, &heightmap);
         });
         self.memory_timeline.mark("map generated + uploaded");
 
@@ -1110,12 +1110,12 @@ impl App {
         let blocked_marks = blocked_marks(&nav, heightmap.tiles);
         let scenery = tagged_alloc::scope(Tag::Render, || {
             // The showroom stands on bare ground, with no trees in the way.
-            let cover = if opts.showroom.is_some() {
-                &[][..]
+            let (cover, thicket) = if opts.showroom.is_some() {
+                (&[][..], &[][..])
             } else {
-                &heightmap.cover[..]
+                (&heightmap.cover[..], &heightmap.thicket[..])
             };
-            scenery::Scenery::new(cover, heightmap.tiles, opts.seed)
+            scenery::Scenery::new(cover, thicket, heightmap.tiles, opts.seed)
         });
         let building_table = buildings::Table::new(&game_data);
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
@@ -3375,7 +3375,12 @@ impl Running {
         // gets its trees back.
         if self.showroom.take().is_some() {
             self.scenery = tagged_alloc::scope(Tag::Render, || {
-                scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, self.seed)
+                scenery::Scenery::new(
+                    &self.heightmap.cover,
+                    &self.heightmap.thicket,
+                    self.heightmap.tiles,
+                    self.seed,
+                )
             });
         }
         // The last battle's recording is done.
@@ -3641,7 +3646,7 @@ impl Running {
         );
         let hm = &self.heightmap;
         tagged_alloc::scope(Tag::Render, || {
-            self.renderer.set_terrain(&terrain_of(hm));
+            set_terrain(&mut self.renderer, hm);
         });
         self.hud.set_terrain(hm);
         self.camera.map_size = hm.tiles as f32;
@@ -3654,7 +3659,12 @@ impl Running {
             MapKey::Conquest(choice) => choice as u64,
         };
         self.scenery = tagged_alloc::scope(Tag::Render, || {
-            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, trees)
+            scenery::Scenery::new(
+                &self.heightmap.cover,
+                &self.heightmap.thicket,
+                self.heightmap.tiles,
+                trees,
+            )
         });
     }
 
@@ -5103,15 +5113,19 @@ fn print_memory(renderer: &Renderer) {
     }
 }
 
-/// The ground as the renderer draws it.
-fn terrain_of(map: &Map) -> Terrain<'_> {
-    Terrain {
+/// Hand the renderer the ground to draw: its heights, and the grass's colour
+/// by land.
+fn set_terrain(renderer: &mut gc_render::Renderer, map: &Map) {
+    let (tint_side, tint) = terrain_view::ground_tint(map);
+    renderer.set_terrain(&Terrain {
         size: map.side(),
         samples_per_tile: gc_map::SAMPLES_PER_TILE,
         max_height: map.max_height(),
         water_level: map.water_level(),
         heights: &map.samples,
-    }
+        tint: &tint,
+        tint_side,
+    });
 }
 
 /// A small square over every cell of ground no regiment can cross.
@@ -5346,15 +5360,20 @@ mod tests {
     #[test]
     fn the_lobby_offers_the_maps_gc_map_makes() {
         assert_eq!(gc_ui::lobby::MAPS, gc_map::FIELD_MAPS);
+        assert_eq!(gc_ui::lobby::DEFAULT_MAP, gc_map::WILDS);
     }
 
-    /// A new lobby's battle is on the Proving Ground every battle was
-    /// played on before maps could be picked.
+    /// A new lobby's two-player battle is on the Wilds, as wild as the
+    /// seed picks, at the standard size for two.
     #[test]
-    fn a_new_lobby_plays_on_the_old_map() {
+    fn a_new_lobby_plays_on_the_wilds() {
         let key = battle_map(&gc_ui::lobby::LobbySettings::default(), 2);
-        assert_eq!(key.make().hash(), Map::generate(0x6772_7562, 256).hash());
-        assert!(matches!(key, MapKey::Field(_)));
+        let wilds = FieldMap {
+            choice: gc_map::WILDS,
+            tiles: 512,
+            seed: 0x6772_7562,
+        };
+        assert_eq!(key, MapKey::Field(wilds));
     }
 
     #[test]

@@ -39,7 +39,12 @@ pub const MIN_BLOODSEEPS: usize = 3;
 pub const FRONTIER_SLOTS: std::ops::RangeInclusive<usize> = 4..=8;
 
 /// The sides a Field map may have, in tiles.
-pub const FIELD_TILES: std::ops::RangeInclusive<i32> = 64..=512;
+pub const FIELD_TILES: std::ops::RangeInclusive<i32> = 64..=1024;
+
+/// Field Battle maps this many tiles a side and more are the big ones:
+/// their starts stand further in (see [`crate::plateaus`]) and the Wilds
+/// have room for a middle band and spurs on them.
+pub const BIG_MAP_TILES: i32 = 512;
 
 impl SizeClass {
     pub fn tiles(self) -> i32 {
@@ -121,6 +126,66 @@ pub enum CoverKind {
     Wood,
     /// Clears cover again.
     Open,
+    /// Woods too dense to march through: blocked to every regiment, as a
+    /// cliff is, so a belt of it turns armies to its gaps. Woods to the
+    /// simulation's eyes (it hides what stands behind it).
+    Thicket,
+}
+
+/// What the ground looks like: the land a region of the map belongs to.
+/// Drawn (the ground's colour, the minimap) and not a rule: what can be
+/// walked, seen or hidden in comes from the heights and the cover.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub enum Land {
+    /// Open grassland, the ground everywhere until painted.
+    #[default]
+    Meadow,
+    /// Old forest: dark loam under the trees.
+    Forest,
+    /// Wet low ground, mud and reeds.
+    Fen,
+    /// Raised rocky ground and heather, round the mountains.
+    Highland,
+    /// Pale, bare bone waste.
+    Waste,
+    /// A river's green valley.
+    Valley,
+}
+
+impl Land {
+    pub const ALL: [Land; 6] = [
+        Land::Meadow,
+        Land::Forest,
+        Land::Fen,
+        Land::Highland,
+        Land::Waste,
+        Land::Valley,
+    ];
+
+    /// The land a tile's byte stands for (Meadow for anything unknown).
+    pub fn from_u8(b: u8) -> Land {
+        Land::ALL.get(usize::from(b)).copied().unwrap_or_default()
+    }
+
+    /// The colour of open ground in this land, sRGB: what the renderer
+    /// tints the grass with and the maps' pictures draw.
+    pub fn colour(self) -> [u8; 3] {
+        match self {
+            Land::Meadow => [112, 150, 70],
+            Land::Forest => [72, 98, 52],
+            Land::Fen => [104, 112, 66],
+            Land::Highland => [128, 120, 104],
+            Land::Waste => [196, 184, 150],
+            Land::Valley => [92, 156, 76],
+        }
+    }
+}
+
+/// Paint the land within a shape (the last paint wins).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct LandOp {
+    pub shape: Shape,
+    pub land: Land,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -209,6 +274,9 @@ pub struct MapDef {
     pub terrain: Vec<TerrainOp>,
     #[serde(default)]
     pub cover: Vec<CoverOp>,
+    /// The look of the ground, region by region; Meadow where unpainted.
+    #[serde(default)]
+    pub land: Vec<LandOp>,
     pub objects: Vec<Object>,
     #[serde(default)]
     pub set_pieces: Vec<SetPiece>,

@@ -19,8 +19,7 @@
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    CoverKind, CoverOp, Kind, MapDef, Mode, Noise, Object, Pos, SetPieceKind, Shape, SizeClass,
-    Symmetry,
+    CoverKind, Kind, MapDef, Mode, Noise, Object, Pos, SetPieceKind, Shape, SizeClass, Symmetry,
 };
 use crate::recipe::{DEEP, FORD, RISE_REACH, WATER, Writer};
 use crate::stamp::dist2;
@@ -290,6 +289,7 @@ pub fn battle_map(region: Region, seed: u64) -> MapDef {
         noise: Some(noise),
         terrain: w.terrain,
         cover: w.cover,
+        land: Vec::new(),
         objects,
         set_pieces: w.set_pieces,
     }
@@ -321,14 +321,6 @@ impl Battle<'_> {
     /// `t` tiles on a 256-tile map, scaled to this one.
     fn scaled(&self, t: i32) -> i32 {
         t * self.n / 256
-    }
-
-    /// How many of a thing to dress the ground with: `lo` to `hi` on a
-    /// 256-tile map, more or fewer with the map's area, so a big map is
-    /// as wooded or as rocky as a small one.
-    fn many(&mut self, lo: i32, hi: i32) -> i32 {
-        let k = self.w.range(lo, hi);
-        (k * self.n * self.n + 128 * 256) / (256 * 256)
     }
 
     fn mid(&self) -> i32 {
@@ -564,12 +556,12 @@ impl Battle<'_> {
                 self.patch(r, 4, Mode::Lower, DEEP, 4);
             }
             Area::Ribs => {
-                for k in 0..self.many(5, 8) {
+                for k in 0..self.w.many(5, 8) {
                     self.ridge((k == 0).then_some("The ridge"));
                 }
             }
             Area::Heart => {
-                for k in 0..self.many(3, 4) {
+                for k in 0..self.w.many(3, 4) {
                     self.ridge((k == 0).then_some("The vein"));
                 }
             }
@@ -590,18 +582,18 @@ impl Battle<'_> {
                         edge,
                     );
                 }
-                for _ in 0..self.many(4, 8) {
+                for _ in 0..self.w.many(4, 8) {
                     self.rock(base + 128);
                 }
             }
             Area::Gut => {
-                for _ in 0..self.many(12, 16) {
+                for _ in 0..self.w.many(12, 16) {
                     let r = self.w.range(5, 9);
                     self.patch(r, 3, Mode::Set, FORD, 3);
                 }
             }
             Area::Spine => {
-                for _ in 0..self.many(16, 24) {
+                for _ in 0..self.w.many(16, 24) {
                     let height = base + self.w.range(64, 96);
                     self.rock(height);
                 }
@@ -617,7 +609,7 @@ impl Battle<'_> {
             Area::Spine => (5, 5),
             Area::Hands => (self.w.range(32, 40), 5),
         };
-        let (woods, meadows) = (self.many(woods, woods), self.many(meadows, meadows));
+        let (woods, meadows) = (self.w.many(woods, woods), self.w.many(meadows, meadows));
         for _ in 0..woods {
             self.clump(CoverKind::Wood);
         }
@@ -684,10 +676,7 @@ impl Battle<'_> {
             let route = self.band == 0 || (at.1 - self.mid()).abs() >= self.band + r;
             let off = |&(p, d): &(Pos, i32)| dist2(p, at) >= (r + d) * (r + d);
             if route && self.no_cover.iter().all(off) {
-                self.w.cover.push(CoverOp {
-                    shape: Shape::Disc { at, r },
-                    kind,
-                });
+                self.w.cover(Shape::Disc { at, r }, kind);
                 return;
             }
         }
@@ -726,14 +715,15 @@ impl Battle<'_> {
     /// The road, kept clear of woods and grass.
     fn road(&mut self) {
         for pair in self.road.windows(2) {
-            self.w.cover.push(CoverOp {
-                shape: Shape::Line {
-                    a: pair[0],
-                    b: pair[1],
+            let (a, b) = (pair[0], pair[1]);
+            self.w.cover(
+                Shape::Line {
+                    a,
+                    b,
                     half_width: 2,
                 },
-                kind: CoverKind::Open,
-            });
+                CoverKind::Open,
+            );
         }
     }
 }

@@ -25,8 +25,33 @@ use glam::{Mat4, Vec3, Vec4};
 
 /// Tiles per terrain chunk side (chunks are the unit of culling).
 pub const CHUNK_TILES: u32 = 32;
-/// Quads per chunk side; vertices sit every half tile.
+/// Quads per chunk side at the finest level of detail; vertices sit every
+/// half tile.
 const CHUNK_QUADS: u32 = 64;
+/// Levels of detail a chunk can be drawn at. Level `n` has `CHUNK_QUADS >> n`
+/// quads a side: 64, 32, 16 and 8, so a vertex every half tile, tile, two
+/// tiles and four tiles. Each level's vertices are every second vertex of
+/// the one below, which is what lets neighbours of different levels meet
+/// without cracks (see `vs_terrain` in world.wgsl).
+const TERRAIN_LEVELS: usize = 4;
+// A level takes two bits of the packed instance word (`chunk_instance`).
+const _: () = assert!(TERRAIN_LEVELS <= 4);
+/// How far from the eye (in tiles, to the nearest point of the chunk's box)
+/// a chunk stays at level 0, 1 and 2; beyond the last it is level 3.
+/// Level 0 reaches four chunks out. At the play camera's default zoom (110
+/// tiles from the ground it looks at) the ground from the bottom of the
+/// screen to a little past the middle stays at today's detail and only the
+/// far strip along the top steps down; zoomed in closer than about 90
+/// tiles, everything on screen is level 0. The steps are further apart
+/// than a chunk's diagonal (45 tiles), so neighbouring chunks differ by at
+/// most one level and the snapped edge strip stays narrow. Past a hundred
+/// tiles a level 1 quad (one tile) is only a few pixels across, and the
+/// per-pixel normals in `fs_terrain` keep the lighting the same at every
+/// level.
+const LOD_DISTANCES: [f32; TERRAIN_LEVELS - 1] = [128.0, 256.0, 384.0];
+/// Bytes of per-chunk instance data: the chunk's coordinates and a word
+/// packing its level and its four neighbours' levels.
+const CHUNK_INSTANCE_BYTES: u64 = 12;
 /// Fixed capacity of the box instance buffer (soldiers and markers); never reallocated.
 pub const MAX_BOX_INSTANCES: usize = 65_536;
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
@@ -70,6 +95,12 @@ pub struct Terrain<'a> {
     pub max_height: f32,
     pub water_level: f32,
     pub heights: &'a [u16],
+    /// The colour of the grass by the land it grows in, sRGB, `tint_side`
+    /// texels a side over the whole map, row by row; empty for the plain
+    /// palette. The terrain shader blends between texels, so borders
+    /// between lands are soft.
+    pub tint: &'a [[u8; 4]],
+    pub tint_side: u32,
 }
 
 /// One shaded box draped on the terrain: a soldier, a ground marker or an
@@ -233,16 +264,18 @@ pub struct Renderer {
     block_shadow_pipeline: wgpu::RenderPipeline,
     shadow_map: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
-    /// Soft edges for the fog map.
-    fog_sampler: wgpu::Sampler,
+    /// Soft edges for the fog map, and the ground tint blended between
+    /// its texels.
+    soft_sampler: wgpu::Sampler,
     /// Bound where the shadow map would be while the shadow map is drawn.
     no_shadow_map: wgpu::TextureView,
     post: post::PostGpu,
     post_targets: post::PostTargets,
     /// The sky colour, scaled so that it tone-maps back to itself.
     fog_color: [f32; 3],
-    /// The chunk grid's triangles, and how many indices they take.
-    chunk_indices: (wgpu::Buffer, u32),
+    /// The chunk grid's triangles at every level of detail, one after the
+    /// other (see [`level_indices`]).
+    chunk_indices: wgpu::Buffer,
     chunk_instances: wgpu::Buffer,
     chunk_instance_capacity: u32,
     box_instances: wgpu::Buffer,
@@ -254,10 +287,14 @@ pub struct Renderer {
     adapter_info: wgpu::AdapterInfo,
     /// What the GPU driver reported behind our back; see [`GpuHealth`].
     health: Arc<GpuHealth>,
-    /// Scratch lists of chunk coordinates the camera and the sun see,
+    /// Scratch lists of the chunks the camera and the sun see, by level,
     /// reused every frame.
-    visible_chunks: Vec<[u32; 2]>,
-    sun_chunks: Vec<[u32; 2]>,
+    visible_chunks: ChunkList,
+    sun_chunks: ChunkList,
+    /// Each chunk's level of detail this frame, row by row; the same for
+    /// the camera's pass and the sun's, so the shadows are cast by the
+    /// surface that is drawn.
+    chunk_levels: Vec<u8>,
     overlay: OverlayGpu,
     soldiers: soldiers::SoldiersGpu,
     /// Menu and lobby screens, drawn under the dev overlay.
@@ -493,6 +530,16 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -519,9 +566,9 @@ impl Renderer {
                 "vs_terrain",
                 color,
                 wgpu::VertexBufferLayout {
-                    array_stride: 8,
+                    array_stride: CHUNK_INSTANCE_BYTES,
                     step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![0 => Uint32x2],
+                    attributes: &wgpu::vertex_attr_array![0 => Uint32x2, 1 => Uint32],
                 },
             )
         };
@@ -578,8 +625,8 @@ impl Renderer {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
-        let fog_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("fog of war"),
+        let soft_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("fog of war and ground tint"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
@@ -588,7 +635,9 @@ impl Renderer {
         let post_targets = post.targets(&device, config.width, config.height);
 
         let chunk_indices = {
-            let indices = chunk_grid_indices(CHUNK_QUADS);
+            let indices: Vec<u16> = (0..TERRAIN_LEVELS)
+                .flat_map(|level| chunk_grid_indices(CHUNK_QUADS >> level))
+                .collect();
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("chunk grid indices"),
                 size: (indices.len() * 2) as u64,
@@ -596,7 +645,7 @@ impl Renderer {
                 mapped_at_creation: false,
             });
             queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&indices));
-            (buffer, indices.len() as u32)
+            buffer
         };
 
         let box_instances = device.create_buffer(&wgpu::BufferDescriptor {
@@ -608,7 +657,7 @@ impl Renderer {
         // Placeholder until terrain arrives; replaced by `set_terrain`.
         let chunk_instances = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chunk instances"),
-            size: 8,
+            size: CHUNK_INSTANCE_BYTES,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -625,7 +674,7 @@ impl Renderer {
             + u64::from(shadow_side)
                 * u64::from(shadow_side)
                 * u64::from(SHADOW_FORMAT.block_copy_size(None).unwrap_or(4))
-            + chunk_indices.0.size()
+            + chunk_indices.size()
             + box_instances.size()
             + soldiers.instances.size()
             + chunk_instances.size();
@@ -648,7 +697,7 @@ impl Renderer {
             block_shadow_pipeline,
             shadow_map,
             shadow_sampler,
-            fog_sampler,
+            soft_sampler,
             no_shadow_map,
             post,
             post_targets,
@@ -663,8 +712,9 @@ impl Renderer {
             stats: RenderStats::default(),
             adapter_info,
             health,
-            visible_chunks: Vec::new(),
-            sun_chunks: Vec::new(),
+            visible_chunks: ChunkList::default(),
+            sun_chunks: ChunkList::default(),
+            chunk_levels: Vec::new(),
             overlay,
             soldiers,
             ui,
@@ -870,6 +920,45 @@ impl Renderer {
             },
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // The ground tint; a single clear texel when there is none, which the
+        // shader reads as "plain palette".
+        let (tint_side, tint): (u32, &[[u8; 4]]) = if t.tint.is_empty() {
+            (1, &[[0; 4]])
+        } else {
+            assert_eq!(t.tint.len(), (t.tint_side * t.tint_side) as usize);
+            (t.tint_side, t.tint)
+        };
+        let tint_extent = wgpu::Extent3d {
+            width: tint_side,
+            height: tint_side,
+            depth_or_array_layers: 1,
+        };
+        let tint_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ground tint"),
+            size: tint_extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tint_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(tint),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(tint_side * 4),
+                rows_per_image: Some(tint_side),
+            },
+            tint_extent,
+        );
+        let tint_view = tint_texture.create_view(&wgpu::TextureViewDescriptor::default());
         // All clear until `set_fog` says otherwise.
         let tiles = (t.size - 1) / t.samples_per_tile;
         let fog_map = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -920,7 +1009,11 @@ impl Renderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: wgpu::BindingResource::Sampler(&self.fog_sampler),
+                        resource: wgpu::BindingResource::Sampler(&self.soft_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::TextureView(&tint_view),
                     },
                 ],
             })
@@ -934,15 +1027,18 @@ impl Renderer {
         // The camera's visible chunks, then the sun's.
         self.chunk_instances = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chunk instances"),
-            size: u64::from(chunk_count) * 16,
+            size: u64::from(chunk_count) * 2 * CHUNK_INSTANCE_BYTES,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         self.static_gpu_bytes += self.chunk_instances.size();
         self.chunk_instance_capacity = chunk_count;
-        self.visible_chunks = Vec::with_capacity(chunk_count as usize);
-        self.sun_chunks = Vec::with_capacity(chunk_count as usize);
-        self.terrain_gpu_bytes = t.heights.len() as u64 * 2 + u64::from(tiles * tiles);
+        self.visible_chunks = ChunkList::with_capacity(chunk_count as usize);
+        self.sun_chunks = ChunkList::with_capacity(chunk_count as usize);
+        self.chunk_levels = vec![0; chunk_count as usize];
+        self.terrain_gpu_bytes = t.heights.len() as u64 * 2
+            + u64::from(tint_side * tint_side) * 4
+            + u64::from(tiles * tiles);
         self.terrain = Some(TerrainGpu {
             bind_group,
             shadow_bind_group,
@@ -1071,34 +1167,53 @@ impl Renderer {
             }
         }
 
-        // Frustum-cull terrain chunks on the CPU; upload only the visible
-        // ones: those the camera sees, then those the sun sees.
+        // Pick each chunk's level of detail from its distance to the eye,
+        // then frustum-cull on the CPU and upload only the visible chunks:
+        // those the camera sees, then those the sun sees.
         let planes = frustum_planes(frame.view_proj);
         let sun_planes = frustum_planes(sun_view_proj);
-        // The camera's chunks fill the instance buffer's first half, the
-        // sun's the second.
-        self.visible_chunks.clear();
-        self.sun_chunks.clear();
         let n = terrain.chunks_per_side;
         let size = CHUNK_TILES as f32;
         for cz in 0..n {
             for cx in 0..n {
+                self.chunk_levels[(cz * n + cx) as usize] =
+                    chunk_level(frame.camera_pos, [cx, cz], terrain.max_height) as u8;
+            }
+        }
+        // The camera's chunks fill the instance buffer's first half, the
+        // sun's the second.
+        self.visible_chunks.clear();
+        self.sun_chunks.clear();
+        for cz in 0..n {
+            for cx in 0..n {
                 let min = Vec3::new(cx as f32 * size, 0.0, cz as f32 * size);
                 let max = Vec3::new(min.x + size, terrain.max_height, min.z + size);
-                if aabb_visible(&planes, min, max) {
-                    self.visible_chunks.push([cx, cz]);
-                }
-                if shadows && aabb_visible(&sun_planes, min, max) {
-                    self.sun_chunks.push([cx, cz]);
+                let camera_sees = aabb_visible(&planes, min, max);
+                let sun_sees = shadows && aabb_visible(&sun_planes, min, max);
+                if camera_sees || sun_sees {
+                    let level = self.chunk_levels[(cz * n + cx) as usize] as usize;
+                    let instance = chunk_instance(&self.chunk_levels, n, [cx, cz]);
+                    if camera_sees {
+                        self.visible_chunks.levels[level].push(instance);
+                    }
+                    if sun_sees {
+                        self.sun_chunks.levels[level].push(instance);
+                    }
                 }
             }
         }
         debug_assert!(self.visible_chunks.len() <= self.chunk_instance_capacity as usize);
-        let sun_chunks_at = u64::from(self.chunk_instance_capacity) * 8;
-        for (chunks, at) in [(&self.visible_chunks, 0), (&self.sun_chunks, sun_chunks_at)] {
-            if !chunks.is_empty() {
-                self.queue
-                    .write_buffer(&self.chunk_instances, at, bytemuck::cast_slice(chunks));
+        let sun_chunks_at = u64::from(self.chunk_instance_capacity) * CHUNK_INSTANCE_BYTES;
+        for (chunks, mut at) in [(&self.visible_chunks, 0), (&self.sun_chunks, sun_chunks_at)] {
+            for instances in &chunks.levels {
+                if !instances.is_empty() {
+                    self.queue.write_buffer(
+                        &self.chunk_instances,
+                        at,
+                        bytemuck::cast_slice(instances),
+                    );
+                    at += instances.len() as u64 * CHUNK_INSTANCE_BYTES;
+                }
             }
         }
         if !self.options.draw_terrain {
@@ -1168,6 +1283,8 @@ impl Renderer {
             pass.draw(0..30, 0..boxes.len() as u32);
             1
         };
+        // One instanced draw per level of detail that has chunks; each
+        // level's chunks sit together in the instance buffer, finest first.
         let draw_terrain = |pass: &mut wgpu::RenderPass<'_>, shadow: bool| {
             let (pipeline, chunks, at) = if shadow {
                 (
@@ -1181,12 +1298,20 @@ impl Renderer {
             if chunks.is_empty() {
                 return 0;
             }
-            let (indices, count) = &self.chunk_indices;
             pass.set_pipeline(pipeline);
-            pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint16);
+            pass.set_index_buffer(self.chunk_indices.slice(..), wgpu::IndexFormat::Uint16);
             pass.set_vertex_buffer(0, self.chunk_instances.slice(at..));
-            pass.draw_indexed(0..*count, 0, 0..chunks.len() as u32);
-            1
+            let mut first = 0;
+            let mut calls = 0;
+            for (level, instances) in chunks.levels.iter().enumerate() {
+                let count = instances.len() as u32;
+                if count > 0 {
+                    pass.draw_indexed(level_indices(level), 0, first..first + count);
+                    calls += 1;
+                }
+                first += count;
+            }
+            calls
         };
         // Pose the soldiers once for both passes below.
         if !bare {
@@ -1598,6 +1723,75 @@ fn chunk_grid_indices(quads: u32) -> Vec<u16> {
     out
 }
 
+/// Where level `level`'s triangles sit in the shared index buffer: the
+/// levels are stored finest first, one after the other.
+fn level_indices(level: usize) -> std::ops::Range<u32> {
+    let len = |l: usize| {
+        let quads = CHUNK_QUADS >> l;
+        quads * quads * 6
+    };
+    let start: u32 = (0..level).map(len).sum();
+    start..start + len(level)
+}
+
+/// The level of detail for a chunk with these coordinates, seen from `eye`:
+/// by the distance to the nearest point of the chunk's box, so a big chunk
+/// is as fine as its nearest corner needs.
+fn chunk_level(eye: Vec3, chunk: [u32; 2], max_height: f32) -> usize {
+    let size = CHUNK_TILES as f32;
+    let min = Vec3::new(chunk[0] as f32 * size, 0.0, chunk[1] as f32 * size);
+    let max = Vec3::new(min.x + size, max_height, min.z + size);
+    let distance = eye.clamp(min, max).distance(eye);
+    LOD_DISTANCES
+        .iter()
+        .position(|&limit| distance < limit)
+        .unwrap_or(LOD_DISTANCES.len())
+}
+
+/// What the terrain shader needs to know about one chunk: its coordinates,
+/// then its level (bits 0-1) and its west, east, north and south
+/// neighbours' levels (bits 2-3, 4-5, 6-7, 8-9) packed into one word. A
+/// side on the map's edge has no neighbour and counts as the chunk's own
+/// level, so its edge is left alone.
+fn chunk_instance(levels: &[u8], chunks_per_side: u32, chunk: [u32; 2]) -> [u32; 3] {
+    let n = chunks_per_side;
+    let at = |x: u32, z: u32| u32::from(levels[(z * n + x) as usize]);
+    let [x, z] = chunk;
+    let own = at(x, z);
+    let west = if x > 0 { at(x - 1, z) } else { own };
+    let east = if x + 1 < n { at(x + 1, z) } else { own };
+    let north = if z > 0 { at(x, z - 1) } else { own };
+    let south = if z + 1 < n { at(x, z + 1) } else { own };
+    [x, z, own | west << 2 | east << 4 | north << 6 | south << 8]
+}
+
+/// The chunks one pass draws, grouped by level of detail so that each
+/// level is one instanced draw.
+#[derive(Default)]
+struct ChunkList {
+    levels: [Vec<[u32; 3]>; TERRAIN_LEVELS],
+}
+
+impl ChunkList {
+    fn with_capacity(chunks: usize) -> ChunkList {
+        ChunkList {
+            levels: std::array::from_fn(|_| Vec::with_capacity(chunks)),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.levels.iter_mut().for_each(Vec::clear);
+    }
+
+    fn len(&self) -> usize {
+        self.levels.iter().map(Vec::len).sum()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.levels.iter().all(Vec::is_empty)
+    }
+}
+
 fn frustum_planes(view_proj: Mat4) -> [Vec4; 6] {
     let r0 = view_proj.row(0);
     let r1 = view_proj.row(1);
@@ -1647,6 +1841,87 @@ mod tests {
         assert_eq!(idx.len() as u32, CHUNK_QUADS * CHUNK_QUADS * 6);
         let max = u32::from(*idx.iter().max().unwrap());
         assert_eq!(max, (CHUNK_QUADS + 1) * (CHUNK_QUADS + 1) - 1);
+    }
+
+    #[test]
+    fn each_level_has_a_quarter_of_the_triangles_and_its_own_index_range() {
+        let mut end = 0;
+        for level in 0..TERRAIN_LEVELS {
+            let range = level_indices(level);
+            assert_eq!(range.start, end);
+            end = range.end;
+            let quads = CHUNK_QUADS >> level;
+            assert_eq!((range.end - range.start) / 3, quads * quads * 2);
+            let indices = chunk_grid_indices(quads);
+            assert_eq!(indices.len() as u32, range.end - range.start);
+        }
+    }
+
+    #[test]
+    fn chunks_get_coarser_with_distance_from_the_eye() {
+        let height = 20.0;
+        let eye = Vec3::new(0.0, 90.0, 0.0);
+        assert_eq!(chunk_level(eye, [0, 0], height), 0);
+        let levels: Vec<usize> = (0..24)
+            .map(|cx| chunk_level(eye, [cx, 0], height))
+            .collect();
+        assert!(levels.windows(2).all(|w| w[0] <= w[1]), "{levels:?}");
+        assert_eq!(*levels.first().unwrap(), 0);
+        assert_eq!(*levels.last().unwrap(), TERRAIN_LEVELS - 1);
+        // Neighbours are never more than one level apart.
+        assert!(levels.windows(2).all(|w| w[1] - w[0] <= 1), "{levels:?}");
+        // The distance is to the nearest point of the chunk, not its middle.
+        // Its middle is 135 tiles away, past level 0's 128; its edge is 120.
+        let beside = Vec3::new(31.0 + 120.0, 1.0, 16.0);
+        assert_eq!(chunk_level(beside, [0, 0], height), 0);
+    }
+
+    #[test]
+    fn chunk_instances_name_their_neighbours_levels() {
+        // A 3 x 3 grid, levels by row: 0 0 1 / 1 2 3 / 3 3 3.
+        let levels = [0, 0, 1, 1, 2, 3, 3, 3, 3];
+        let unpack = |w: u32| [w & 3, w >> 2 & 3, w >> 4 & 3, w >> 6 & 3, w >> 8 & 3];
+        // The middle chunk: own 2; west 1, east 3, north 0, south 3.
+        let [x, z, word] = chunk_instance(&levels, 3, [1, 1]);
+        assert_eq!([x, z], [1, 1]);
+        assert_eq!(unpack(word), [2, 1, 3, 0, 3]);
+        // The corner chunk has no west or north, which count as its own level.
+        let [_, _, word] = chunk_instance(&levels, 3, [0, 0]);
+        assert_eq!(unpack(word), [0, 0, 0, 0, 1]);
+        let [_, _, word] = chunk_instance(&levels, 3, [2, 2]);
+        assert_eq!(unpack(word), [3, 3, 3, 3, 3]);
+    }
+
+    /// The terrain vertex shader's edge rule, in Rust: where one chunk's
+    /// vertices land along an edge it shares with a neighbour.
+    fn edge_positions(level: u32, neighbour: u32) -> Vec<u32> {
+        let quads = CHUNK_QUADS >> level;
+        (0..=quads)
+            .map(|i| {
+                let p = i << level;
+                if neighbour > level {
+                    (p >> neighbour) << neighbour
+                } else {
+                    p
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_finer_chunks_edge_lands_on_the_coarser_chunks_vertices() {
+        for coarse in 1..TERRAIN_LEVELS as u32 {
+            let theirs = edge_positions(coarse, 0);
+            for fine in 0..coarse {
+                let ours = edge_positions(fine, coarse);
+                // Every vertex drawn on the edge is one of the neighbour's,
+                // so the two edges are the same polyline.
+                assert!(ours.iter().all(|p| theirs.contains(p)), "{fine} {coarse}");
+                // Both run corner to corner, in order.
+                assert_eq!((ours[0], *ours.last().unwrap()), (0, CHUNK_QUADS));
+                assert!(ours.windows(2).all(|w| w[0] <= w[1]));
+            }
+        }
     }
 
     #[test]
