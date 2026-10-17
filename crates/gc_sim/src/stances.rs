@@ -80,6 +80,16 @@ impl Stances {
         true
     }
 
+    /// Every army handed to a party in the bitmask `out` goes back to its
+    /// owner, so a party that is out commands nothing.
+    pub(crate) fn take_back_from(&mut self, out: u8) {
+        for (p, c) in self.commander.iter_mut().enumerate() {
+            if out & (1 << *c) != 0 {
+                *c = p as PlayerId;
+            }
+        }
+    }
+
     /// Hash who commands whom, and nothing while every party commands its
     /// own, so matches with no hand-over hash as they always have.
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
@@ -163,5 +173,15 @@ mod tests {
         assert!(s.hand_over(0, 0));
         assert!(s.can_command(0, 0));
         assert_eq!(hash(&s), untouched);
+    }
+
+    #[test]
+    fn armies_handed_to_a_party_that_is_out_go_back() {
+        let mut s = Stances::from_teams(&[0, 1, 0, 1]);
+        assert!(s.hand_over(0, 2));
+        assert!(s.hand_over(1, 3));
+        s.take_back_from(1 << 2);
+        assert_eq!(s.commander(0), 0);
+        assert_eq!(s.commander(1), 3);
     }
 }

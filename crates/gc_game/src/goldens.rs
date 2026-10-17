@@ -87,7 +87,7 @@ fn charge(world: &World, out: &mut Vec<PlayerCommand>) {
 /// [`charge`], for the regiments of the parties `charging` picks, each
 /// order given by whoever commands the regiment.
 fn charge_with(world: &World, out: &mut Vec<PlayerCommand>, charging: fn(PlayerId) -> bool) {
-    if world.tick_count() % 20 != 1 {
+    if world.tick_count() % gc_sim::TICKS_PER_SECOND != 1 {
         return;
     }
     for r in world.regiments.iter() {

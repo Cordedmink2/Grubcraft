@@ -199,7 +199,7 @@ fn read_army(r: &mut Reader) -> Option<Vec<u16>> {
 }
 
 fn read_faction(r: &mut Reader) -> Option<Faction> {
-    Faction::ALL.get(r.u8()? as usize).copied()
+    Faction::from_u8(r.u8()?)
 }
 
 fn read_slot(r: &mut Reader) -> Option<Slot> {

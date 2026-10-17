@@ -1005,6 +1005,7 @@ impl World {
         );
         if out != 0 {
             c.eliminate(out, &mut self.regiments, &mut self.nav);
+            self.stances.take_back_from(out);
         }
     }
 
@@ -1143,7 +1144,10 @@ impl World {
                     .set_zone(pc.player, Zone { center, radius }, self.tick)
             }
             Command::Ready => self.deploy.set_ready(pc.player, self.tick),
-            Command::HandOver { to } => self.stances.hand_over(pc.player, to),
+            // Nobody hands an army to, or from, a party that is out.
+            Command::HandOver { to } => {
+                !self.is_out(pc.player) && !self.is_out(to) && self.stances.hand_over(pc.player, to)
+            }
             Command::SpawnStructure { building, tile } => {
                 let Some(conquest) = &mut self.conquest else {
                     return false;
@@ -1356,11 +1360,12 @@ impl World {
         let Some(r) = self.regiments.get(regiment) else {
             return false;
         };
-        let allowed = r.owner == player
+        // Whoever commands the regiment places it, inside its owner's zone.
+        let allowed = self.stances.can_command(player, r.owner)
             && on_map
             && self
                 .deploy
-                .zone(player)
+                .zone(r.owner)
                 .is_some_and(|z| z.contains(position))
             && self.nav.walkable(position);
         let Some(i) = allowed
