@@ -2706,9 +2706,7 @@ impl Running {
             let banner = match r.morale {
                 _ if self.world.is_worker(r.handle) => None,
                 // Drawn as a standard model with the scenery instead.
-                m if !self.commander
-                    && banner_model(m).is_some_and(|b| self.scenery.draws(b)) =>
-                {
+                m if !self.commander && banner_model(m).is_some_and(|b| self.scenery.draws(b)) => {
                     None
                 }
                 MoraleState::Steady => None,
@@ -4720,7 +4718,10 @@ impl Running {
             let colour = color_of(parties, self.sandbox.side);
             buildings::push_rally(&self.world, h, colour, &mut self.instances);
         }
-        if !self.scenery.draws(scenery::Model::GrubSeep) {
+        if ![scenery::Model::GrubSeep, scenery::Model::MarrowVein]
+            .iter()
+            .all(|&m| self.scenery.draws(m))
+        {
             buildings::push_nodes(&self.world, &mut self.instances);
         }
         buildings::push_veins(
@@ -4805,8 +4806,7 @@ impl Running {
                 Some(scenery::Extra {
                     model,
                     at: Vec3::new(pos.x, ground_of(map, pos), pos.y),
-                    turn: (facing.y.atan2(facing.x) / std::f32::consts::TAU * 256.0) as i32
-                        as u8,
+                    turn: (facing.y.atan2(facing.x) / std::f32::consts::TAU * 256.0) as i32 as u8,
                     scale: 1.0,
                     tint,
                 })

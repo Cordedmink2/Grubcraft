@@ -192,7 +192,6 @@ impl SceneryModels {
         self.ids[m as usize]
     }
 
-
     /// Whether the pack has any model of `list`.
     fn has(&self, list: &[(Model, u8)]) -> bool {
         list.iter().any(|&(m, _)| self.id(m).is_some())
