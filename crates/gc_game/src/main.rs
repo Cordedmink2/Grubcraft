@@ -2705,6 +2705,12 @@ impl Running {
             // (they waver all the time) and they are not in the battle line.
             let banner = match r.morale {
                 _ if self.world.is_worker(r.handle) => None,
+                // Drawn as a standard model with the scenery instead.
+                m if !self.commander
+                    && banner_model(m).is_some_and(|b| self.scenery.draws(b)) =>
+                {
+                    None
+                }
                 MoraleState::Steady => None,
                 MoraleState::Wavering => blink.then_some([235, 170, 40, 200]),
                 MoraleState::Routing => Some([245, 245, 240, 200]),
@@ -4714,7 +4720,7 @@ impl Running {
             let colour = color_of(parties, self.sandbox.side);
             buildings::push_rally(&self.world, h, colour, &mut self.instances);
         }
-        if !self.scenery.draws_nodes() {
+        if !self.scenery.draws(scenery::Model::GrubSeep) {
             buildings::push_nodes(&self.world, &mut self.instances);
         }
         buildings::push_veins(
@@ -4774,8 +4780,38 @@ impl Running {
             .economy()
             .into_iter()
             .flat_map(gc_sim::Economy::nodes);
-        self.scenery
-            .set_nodes(nodes.map(|n| buildings::node_look(&n, |p| ground_of(map, p))));
+        let nodes = nodes.map(|n| buildings::node_look(&n, |p| ground_of(map, p)));
+        // Shaken regiments plant a morale standard at their centre (the
+        // Commander View has its own flags).
+        let viewer = self.sandbox.side;
+        let (prev, alpha, world, parties) =
+            (&self.prev_positions, self.alpha, &self.world, &self.parties);
+        let banners = world
+            .regiments
+            .iter()
+            .filter(|_| !self.commander)
+            .filter(|r| self.reveal_all || world.sees(viewer, r.handle))
+            .filter(|r| !world.is_worker(r.handle))
+            .filter_map(|r| {
+                let model = banner_model(r.morale)?;
+                let (pos, facing) = drawn_pose(prev, alpha, &r);
+                let team = color_of(parties, r.owner);
+                let tint = match r.morale {
+                    // The white rag of flight keeps its own colour.
+                    MoraleState::Routing => [128; 3],
+                    MoraleState::Shattered => team.map(|c| c / 3),
+                    _ => team.map(|c| c / 2),
+                };
+                Some(scenery::Extra {
+                    model,
+                    at: Vec3::new(pos.x, ground_of(map, pos), pos.y),
+                    turn: (facing.y.atan2(facing.x) / std::f32::consts::TAU * 256.0) as i32
+                        as u8,
+                    scale: 1.0,
+                    tint,
+                })
+            });
+        self.scenery.set_extras(nodes.chain(banners));
         let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
         self.renderer.set_scenery_frame(instances, batches);
     }
@@ -5451,6 +5487,16 @@ fn digit(code: KeyCode) -> Option<usize> {
 /// the previous tick (just spawned, or the slot was reused) is drawn where
 /// it is. Picking, routes and the minimap use this too, so they agree with
 /// what the player sees.
+/// The standard a regiment in this morale state plants, if any.
+fn banner_model(m: MoraleState) -> Option<scenery::Model> {
+    match m {
+        MoraleState::Steady => None,
+        MoraleState::Wavering => Some(scenery::Model::BannerWavering),
+        MoraleState::Routing => Some(scenery::Model::BannerRouting),
+        MoraleState::Shattered => Some(scenery::Model::BannerShattered),
+    }
+}
+
 fn drawn_pose(
     prev_positions: &[Option<(RegimentHandle, Vec2, Vec2)>],
     alpha: f32,
