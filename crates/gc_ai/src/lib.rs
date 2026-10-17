@@ -26,6 +26,7 @@
 
 pub mod army;
 pub mod captain;
+pub mod conquest;
 pub mod difficulty;
 pub mod estimator;
 pub mod ground;
@@ -92,6 +93,8 @@ pub struct Mind {
     readings: Vec<reading::Reading>,
     /// Playing in real time (see [`Minds::live`]).
     live: bool,
+    /// Its economy and army, in Conquest.
+    realm: Option<conquest::Realm>,
 }
 
 impl Mind {
@@ -150,7 +153,34 @@ impl Mind {
             verdict: None,
             readings: Vec::new(),
             live: false,
+            realm: None,
         }
+    }
+
+    /// A Conquest player of `kit`'s faction: it runs its economy and army
+    /// as well as its battles.
+    pub fn conquest(config: MindConfig, kit: Arc<conquest::kit::Kit>) -> Mind {
+        let mut mind = Mind::new(config);
+        // Greedy minds expand sooner; a Recruit forgets to until its seeps
+        // run low.
+        let seconds = 300.0 - 150.0 * f32::from(mind.persona.greed) / 100.0;
+        let expand_after = match config.difficulty {
+            Difficulty::Recruit => u32::MAX,
+            _ => (seconds * perception::TICKS) as u32,
+        };
+        mind.realm = Some(conquest::Realm::new(
+            kit,
+            config.party,
+            &mind.knobs,
+            expand_after,
+        ));
+        mind.journal.note(0, "Takes up the Conquest".to_string());
+        mind
+    }
+
+    /// Its economy and army, in Conquest.
+    pub fn realm(&self) -> Option<&conquest::Realm> {
+        self.realm.as_ref()
     }
 
     pub fn party(&self) -> PlayerId {
@@ -185,7 +215,11 @@ impl Mind {
 
     /// Orders sent so far.
     pub fn orders_sent(&self) -> u32 {
-        self.orders.count
+        self.orders.count()
+            + self
+                .realm
+                .as_ref()
+                .map_or(0, |r| r.marshal.orders().count() + r.clicks().count)
     }
 
     /// The order layer, for its counters.
@@ -213,6 +247,20 @@ impl Mind {
         world: &World,
         out: &mut Vec<PlayerCommand>,
     ) {
+        if let Some(realm) = &mut self.realm {
+            let ctx = captain::Ctx {
+                view,
+                terrain,
+                party: self.party,
+                knobs: &self.knobs,
+                persona: self.persona,
+                rng: &mut self.rng,
+                journal: &mut self.journal,
+                next_slip: &mut self.next_slip,
+            };
+            realm.tick(world, ctx, out);
+            return;
+        }
         if self.knobs.rehearse {
             self.rehearse(view, terrain, world);
         }
@@ -313,6 +361,14 @@ impl Mind {
 
     /// One line on what it is doing, for the sandbox panel.
     pub fn summary(&self) -> String {
+        if let Some(realm) = &self.realm {
+            return format!(
+                "{} ({}): {}",
+                self.persona.name,
+                self.difficulty.name(),
+                realm.summary()
+            );
+        }
         let c = &self.captain;
         let expects = match c.estimate {
             Some(e) => format!(", expects {}", captain::describe_margin(e.margin)),
@@ -413,9 +469,9 @@ impl Minds {
             return;
         }
         self.view.capture(world);
-        // Regiments hidden in cover are hidden from the computer players
-        // too (docs/20-ambushes.md).
-        let fair = world.terrain().has_cover();
+        // Regiments hidden in cover or fog of war are hidden from the
+        // computer players too (docs/20-ambushes.md).
+        let fair = world.terrain().has_cover() || world.fog();
         for m in &mut self.minds {
             if fair {
                 let mut sight = std::mem::take(&mut m.sight);

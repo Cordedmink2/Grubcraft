@@ -114,6 +114,7 @@
 mod buildings;
 mod camera;
 mod conquest;
+mod conquest_ai;
 mod conquest_card;
 #[cfg(test)]
 mod conquest_golden;
@@ -3761,8 +3762,9 @@ impl Running {
     }
 
     /// Seat every side of a lobby Conquest match and, on the host (or
-    /// alone), put each one's start buildings and workers on the field.
-    /// No computer player plays Conquest yet.
+    /// alone), put each one's start buildings and workers on the field and
+    /// a Conquest mind in charge of each AI player (their orders travel in
+    /// the turns like anyone's).
     fn set_out_conquest(&mut self, setup: &MatchStart) {
         let me = setup
             .local_player
@@ -3780,6 +3782,24 @@ impl Running {
                 &self.world,
                 &conquest::factions(setup),
             ));
+            let roll = self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            tagged_alloc::scope(Tag::Ai, || {
+                conquest_ai::seat(
+                    setup,
+                    &self.data,
+                    &self.buildings,
+                    &self.heightmap,
+                    roll,
+                    &mut self.minds,
+                );
+            });
+            for m in self.minds.iter() {
+                logln!(
+                    "grubcraft: {} plays {}",
+                    m.summary(),
+                    party_name(&self.parties, m.party())
+                );
+            }
         }
         // Look over your start.
         let focus = conquest::player_starts(&self.heightmap, setup.players.len())

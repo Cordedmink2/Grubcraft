@@ -1,0 +1,418 @@
+//! The computer players of a lobby Conquest match: what each one knows of
+//! its faction before the match starts (its [`Kit`]), and seating a
+//! Conquest mind on every AI slot. Like Field Battle's minds they run on
+//! the host (or alone) and act only through ordinary commands, so nothing
+//! here touches the simulation (docs/18-ai.md, "The big decision").
+//!
+//! The tests below also hold a headless runner that plays whole Conquest
+//! matches between minds with no window, to watch them and to check they
+//! can finish a game.
+
+use std::sync::Arc;
+
+use gc_ai::conquest::kit::{EconomyStyle, Kit, KitBuilding, KitUnit};
+use gc_ai::{Difficulty, Mind, MindConfig, Minds};
+use gc_data::conquest::Class;
+use gc_data::{Faction, GameData};
+use gc_fixed::Pcg32;
+use gc_map::Map;
+use gc_ui::lobby::{MatchStart, SlotKind};
+use glam::Vec2;
+
+use crate::buildings::Table;
+use crate::conquest;
+
+/// What a mind of `faction` knows before the match starts, the way a
+/// player knows their faction's build menu: its building and unit types
+/// (ids are the baked tables' indexes) and where the map's starts are.
+pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
+    let buildings = (0..data.buildings.len())
+        .filter(|&i| data.buildings[i].faction() == faction)
+        .map(|i| KitBuilding {
+            id: i as u16,
+            stats: table.stats[i],
+        })
+        .collect();
+    let units = data
+        .conquest_units
+        .iter()
+        .enumerate()
+        .filter(|(_, rec)| rec.faction() == faction)
+        .map(|(u, rec)| {
+            let unit = conquest::unit_of(rec);
+            // A regiment for the line: trained at a building, costing
+            // something and taking supply, and not a worker, caravan,
+            // healer or Reclaimer.
+            let fighter = !unit.worker
+                && rec.class() != Class::Support
+                && unit.trained_at.is_some()
+                && unit.supply > 0
+                && unit.cost_grub + unit.cost_marrow > 0;
+            KitUnit {
+                id: u as u16,
+                unit,
+                fighter,
+            }
+        })
+        .collect();
+    Kit {
+        // gc_data and gc_ai list the factions in the same order.
+        faction,
+        economy: EconomyStyle::Shared,
+        buildings,
+        units,
+        all_workers: data
+            .conquest_units
+            .iter()
+            .enumerate()
+            .filter(|(_, rec)| rec.worker())
+            .map(|(u, _)| u as u16)
+            .collect(),
+        starts: map
+            .starts()
+            .into_iter()
+            .map(|(x, y)| Vec2::new(x as f32 + 0.5, y as f32 + 0.5))
+            .collect(),
+    }
+}
+
+/// Put a Conquest mind in charge of every AI slot of `setup` (player `i`
+/// is slot `i`), picking each one's temper and seed from `roll` as Field
+/// Battle does. The caller does this on the host or alone only.
+pub fn seat(
+    setup: &MatchStart,
+    data: &GameData,
+    table: &Table,
+    map: &Map,
+    roll: u64,
+    minds: &mut Minds,
+) {
+    let factions = conquest::factions(setup);
+    for (i, slot) in setup.players.iter().enumerate() {
+        if slot.kind != SlotKind::Ai {
+            continue;
+        }
+        let level = Difficulty::from_index(usize::from(slot.ai_level));
+        minds.add(mind_for(data, table, map, i, factions[i], level, roll));
+    }
+}
+
+/// The Conquest mind for player `i`, playing `faction` at `level`, its
+/// temper and seed picked from `roll`.
+fn mind_for(
+    data: &GameData,
+    table: &Table,
+    map: &Map,
+    i: usize,
+    faction: Faction,
+    level: Difficulty,
+    roll: u64,
+) -> Mind {
+    let config = MindConfig {
+        party: i as u8,
+        difficulty: level,
+        personality: gc_ai::personality::pick(faction, Pcg32::new(roll, i as u64).next_u32()),
+        seed: roll ^ i as u64,
+    };
+    Mind::conquest(config, Arc::new(kit(data, table, map, faction)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gc_sim::economy::Bank;
+    use gc_sim::{
+        Capacities, MatchSetup, PlayerId, TICKS_PER_SECOND, Verdict, Victories, Win, World,
+    };
+    use gc_ui::lobby::Tempo;
+
+    /// How one side stood when a headless match ended.
+    pub(crate) struct Standing {
+        pub faction: Faction,
+        /// The mind's one-line summary of what it is doing.
+        pub summary: String,
+        pub bank: Bank,
+        pub buildings: usize,
+        pub regiments: usize,
+        /// Orders the mind sent: its battle layer's, and its economy
+        /// clicks.
+        pub orders: u32,
+        pub clicks: u32,
+    }
+
+    /// A headless Conquest match played to its end (or the time limit).
+    pub(crate) struct Played {
+        pub verdict: Option<Verdict>,
+        pub ticks: u32,
+        pub sides: Vec<Standing>,
+    }
+
+    impl Played {
+        /// The side that won, if the match was decided and not drawn.
+        pub fn winner(&self) -> Option<PlayerId> {
+            self.verdict.filter(|v| v.by != Win::Draw).map(|v| v.holder)
+        }
+
+        /// The result and how each side stood, one line apiece.
+        pub fn report(&self) -> String {
+            let clock = |t: u32| {
+                format!(
+                    "{}:{:02}",
+                    t / 60 / TICKS_PER_SECOND,
+                    t / TICKS_PER_SECOND % 60
+                )
+            };
+            let mut out = match self.verdict {
+                Some(v) if v.by == Win::Draw => {
+                    format!("draw ({:?}) at {}", v.by, clock(v.tick))
+                }
+                Some(v) => format!("side {} wins by {:?} at {}", v.holder, v.by, clock(v.tick)),
+                None => format!("undecided after {}", clock(self.ticks)),
+            };
+            for (p, s) in self.sides.iter().enumerate() {
+                out += &format!("\n  {}", s.line(p));
+            }
+            out
+        }
+    }
+
+    impl Standing {
+        /// "side 0 EmberClans: bank 300/0, supply 8/10, ..." and, below,
+        /// the mind's summary.
+        pub fn line(&self, p: usize) -> String {
+            let b = &self.bank;
+            format!(
+                "side {p} {:?}: bank {}/{}, supply {}/{}, {} buildings, {} regiments, \
+                 {} orders ({} economy)\n    {}",
+                self.faction,
+                b.grub,
+                b.marrow,
+                b.supply_used,
+                b.supply_cap,
+                self.buildings,
+                self.regiments,
+                self.orders,
+                self.clicks,
+                self.summary
+            )
+        }
+    }
+
+    /// One side's numbers now: its bank and what it owns.
+    fn standing(world: &World, minds: &Minds, p: PlayerId, faction: Faction) -> Standing {
+        let mind = minds.get(p).expect("a mind plays every side");
+        Standing {
+            faction,
+            summary: mind.summary(),
+            bank: world.bank(p).unwrap_or_default(),
+            buildings: world
+                .structures()
+                .map_or(0, |s| s.iter().filter(|v| v.owner == p).count()),
+            regiments: world.regiments.iter().filter(|r| r.owner == p).count(),
+            orders: mind.orders_sent(),
+            clicks: mind.realm().map_or(0, |r| r.clicks().count),
+        }
+    }
+
+    /// Play Conquest map `choice` between Conquest minds, `factions[i]` at
+    /// start `i` thinking at `levels[i]` (the last level covers any
+    /// more), with no window, until a side wins or `max_minutes` of game
+    /// time pass. Fog of war and victories are as the lobby's defaults.
+    /// With `AI_TRACE=1` it prints every side's progress each two game
+    /// minutes.
+    pub(crate) fn play(
+        choice: usize,
+        factions: &[Faction],
+        levels: &[Difficulty],
+        seed: u64,
+        max_minutes: u32,
+    ) -> Played {
+        let trace = std::env::var("AI_TRACE").unwrap_or_default();
+        // AI_TRACE=2 also prints every journal entry as it is written.
+        let journal = trace == "2";
+        let trace = journal || trace == "1";
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let map = conquest::make_map(choice, seed);
+        let units = conquest::unit_stats(&data);
+        let nav = map.nav_costs();
+        let teams: Vec<u8> = (0..factions.len() as u8).collect();
+        let setup = MatchSetup {
+            seed,
+            capacities: Capacities::default(),
+            units: &units,
+            map_tiles: map.tiles,
+            nav: &nav,
+            teams: &teams,
+            ground: map.ground(),
+            champions: false,
+        };
+        let defaults = gc_ui::lobby::LobbySettings::default();
+        let plan = conquest::plan(
+            &table,
+            &data,
+            &map,
+            factions,
+            Tempo::Standard,
+            conquest::victories(defaults.victory),
+        );
+        assert!(plan.victories.any() && plan.victories != Victories::default());
+        let mut world = World::new(&setup);
+        assert!(world.conquest(&plan.setup()));
+        let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&map, &nav));
+        for (i, &faction) in factions.iter().enumerate() {
+            let level = levels[i.min(levels.len() - 1)];
+            minds.add(mind_for(&data, &table, &map, i, faction, level, seed));
+        }
+        let opening = conquest::opening(&data, &table, &map, &world, factions);
+        let stats = world.tick(&opening);
+        assert_eq!(stats.commands_applied as usize, opening.len());
+        let end = max_minutes * 60 * TICKS_PER_SECOND;
+        let every = 120 * TICKS_PER_SECOND;
+        let mut cmds = Vec::new();
+        let mut noted = vec![0u32; factions.len()];
+        while world.verdict().is_none() && world.tick_count() < end {
+            cmds.clear();
+            minds.tick(&world, &mut cmds);
+            world.tick(&cmds);
+            let t = world.tick_count();
+            if journal {
+                for (p, last) in noted.iter_mut().enumerate() {
+                    let Some(m) = minds.get(p as PlayerId) else {
+                        continue;
+                    };
+                    let from = *last;
+                    for e in m.journal().entries().filter(|e| e.tick > from) {
+                        println!(
+                            "{}:{:02} side {p}: {}",
+                            e.tick / 1200,
+                            e.tick / 20 % 60,
+                            e.text
+                        );
+                        *last = e.tick;
+                    }
+                }
+            }
+            if trace && t.is_multiple_of(every) {
+                println!("-- {}:00", t / 60 / TICKS_PER_SECOND);
+                for (p, &f) in factions.iter().enumerate() {
+                    let s = standing(&world, &minds, p as PlayerId, f);
+                    let last = minds
+                        .get(p as PlayerId)
+                        .and_then(|m| m.journal().latest())
+                        .map_or(String::new(), |e| format!("[{}] {}", e.tick, e.text));
+                    println!("{}\n    last: {last}", s.line(p));
+                }
+            }
+        }
+        Played {
+            verdict: world.verdict(),
+            ticks: world.tick_count(),
+            sides: factions
+                .iter()
+                .enumerate()
+                .map(|(p, &f)| standing(&world, &minds, p as PlayerId, f))
+                .collect(),
+        }
+    }
+
+    /// The level named by `AI_LEVEL` (a name or an index), Veteran if unset.
+    fn level_from_env() -> Difficulty {
+        let var = std::env::var("AI_LEVEL").unwrap_or_default();
+        Difficulty::ALL
+            .into_iter()
+            .find(|d| d.name().eq_ignore_ascii_case(&var))
+            .or_else(|| var.parse().ok().map(Difficulty::from_index))
+            .unwrap_or(Difficulty::Veteran)
+    }
+
+    fn env_number(name: &str, default: u64) -> u64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+
+    #[test]
+    fn a_kit_holds_the_factions_own_build_menu_and_the_maps_starts() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let map = conquest::make_map(1, 0);
+        for f in Faction::ALL {
+            let k = kit(&data, &table, &map, f);
+            assert_eq!(k.faction as u8, f as u8);
+            assert!(k.main().is_some(), "{f:?} has a main building");
+            assert!(k.worker().is_some(), "{f:?} has a worker");
+            assert!(k.housing().is_some(), "{f:?} has housing");
+            assert!(k.units.iter().any(|u| u.fighter), "{f:?} has fighters");
+            assert!(k.buildings.iter().all(|b| {
+                data.buildings[usize::from(b.id)].faction() == f
+                    && b.stats == table.stats[usize::from(b.id)]
+            }));
+            assert!(k.units.iter().all(|u| !(u.fighter && u.unit.worker)));
+            assert!(k.all_workers.len() >= Faction::ALL.len());
+            assert_eq!(k.starts.len(), 4);
+            assert_eq!(
+                k.starts[0],
+                Vec2::new(
+                    map.starts()[0].0 as f32 + 0.5,
+                    map.starts()[0].1 as f32 + 0.5
+                )
+            );
+        }
+    }
+
+    /// Watch a match: `AI_MAP`, `AI_SEED`, `AI_MINUTES` and `AI_LEVEL`
+    /// choose it, `AI_TRACE=1` prints progress.
+    ///
+    /// ```text
+    /// AI_TRACE=1 AI_MINUTES=12 cargo test -p gc_game --release conquest_ai_watch -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "a watching aid, run by hand"]
+    fn conquest_ai_watch() {
+        let choice = env_number("AI_MAP", 0) as usize;
+        let seed = env_number("AI_SEED", 7);
+        let minutes = env_number("AI_MINUTES", 40) as u32;
+        let level = level_from_env();
+        let players = gc_ui::lobby::CONQUEST_MAP_PLAYERS[choice];
+        let factions: Vec<Faction> = (0..players)
+            .map(|i| match players {
+                2 => [Faction::EmberClans, Faction::CarrionConcord][i],
+                _ => Faction::ALL[i % 4],
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let played = play(choice, &factions, &[level], seed, minutes);
+        println!("{}", played.report());
+        println!(
+            "{} game minutes in {:.1?}",
+            played.ticks / 60 / TICKS_PER_SECOND,
+            started.elapsed()
+        );
+    }
+
+    // A game takes seconds in a release build and minutes in a debug one,
+    // so these run in CI's release step.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_ribcage_1v1_ends_in_a_win() {
+        let pairs = [
+            [Faction::EmberClans, Faction::CarrionConcord],
+            [Faction::Brood, Faction::Choir],
+        ];
+        for (factions, seed) in pairs.iter().zip([7, 8]) {
+            let played = play(0, factions, &[Difficulty::Veteran], seed, 45);
+            assert!(played.winner().is_some(), "{}", played.report());
+        }
+    }
+
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_four_teeth_ends_in_a_win() {
+        for seed in [7, 8] {
+            let played = play(1, &Faction::ALL, &[Difficulty::Veteran], seed, 90);
+            assert!(played.winner().is_some(), "{}", played.report());
+        }
+    }
+}

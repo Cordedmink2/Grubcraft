@@ -80,7 +80,7 @@ impl Resource {
     }
 
     /// The building flag of a drop-off that takes it.
-    fn drop_off(self) -> u8 {
+    pub fn drop_off(self) -> u8 {
         match self {
             Resource::Grub => DROP_OFF_GRUB,
             Resource::Marrow => DROP_OFF_MARROW,

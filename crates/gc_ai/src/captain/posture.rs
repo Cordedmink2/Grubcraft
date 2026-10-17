@@ -209,6 +209,7 @@ impl Captain {
                 outshot || (out_of_range && !self.lying_in_wait()) || waited > patience.max(0.0)
             };
             let advance = match self.plan.map(|plan| plan.stance) {
+                _ if self.pressing => !halted,
                 Some(Stance::Advance) => !halted && self.onlooking.is_none(),
                 Some(Stance::Hold) => {
                     // Holding still gives up on an enemy that never comes,

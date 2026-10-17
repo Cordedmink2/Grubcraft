@@ -32,7 +32,7 @@ pub fn gap_between(a: &Seen, b: &Seen) -> f32 {
     a.pos.distance(b.pos) - a.depth * 0.5 - b.radius() * 0.8
 }
 
-pub(super) fn centroid(rs: &[&Seen]) -> Vec2 {
+pub(crate) fn centroid(rs: &[&Seen]) -> Vec2 {
     let mut sum = Vec2::ZERO;
     let mut n = 0.0;
     for r in rs {
