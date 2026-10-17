@@ -65,8 +65,9 @@ pub fn check(def: &MapDef) -> Report {
     placement(&map, &walk, &mut r);
     // A Field Battle map has armies and starts, no economy: it is checked
     // for placement, for every start reaching every other, and for its set
-    // pieces, and its fairness is its symmetry.
-    let field = matches!(map.size, Some(SizeClass::Field(_)));
+    // pieces, and its fairness is its symmetry. A big Conquest map (the
+    // Wilds made for Conquest) is Field size with an economy.
+    let field = matches!(map.size, Some(SizeClass::Field(_))) && !map.is_conquest();
     if !r.ok() || !starts(&map, &mut r) || (!field && !counts(&map, &mut r)) {
         return r;
     }
@@ -83,7 +84,7 @@ pub fn check(def: &MapDef) -> Report {
         return r;
     }
     areas(&map, &from, &mut r);
-    fairness(&map, &from, &mut r);
+    fairness(&map, &from, &alike_starts(def, &map), &mut r);
     routes(&map, &walk, &from, &mut r);
     set_pieces(&map, &walk, &mut r);
     r
@@ -438,41 +439,99 @@ fn spread(values: &[u32]) -> u32 {
     ((hi - lo) * 100).checked_div(hi).unwrap_or(0) as u32
 }
 
-/// Note one number per player, and make it an error if they differ too much.
-fn compare(r: &mut Report, label: &str, values: &[u32], show: impl Fn(u32) -> String) {
+/// Note one number per player, and make it an error if they differ too
+/// much between starts in the same group (`groups`, one per player; all
+/// the same group compares every start with every other).
+fn compare(
+    r: &mut Report,
+    label: &str,
+    values: &[u32],
+    groups: &[usize],
+    show: impl Fn(u32) -> String,
+) {
+    let alike = (0..values.len())
+        .map(|g| {
+            let group: Vec<u32> = values
+                .iter()
+                .zip(groups)
+                .filter(|&(_, &h)| h == g)
+                .map(|(&v, _)| v)
+                .collect();
+            spread(&group)
+        })
+        .max()
+        .unwrap_or(0);
     let sp = spread(values);
     let shown: Vec<String> = values.iter().map(|&v| format!("{:>7}", show(v))).collect();
-    r.notes
-        .push(format!("{label:<22} {}   spread {sp}%", shown.join(" ")));
-    if sp > TOLERANCE_PERCENT {
+    let between = if groups.iter().any(|&g| g != 0) {
+        format!(", {alike}% between alike starts")
+    } else {
+        String::new()
+    };
+    r.notes.push(format!(
+        "{label:<22} {}   spread {sp}%{between}",
+        shown.join(" ")
+    ));
+    if alike > TOLERANCE_PERCENT {
         r.err(format!(
-            "unfair: {label} differs by {sp}% between starts (limit {TOLERANCE_PERCENT}%)"
+            "unfair: {label} differs by {alike}% between starts (limit {TOLERANCE_PERCENT}%)"
         ));
     }
 }
 
-fn fairness(map: &Map, from: &[Search], r: &mut Report) {
-    // (name, kinds, only unowned, how many nearest to add up)
+/// Which starts the map's symmetry makes alike, as a group per player:
+/// the lowest player whose start is one of this start's turned copies.
+/// On a six-player map under `Rot2` that is three pairs of twins, found by
+/// where they stand, however their owners are numbered. Every start is in
+/// one group when the turned copies take every start round to every
+/// other (a Warfield's four), when there is no symmetry, or when no start
+/// has a twin.
+fn alike_starts(def: &MapDef, map: &Map) -> Vec<usize> {
+    let starts: Vec<Pos> = (0..map.players).map(|p| map.start_of(p).unwrap()).collect();
+    let groups: Vec<usize> = starts
+        .iter()
+        .map(|&s| {
+            let copies = def.symmetry.tile_copies(s, map.n);
+            starts.iter().position(|t| copies.contains(t)).unwrap_or(0)
+        })
+        .collect();
+    let twins = (0..groups.len()).any(|p| groups.iter().filter(|&&g| g == p).count() > 1);
+    if twins { groups } else { vec![0; starts.len()] }
+}
+
+/// Every start has the same economy round it, near and far. Where a
+/// start stands on the map (how far the Heart and the nearest foe are)
+/// is fair between the starts the symmetry makes alike (`alike`, see
+/// [`alike_starts`]): on a six-player map under `Rot2`, the middle two are
+/// nearer the Heart than the corners, as on most six-player maps, and
+/// three against three across the middle is fair.
+fn fairness(map: &Map, from: &[Search], alike: &[usize], r: &mut Report) {
+    let every = vec![0; alike.len()];
     let hamlets = [Kind::Village, Kind::Town, Kind::Bazaar];
-    let metrics: [(&str, &[Kind], bool, usize); 6] = [
-        ("4 nearest seeps", &[Kind::GrubSeep], false, 4),
-        ("nearest vein", &[Kind::MarrowVein], false, 1),
-        ("Heart", &[Kind::Heart], false, 1),
-        ("nearest hamlet", &hamlets, false, 1),
+    // (name, kinds, only unowned, how many nearest to add up, whether it is
+    // where a start stands rather than what is round it, so compared only
+    // between the alike starts)
+    let metrics: [(&str, &[Kind], bool, usize, bool); 6] = [
+        ("4 nearest seeps", &[Kind::GrubSeep], false, 4, false),
+        ("nearest vein", &[Kind::MarrowVein], false, 1, false),
+        ("Heart", &[Kind::Heart], false, 1, true),
+        ("nearest hamlet", &hamlets, false, 1, false),
         (
             "2 nearest contested",
             &[Kind::GrubSeep, Kind::MarrowVein],
             true,
             2,
+            false,
         ),
-        ("nearest Shrine", &[Kind::Shrine], false, 1),
+        ("nearest Shrine", &[Kind::Shrine], false, 1, false),
     ];
-    for (name, kinds, unowned_only, k) in metrics {
+    for (name, kinds, unowned_only, k, positional) in metrics {
         let v: Vec<u32> = from
             .iter()
             .map(|s| nearest(map, s, kinds, unowned_only, k))
             .collect();
-        compare(r, name, &v, tenths);
+        let groups = if positional { alike } else { &every };
+        compare(r, name, &v, groups, tenths);
     }
     let foes: Vec<u32> = (0..map.players)
         .map(|p| {
@@ -484,14 +543,14 @@ fn fairness(map: &Map, from: &[Search], r: &mut Report) {
                 .unwrap_or(0)
         })
         .collect();
-    compare(r, "nearest enemy start", &foes, tenths);
+    compare(r, "nearest enemy start", &foes, alike, tenths);
 
     let curves: Vec<[u32; 3]> = (0..map.players)
         .map(|p| income(map, &from[p as usize], p))
         .collect();
     for (i, minutes) in MINUTES.iter().enumerate() {
         let v: Vec<u32> = curves.iter().map(|c| c[i]).collect();
-        compare(r, &format!("income by minute {minutes}"), &v, |v| {
+        compare(r, &format!("income by minute {minutes}"), &v, &every, |v| {
             v.to_string()
         });
     }

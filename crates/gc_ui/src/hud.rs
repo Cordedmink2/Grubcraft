@@ -105,6 +105,13 @@ impl MinimapTerrain {
         }
         MinimapTerrain { side, colors }
     }
+
+    /// The cell [`MinimapTerrain::from_fn`] samples at `(u, v)` in, an
+    /// index into `colors`.
+    pub fn cell_at(&self, u: f32, v: f32) -> usize {
+        let cell = |t: f32| ((t * self.side as f32) as usize).min(self.side - 1);
+        cell(v) * self.side + cell(u)
+    }
 }
 
 /// One regiment on the minimap.

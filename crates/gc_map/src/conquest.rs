@@ -17,11 +17,12 @@
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    CoverKind, FRONTIER_SLOTS, Kind, MIN_BLOODSEEPS, MapDef, Mode, Noise, Object, Pos,
-    SetPieceKind, Shape, SizeClass, Symmetry,
+    BIG_MAP_TILES, CoverKind, FIELD_TILES, FRONTIER_SLOTS, Kind, MIN_BLOODSEEPS, MapDef, Mode,
+    Noise, Object, Pos, SetPieceKind, Shape, SizeClass, Symmetry,
 };
 use crate::recipe::{DEEP, FORD, RISE_REACH, WATER, Writer};
 use crate::stamp::{dist2, tile_copies};
+use crate::wilds::{self, Purpose, Wildness};
 
 /// The kinds of Conquest map a seed can make.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +59,17 @@ impl ConquestRecipe {
 /// Skirmish map, four on a Warfield.
 pub const CONQUEST_SIZES: [SizeClass; 3] =
     [SizeClass::Duel, SizeClass::Skirmish, SizeClass::Warfield];
+
+/// A base's own nodes, from its start, within a dozen tiles (well inside
+/// `BASE_AREA`): the same for every Conquest map.
+pub(crate) const BASE_NODES: [(Kind, i32, i32); 3] = [
+    (Kind::GrubSeep, -9, 8),
+    (Kind::GrubSeep, 8, -9),
+    (Kind::MarrowVein, 8, 8),
+];
+/// The creeps that guard a contested seep and a contested vein.
+pub(crate) const TOADS: &str = "Bile Toads";
+pub(crate) const GOLEMS: &str = "Marrow Golems";
 
 /// Ground level (sixteenths of a tile), as the shipped maps have it, and
 /// a fen's dry ground, half a tile above the water.
@@ -120,6 +132,24 @@ pub fn describe(recipe: ConquestRecipe, size: SizeClass, seed: u64) -> Option<Ma
         objects,
         set_pieces: w.set_pieces,
     })
+}
+
+/// A big Conquest map for six players, `tiles` on a side, or `None` for
+/// a side under [`BIG_MAP_TILES`] (six bases need the room) or over the
+/// biggest Field size: the Wilds' land ([`crate::wilds`]) as wild as
+/// `wildness`, with each start's economy round it, villages, outposts and
+/// lairs with rich fields out in the land, and the Heart in the middle.
+/// Players 0 to 2 are the north starts west to east and 3 to 5 their
+/// turned copies, so three against three, north against south, is fair
+/// (to the half tile the Heart stands off the turning centre), and every
+/// start has the same economy round it; in a game for
+/// all, the middle two are nearer the Heart. It isn't rerolled: every
+/// seed swept passes the checker (120 maps when this was made, and
+/// `gc_mapcheck`'s tests sweep some each build).
+pub fn describe_wilds(tiles: i32, seed: u64, wildness: Wildness) -> Option<MapDef> {
+    (BIG_MAP_TILES..=*FIELD_TILES.end())
+        .contains(&tiles)
+        .then(|| wilds::make(tiles, seed, wildness, Purpose::Conquest))
 }
 
 /// Where the first player's share sits on a map of one size.
@@ -229,16 +259,10 @@ impl Share<'_> {
         let f = self.f;
         let s = f.start;
         self.put(Kind::Start, s, true, false, "");
-        // The base, within a dozen tiles (well inside BASE_AREA), and the
-        // natural expansion out to the east, past BASE_AREA.
-        let own = [
-            (Kind::GrubSeep, -9, 8),
-            (Kind::GrubSeep, 8, -9),
-            (Kind::MarrowVein, 8, 8),
-            (Kind::GrubSeep, 32, -6),
-            (Kind::GrubSeep, 34, 6),
-        ];
-        for (kind, dx, dy) in own {
+        // The base, and the natural expansion out to the east, past
+        // BASE_AREA.
+        let natural = [(Kind::GrubSeep, 32, -6), (Kind::GrubSeep, 34, 6)];
+        for (kind, dx, dy) in BASE_NODES.into_iter().chain(natural) {
             let at = (
                 s.0 + dx + self.w.range(-1, 1),
                 s.1 + dy + self.w.range(-1, 1),
@@ -250,8 +274,8 @@ impl Share<'_> {
         self.put(Kind::Village, village, false, false, "");
         // Contested nodes, each with a camp of creeps between it and the middle.
         let contested = [
-            (Kind::GrubSeep, (640, 700), 28, (4, 2), "Bile Toads"),
-            (Kind::MarrowVein, (620, 680), -30, (2, 4), "Marrow Golems"),
+            (Kind::GrubSeep, (640, 700), 28, (4, 2), TOADS),
+            (Kind::MarrowVein, (620, 680), -30, (2, 4), GOLEMS),
         ];
         for (kind, u, v, (dx, dy), creeps) in contested {
             let at = f.at(self.w.range(u.0, u.1), f.scaled(v));
@@ -562,6 +586,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_same_seed_gives_the_same_conquest_wilds() {
+        for wild in Wildness::ALL {
+            let a = describe_wilds(512, 5, wild).unwrap().to_ron();
+            assert_eq!(a, describe_wilds(512, 5, wild).unwrap().to_ron());
+        }
+    }
+
+    /// Six bases round the Wilds: three starts in the north half, each
+    /// with the same share round it, the Heart once in the middle.
+    #[test]
+    fn conquest_wilds_give_every_start_the_same_share() {
+        let def = describe_wilds(768, 2, Wildness::Mixed).unwrap();
+        assert_eq!((def.players, def.symmetry), (6, Symmetry::Rot2));
+        let starts: Vec<&Object> = def
+            .objects
+            .iter()
+            .filter(|o| o.kind == Kind::Start)
+            .collect();
+        assert_eq!(starts.len(), 3);
+        let share = |p: u8| {
+            let s = starts.iter().find(|o| o.owner == Some(p)).unwrap().at;
+            let mut around: Vec<(Kind, i32, i32)> = def
+                .objects
+                .iter()
+                .filter(|o| o.kind != Kind::Heart)
+                .map(|o| (o.kind, o.at.0 - s.0, o.at.1 - s.1))
+                .filter(|&(_, dx, dy)| dx * dx + dy * dy <= 90 * 90)
+                .collect();
+            around.sort_by_key(|&(k, dx, dy)| (k as u8, dx, dy));
+            around
+        };
+        assert_eq!(share(0), share(1));
+        assert_eq!(share(1), share(2));
+        let mut hearts = def.objects.iter().filter(|o| o.kind == Kind::Heart);
+        assert!(hearts.next().is_some_and(|h| h.once));
+        assert!(hearts.next().is_none());
+        assert!(describe_wilds(320, 1, Wildness::Wild).is_none());
     }
 
     #[test]
