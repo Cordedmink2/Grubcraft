@@ -77,7 +77,7 @@
         files: 6,
         speed: 3.25,
         turn_rate: 80.0,
-        file_spacing: 0.55,
+        file_spacing: 0.6,
         rank_spacing: 0.9,
         melee_attack: 40,
         melee_defence: 40,
@@ -120,7 +120,7 @@
         melee_damage: 2,
         charge_bonus: 5,
         morale: 50,
-        ranged: Some((range: 30.0, damage: 4, reload: 4.0, accuracy: 31)),
+        ranged: Some((range: 30.0, damage: 4, reload: 4.0, accuracy: 32)),
         points: 400,
     ),
 ]
