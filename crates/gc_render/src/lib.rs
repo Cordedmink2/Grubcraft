@@ -414,6 +414,18 @@ impl Renderer {
                     // each: ask for all the GPU has (2,048 on every desktop
                     // GPU we target).
                     max_texture_array_layers: adapter.limits().max_texture_array_layers,
+                    // The skinning pass reads every model vertex, buildings
+                    // included: as much at once as the GPU binds (it splits
+                    // them in two where that is under the vertices' size).
+                    max_storage_buffer_binding_size: adapter
+                        .limits()
+                        .max_storage_buffer_binding_size,
+                    max_buffer_size: adapter.limits().max_buffer_size,
+                    // Five for the skinning pass (the model vertices take
+                    // two); every desktop GPU has at least eight.
+                    max_storage_buffers_per_shader_stage: adapter
+                        .limits()
+                        .max_storage_buffers_per_shader_stage,
                     ..wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits())
                 },
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
@@ -806,6 +818,17 @@ impl Renderer {
             return Err(format!(
                 "{} bone animation rows, more than this GPU's {limit}",
                 models.bone_rows()
+            ));
+        }
+        // The skinning pass binds the model vertices in two halves.
+        let vertices = models.vertices.len() as u64;
+        let first = soldiers::vertex_split(&self.device, vertices);
+        if vertices - first > first {
+            let binding = self.device.limits().max_storage_buffer_binding_size;
+            return Err(format!(
+                "{} MB of model vertices, more than twice this GPU's {} MB storage binding",
+                (vertices * soldiers::VERTEX_BYTES) >> 20,
+                binding >> 20
             ));
         }
         // One batch per model and level of detail is one skinning job.

@@ -273,6 +273,45 @@ fn skin_buffers(device: &wgpu::Device, capacity: usize) -> (wgpu::Buffer, wgpu::
     (make("skinned positions"), make("skinned normals"))
 }
 
+/// How many model vertices the skinning pass's first vertex binding holds:
+/// all of them when the GPU's storage binding limit allows (most do), else
+/// as many as fit, the rest going to the second binding (`set_vertices_hi`
+/// in world.wgsl). The split is a multiple of the offset alignment.
+pub(crate) fn vertex_split(device: &wgpu::Device, vertices: u64) -> u64 {
+    let limits = device.limits();
+    let step = (u64::from(limits.min_storage_buffer_offset_alignment) / VERTEX_BYTES).max(1);
+    let most = limits.max_storage_buffer_binding_size / VERTEX_BYTES / step * step;
+    vertices.min(most)
+}
+
+/// Bytes in one stored model vertex (`SetVertex` in world.wgsl).
+pub(crate) const VERTEX_BYTES: u64 = size_of::<ModelVertex>() as u64;
+
+/// The two vertex bindings of the skinning pass (see [`vertex_split`]).
+fn vertex_entries<'a>(
+    device: &wgpu::Device,
+    vertices: &'a wgpu::Buffer,
+) -> [wgpu::BindGroupEntry<'a>; 2] {
+    let all = vertices.size() / VERTEX_BYTES;
+    let split = vertex_split(device, all);
+    let range = |binding, from: u64, to: u64| wgpu::BindGroupEntry {
+        binding,
+        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+            buffer: vertices,
+            offset: from * VERTEX_BYTES,
+            size: wgpu::BufferSize::new((to - from) * VERTEX_BYTES),
+        }),
+    };
+    // With nothing past the split, the second binding repeats the first
+    // vertex: it is never read.
+    let hi = if split < all {
+        range(14, split, all)
+    } else {
+        range(14, 0, 1)
+    };
+    [range(9, 0, split), hi]
+}
+
 /// A buffer, whole, as the resource of a binding.
 fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
@@ -321,6 +360,7 @@ fn bind_groups(
             entry(5, m.origins),
         ],
     });
+    let [lo, hi] = vertex_entries(device, m.vertices);
     let skin = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("soldier skinning"),
         layout: &soldiers.skin_layout,
@@ -329,7 +369,8 @@ fn bind_groups(
                 binding: 8,
                 resource: wgpu::BindingResource::TextureView(m.bones),
             },
-            entry(9, m.vertices),
+            lo,
+            hi,
             entry(10, &soldiers.instances),
             entry(11, m.jobs),
             entry(12, m.skin_pos),
@@ -435,6 +476,7 @@ pub(crate) fn make(
             },
             storage(12, compute, false),
             storage(13, compute, false),
+            storage(14, compute, true),
         ],
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -669,7 +711,8 @@ impl SoldiersGpu {
                 self.models = Some(models);
             }
             let models = self.models.as_ref().expect("models were just put back");
-            let header = [self.jobs.len() as u32, self.threads, 0, 0];
+            let split = vertex_split(device, models.vertices.size() / VERTEX_BYTES) as u32;
+            let header = [self.jobs.len() as u32, self.threads, split, 0];
             queue.write_buffer(&models.jobs, 0, bytemuck::bytes_of(&header));
             queue.write_buffer(&models.jobs, 16, bytemuck::cast_slice(&self.jobs));
             queue.write_buffer(
