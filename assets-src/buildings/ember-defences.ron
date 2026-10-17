@@ -1,0 +1,72 @@
+// Ember Clans defences and shrine buildings (batch 2: Ancestor Shrine, Forge, Watchtower, Palisade, Gate),
+// baked into assets/buildings/ember-defences.pak by tools/gc_artbake
+// (`cargo run -p gc_artbake --release -- --config assets-src/buildings/ember-defences.ron --out assets/buildings/ember-defences.pak`).
+// Each building has four models: its construction stages `#1` (foundation), `#2` (frame) and `#3`
+// (nearly done), then the finished building under its own name, exactly as in data/rosters.
+// All four share one texture set (one material) and keep their authored positions in tiles
+// (`keep_origin`), with the origin at the middle of the footprint on the ground and the door
+// facing +z. Sources and scripts: the project's design/buildings/ folder (docs/21-buildings.md).
+(
+    models: [
+        (
+            name: "Palisade #1",
+            source: "shared:grubcraft/buildings/ember/palisade/stage1.glb",
+            height: 2.4,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/ember/palisade/albedo.png",
+                team: Some("shared:grubcraft/buildings/ember/palisade/team.png"),
+                normal: Some("shared:grubcraft/buildings/ember/palisade/normal.png"),
+                orm: Some("shared:grubcraft/buildings/ember/palisade/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/ember/palisade/emissive.png"),
+            )),
+        ),
+        (
+            name: "Palisade #2",
+            source: "shared:grubcraft/buildings/ember/palisade/stage2.glb",
+            height: 2.4,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/ember/palisade/albedo.png",
+                team: Some("shared:grubcraft/buildings/ember/palisade/team.png"),
+                normal: Some("shared:grubcraft/buildings/ember/palisade/normal.png"),
+                orm: Some("shared:grubcraft/buildings/ember/palisade/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/ember/palisade/emissive.png"),
+            )),
+        ),
+        (
+            name: "Palisade #3",
+            source: "shared:grubcraft/buildings/ember/palisade/stage3.glb",
+            height: 2.4,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/ember/palisade/albedo.png",
+                team: Some("shared:grubcraft/buildings/ember/palisade/team.png"),
+                normal: Some("shared:grubcraft/buildings/ember/palisade/normal.png"),
+                orm: Some("shared:grubcraft/buildings/ember/palisade/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/ember/palisade/emissive.png"),
+            )),
+        ),
+        (
+            name: "Palisade",
+            source: "shared:grubcraft/buildings/ember/palisade/final.glb",
+            height: 2.4,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/ember/palisade/albedo.png",
+                team: Some("shared:grubcraft/buildings/ember/palisade/team.png"),
+                normal: Some("shared:grubcraft/buildings/ember/palisade/normal.png"),
+                orm: Some("shared:grubcraft/buildings/ember/palisade/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/ember/palisade/emissive.png"),
+            )),
+        ),
+    ],
+)
