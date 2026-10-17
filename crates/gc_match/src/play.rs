@@ -55,6 +55,27 @@ impl Match {
         live: bool,
         record: Option<String>,
     ) -> Match {
+        let (mut m, first) = Match::set_up(setup, seed, map, tables, live, true, record);
+        m.play_turn(&first);
+        m
+    }
+
+    /// Set out `setup` on `map` with `seed` without playing a tick, for a
+    /// match whose turns come from elsewhere (the network). With `deploy`
+    /// (alone, or the host of a network match) the armies are raised and
+    /// the computer players seated, and the commands that put the armies on
+    /// the field are returned, to be played as the first turn; without it
+    /// (a network match's joiner) nothing is returned and no mind is
+    /// seated, since the host's orders reach everyone through the turns.
+    pub fn set_up(
+        setup: &MatchStart,
+        seed: u64,
+        map: &Map,
+        tables: &Tables,
+        live: bool,
+        deploy: bool,
+        record: Option<String>,
+    ) -> (Match, Vec<PlayerCommand>) {
         let nav = map.nav_costs();
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
         let match_setup = MatchSetup {
@@ -81,11 +102,11 @@ impl Match {
             &tables.points,
             plateau_positions(map.tiles),
             seed,
-            true,
+            deploy,
             &mut minds,
             &mut out,
         );
-        Match::from_parts(world, minds, set, &out, recorder)
+        (Match::unplayed(world, minds, set, recorder), out)
     }
 
     /// A match set out some other way than a lobby's (a golden replay's
@@ -99,8 +120,14 @@ impl Match {
         first: &[PlayerCommand],
         recorder: Option<Recorder>,
     ) -> Match {
+        let mut m = Match::unplayed(world, minds, set, recorder);
+        m.play_turn(first);
+        m
+    }
+
+    fn unplayed(world: World, minds: Minds, set: SetOut, recorder: Option<Recorder>) -> Match {
         let battle = Battle::new(Some(set.me));
-        let mut m = Match {
+        Match {
             world,
             minds,
             set,
@@ -109,9 +136,7 @@ impl Match {
             minds_worst: Duration::ZERO,
             recorder,
             out: Vec::new(),
-        };
-        m.advance(first);
-        m
+        }
     }
 
     /// Play one tick: the computer players' commands, then `extra` (a
@@ -119,20 +144,27 @@ impl Match {
     pub fn step(&mut self, extra: &[PlayerCommand]) -> TickReport {
         let mut out = std::mem::take(&mut self.out);
         out.clear();
-        let t0 = Instant::now();
-        self.minds.tick(&self.world, &mut out);
-        let took = t0.elapsed();
-        self.minds_time += took;
-        self.minds_worst = self.minds_worst.max(took);
+        self.think(&mut out);
         out.extend_from_slice(extra);
-        let report = self.advance(&out);
+        let report = self.play_turn(&out);
         self.out = out;
         report
     }
 
-    /// Tick the world with `commands`, recording them if recording, and
-    /// judge.
-    fn advance(&mut self, commands: &[PlayerCommand]) -> TickReport {
+    /// Let the computer players think about the world as it stands, adding
+    /// their orders to `out` (on the host of a network match, to be sent as
+    /// the next turn).
+    pub fn think(&mut self, out: &mut Vec<PlayerCommand>) {
+        let t0 = Instant::now();
+        self.minds.tick(&self.world, out);
+        let took = t0.elapsed();
+        self.minds_time += took;
+        self.minds_worst = self.minds_worst.max(took);
+    }
+
+    /// Tick the world with `commands` (a turn as the network gave it, say),
+    /// recording them if recording, and judge.
+    pub fn play_turn(&mut self, commands: &[PlayerCommand]) -> TickReport {
         let stats = match &mut self.recorder {
             Some(rec) => rec.tick(&mut self.world, commands),
             None => self.world.tick(commands),

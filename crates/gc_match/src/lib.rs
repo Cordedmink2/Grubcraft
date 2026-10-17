@@ -13,6 +13,8 @@
 pub mod battle;
 #[cfg(test)]
 mod battle_tables;
+#[cfg(test)]
+mod online_tests;
 pub mod play;
 pub mod terrain_view;
 
