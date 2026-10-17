@@ -321,17 +321,193 @@
             },
             lod_triangles: (1200, 500, 220, 90),
         ),
+        // Shard Choir roster (docs/23-choir-models.md): crystal gems on bones, floating parts on Float.* bones.
+        (
+            name: "Tuner",
+            // Choir roster art (worker: a slight crystal builder with a tuning hammer and a floating resonator crystal).
+            source: "shared:grubcraft/choir/tuner/tuner.glb",
+            height: 1.27,
+            clips: {
+                "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
+            },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((
+                albedo: "shared:grubcraft/choir/tuner/albedo.png",
+                team: Some("shared:grubcraft/choir/tuner/team.png"),
+                normal: Some("shared:grubcraft/choir/tuner/normal.png"),
+                orm: Some("shared:grubcraft/choir/tuner/orm.png"),
+                emissive: Some("shared:grubcraft/choir/tuner/emissive.png"),
+            )),
+        ),
         (
             name: "Shardlings",
-            source: "shared:quaternius/ultimate-monsters/Big/glTF/Alien.gltf",
-            height: 1.1,
-            team: ["#542964"],
+            // Choir roster art (line infantry: a crystal blade grown from the right forearm, a faceted buckler).
+            source: "shared:grubcraft/choir/shardlings/shardlings.glb",
+            height: 1.342,
             clips: {
-                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Weapon",
-                "Attack2": "Punch", "Hit": "HitReact", "Die": "Death", "Cheer": "Yes",
-                "Block": "Duck",
+                "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
             },
-            lod_triangles: (1400, 600, 250, 100),
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((
+                albedo: "shared:grubcraft/choir/shardlings/albedo.png",
+                team: Some("shared:grubcraft/choir/shardlings/team.png"),
+                normal: Some("shared:grubcraft/choir/shardlings/normal.png"),
+                orm: Some("shared:grubcraft/choir/shardlings/orm.png"),
+                emissive: Some("shared:grubcraft/choir/shardlings/emissive.png"),
+            )),
+        ),
+        (
+            name: "Prism Lancers",
+            // Choir roster art (violet prism head and a beam lance with a fork-held emitter).
+            source: "shared:grubcraft/choir/prism-lancers/prism-lancers.glb",
+            height: 1.282,
+            clips: {
+                "Idle": "Idle_Gun", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave", "Shoot": "Gun_Shoot",
+            },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((
+                albedo: "shared:grubcraft/choir/prism-lancers/albedo.png",
+                team: Some("shared:grubcraft/choir/prism-lancers/team.png"),
+                normal: Some("shared:grubcraft/choir/prism-lancers/normal.png"),
+                orm: Some("shared:grubcraft/choir/prism-lancers/orm.png"),
+                emissive: Some("shared:grubcraft/choir/prism-lancers/emissive.png"),
+            )),
+        ),
+        (
+            name: "Harmonic Walkers",
+            // Choir roster art (massive crystal knights with a great tuning fork as a blade, drawn 1.3x the height rule).
+            source: "shared:grubcraft/choir/harmonic-walkers/harmonic-walkers.glb",
+            height: 1.714,
+            clips: {
+                "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Kick_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
+            },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((
+                albedo: "shared:grubcraft/choir/harmonic-walkers/albedo.png",
+                team: Some("shared:grubcraft/choir/harmonic-walkers/team.png"),
+                normal: Some("shared:grubcraft/choir/harmonic-walkers/normal.png"),
+                orm: Some("shared:grubcraft/choir/harmonic-walkers/orm.png"),
+                emissive: Some("shared:grubcraft/choir/harmonic-walkers/emissive.png"),
+            )),
+        ),
+        (
+            name: "Glass Striders",
+            // Choir roster art (a crystal lancer on Quaternius's Horse rebuilt as faceted glass (one crystal per bone), one 60-bone rig).
+            source: "shared:grubcraft/choir/glass-striders/glass-striders.glb",
+            height: 1.824,
+            clips: {
+                "Idle": "Ride_Idle", "Walk": "Ride_Walk", "Run": "Ride_Run", "Attack": "Ride_Slash", "Attack2": "Ride_Rear", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Cheer",
+            },
+            lod_triangles: (14000, 5000, 1700, 550),
+            textures: Some((
+                albedo: "shared:grubcraft/choir/glass-striders/albedo.png",
+                team: Some("shared:grubcraft/choir/glass-striders/team.png"),
+                normal: Some("shared:grubcraft/choir/glass-striders/normal.png"),
+                orm: Some("shared:grubcraft/choir/glass-striders/orm.png"),
+                emissive: Some("shared:grubcraft/choir/glass-striders/emissive.png"),
+            )),
+        ),
+        (
+            name: "Skyglass",
+            // Choir roster art (a flying shard of glass on its own rig; rests on the ground, every clip lifts it 2.4 m; drawn 1.4x the height rule).
+            source: "shared:grubcraft/choir/skyglass/skyglass.glb",
+            height: 0.496,
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Shoot", "Shoot": "Shoot", "Hit": "Hit", "Die": "Death", "Cheer": "Cheer",
+            },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((
+                albedo: "shared:grubcraft/choir/skyglass/albedo.png",
+                team: Some("shared:grubcraft/choir/skyglass/team.png"),
+                normal: Some("shared:grubcraft/choir/skyglass/normal.png"),
+                orm: Some("shared:grubcraft/choir/skyglass/orm.png"),
+                emissive: Some("shared:grubcraft/choir/skyglass/emissive.png"),
+            )),
+        ),
+        (
+            name: "Conductor",
+            // Choir roster art (tall crystal priest with a tuning-fork staff, a robe of hanging shards and a ring of circling crystals).
+            source: "shared:grubcraft/choir/conductor/conductor.glb",
+            height: 1.342,
+            clips: {
+                "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
+            },
+            lod_triangles: (12000, 4000, 1400, 450),
+            textures: Some((
+                albedo: "shared:grubcraft/choir/conductor/albedo.png",
+                team: Some("shared:grubcraft/choir/conductor/team.png"),
+                normal: Some("shared:grubcraft/choir/conductor/normal.png"),
+                orm: Some("shared:grubcraft/choir/conductor/orm.png"),
+                emissive: Some("shared:grubcraft/choir/conductor/emissive.png"),
+            )),
+        ),
+        (
+            name: "Monolith",
+            // Choir roster art (a floating 4.6 m cathedral spire on its own rig; rests on the ground, every clip lifts it).
+            source: "shared:grubcraft/choir/monolith/monolith.glb",
+            height: 2.842,
+            clips: {
+                "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Slam", "Attack2": "Beam", "Shoot": "Beam", "Hit": "Hit", "Die": "Death", "Cheer": "Cheer",
+            },
+            lod_triangles: (20000, 7000, 2400, 800),
+            textures: Some((
+                albedo: "shared:grubcraft/choir/monolith/albedo.png",
+                team: Some("shared:grubcraft/choir/monolith/team.png"),
+                normal: Some("shared:grubcraft/choir/monolith/normal.png"),
+                orm: Some("shared:grubcraft/choir/monolith/orm.png"),
+                emissive: Some("shared:grubcraft/choir/monolith/emissive.png"),
+            )),
+        ),
+        (
+            name: "The Maestro",
+            // Choir roster art (hero: violet tailcoat of shards, a turning crown of tuning forks, a crystal baton).
+            source: "shared:grubcraft/choir/the-maestro/the-maestro.glb",
+            height: 1.303,
+            clips: {
+                "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
+            },
+            lod_triangles: (12000, 4000, 1400, 450),
+            textures: Some((
+                albedo: "shared:grubcraft/choir/the-maestro/albedo.png",
+                team: Some("shared:grubcraft/choir/the-maestro/team.png"),
+                normal: Some("shared:grubcraft/choir/the-maestro/normal.png"),
+                orm: Some("shared:grubcraft/choir/the-maestro/orm.png"),
+                emissive: Some("shared:grubcraft/choir/the-maestro/emissive.png"),
+            )),
+        ),
+        (
+            name: "The Refractor",
+            // Choir roster art (hero: prism head, three floating lens discs and a heavy prism lance).
+            source: "shared:grubcraft/choir/the-refractor/the-refractor.glb",
+            height: 1.294,
+            clips: {
+                "Idle": "Idle_Gun", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave", "Shoot": "Gun_Shoot",
+            },
+            lod_triangles: (12000, 4000, 1400, 450),
+            textures: Some((
+                albedo: "shared:grubcraft/choir/the-refractor/albedo.png",
+                team: Some("shared:grubcraft/choir/the-refractor/team.png"),
+                normal: Some("shared:grubcraft/choir/the-refractor/normal.png"),
+                orm: Some("shared:grubcraft/choir/the-refractor/orm.png"),
+                emissive: Some("shared:grubcraft/choir/the-refractor/emissive.png"),
+            )),
+        ),
+        (
+            name: "The Hollow Bell",
+            // Choir roster art (hero: a great hollow glass bell for a lower body, floating on motes, with a clapper mace).
+            source: "shared:grubcraft/choir/the-hollow-bell/the-hollow-bell.glb",
+            height: 1.318,
+            clips: {
+                "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
+            },
+            lod_triangles: (12000, 4000, 1400, 450),
+            textures: Some((
+                albedo: "shared:grubcraft/choir/the-hollow-bell/albedo.png",
+                team: Some("shared:grubcraft/choir/the-hollow-bell/team.png"),
+                normal: Some("shared:grubcraft/choir/the-hollow-bell/normal.png"),
+                orm: Some("shared:grubcraft/choir/the-hollow-bell/orm.png"),
+                emissive: Some("shared:grubcraft/choir/the-hollow-bell/emissive.png"),
+            )),
         ),
         // Carrion Concord roster (docs/22-concord-models.md): made in Blender on Quaternius bodies and rigs.
         (
