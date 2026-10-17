@@ -122,6 +122,7 @@ mod conquest_golden;
 mod conquest_soak;
 mod credits;
 mod data;
+mod faction_powers;
 mod field;
 mod fog;
 #[cfg(test)]
@@ -159,8 +160,8 @@ use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
     BuildingId, BuildingStats, Capacities, Formation, LOOSE_DEFENCE, MatchSetup, MoraleState,
-    PlayerCommand, PlayerId, RegimentHandle, StructureHandle, TIGHT_DEFENCE, UnitId, UnitStats,
-    World,
+    PlayerCommand, PlayerId, RegimentHandle, StructureHandle, StructureView, TIGHT_DEFENCE, UnitId,
+    UnitStats, World,
 };
 use gc_ui::lobby::{GameMode, MatchStart};
 use gc_ui::menu::MapPreviewKey;
@@ -1540,6 +1541,10 @@ impl ApplicationHandler for App {
                     {
                         return;
                     }
+                    if grid_key && let Some(slot) = faction_powers::key_slot(code) {
+                        r.power_press(slot);
+                        return;
+                    }
                     match code {
                         KeyCode::ArrowUp => r.input.arrows[0] = down,
                         KeyCode::ArrowDown => r.input.arrows[1] = down,
@@ -1782,10 +1787,7 @@ impl Running {
                         .then(|| self.building_under_cursor(|o| o == side))
                         .flatten();
                     let reach = if building.is_some() { 1.5 } else { 6.0 };
-                    match self.body_under_cursor(true).or_else(|| {
-                        self.ground_under_cursor()
-                            .and_then(|p| self.nearest_own(p, reach))
-                    }) {
+                    match self.own_regiment_at_cursor(reach) {
                         Some(h) => self.toggle_selected(h),
                         None => self.selected_structure = building,
                     }
@@ -1799,7 +1801,13 @@ impl Running {
                 self.input.right_down = self.input.cursor.zip(self.ground_under_cursor());
             }
             (MouseButton::Right, ElementState::Released) => {
-                // A right-click order takes the place of an armed one.
+                // A right-click puts down a power being aimed, and orders
+                // nothing; any other armed order it takes the place of.
+                if matches!(self.hud.armed, Some(hud::Armed::Power(_))) {
+                    self.hud.armed = None;
+                    self.input.right_down = None;
+                    return;
+                }
                 self.hud.armed = None;
                 let drag = self.drag_order();
                 let plain = drag.is_none().then(|| self.ground_under_cursor()).flatten();
@@ -1950,6 +1958,11 @@ impl Running {
 
     /// The building the mouse is over whose owner `accept` allows.
     fn building_under_cursor(&self, accept: impl Fn(PlayerId) -> bool) -> Option<StructureHandle> {
+        self.pick_building(|s| accept(s.owner))
+    }
+
+    /// The nearest building the mouse is over that `accept` allows.
+    fn pick_building(&self, accept: impl Fn(&StructureView) -> bool) -> Option<StructureHandle> {
         let ray = self.cursor_ray()?;
         let hm = &self.heightmap;
         let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
@@ -1958,7 +1971,7 @@ impl Running {
             &self.buildings,
             |x, z| hm.height_at(x, z).max(hm.water_level()),
             ray,
-            |s| shown(s) && accept(s.owner),
+            |s| shown(s) && accept(s),
         )
     }
 
@@ -2399,6 +2412,15 @@ impl Running {
         self.say("Falling back: they back away facing the enemy, who gets one parting blow".into());
     }
 
+    /// One of your regiments under the mouse: the one the ray passes through
+    /// (riding), else the nearest to the ground point within `reach` tiles.
+    fn own_regiment_at_cursor(&self, reach: f32) -> Option<RegimentHandle> {
+        self.body_under_cursor(true).or_else(|| {
+            self.ground_under_cursor()
+                .and_then(|p| self.nearest_own(p, reach))
+        })
+    }
+
     fn nearest_own(&self, p: Vec2, radius: f32) -> Option<RegimentHandle> {
         self.world
             .regiments
@@ -2574,6 +2596,7 @@ impl Running {
             1.0
         };
         let ridden = self.ride.as_ref().map(|ride| ride.regiment);
+        let haste_glow = self.haste_glow();
         // Soldiers stand only where a regiment could walk.
         let nav = self.world.nav();
         let firm = |p: Vec2| nav.standable(fx_vec(p));
@@ -2635,6 +2658,16 @@ impl Running {
                     depth,
                     block.disorder,
                     r.handle.index,
+                );
+            }
+            // A hasted regiment glows cyan round its block.
+            if self.world.regiment_haste(r.handle) > 0 {
+                buildings::push_regiment_haste(
+                    pos,
+                    facing,
+                    (width, depth),
+                    haste_glow,
+                    &mut self.instances,
                 );
             }
             // Your regiments that no enemy can see carry a moss-green flag
@@ -4003,15 +4036,8 @@ impl Running {
         d: f32,
         seed: u32,
     ) {
-        let right = Vec2::new(-facing.y, facing.x);
-        let (hw, hd) = (width / 2.0 + 0.4, depth / 2.0 + 0.4);
-        // Corners in order round the block, front left first.
-        let corners = [
-            centre + facing * hd - right * hw,
-            centre + facing * hd + right * hw,
-            centre - facing * hd + right * hw,
-            centre - facing * hd - right * hw,
-        ];
+        let half = (width / 2.0 + 0.4, depth / 2.0 + 0.4);
+        let corners = buildings::block_corners(centre, facing, half);
         let length = DISORDER_DASH * (0.3 + 0.7 * d);
         let seed = seed.wrapping_mul(0x9E37_79B9);
         for side in 0..4 {
@@ -4643,6 +4669,7 @@ impl Running {
     /// Every standing building as a box, the selected one with a rim, and
     /// every gathering spot.
     fn push_buildings(&mut self) {
+        let haste_glow = self.haste_glow();
         let look = self.active_camera().forward();
         let across = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
         let (hm, parties, art) = (&self.heightmap, &self.parties, &self.art);
@@ -4696,6 +4723,12 @@ impl Running {
             self.sandbox.side,
             self.reveal_all,
             lit,
+            &mut self.instances,
+        );
+        buildings::push_haste(
+            &self.world,
+            buildings::shown_to(self.sandbox.side, self.reveal_all),
+            haste_glow,
             &mut self.instances,
         );
         buildings::push_heart(&self.world, parties, &mut self.instances);

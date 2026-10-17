@@ -267,6 +267,10 @@ regiment_fields! {
     /// [`FALL_BACK_TICKS`](crate::combat::FALL_BACK_TICKS) for the tick the
     /// order lands, when its foes still hold it for their parting blow.
     falling_back: u16 = 0,
+    /// A haste (see [`crate::powers`]): ticks left (0 for none), and how
+    /// many percent faster it reloads, strikes and builds.
+    haste_left: u16 = 0,
+    haste: u8 = 0,
 }
 
 impl Regiments {
@@ -665,6 +669,26 @@ impl Regiments {
         self.attack_target[i] = None;
     }
 
+    /// Slot `i` is out of its fight: no foe, and who was winning forgotten.
+    pub(crate) fn leave_fight(&mut self, i: usize) {
+        self.engaged[i] = None;
+        self.pressing[i] = 0;
+        self.pressed[i] = 0;
+        self.giving[i] = 0;
+    }
+
+    /// Slot `i` is gone from its fight altogether: out of it, and nobody
+    /// still locked with it to press after it.
+    pub(crate) fn vanish_from_fight(&mut self, i: usize) {
+        let h = self.handle(i);
+        for k in 0..self.alive.len() {
+            if self.engaged[k] == Some(h) {
+                self.leave_fight(k);
+            }
+        }
+        self.leave_fight(i);
+    }
+
     /// Order a regiment to attack an enemy regiment: melee regiments close
     /// in and fight, ranged ones move into range and shoot.
     pub(crate) fn attack(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
@@ -703,10 +727,7 @@ impl Regiments {
                 self.strike[k] = Strike::Early;
             }
         }
-        self.engaged[i] = None;
-        self.pressing[i] = 0;
-        self.pressed[i] = 0;
-        self.giving[i] = 0;
+        self.leave_fight(i);
         self.target[i] = Some(to);
         self.target_facing[i] = Some(self.facing[i]);
         self.attack_target[i] = None;

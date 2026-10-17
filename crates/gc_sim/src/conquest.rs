@@ -13,6 +13,7 @@ use gc_fixed::FxVec2;
 
 use crate::economy::{Bank, Economy, NodeSetup};
 use crate::nav::Nav;
+use crate::powers::{PowerStats, Powers};
 use crate::production::Production;
 use crate::regiments::Regiments;
 use crate::structures::{
@@ -108,6 +109,9 @@ pub struct ConquestSetup<'a> {
     pub victories: Victories,
     /// The middle of the Titan's Heart, in tiles, if the map has one.
     pub heart: Option<FxVec2>,
+    /// The faction meters' powers (see [`crate::powers`]), indexed by
+    /// [`crate::Command::UsePower`]'s `power`.
+    pub powers: &'a [PowerStats],
 }
 
 impl ConquestSetup<'_> {
@@ -129,6 +133,7 @@ impl Default for ConquestSetup<'_> {
             build_percent: Self::STANDARD,
             victories: Victories::default(),
             heart: None,
+            powers: &[],
         }
     }
 }
@@ -141,6 +146,7 @@ pub(crate) struct Conquest {
     pub(crate) structures: Structures,
     pub(crate) economy: Economy,
     pub(crate) production: Production,
+    pub(crate) powers: Powers,
 }
 
 impl Conquest {
@@ -155,6 +161,7 @@ impl Conquest {
             ),
             economy: Economy::new(setup, regiments),
             production: Production::new(setup.structures as usize, setup.build_percent),
+            powers: Powers::new(setup.powers),
         }
     }
 
@@ -182,6 +189,9 @@ impl Conquest {
         self.production.update(&self.structures, nav, units, || {
             economy.supply_in_use(units, regs)
         });
+        // Last, so every part of the tick saw the same haste.
+        self.structures.wear_haste();
+        regs.wear_haste();
     }
 
     /// Player `p`'s store and supply. Supply in use counts the regiments in
@@ -498,5 +508,6 @@ impl Conquest {
             u.hash_into(h);
         }
         self.structures.hash_into(regs, h);
+        self.powers.hash_into(h);
     }
 }

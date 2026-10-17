@@ -32,7 +32,9 @@
 // Order, Ultimate), effect (plain words; hero ranks written 1/2/3), primitives (the
 // effect primitives it would be built from), and where they apply cooldown
 // (s), range (tiles), radius (tiles), duration (s). Meter abilities add cost
-// (meter points) and tier.
+// (meter points) and tier, and the ones the game has built say what the
+// simulation does: haste (percent faster for the duration) or shift_to
+// (regiments step to one of the caster's buildings of that name).
 (
     faction: Choir,
     meter: (
@@ -48,6 +50,7 @@
                 duration: 20.0,
                 effect: "A structure or regiment works, reloads and strikes 50% faster for 20 s.",
                 primitives: [ModifyStat],
+                haste: 50,
             ),
             (
                 name: "Phase Shift",
@@ -57,6 +60,7 @@
                 cooldown: 90.0,
                 effect: "Teleport selected regiments to any of your Resonators.",
                 primitives: [Teleport],
+                shift_to: Some("Resonator"),
             ),
             (
                 name: "Silence the Chord",

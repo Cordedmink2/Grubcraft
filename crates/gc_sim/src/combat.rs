@@ -1320,12 +1320,15 @@ impl Combat {
                 continue;
             }
             regs.charge[i] = regs.charge[i].saturating_sub(1);
-            regs.reload[i] = regs.reload[i].saturating_sub(1);
+            // A hasted regiment reloads faster and has extra turns (see
+            // [`crate::powers`]).
+            regs.reload[i] = regs.reload[i].saturating_sub(regs.steps(i));
             // Each regiment strikes on its turn, once a second. Spears and
             // pikes that have just met their foe strike at once instead, and
             // then sit out their next turn, so lines that touch and part
             // again don't earn them extra blows.
-            let on_turn = (tick + i as u32).is_multiple_of(STRIKE_INTERVAL);
+            let on_turn =
+                (tick + i as u32).is_multiple_of(STRIKE_INTERVAL) || regs.extra_turn(i, tick);
             let rhythm = regs.strike[i];
             if on_turn || rhythm == Strike::Early {
                 regs.strike[i] = Strike::Turn;

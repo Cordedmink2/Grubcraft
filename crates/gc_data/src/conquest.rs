@@ -15,11 +15,15 @@ use crate::{Faction, NAME_BYTES, UnitRecord, name_of, validate_name, validate_st
 pub const BUILDINGS_PATH: &str = "data/buildings";
 /// Pack path of the Conquest unit table.
 pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
+/// Pack path of the faction powers table (the faction meters' abilities).
+pub const POWERS_PATH: &str = "data/powers";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
 pub const BUILDING_SCHEMA: u32 = 5;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
 pub const CONQUEST_UNIT_SCHEMA: u32 = 3;
+/// Bump whenever [`PowerRecord`]'s layout or meaning changes.
+pub const POWER_SCHEMA: u32 = 1;
 /// An index field that names nothing.
 pub const NONE: u16 = u16::MAX;
 /// Largest footprint side, in tiles (docs/21: buildings are 2×2 to 5×5,
@@ -289,6 +293,96 @@ impl ConquestUnitRecord {
     }
 }
 
+/// [`PowerRecord::meter`]: the faction meter a power is paid from.
+pub const METER_NOT_BUILT: u8 = 0;
+pub const METER_RESONANCE: u8 = 1;
+/// [`PowerRecord::effect`]: what a power does.
+pub const POWER_NOT_BUILT: u8 = 0;
+/// A building or regiment of the caster's works, reloads and strikes
+/// [`PowerRecord::percent`] percent faster for the duration.
+pub const POWER_HASTE: u8 = 1;
+/// The caster's chosen regiments step to one of their
+/// [`PowerRecord::to_building`] buildings.
+pub const POWER_SHIFT: u8 = 2;
+/// The longest a power's cooldown or effect lasts, in ticks (10 minutes).
+pub const MAX_POWER_TICKS: u32 = 10 * 60 * 20;
+
+/// One ability a faction meter pays for (docs/17-unit-rosters.md, the
+/// meter tables), in [`Faction`] order and then the roster's. Times are
+/// simulation ticks.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
+pub struct PowerRecord {
+    /// UTF-8, zero-padded.
+    pub name: [u8; NAME_BYTES],
+    pub cooldown_ticks: u32,
+    /// How long its effect lasts; 0 for an instant one.
+    pub duration_ticks: u32,
+    /// For [`POWER_SHIFT`]: the building the regiments step to, as an index
+    /// into the building table; [`NONE`] otherwise.
+    pub to_building: u16,
+    /// A [`Faction`] as `u8`.
+    pub faction: u8,
+    /// Main-building tier needed to use it.
+    pub tier: u8,
+    /// Meter points it costs.
+    pub cost: u8,
+    /// A `METER_*`.
+    pub meter: u8,
+    /// A `POWER_*`.
+    pub effect: u8,
+    /// For [`POWER_HASTE`]: how many percent faster.
+    pub percent: u8,
+}
+
+impl PowerRecord {
+    pub fn name(&self) -> &str {
+        name_of(&self.name)
+    }
+
+    pub fn faction(&self) -> Faction {
+        // Validated when the table is loaded.
+        Faction::from_u8(self.faction).unwrap_or(Faction::EmberClans)
+    }
+
+    /// Whether the game has built what it does yet.
+    pub fn built(&self) -> bool {
+        self.effect != POWER_NOT_BUILT
+    }
+}
+
+/// The rules every power record satisfies on its own; `buildings` is the
+/// number of buildings, for [`PowerRecord::to_building`].
+pub fn validate_power(p: &PowerRecord, buildings: usize) -> Result<(), &'static str> {
+    validate_name(&p.name)?;
+    if Faction::from_u8(p.faction).is_none() {
+        return Err("unknown faction");
+    }
+    if p.tier == 0 || p.tier > MAX_TIER {
+        return Err("tier is 1 to 3");
+    }
+    if p.meter > METER_RESONANCE || p.effect > POWER_SHIFT {
+        return Err("unknown meter or effect");
+    }
+    if p.built() && p.meter == METER_NOT_BUILT {
+        return Err("a built power is paid from a built meter");
+    }
+    if p.cooldown_ticks > MAX_POWER_TICKS || p.duration_ticks > MAX_POWER_TICKS {
+        return Err("cooldown and duration are at most 10 minutes");
+    }
+    if (p.effect == POWER_HASTE) != (p.percent > 0)
+        || (p.effect == POWER_HASTE) != (p.duration_ticks > 0)
+    {
+        return Err("a haste, and only a haste, makes things a percent faster for a while");
+    }
+    if (p.effect == POWER_SHIFT) != (p.to_building != NONE)
+        || (p.to_building != NONE && usize::from(p.to_building) >= buildings)
+    {
+        return Err("a shift, and only a shift, steps to a building in the table");
+    }
+    Ok(())
+}
+
 /// The rules every building record satisfies on its own; `count` is the
 /// number of buildings, for the index fields. Shared by the baker and the
 /// loader.
@@ -411,5 +505,7 @@ mod tests {
         assert_eq!(align_of::<BuildingRecord>(), 4);
         assert_eq!(size_of::<ConquestUnitRecord>(), 92);
         assert_eq!(align_of::<ConquestUnitRecord>(), 4);
+        assert_eq!(size_of::<PowerRecord>(), 48);
+        assert_eq!(align_of::<PowerRecord>(), 4);
     }
 }

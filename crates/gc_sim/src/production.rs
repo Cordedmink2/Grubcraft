@@ -253,7 +253,8 @@ impl Production {
                     *left -= need;
                     self.clock[i][k] = self.train_ticks(units, unit);
                 }
-                self.clock[i][k] -= 1;
+                // A hasted building trains faster (see [`crate::powers`]).
+                self.clock[i][k] = self.clock[i][k].saturating_sub(structures.steps(i));
                 if self.clock[i][k] > 0 {
                     k += 1;
                     continue;

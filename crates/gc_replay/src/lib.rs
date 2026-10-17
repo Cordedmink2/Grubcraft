@@ -33,10 +33,11 @@ use std::fmt;
 use std::path::Path;
 
 use gc_fixed::FxVec2;
+use gc_sim::powers::MAX_POWERS;
 use gc_sim::{
     BuildingStats, Capacities, ConquestSetup, ConquestUnit, Ground, MAX_PARTIES, MatchSetup,
-    NodeSetup, PlayerCommand, TICKS_PER_SECOND, TickStats, UnitStats, Verdict, Victories, Win,
-    World,
+    NodeSetup, PlayerCommand, PowerStats, TICKS_PER_SECOND, TickStats, UnitStats, Verdict,
+    Victories, Win, World,
 };
 
 use codec::{Reader, Writer};
@@ -44,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 21: the faction powers and the orders that use them (read as none);
 /// - 20: the buildings' chord links (read as none);
 /// - 19: the buildings' fields and tuning (root-veins read as reaching 15
 ///   tiles from a main building and 8 from any other) and the Conquest
@@ -68,7 +70,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 20;
+pub const FORMAT: u16 = 21;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -169,6 +171,7 @@ pub struct ConquestRecord {
     pub build_percent: u32,
     pub victories: Victories,
     pub heart: Option<FxVec2>,
+    pub powers: Vec<PowerStats>,
 }
 
 impl ConquestRecord {
@@ -183,6 +186,9 @@ impl ConquestRecord {
             build_percent: setup.build_percent,
             victories: setup.victories,
             heart: setup.heart,
+            // The simulation keeps no more than this, and reading takes no
+            // more.
+            powers: setup.powers.iter().take(MAX_POWERS).copied().collect(),
         }
     }
 
@@ -197,6 +203,7 @@ impl ConquestRecord {
             build_percent: self.build_percent,
             victories: self.victories,
             heart: self.heart,
+            powers: &self.powers,
         }
     }
 
@@ -225,6 +232,10 @@ impl ConquestRecord {
         w.bool(self.heart.is_some());
         if let Some(at) = self.heart {
             w.vec(at);
+        }
+        w.var(self.powers.len() as u64);
+        for p in &self.powers {
+            w.power(p);
         }
     }
 
@@ -260,6 +271,15 @@ impl ConquestRecord {
         } else {
             (Victories::default(), None)
         };
+        let powers = if format >= 21 {
+            let n: usize = r.var_as().filter(|&n| n <= MAX_POWERS)?;
+            (0..n.min(r.remaining()))
+                .map(|_| r.power().map(PowerStats::sanitized))
+                .collect::<Option<Vec<_>>>()
+                .filter(|p| p.len() == n)?
+        } else {
+            Vec::new()
+        };
         Some(ConquestRecord {
             buildings,
             units,
@@ -270,6 +290,7 @@ impl ConquestRecord {
             build_percent,
             victories,
             heart,
+            powers,
         })
     }
 }
@@ -1348,6 +1369,23 @@ mod tests {
         let mut start = [(0, 0); MAX_PARTIES];
         start[0] = (600, 0);
         start[1] = (600, 0);
+        let powers = [
+            gc_sim::PowerStats {
+                tier: 1,
+                cost: 20,
+                cooldown_ticks: 400,
+                duration_ticks: 400,
+                effect: gc_sim::PowerEffect::Haste { percent: 50 },
+            },
+            gc_sim::PowerStats {
+                tier: 2,
+                cost: 60,
+                cooldown_ticks: 1800,
+                duration_ticks: 0,
+                effect: gc_sim::PowerEffect::Shift { to: 0 },
+            },
+            gc_sim::PowerStats::default(),
+        ];
         let conquest = ConquestSetup {
             buildings: &buildings,
             units: &units,
@@ -1358,6 +1396,7 @@ mod tests {
             build_percent: 75,
             victories: Victories::BOTH,
             heart: Some(FxVec2::from_ints(32, 32)),
+            powers: &powers,
         };
         let mut world = World::new(&setup);
         assert!(world.conquest(&conquest));

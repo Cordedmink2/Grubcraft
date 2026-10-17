@@ -8,10 +8,11 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use gc_assets::{Kind, PackWriter, table_bytes};
-use gc_data::conquest::{BUILDING_SCHEMA, CONQUEST_UNIT_SCHEMA};
+use gc_data::conquest::{BUILDING_SCHEMA, CONQUEST_UNIT_SCHEMA, POWER_SCHEMA};
 use gc_data::{
     ANGLE_STEPS_PER_TURN, BUILDINGS_PATH, CONQUEST_UNITS_PATH, Faction, MANIFEST_PATH, NAME_BYTES,
-    UNIT_SCHEMA, UNITS_PATH, UnitRecord, WEAPON_REACH, WEAPON_SHIELD, WEAPON_SWING_ROOM,
+    POWERS_PATH, UNIT_SCHEMA, UNITS_PATH, UnitRecord, WEAPON_REACH, WEAPON_SHIELD,
+    WEAPON_SWING_ROOM,
 };
 use gc_fixed::Fx;
 use rosters::{FactionDef, Stats};
@@ -83,34 +84,39 @@ pub struct Baked {
     pub units: usize,
     pub buildings: usize,
     pub conquest_units: usize,
+    pub powers: usize,
 }
 
 /// Bake everything under `data_dir` into a pack.
 pub fn bake(data_dir: &Path) -> Result<Baked, BakeError> {
     let units_file = data_dir.join("units.ron");
     let units = bake_units(&units_file)?;
-    let (buildings, conquest_units) = conquest::bake_rosters(data_dir, &units)?;
+    let tables = conquest::bake_rosters(data_dir, &units)?;
     let units_table = table_bytes(UNIT_SCHEMA, &units);
-    let buildings_table = table_bytes(BUILDING_SCHEMA, &buildings);
-    let conquest_table = table_bytes(CONQUEST_UNIT_SCHEMA, &conquest_units);
+    let buildings_table = table_bytes(BUILDING_SCHEMA, &tables.buildings);
+    let conquest_table = table_bytes(CONQUEST_UNIT_SCHEMA, &tables.units);
+    let powers_table = table_bytes(POWER_SCHEMA, &tables.powers);
 
     let data_hash = data_hash(&[
         (UNITS_PATH, &units_table),
         (BUILDINGS_PATH, &buildings_table),
         (CONQUEST_UNITS_PATH, &conquest_table),
+        (POWERS_PATH, &powers_table),
     ]);
 
     let mut pack = PackWriter::new();
     pack.add(UNITS_PATH, Kind::Table, &units_table);
     pack.add(BUILDINGS_PATH, Kind::Table, &buildings_table);
     pack.add(CONQUEST_UNITS_PATH, Kind::Table, &conquest_table);
+    pack.add(POWERS_PATH, Kind::Table, &powers_table);
     pack.add(MANIFEST_PATH, Kind::Blob, &data_hash);
     Ok(Baked {
         pack: pack.finish(),
         data_hash,
         units: units.len(),
-        buildings: buildings.len(),
-        conquest_units: conquest_units.len(),
+        buildings: tables.buildings.len(),
+        conquest_units: tables.units.len(),
+        powers: tables.powers.len(),
     })
 }
 
@@ -334,7 +340,7 @@ mod tests {
         let hex: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,
-            "c8700bfbaa1580e668c6024df9681c0d0103999af58ab167f0ef6443dab3b947"
+            "e4019327c4a8478ea740785bd1e368a20016cc6648290e35338428e98e671555"
         );
     }
 

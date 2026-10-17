@@ -14,6 +14,7 @@ use crate::alerts::{self, AlertData};
 use crate::conquest::{self, Block, NodeDot, StructurePanel, TopBar};
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, text_width};
 use crate::hero::{self, HeroPanel};
+use crate::powers::{self, PowerButton};
 use crate::ui::{Press, theme};
 
 /// Height of the bottom bar, in UI pixels.
@@ -199,6 +200,9 @@ pub struct HudData<'a> {
     pub top: Option<TopBar>,
     /// A selected building: its card and queue replace the regiment cards.
     pub structure: Option<StructurePanel<'a>>,
+    /// The faction powers you can use (Conquest), as a row of buttons over
+    /// the battlefield; none draws nothing.
+    pub powers: &'a [PowerButton<'a>],
 }
 
 /// The deployment phase, as this player sees it.
@@ -217,6 +221,7 @@ const WIDGET_SLOT: u32 = 3 << 24;
 const WIDGET_CARD: u32 = 4 << 24;
 pub(crate) const WIDGET_ALERT: u32 = 5 << 24;
 pub(crate) const WIDGET_QUEUE: u32 = 6 << 24;
+pub(crate) const WIDGET_POWER: u32 = 7 << 24;
 
 /// What the mouse did since the last frame, in UI pixels.
 #[derive(Clone, Copy, Debug, Default)]
@@ -252,6 +257,9 @@ pub enum HudEvent {
     /// Take this unit (its index in the queue) out of the selected building's
     /// training queue.
     Unqueue(usize),
+    /// A faction power's button was clicked (its place in
+    /// [`HudData::powers`]).
+    Power(usize),
 }
 
 #[derive(Default)]
@@ -264,6 +272,17 @@ pub struct Hud {
     press: Press,
     /// The top bar, alert badges and buttons over the battlefield as last drawn.
     over: Vec<Rect>,
+}
+
+/// A button's background, edge and text colours: dim while it can't be
+/// used, lit under the mouse (`hot`) and orange while it waits for a click.
+pub(crate) fn slot_colors(state: SlotState, hot: bool) -> (Color, Color, Color) {
+    match state {
+        SlotState::Off | SlotState::Blocked => (theme::FIELD, theme::PANEL_EDGE, theme::DISABLED),
+        SlotState::Ready if hot => (theme::BUTTON_HOT, theme::PANEL_EDGE, theme::TEXT),
+        SlotState::Ready => (theme::BUTTON, theme::PANEL_EDGE, theme::TEXT),
+        SlotState::Armed => (theme::PRIMARY, theme::ACCENT, theme::TEXT),
+    }
 }
 
 pub(crate) fn rgb(c: [u8; 3]) -> Color {
@@ -311,6 +330,15 @@ impl Hud {
         if let Some(h) = &data.hero {
             hero::draw(draw, layout.bar.y, h, &mut self.over);
         }
+        powers::draw(
+            draw,
+            layout.field,
+            input,
+            &mut self.press,
+            data.powers,
+            &mut self.over,
+            events,
+        );
         alerts::draw(
             draw,
             layout.field,
@@ -358,14 +386,7 @@ impl Hud {
             if clicked && on {
                 events.push(HudEvent::Command(i));
             }
-            let (back, edge, text) = match slot.state {
-                SlotState::Off | SlotState::Blocked => {
-                    (theme::FIELD, theme::PANEL_EDGE, theme::DISABLED)
-                }
-                SlotState::Ready if hot => (theme::BUTTON_HOT, theme::PANEL_EDGE, theme::TEXT),
-                SlotState::Ready => (theme::BUTTON, theme::PANEL_EDGE, theme::TEXT),
-                SlotState::Armed => (theme::PRIMARY, theme::ACCENT, theme::TEXT),
-            };
+            let (back, edge, text) = slot_colors(slot.state, hot);
             draw.rect(cell, back);
             draw.border(cell, 1, edge);
             let inner = cell.inset(3);
@@ -750,6 +771,7 @@ mod tests {
         structure: Option<StructurePanel<'a>>,
         nodes: &'a [NodeDot],
         blocks: &'a [Block],
+        powers: &'a [PowerButton<'a>],
     }
 
     fn run(
@@ -795,6 +817,7 @@ mod tests {
             hero: None,
             top: extras.top,
             structure: extras.structure,
+            powers: extras.powers,
         };
         let mut draw = DrawList::default();
         let mut events = Vec::new();
@@ -829,6 +852,7 @@ mod tests {
                 hero: None,
                 top: None,
                 structure: None,
+                powers: &[],
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             Hud::default().frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -873,6 +897,7 @@ mod tests {
                 hero: None,
                 top: None,
                 structure: None,
+                powers: &[],
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             hud.frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -947,6 +972,7 @@ mod tests {
             alerts: AlertData::default(),
             top: None,
             structure: None,
+            powers: &[],
         };
         let l = HudLayout::new(SCREEN, false);
         let over_panel = (30, l.bar.y - 40);
@@ -1413,5 +1439,37 @@ mod tests {
         // Pressed on one slot, let go over another: no click.
         frame(at(queue_slot(0), true, false));
         assert!(frame(at(queue_slot(1), false, true)).is_empty());
+    }
+
+    #[test]
+    fn a_power_button_reports_its_click_and_takes_the_mouse() {
+        let buttons = [PowerButton {
+            name: "Overclock",
+            detail: "20 Resonance",
+            state: SlotState::Ready,
+        }];
+        let extras = || Extras {
+            powers: &buttons,
+            ..Extras::default()
+        };
+        let mut hud = Hud::default();
+        let top = Some(TopBar::default());
+        let field = HudLayout::new(SCREEN, top.is_some()).field;
+        let spot = (field.x + 60, field.y + 20);
+        let click = HudInput {
+            mouse: spot,
+            left_pressed: true,
+            left_released: true,
+            ..HudInput::default()
+        };
+        assert!(!hud.wants(SCREEN, spot), "nothing drawn yet");
+        let with_top = || Extras { top, ..extras() };
+        let (events, _) = run_with(&mut hud, click, &[], &[], with_top());
+        assert_eq!(events, vec![HudEvent::Power(0)]);
+        assert!(hud.wants(SCREEN, spot));
+        // No powers, no button, and the click is the battlefield's.
+        let (events, _) = run_with(&mut hud, click, &[], &[], Extras::default());
+        assert!(events.is_empty());
+        assert!(!hud.wants(SCREEN, spot));
     }
 }

@@ -4,7 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use gc_assets::Pack;
-use gc_data::conquest::{BUILDING_DROP_OFF_GRUB, Class, NONE};
+use gc_data::conquest::{
+    BUILDING_DROP_OFF_GRUB, Class, METER_RESONANCE, NONE, POWER_HASTE, POWER_NOT_BUILT, POWER_SHIFT,
+};
 use gc_data::{Faction, GameData};
 
 fn data_dir() -> PathBuf {
@@ -142,4 +144,74 @@ fn baking_twice_gives_the_same_bytes() {
     let a = gc_bake::bake(&data_dir()).unwrap();
     let b = gc_bake::bake(&data_dir()).unwrap();
     assert_eq!(a.pack, b.pack);
+}
+
+/// Overclock and Phase Shift bake as the Choir's Resonance powers, with their
+/// costs, tiers and times, and Phase Shift steps to the Choir's Resonator.
+#[test]
+fn overclock_and_phase_shift_bake_as_the_choirs_resonance_powers() {
+    with_real_data(|data| {
+        // docs/17-unit-rosters.md: Overclock 20 points, tier 1, 20 s
+        // cooldown and duration; Phase Shift 60 points, tier 2, 90 s cooldown.
+        let overclock = data
+            .powers
+            .iter()
+            .find(|p| p.name() == "Overclock")
+            .expect("no Overclock");
+        assert_eq!(overclock.faction(), Faction::Choir);
+        assert_eq!(overclock.meter, METER_RESONANCE);
+        assert_eq!(overclock.effect, POWER_HASTE);
+        assert_eq!(overclock.percent, 50);
+        assert_eq!(overclock.cost, 20);
+        assert_eq!(overclock.tier, 1);
+        assert_eq!(overclock.cooldown_ticks, 400);
+        assert_eq!(overclock.duration_ticks, 400);
+        assert_eq!(overclock.to_building, NONE);
+        assert!(overclock.built());
+
+        let resonator = data
+            .buildings
+            .iter()
+            .position(|b| b.name() == "Resonator" && b.faction() == Faction::Choir)
+            .expect("no Choir Resonator");
+        let shift = data
+            .powers
+            .iter()
+            .find(|p| p.name() == "Phase Shift")
+            .expect("no Phase Shift");
+        assert_eq!(shift.faction(), Faction::Choir);
+        assert_eq!(shift.meter, METER_RESONANCE);
+        assert_eq!(shift.effect, POWER_SHIFT);
+        assert_eq!(usize::from(shift.to_building), resonator);
+        assert_eq!(shift.cost, 60);
+        assert_eq!(shift.tier, 2);
+        assert_eq!(shift.cooldown_ticks, 1800);
+        assert_eq!(shift.duration_ticks, 0);
+        assert_eq!(shift.percent, 0);
+        assert!(shift.built());
+    });
+}
+
+/// Every other faction's meter ability is listed as not built yet.
+#[test]
+fn every_other_faction_meter_ability_is_not_built_yet() {
+    with_real_data(|data| {
+        let mut others = 0;
+        for p in data.powers {
+            if p.name() == "Overclock" || p.name() == "Phase Shift" {
+                continue;
+            }
+            others += 1;
+            assert_eq!(p.effect, POWER_NOT_BUILT, "{}", p.name());
+            assert!(!p.built(), "{}", p.name());
+        }
+        assert!(others > 0, "no other meter ability is listed");
+        let silence = data
+            .powers
+            .iter()
+            .find(|p| p.name() == "Silence the Chord")
+            .expect("no Silence the Chord");
+        assert_eq!(silence.faction(), Faction::Choir);
+        assert_eq!(silence.effect, POWER_NOT_BUILT);
+    });
 }

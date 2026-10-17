@@ -380,10 +380,17 @@ impl Running {
 
     /// Give `command` as the side you command.
     fn order(&mut self, command: Command) {
-        self.human_orders.push(PlayerCommand {
-            player: self.sandbox.side,
-            command,
-        });
+        self.orders([command]);
+    }
+
+    /// Give `commands` as the side you command, all in the same tick.
+    pub(crate) fn orders(&mut self, commands: impl IntoIterator<Item = Command>) {
+        let player = self.sandbox.side;
+        (self.human_orders).extend(
+            commands
+                .into_iter()
+                .map(|command| PlayerCommand { player, command }),
+        );
         self.ui_sound(sounds::UiSound::Move);
     }
 }

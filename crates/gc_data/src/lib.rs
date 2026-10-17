@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 
 pub mod conquest;
 
-pub use conquest::{BUILDINGS_PATH, BuildingRecord, CONQUEST_UNITS_PATH, ConquestUnitRecord};
+pub use conquest::{
+    BUILDINGS_PATH, BuildingRecord, CONQUEST_UNITS_PATH, ConquestUnitRecord, POWERS_PATH,
+    PowerRecord,
+};
 
 /// Pack path of the unit table.
 pub const UNITS_PATH: &str = "data/units";
@@ -182,6 +185,8 @@ pub enum DataError {
     BadBuilding(usize, &'static str),
     /// A Conquest unit record failed validation; the index is its row.
     BadConquestUnit(usize, &'static str),
+    /// A faction power record failed validation; the index is its row.
+    BadPower(usize, &'static str),
 }
 
 impl fmt::Display for DataError {
@@ -195,6 +200,7 @@ impl fmt::Display for DataError {
             DataError::BadUnit(i, why) => write!(f, "unit {i}: {why}"),
             DataError::BadBuilding(i, why) => write!(f, "building {i}: {why}"),
             DataError::BadConquestUnit(i, why) => write!(f, "Conquest unit {i}: {why}"),
+            DataError::BadPower(i, why) => write!(f, "faction power {i}: {why}"),
         }
     }
 }
@@ -216,6 +222,8 @@ pub struct GameData<'a> {
     pub buildings: &'a [BuildingRecord],
     /// Every faction's trainable units, for Conquest (see [`conquest`]).
     pub conquest_units: &'a [ConquestUnitRecord],
+    /// Every faction meter's abilities (see [`conquest`]).
+    pub powers: &'a [PowerRecord],
     /// BLAKE3 hash of every data table, as computed by the baker.
     pub hash: [u8; 32],
 }
@@ -241,6 +249,11 @@ impl<'a> GameData<'a> {
             conquest::validate_conquest_unit(u, buildings.len(), conquest_units.len())
                 .map_err(|why| DataError::BadConquestUnit(i, why))?;
         }
+        let powers = table::<PowerRecord>(pack, POWERS_PATH, conquest::POWER_SCHEMA)?;
+        for (i, p) in powers.iter().enumerate() {
+            conquest::validate_power(p, buildings.len())
+                .map_err(|why| DataError::BadPower(i, why))?;
+        }
 
         let manifest = pack
             .get_path(MANIFEST_PATH)
@@ -253,6 +266,7 @@ impl<'a> GameData<'a> {
             units,
             buildings,
             conquest_units,
+            powers,
             hash,
         })
     }

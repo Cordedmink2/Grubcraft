@@ -5,6 +5,10 @@
 //! soldiers and helps build it, lays a second and calls it off, upgrades
 //! its main building, trains soldiers, rallies them and sends them at the
 //! other side's main building; at the end the host takes a building away.
+//! The second side also puts up three of the Choir's Resonators in a chord
+//! and spends the Resonance it charges on the Choir's powers: Overclock on
+//! its main building, Phase Shift for two soldiers, and Overclock on a
+//! soldier.
 //!
 //! The test below plays it through a recorder and checks it plays back
 //! alike after a trip through the file format. To record the golden again
@@ -20,8 +24,8 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use gc_replay::{Recorder, Replay};
 use gc_sim::structures::{Role, StructureView};
 use gc_sim::{
-    BuildingId, Capacities, Command, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, Resource,
-    TICKS_PER_SECOND, UnitId, Victories, World,
+    BuildingId, Capacities, Command, MatchSetup, PlayerCommand, PlayerId, PowerTarget,
+    RegimentHandle, Resource, TICKS_PER_SECOND, UnitId, Victories, World,
 };
 use gc_ui::lobby::Tempo;
 
@@ -42,6 +46,8 @@ const SPARE_FROM: u32 = 80 * TICKS_PER_SECOND;
 const UPGRADE_FROM: u32 = 120 * TICKS_PER_SECOND;
 const MARCH_AT: u32 = 150 * TICKS_PER_SECOND;
 const REMOVE_AT: u32 = (MINUTES * 60 - 5) * TICKS_PER_SECOND;
+/// When the second side's chord goes up.
+const CHORD_AT: u32 = 10 * TICKS_PER_SECOND;
 /// Soldiers and workers each side trains up to.
 const FIGHTERS: usize = 6;
 const WORKERS: usize = 8;
@@ -140,6 +146,37 @@ struct Side {
     called_off: bool,
     rallied: bool,
     charged: bool,
+    /// The chord is up, and how many of its powers' uses are done.
+    chord: bool,
+    powers: u8,
+}
+
+/// The Choir's Resonator and its two powers, as the second side plays them.
+#[derive(Clone, Copy, Debug)]
+struct Choir {
+    resonator: BuildingId,
+    overclock: u8,
+    shift: u8,
+}
+
+impl Choir {
+    fn of(data: &GameData) -> Choir {
+        let building = |name: &str| {
+            (data.buildings.iter())
+                .position(|b| b.name() == name)
+                .expect("the Choir's building") as BuildingId
+        };
+        let power = |name: &str| {
+            (data.powers.iter())
+                .position(|p| p.name() == name && p.built())
+                .expect("the Choir's power") as u8
+        };
+        Choir {
+            resonator: building("Resonator"),
+            overclock: power("Overclock"),
+            shift: power("Phase Shift"),
+        }
+    }
 }
 
 /// The match: its world, its recorder and both sides' scripts.
@@ -148,6 +185,7 @@ pub struct Match {
     rec: Recorder,
     kits: [Kit; 2],
     sides: [Side; 2],
+    choir: Choir,
     starts: Vec<(i32, i32)>,
 }
 
@@ -183,6 +221,7 @@ impl Match {
         let mut m = Match {
             kits: FACTIONS.map(|f| Kit::of(&data, &table, f)),
             sides: Default::default(),
+            choir: Choir::of(&data),
             starts: map.starts(),
             world,
             rec,
@@ -437,6 +476,9 @@ impl Match {
             }
             self.sides[usize::from(p)].charged = seen || target.is_none();
         }
+        if p == 1 {
+            self.powers(p, out);
+        }
         // The host takes the first side's barracks away.
         if t == REMOVE_AT
             && p == 0
@@ -445,6 +487,70 @@ impl Match {
             out.push(order(Command::RemoveStructure {
                 structure: b.handle,
             }));
+        }
+    }
+
+    /// Side `p`'s chord and powers: three Resonators put up, then
+    /// Overclock on its main building, Phase Shift for two soldiers to a
+    /// Resonator (once it is tier 2) and Overclock on a soldier, each as
+    /// soon as it has the Resonance.
+    fn powers(&mut self, p: PlayerId, out: &mut Vec<PlayerCommand>) {
+        let t = self.world.tick_count();
+        let (c, k) = (self.choir, self.kits[usize::from(p)]);
+        let order = |command| PlayerCommand { player: p, command };
+        let ready = |power| self.world.can_use_power(p, power).is_ok();
+        let fighters: Vec<RegimentHandle> = (self.world.regiments.iter())
+            .filter(|r| r.owner == p && r.unit == k.fighter && !r.morale.broken())
+            .map(|r| r.handle)
+            .collect();
+        let side = &mut self.sides[usize::from(p)];
+        if !side.chord && t >= CHORD_AT {
+            let sites = chord_sites(&self.world, &self.kits[usize::from(p)], p, c.resonator)
+                .expect("room for a chord near the main building");
+            for tile in sites {
+                out.push(order(Command::SpawnStructure {
+                    building: c.resonator,
+                    tile,
+                }));
+            }
+            side.chord = true;
+        }
+        let main = main_of(&self.world, &k, p);
+        let resonator = own(&self.world, p, Some(c.resonator)).first().copied();
+        match side.powers {
+            0 if ready(c.overclock) => {
+                if let Some(main) = main {
+                    out.push(order(Command::UsePower {
+                        power: c.overclock,
+                        target: PowerTarget::Structure(main.handle),
+                    }));
+                    side.powers = 1;
+                }
+            }
+            1 if ready(c.shift) && fighters.len() >= 2 => {
+                if let Some(to) = resonator {
+                    for &regiment in &fighters[..2] {
+                        out.push(order(Command::UsePower {
+                            power: c.shift,
+                            target: PowerTarget::Shift {
+                                regiment,
+                                to: to.handle,
+                            },
+                        }));
+                    }
+                    side.powers = 2;
+                }
+            }
+            2 if ready(c.overclock) => {
+                if let Some(&regiment) = fighters.first() {
+                    out.push(order(Command::UsePower {
+                        power: c.overclock,
+                        target: PowerTarget::Regiment(regiment),
+                    }));
+                    side.powers = 3;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -511,6 +617,39 @@ pub(crate) fn site(world: &World, k: &Kit, p: PlayerId, b: BuildingId) -> Option
         .map(|(x, y)| (x as i16, y as i16))
 }
 
+/// Three tiles round side `p`'s main building where buildings of type
+/// `b` can go up and make a chord: a triangle about 10 tiles a side,
+/// 10 tiles off one side of the main building.
+fn chord_sites(world: &World, k: &Kit, p: PlayerId, b: BuildingId) -> Option<[(i16, i16); 3]> {
+    let main = main_of(world, k, p)?;
+    let (cx, cy) = (
+        main.tile.0 + i32::from(main.width) / 2,
+        main.tile.1 + i32::from(main.depth) / 2,
+    );
+    let near = |(x, y): (i32, i32)| {
+        conquest::ring([x, y, 1, 1], 0)
+            .take(64)
+            .find(|&t| world.can_build(b, t).is_ok())
+    };
+    [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        .into_iter()
+        .find_map(|(dx, dy)| {
+            let base = (cx + dx * 10, cy + dy * 10);
+            let (px, py) = (dy, dx);
+            let sites = [
+                near((base.0 - px * 5, base.1 - py * 5))?,
+                near((base.0 + px * 5, base.1 + py * 5))?,
+                near((base.0 + dx * 8, base.1 + dy * 8))?,
+            ];
+            let apart = |a: (i32, i32), b: (i32, i32)| (a.0 - b.0).abs().max((a.1 - b.1).abs());
+            let fits = (0..3).all(|i| {
+                let (a, b) = (sites[i], sites[(i + 1) % 3]);
+                (4..=9).contains(&apart(a, b))
+            });
+            fits.then(|| sites.map(|(x, y)| (x as i16, y as i16)))
+        })
+}
+
 /// The nodes of `resource` with something left, nearest `start` first.
 pub(crate) fn nodes_near(world: &World, (sx, sy): (i32, i32), resource: Resource) -> Vec<u16> {
     let start = FxVec2::from_ints(sx, sy);
@@ -568,6 +707,7 @@ mod tests {
             assert!(side.helped && side.called_off);
             assert!(side.charged, "side {p} found the other's main building");
         }
+        assert_eq!(m.sides[1].powers, 3, "side 1 used its powers");
         assert!(m.own(0, Some(m.kits[0].barracks)).is_empty(), "removed");
         let played = m.world.tick_count();
         let replay = m.finish();

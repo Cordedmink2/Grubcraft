@@ -1,11 +1,11 @@
-//! Bakes the faction rosters (`data/rosters/*.ron`) into the building and
-//! Conquest unit tables (`gc_data::conquest`): the factions in `Faction`
-//! order, and within one the entries in file order.
+//! Bakes the faction rosters (`data/rosters/*.ron`) into the building,
+//! Conquest unit and faction power tables (`gc_data::conquest`): the
+//! factions in `Faction` order, and within one the entries in file order.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use gc_data::conquest::{self as cq, BuildingRecord, ConquestUnitRecord};
+use gc_data::conquest::{self as cq, BuildingRecord, ConquestUnitRecord, PowerRecord};
 use gc_data::{Faction, UnitRecord};
 
 use crate::rosters::{self, FactionDef, Roster};
@@ -23,12 +23,17 @@ pub(crate) const ROSTER_FILES: [(&str, FactionDef); 4] = [
 /// Where each name stands in a table, within one faction.
 type Index<'a> = BTreeMap<&'a str, u16>;
 
-/// The building and Conquest unit tables for the four rosters. `units` is the
-/// baked `units.ron`: a roster unit of the same name takes its points.
-pub(crate) fn bake_rosters(
-    data_dir: &Path,
-    units: &[UnitRecord],
-) -> Result<(Vec<BuildingRecord>, Vec<ConquestUnitRecord>), BakeError> {
+/// The tables the rosters bake into.
+pub(crate) struct Tables {
+    pub buildings: Vec<BuildingRecord>,
+    pub units: Vec<ConquestUnitRecord>,
+    pub powers: Vec<PowerRecord>,
+}
+
+/// The building, Conquest unit and faction power tables for the four
+/// rosters. `units` is the baked `units.ron`: a roster unit of the same
+/// name takes its points.
+pub(crate) fn bake_rosters(data_dir: &Path, units: &[UnitRecord]) -> Result<Tables, BakeError> {
     let mut loaded = Vec::new();
     for (path, faction) in ROSTER_FILES {
         let file = data_dir.join(path);
@@ -73,6 +78,7 @@ pub(crate) fn bake_rosters(
 
     let mut building_records = Vec::with_capacity(buildings);
     let mut unit_records = Vec::with_capacity(conquest_units);
+    let mut power_records = Vec::new();
     for (i, (file, r)) in loaded.iter().enumerate() {
         let faction = Faction::from(r.faction);
         for n in &r.starting_buildings {
@@ -108,6 +114,11 @@ pub(crate) fn bake_rosters(
                 .map_err(|why| invalid(file, &u.stats.name, why))?;
             unit_records.push(record);
         }
+        for a in &r.meter.abilities {
+            let record = power_record(file, faction, &r.meter.name, a, &building_at[i])?;
+            cq::validate_power(&record, buildings).map_err(|why| invalid(file, &a.name, why))?;
+            power_records.push(record);
+        }
     }
     for (i, b) in building_records.iter().enumerate() {
         cq::validate_upgrade(&building_records, i).map_err(|why| {
@@ -115,7 +126,63 @@ pub(crate) fn bake_rosters(
             invalid(file, b.name(), why)
         })?;
     }
-    Ok((building_records, unit_records))
+    Ok(Tables {
+        buildings: building_records,
+        units: unit_records,
+        powers: power_records,
+    })
+}
+
+/// A faction meter's ability. One that names no `haste` or `shift_to` is
+/// not built yet: it is listed, but the game doesn't offer it.
+fn power_record(
+    file: &Path,
+    faction: Faction,
+    meter: &str,
+    a: &rosters::Ability,
+    building_at: &Index,
+) -> Result<PowerRecord, BakeError> {
+    let bad = |why: &str| invalid(file, &a.name, why.to_string());
+    let ticks = |seconds: f64| -> Result<u32, BakeError> {
+        if seconds == 0.0 {
+            Ok(0)
+        } else {
+            to_ticks(seconds).map(u32::from).map_err(bad)
+        }
+    };
+    let to_building = match &a.shift_to {
+        Some(n) => *building_at
+            .get(n.as_str())
+            .ok_or_else(|| bad(&format!("shift_to names no building {n}")))?,
+        None => cq::NONE,
+    };
+    let effect = match (a.haste, &a.shift_to) {
+        (0, None) => cq::POWER_NOT_BUILT,
+        (_, None) => cq::POWER_HASTE,
+        (0, Some(_)) => cq::POWER_SHIFT,
+        _ => return Err(bad("a power hastes or shifts, not both")),
+    };
+    let meter = match meter {
+        _ if effect == cq::POWER_NOT_BUILT => cq::METER_NOT_BUILT,
+        "Resonance" => cq::METER_RESONANCE,
+        _ => return Err(bad("its meter is not built yet")),
+    };
+    Ok(PowerRecord {
+        name: name_bytes(&a.name).map_err(|why| bad(&why))?,
+        cooldown_ticks: ticks(a.cooldown)?,
+        duration_ticks: if effect == cq::POWER_HASTE {
+            ticks(a.duration)?
+        } else {
+            0
+        },
+        to_building,
+        faction: faction as u8,
+        tier: a.tier,
+        cost: u8::try_from(a.cost).map_err(|_| bad("costs more than 255"))?,
+        meter,
+        effect,
+        percent: a.haste,
+    })
 }
 
 /// `n` as a table index, which must leave `NONE` free.

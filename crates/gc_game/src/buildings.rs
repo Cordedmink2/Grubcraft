@@ -827,6 +827,64 @@ pub fn push_fields(
     }
 }
 
+/// The glow on whatever a power hastes: a cyan ribbon, as wide as a
+/// chord's edge, round a hasted building's footprint or a hasted regiment's
+/// block. How far outside it stands, in tiles.
+const HASTE_COLOR: [u8; 3] = [90, 230, 255];
+const HASTE_WIDTH: f32 = 0.2;
+const HASTE_REACH: f32 = 0.6;
+const HASTE_LIFT: f32 = RING_LIFT + 0.02;
+
+/// Ring each building that `shown` allows and a power has hasted (Conquest)
+/// with a cyan ribbon `glow` bright.
+pub fn push_haste(
+    world: &World,
+    shown: impl Fn(&StructureView) -> bool,
+    glow: u8,
+    out: &mut Vec<BoxInstance>,
+) {
+    let Some(structures) = world.structures() else {
+        return;
+    };
+    let hasted = |s: &StructureView| world.structure_haste(s.handle) > 0 && shown(s);
+    for s in structures.iter().filter(hasted) {
+        let foot = [s.tile.0, s.tile.1, i32::from(s.width), i32::from(s.depth)];
+        let look = (HASTE_WIDTH, HASTE_COLOR, glow);
+        push_ring(foot.map(|v| v as f32), HASTE_REACH, look, HASTE_LIFT, out);
+    }
+}
+
+/// Outline a hasted regiment's block (`width` across its `facing`, `depth`
+/// along it, round `centre`) with a cyan ribbon `glow` bright.
+pub fn push_regiment_haste(
+    centre: Vec2,
+    facing: Vec2,
+    (width, depth): (f32, f32),
+    glow: u8,
+    out: &mut Vec<BoxInstance>,
+) {
+    let half = (width / 2.0 + HASTE_REACH, depth / 2.0 + HASTE_REACH);
+    let corners = block_corners(centre, facing, half);
+    for (i, &from) in corners.iter().enumerate() {
+        let to = corners[(i + 1) % corners.len()];
+        let width = (HASTE_WIDTH, HASTE_WIDTH);
+        push_ribbon(from, to, width, HASTE_COLOR, HASTE_LIFT, |_| glow, out);
+    }
+}
+
+/// The corners of a regiment's block round `centre`, `half` its width
+/// across its `facing` and its depth along it: in order round the block,
+/// front left first.
+pub fn block_corners(centre: Vec2, facing: Vec2, (hw, hd): (f32, f32)) -> [Vec2; 4] {
+    let right = Vec2::new(-facing.y, facing.x);
+    [
+        centre + facing * hd - right * hw,
+        centre + facing * hd + right * hw,
+        centre - facing * hd + right * hw,
+        centre - facing * hd - right * hw,
+    ]
+}
+
 /// A closed ring on the ground `reach` tiles outside the rectangle `foot`
 /// (`[x, y, width, depth]`): straight along its sides, round at its
 /// corners. `look` is its width, colour and glow.
@@ -1051,6 +1109,7 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::Busy => "That building is busy.",
         Refusal::Larva => "No larvae are ready.",
         Refusal::Unpowered => "It must stand inside a field of power.",
+        Refusal::Cooling => "That power isn't ready again yet.",
     }
 }
 
@@ -1352,5 +1411,36 @@ mod tests {
                 .count();
             assert!(trains <= 11, "{} trains {trains}", table.name(b));
         }
+    }
+
+    #[test]
+    fn a_hasted_regiment_is_outlined_round_its_block_whichever_way_it_faces() {
+        let draw = |facing: Vec2| {
+            let mut out = Vec::new();
+            push_regiment_haste(Vec2::new(50.0, 40.0), facing, (10.0, 4.0), 180, &mut out);
+            out
+        };
+        let north = draw(Vec2::NEG_Y);
+        assert!(north.len() >= 4);
+        assert!(
+            north
+                .iter()
+                .all(|b| b.color[3] == 180 && b.color[2] > b.color[0])
+        );
+        // Round the block: some pieces beyond its width and some beyond its
+        // depth, but none far outside it.
+        let reach = |out: &[BoxInstance], axis: usize| {
+            let at = |b: &BoxInstance| (b.pos[axis] - [50.0, 40.0][axis]).abs();
+            out.iter().map(at).fold(0.0f32, f32::max)
+        };
+        assert!(reach(&north, 0) >= 5.0 && reach(&north, 1) >= 2.0);
+        assert!(reach(&north, 0) < 7.0 && reach(&north, 1) < 4.0);
+        // Turned to face east, the long way runs north-south.
+        let east = draw(Vec2::X);
+        assert!(reach(&east, 1) >= 5.0 && reach(&east, 0) < 4.0);
+        // A full list draws nothing more.
+        let mut full = vec![BoxInstance::default(); MAX_BOX_INSTANCES];
+        push_regiment_haste(Vec2::ZERO, Vec2::X, (4.0, 4.0), 100, &mut full);
+        assert_eq!(full.len(), MAX_BOX_INSTANCES);
     }
 }

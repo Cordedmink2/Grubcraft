@@ -7,7 +7,10 @@
 //! fails to decode is dropped.
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::{Command, Formation, Mass, PlayerCommand, RegimentHandle, StructureHandle, UnitStats};
+use gc_sim::{
+    Command, Formation, Mass, PlayerCommand, PowerTarget, RegimentHandle, StructureHandle,
+    UnitStats,
+};
 
 #[derive(Default)]
 pub struct Writer {
@@ -358,6 +361,25 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(21);
             w.u8(to);
         }
+        Command::UsePower { power, target } => {
+            w.u8(22);
+            w.u8(power);
+            match target {
+                PowerTarget::Structure(h) => {
+                    w.u8(0);
+                    w.structure(h);
+                }
+                PowerTarget::Regiment(h) => {
+                    w.u8(1);
+                    w.handle(h);
+                }
+                PowerTarget::Shift { regiment, to } => {
+                    w.u8(2);
+                    w.handle(regiment);
+                    w.structure(to);
+                }
+            }
+        }
     }
 }
 
@@ -447,6 +469,18 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             on: r.bool()?,
         },
         21 => Command::HandOver { to: r.u8()? },
+        22 => Command::UsePower {
+            power: r.u8()?,
+            target: match r.u8()? {
+                0 => PowerTarget::Structure(r.structure()?),
+                1 => PowerTarget::Regiment(r.handle()?),
+                2 => PowerTarget::Shift {
+                    regiment: r.handle()?,
+                    to: r.structure()?,
+                },
+                _ => return None,
+            },
+        },
         _ => return None,
     })
 }
@@ -641,6 +675,20 @@ mod tests {
                 on: false,
             },
             Command::HandOver { to: 2 },
+            Command::UsePower {
+                power: 3,
+                target: PowerTarget::Shift {
+                    regiment: h(4, 1),
+                    to: StructureHandle {
+                        index: 9,
+                        generation: 2,
+                    },
+                },
+            },
+            Command::UsePower {
+                power: 0,
+                target: PowerTarget::Regiment(h(1, 0)),
+            },
         ];
         let pcs: Vec<PlayerCommand> = cmds
             .iter()

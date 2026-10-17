@@ -12,6 +12,7 @@ use gc_ui::hud::{
     Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, Hud, HudData,
     HudEvent, HudInput, MinimapData, MinimapTerrain, SlotState,
 };
+use gc_ui::powers::{POWER_KEYS, PowerButton};
 use glam::{Vec2, Vec3};
 
 use crate::{Running, from_fx_vec, fx_vec, sounds};
@@ -40,6 +41,9 @@ pub enum Armed {
     Attack,
     /// Conquest: where a worker lays this building.
     Lay(gc_sim::BuildingId),
+    /// Conquest: the target of this faction power (its place in the
+    /// powers table).
+    Power(u8),
 }
 
 /// Slots of the command grid, row by row (docs/08-ui-ux.md#screen-layout-1080p-reference).
@@ -104,6 +108,9 @@ pub struct HudState {
     /// The Conquest card's slot names and prices, kept for their room.
     card_labels: [String; GRID_SLOTS],
     card_details: [String; GRID_SLOTS],
+    /// The faction power buttons' names and second lines, likewise.
+    power_names: [String; POWER_KEYS.len()],
+    power_details: [String; POWER_KEYS.len()],
     /// A button went down on the bar (or the minimap drag), so its release
     /// is the bar's, wherever the mouse is by then.
     left_held: bool,
@@ -412,6 +419,7 @@ impl Running {
         let map = self.heightmap.tiles as f32;
         self.selected
             .retain(|&h| self.world.regiments.get(h).is_some());
+        self.drop_stale_power();
         // A building stays selected while it stands and is ours, and until
         // a regiment is.
         if !self.selected.is_empty()
@@ -454,6 +462,10 @@ impl Running {
                 self.describe_card(&c, &mut card_labels, &mut card_details),
             )
         });
+        let mut power_names = std::mem::take(&mut self.hud.power_names);
+        let mut power_details = std::mem::take(&mut self.hud.power_details);
+        let (power_states, powers_shown) =
+            self.describe_powers(&mut power_names, &mut power_details);
         let camera = self.active_camera();
         let (view_proj, plane) = (camera.view_proj(), camera.ground_plane());
 
@@ -473,7 +485,9 @@ impl Running {
             });
 
         let hud = &mut self.hud;
-        if self.selected.is_empty() {
+        // A power being aimed needs no selection, unless it shifts one (see
+        // `drop_stale_power`).
+        if self.selected.is_empty() && !matches!(hud.armed, Some(Armed::Power(_))) {
             hud.armed = None;
         }
         hud.dots.clear();
@@ -605,7 +619,7 @@ impl Running {
         match hud.armed {
             Some(Armed::Move) => grid[SLOT_MOVE].state = SlotState::Armed,
             Some(Armed::Attack) => grid[SLOT_ATTACK].state = SlotState::Armed,
-            Some(Armed::Lay(_)) | None => {}
+            Some(Armed::Lay(_) | Armed::Power(_)) | None => {}
         }
         if let Some(Some(f)) = self.shown_formation {
             grid[SLOT_FORMATION].detail = f.name();
@@ -625,6 +639,11 @@ impl Running {
             }
         }
 
+        let power_buttons: [PowerButton; POWER_KEYS.len()] = std::array::from_fn(|i| PowerButton {
+            name: &power_names[i],
+            detail: &power_details[i],
+            state: power_states[i],
+        });
         hud.alerts.clear();
         if !hud.notes.is_empty() {
             hud.alerts.extend(hud.notes.iter().map(|n| Alert {
@@ -712,6 +731,7 @@ impl Running {
             structure,
             top: hud.readout.map(|r| r.top),
             tray_title: &title,
+            powers: &power_buttons[..powers_shown],
             // Nobody deploys in a replay.
             deployment: self
                 .world
@@ -733,15 +753,11 @@ impl Running {
             .frame(&mut hud.draw, screen, input, &data, &mut hud.events);
         self.hud.card_labels = card_labels;
         self.hud.card_details = card_details;
-        if let Some(ride) = &self.ride {
-            let name = self
-                .world
-                .regiments
-                .get(ride.regiment)
-                .map_or("the regiment", |r| {
-                    self.units.names[r.unit as usize].as_str()
-                });
-            draw_ride_hint(&mut self.hud.draw, screen, name);
+        self.hud.power_names = power_names;
+        self.hud.power_details = power_details;
+        // What to click for a power being aimed, else the ride's way out.
+        if let Some(text) = self.power_hint().or_else(|| self.ride_hint()) {
+            draw_hint(&mut self.hud.draw, screen, &text);
         }
         upload_ui(
             &mut self.renderer,
@@ -781,6 +797,7 @@ impl Running {
                 self.ui_sound(sounds::UiSound::Select);
             }
             HudEvent::Command(slot) => self.grid_press(slot),
+            HudEvent::Power(slot) => self.power_press(slot),
             HudEvent::Alert(id) => {
                 if let Some(n) = self.hud.notes.iter().find(|n| n.id == id) {
                     self.look_at(n.at);
@@ -843,6 +860,7 @@ impl Running {
         // A click that finds nothing to attack keeps the order armed.
         match armed {
             Armed::Lay(b) => return self.finish_laying(b),
+            Armed::Power(power) => return self.finish_power(power),
             Armed::Move => match self.ground_under_cursor() {
                 Some(p) => self.issue_group_order(move_order(p)),
                 None => return,
@@ -924,6 +942,15 @@ impl Running {
         }
     }
 
+    /// The line shown while riding with a regiment.
+    fn ride_hint(&self) -> Option<String> {
+        let ride = self.ride.as_ref()?;
+        let name = (self.world.regiments.get(ride.regiment)).map_or("the regiment", |r| {
+            self.units.names[r.unit as usize].as_str()
+        });
+        Some(format!("Riding with {name} - Y or Esc to return"))
+    }
+
     pub fn look_at(&mut self, p: Vec2) {
         let focus = p.clamp(Vec2::ZERO, Vec2::splat(self.camera.map_size));
         let height = self.heightmap.height_at(focus.x, focus.y);
@@ -933,11 +960,10 @@ impl Running {
     }
 }
 
-/// The line shown while riding with a regiment, centred just above the bar.
-fn draw_ride_hint(draw: &mut DrawList, screen: (i32, i32), name: &str) {
-    let text = format!("Riding with {name} - Y or Esc to return");
+/// A line of help, centred just above the bar.
+fn draw_hint(draw: &mut DrawList, screen: (i32, i32), text: &str) {
     let scale = 1;
-    let w = gc_ui::draw::text_width(&text, scale);
+    let w = gc_ui::draw::text_width(text, scale);
     let h = gc_ui::draw::text_height(scale);
     let pad = 8;
     let panel = gc_ui::Rect::new(
@@ -952,7 +978,7 @@ fn draw_ride_hint(draw: &mut DrawList, screen: (i32, i32), name: &str) {
         panel.y + pad / 2,
         scale,
         [235, 238, 242, 255],
-        &text,
+        text,
     );
 }
 

@@ -189,6 +189,14 @@ pub struct Ability {
     pub cost: u16,
     #[serde(default)]
     pub tier: u8,
+    /// Faction-meter abilities the game has built: what the simulation does.
+    /// A building or regiment works this many percent faster for the
+    /// duration.
+    #[serde(default)]
+    pub haste: u8,
+    /// Regiments step to one of the caster's buildings of this name.
+    #[serde(default)]
+    pub shift_to: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]

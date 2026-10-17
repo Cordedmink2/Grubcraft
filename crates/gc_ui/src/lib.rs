@@ -17,6 +17,7 @@ pub mod hero;
 pub mod hud;
 pub mod lobby;
 pub mod menu;
+pub mod powers;
 pub mod settings;
 pub mod ui;
 pub mod viewer;

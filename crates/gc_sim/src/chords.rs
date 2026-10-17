@@ -189,6 +189,13 @@ impl Structures {
         }
     }
 
+    /// Take `points` of player `p`'s Resonance (they have them).
+    pub(crate) fn spend_resonance(&mut self, p: PlayerId, points: u32) {
+        if let Some(r) = self.resonance.get_mut(usize::from(p)) {
+            *r = r.saturating_sub(points * RESONANCE_TICKS);
+        }
+    }
+
     /// Player `p`'s Resonance, in points.
     pub fn resonance(&self, p: PlayerId) -> u32 {
         (self.resonance.get(usize::from(p))).map_or(0, |&r| r / RESONANCE_TICKS)

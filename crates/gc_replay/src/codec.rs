@@ -9,8 +9,8 @@
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::structures::{Armour, Breaker, Role, TowerAttack, VEINS};
 use gc_sim::{
-    BuildingStats, Command, ConquestUnit, Formation, Mass, NodeSetup, PlayerCommand,
-    RegimentHandle, Resource, StructureHandle, UnitStats,
+    BuildingStats, Command, ConquestUnit, Formation, Mass, NodeSetup, PlayerCommand, PowerEffect,
+    PowerStats, PowerTarget, RegimentHandle, Resource, StructureHandle, UnitStats,
 };
 
 #[derive(Default)]
@@ -123,6 +123,24 @@ impl Writer {
             None => self.u8(0),
         }
         self.u8(b.links);
+    }
+
+    pub fn power(&mut self, p: &PowerStats) {
+        self.u8(p.tier);
+        self.u8(p.cost);
+        self.var(u64::from(p.cooldown_ticks));
+        self.var(u64::from(p.duration_ticks));
+        match p.effect {
+            PowerEffect::NotBuilt => self.u8(0),
+            PowerEffect::Haste { percent } => {
+                self.u8(1);
+                self.u8(percent);
+            }
+            PowerEffect::Shift { to } => {
+                self.u8(2);
+                self.var(u64::from(to));
+            }
+        }
     }
 
     pub fn conquest_unit(&mut self, u: &ConquestUnit) {
@@ -278,6 +296,25 @@ impl Writer {
             Command::HandOver { to } => {
                 self.u8(21);
                 self.u8(to);
+            }
+            Command::UsePower { power, target } => {
+                self.u8(22);
+                self.u8(power);
+                match target {
+                    PowerTarget::Structure(h) => {
+                        self.u8(0);
+                        self.structure(h);
+                    }
+                    PowerTarget::Regiment(h) => {
+                        self.u8(1);
+                        self.handle(h);
+                    }
+                    PowerTarget::Shift { regiment, to } => {
+                        self.u8(2);
+                        self.handle(regiment);
+                        self.structure(to);
+                    }
+                }
             }
         }
     }
@@ -450,6 +487,24 @@ impl<'a> Reader<'a> {
         Some(b)
     }
 
+    /// A faction power (format 21 on).
+    pub fn power(&mut self) -> Option<PowerStats> {
+        Some(PowerStats {
+            tier: self.u8()?,
+            cost: self.u8()?,
+            cooldown_ticks: self.var_as()?,
+            duration_ticks: self.var_as()?,
+            effect: match self.u8()? {
+                0 => PowerEffect::NotBuilt,
+                1 => PowerEffect::Haste {
+                    percent: self.u8()?,
+                },
+                2 => PowerEffect::Shift { to: self.var_as()? },
+                _ => return None,
+            },
+        })
+    }
+
     /// A Conquest unit as file format `format` wrote it.
     pub fn conquest_unit(&mut self, format: u16) -> Option<ConquestUnit> {
         let mut u = ConquestUnit {
@@ -571,6 +626,18 @@ impl<'a> Reader<'a> {
                 on: self.bool()?,
             },
             21 => Command::HandOver { to: self.u8()? },
+            22 => Command::UsePower {
+                power: self.u8()?,
+                target: match self.u8()? {
+                    0 => PowerTarget::Structure(self.structure()?),
+                    1 => PowerTarget::Regiment(self.handle()?),
+                    2 => PowerTarget::Shift {
+                        regiment: self.handle()?,
+                        to: self.structure()?,
+                    },
+                    _ => return None,
+                },
+            },
             _ => return None,
         };
         Some(PlayerCommand { player, command })

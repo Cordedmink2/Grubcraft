@@ -31,6 +31,7 @@ pub mod larvae;
 pub mod morale;
 pub mod nav;
 pub mod power;
+pub mod powers;
 pub mod production;
 mod regiments;
 pub mod scenario;
@@ -49,6 +50,7 @@ pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource};
 pub use fork::Standing;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
+pub use powers::{PowerEffect, PowerStats, PowerTarget};
 pub use production::Production;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
@@ -95,7 +97,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 17;
+pub const SIM_VERSION: u32 = 18;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -596,6 +598,11 @@ pub enum Command {
     /// orders (moving, attacking, formations); `to` the issuer itself takes
     /// it back (see [`Stances::commander`]). Refused for an enemy.
     HandOver { to: PlayerId },
+    /// Conquest: use faction power `power` (an index into
+    /// [`ConquestSetup::powers`]) on `target`, paid from the issuer's
+    /// faction meter (see [`powers`]). Refused before their tier allows it,
+    /// while it cools down, or when they can't pay.
+    UsePower { power: u8, target: PowerTarget },
 }
 
 impl Command {
@@ -619,6 +626,7 @@ impl Command {
             | Command::Train { .. }
             | Command::Untrain { .. }
             | Command::Upgrade { .. }
+            | Command::UsePower { .. }
             | Command::Rally { .. }
             | Command::HandOver { .. } => true,
             Command::SpawnRegiment { .. }
@@ -1382,11 +1390,72 @@ impl World {
                 .conquest
                 .as_mut()
                 .is_some_and(|c| c.set_rally(pc.player, structure, at)),
+            Command::UsePower { power, target } => self.use_power(pc.player, power, target),
             Command::RemoveStructure { structure } => self.conquest.as_mut().is_some_and(|c| {
                 c.structures
                     .despawn(structure, &mut self.nav, &self.regiments)
             }),
         }
+    }
+
+    /// `player` uses faction power `power` on `target` (see
+    /// [`Command::UsePower`]). A regiment shifted stops what it was doing
+    /// and looks about it from where it stands now.
+    fn use_power(&mut self, player: PlayerId, power: u8, target: PowerTarget) -> bool {
+        let Some(c) = &mut self.conquest else {
+            return false;
+        };
+        let used = c.powers.use_power(
+            &mut c.structures,
+            &mut self.regiments,
+            &self.nav,
+            player,
+            power,
+            target,
+            self.tick,
+        );
+        if let (true, PowerTarget::Shift { regiment, .. }) = (used, target)
+            && let Some(r) = self.regiments.resolve(regiment)
+        {
+            c.stop_work(r);
+            self.vision
+                .start(&self.regiments, &self.units, &self.terrain, r);
+        }
+        used
+    }
+
+    /// The faction powers of this Conquest match (none outside one).
+    pub fn powers(&self) -> &[PowerStats] {
+        self.conquest.as_ref().map_or(&[], |c| c.powers.stats())
+    }
+
+    /// Whether `player` could use faction power `power` now, and if not,
+    /// why: the check [`Command::UsePower`] makes before its target.
+    pub fn can_use_power(&self, player: PlayerId, power: u8) -> Result<(), Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        c.powers
+            .can_use(&c.structures, player, power, self.tick)
+            .map(|_| ())
+    }
+
+    /// Ticks until `player` can use faction power `power` again: 0 when it
+    /// is ready.
+    pub fn power_cooling(&self, player: PlayerId, power: u8) -> u32 {
+        self.conquest
+            .as_ref()
+            .map_or(0, |c| c.powers.cooling(player, power, self.tick))
+    }
+
+    /// Ticks left of the haste on building `h` (see [`powers`]).
+    pub fn structure_haste(&self, h: StructureHandle) -> u16 {
+        self.conquest
+            .as_ref()
+            .map_or(0, |c| c.structures.haste_left(h))
+    }
+
+    /// Ticks left of the haste on regiment `h` (see [`powers`]).
+    pub fn regiment_haste(&self, h: RegimentHandle) -> u16 {
+        self.regiments.haste_left(h)
     }
 
     /// The slot of `player`'s regiment `h`, if it is theirs and not

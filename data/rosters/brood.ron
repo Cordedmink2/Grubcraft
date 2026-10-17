@@ -32,7 +32,9 @@
 // Order, Ultimate), effect (plain words; hero ranks written 1/2/3), primitives (the
 // effect primitives it would be built from), and where they apply cooldown
 // (s), range (tiles), radius (tiles), duration (s). Meter abilities add cost
-// (meter points) and tier.
+// (meter points) and tier, and the ones the game has built say what the
+// simulation does: haste (percent faster for the duration) or shift_to
+// (regiments step to one of the caster's buildings of that name).
 (
     faction: Brood,
     meter: (

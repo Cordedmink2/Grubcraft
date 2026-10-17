@@ -171,6 +171,8 @@ pub enum Refusal {
     Larva,
     /// It needs power, and none of its owner's fields reach there.
     Unpowered,
+    /// A power used too lately to use again yet (see [`crate::powers`]).
+    Cooling,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -483,6 +485,10 @@ pub struct Structures {
     /// (0 while full); see [`crate::larvae`].
     pub(crate) larvae: Vec<u8>,
     pub(crate) larva_clock: Vec<u32>,
+    /// A haste (see [`crate::powers`]): ticks left (0 for none), and how
+    /// many percent faster.
+    pub(crate) haste_left: Vec<u16>,
+    pub(crate) haste_percent: Vec<u8>,
     /// Root-veins, worked out each tick (see [`crate::veins`]): the slot
     /// each linked veins building links through, the linked slots, and the
     /// unlinked veins buildings looked at on the way.
@@ -582,6 +588,8 @@ impl Structures {
             growing: vec![false; n],
             larvae: vec![0; n],
             larva_clock: vec![0; n],
+            haste_left: vec![0; n],
+            haste_percent: vec![0; n],
             vein_from: vec![crate::veins::UNLINKED; n],
             vein_linked: Vec::with_capacity(n),
             vein_cands: Vec::with_capacity(n),
@@ -839,6 +847,10 @@ impl Structures {
         self.owner[i]
     }
 
+    pub(crate) fn building_of(&self, i: usize) -> BuildingId {
+        self.building[i]
+    }
+
     /// Play in fog of war from now on.
     pub(crate) fn fog(&mut self) {
         self.fog = true;
@@ -973,6 +985,8 @@ impl Structures {
         self.growing[i] = false;
         self.larvae[i] = Structures::whole_larvae(self.buildings[building as usize].flags);
         self.larva_clock[i] = 0;
+        self.haste_left[i] = 0;
+        self.haste_percent[i] = 0;
         self.seen[i] = if self.fog { 1 << owner } else { u8::MAX };
         nav.set_built(self.footprint(i), true, regs);
         Some(self.handle(i))
@@ -1124,7 +1138,7 @@ impl Structures {
         // build it.
         for s in 0..self.hp.len() {
             if self.hp[s] > 0 && self.growing(s) {
-                self.build(s);
+                self.build(s, 1);
             }
         }
         for r in 0..self.siege.len() {
@@ -1141,7 +1155,8 @@ impl Structures {
             if regs.engaged[r].is_some() {
                 continue;
             }
-            self.siege_clock[r] = self.siege_clock[r].saturating_sub(1);
+            // A hasted regiment strikes buildings faster too.
+            self.siege_clock[r] = self.siege_clock[r].saturating_sub(regs.steps(r));
             // Standing (in reach or not) until its next blow or try.
             if self.siege_clock[r] > 0 && regs.target[r].is_none() {
                 continue;
@@ -1179,7 +1194,9 @@ impl Structures {
                 continue;
             }
             if building {
-                if !self.build(s) {
+                // A hasted building or builder builds faster (see
+                // [`crate::powers`]).
+                if !self.build(s, u32::from(regs.steps(r))) {
                     // Built and whole: its work is done.
                     self.siege[r] = None;
                 }
@@ -1200,10 +1217,12 @@ impl Structures {
         }
     }
 
-    /// One builder's tick on building slot `s`: build it, or once it is up,
-    /// mend it. Returns false when there is nothing left to do (or the crew
-    /// is full, which the builder waits out).
-    fn build(&mut self, s: usize) -> bool {
+    /// One builder's tick on building slot `s`, doing `steps` ticks' work
+    /// (more when hasted): build it, or once it is up, mend it. Returns
+    /// false when there is nothing left to do (or the crew is full, which
+    /// the builder waits out).
+    fn build(&mut self, s: usize, steps: u32) -> bool {
+        let steps = steps + self.steps(s) - 1;
         let max = u32::from(self.stats_of(s).hp) * HP_SCALE;
         if self.crew[s] >= CREW {
             return true;
@@ -1228,7 +1247,7 @@ impl Structures {
         let rise = u64::from(max) * u64::from(100 - FOUNDATION_PERCENT) / 100;
         let risen = |left: u32| (rise * (full - u64::from(left)) / full) as u32;
         let before = risen(self.work_left[s]);
-        self.work_left[s] = self.work_left[s].saturating_sub(hand);
+        self.work_left[s] = self.work_left[s].saturating_sub(hand * steps);
         self.hp[s] = (self.hp[s] + risen(self.work_left[s]) - before).min(max);
         true
     }
@@ -1240,7 +1259,7 @@ impl Structures {
             let Some(to) = self.upgrade_to[i].filter(|_| self.hp[i] > 0) else {
                 continue;
             };
-            self.upgrade_left[i] -= 1;
+            self.upgrade_left[i] = self.upgrade_left[i].saturating_sub(self.steps(i));
             if self.upgrade_left[i] > 0 {
                 continue;
             }
@@ -1325,6 +1344,10 @@ impl Structures {
                 h.u16(to);
                 h.u32(self.upgrade_left[i]);
                 h.u32(self.upgrade_full[i]);
+            }
+            h.u16(self.haste_left[i]);
+            if self.haste_left[i] > 0 {
+                h.u8(self.haste_percent[i]);
             }
         }
         h.u32(self.build_percent);
