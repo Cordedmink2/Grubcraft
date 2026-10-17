@@ -354,6 +354,10 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.handle(regiment);
             w.bool(on);
         }
+        Command::HandOver { to } => {
+            w.u8(21);
+            w.u8(to);
+        }
     }
 }
 
@@ -442,6 +446,7 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             regiment: r.handle()?,
             on: r.bool()?,
         },
+        21 => Command::HandOver { to: r.u8()? },
         _ => return None,
     })
 }
@@ -635,6 +640,7 @@ mod tests {
                 regiment: h(6, 1),
                 on: false,
             },
+            Command::HandOver { to: 2 },
         ];
         let pcs: Vec<PlayerCommand> = cmds
             .iter()

@@ -31,7 +31,7 @@ The UI goal: **comprehensive, never burdensome**. Think of the best iPad strateg
 ```
 
 - **Top bar:** the four economic numbers, match clock, menu. Nothing else.
-- **Minimap (bottom-left):** terrain, fog, units as dots, seeps as glowing dots, pings. Click to jump, right-click to order.
+- **Minimap (bottom-left):** terrain, fog, units as dots, seeps as glowing dots, pings. Click to jump, right-click to order. On a Field Battle map with sites (the Wilds, [07](07-world-and-maps.md#field-battle-maps-and-recipes)), each site is a mark in its own colour: villages amber, outposts and lairs dark red, standing stones pale blue (*built 2026-10-17*).
 - **Army tray (bottom-centre):** the Total War unit-card row. Each selected regiment (or, with nothing selected, your current control group) has a card showing a portrait, model count bar, morale bar, veterancy chevrons and ability-ready dots. Clicking a card selects that regiment; double-click centres the camera on it. When a structure is selected, the tray shows its production queue and research instead.
 - **Command card (bottom-right):** 12 slots. Common layout:
 

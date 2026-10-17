@@ -117,6 +117,8 @@ mod conquest;
 mod conquest_card;
 #[cfg(test)]
 mod conquest_golden;
+#[cfg(test)]
+mod conquest_soak;
 mod credits;
 mod data;
 mod field;
@@ -709,10 +711,7 @@ impl UnitTable {
             data_stats: stats.clone(),
             stats,
             names: units.iter().map(|u| u.name().to_string()).collect(),
-            factions: units
-                .iter()
-                .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
-                .collect(),
+            factions: units.iter().map(|u| u.faction()).collect(),
             points: units.iter().map(|u| u32::from(u.points)).collect(),
             models: models.map_or_else(Vec::new, |m| {
                 units.iter().map(|u| m.by_name(u.name())).collect()
@@ -1110,7 +1109,7 @@ impl App {
             .zip(&units.names)
             .map(|(u, name)| gc_ui::lobby::RosterUnit {
                 name: name.clone(),
-                faction: gc_ui::lobby::Faction::ALL[u.faction() as usize],
+                faction: u.faction(),
                 points: u32::from(u.points),
             })
             .collect();
@@ -3243,13 +3242,15 @@ impl Running {
                 }
             }
             MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
-                Ok(r) => match replays::unplayable(&r.info(), self.unit_types(), self.capacities) {
-                    None => {
-                        logln!("grubcraft: watching {}", path.display());
-                        self.start_match(MatchKind::Replay(Box::new(r)));
+                Ok(r) => {
+                    match replays::unplayable(&r.info(), &self.unit_types(), self.capacities) {
+                        None => {
+                            logln!("grubcraft: watching {}", path.display());
+                            self.start_match(MatchKind::Replay(Box::new(r)));
+                        }
+                        Some(why) => self.menu.tell(why),
                     }
-                    Some(why) => self.menu.tell(why),
-                },
+                }
                 Err(e) => self.menu.tell(format!("Can't open that replay: {e}")),
             },
             MenuAction::StartMatch(setup) => {
@@ -3458,7 +3459,10 @@ impl Running {
             MatchKind::Replay(r) => {
                 let choice = r.header.map.map_or(0, usize::from);
                 let key = if conquest {
-                    MapKey::Conquest(choice)
+                    MapKey::Conquest {
+                        choice,
+                        seed: gc_ui::lobby::conquest_map_seed(choice, r.seed),
+                    }
                 } else {
                     MapKey::Field(FieldMap {
                         choice,
@@ -3655,18 +3659,22 @@ impl Running {
         std::mem::swap(&mut self.units, &mut self.other_units);
     }
 
-    /// How many regiment types each table has, which a replay must match.
+    /// Each table's regiment types by name, which a replay must match.
     fn unit_types(&self) -> replays::UnitTypes {
-        let (here, other) = (
-            self.units.data_stats.len(),
-            self.other_units.data_stats.len(),
-        );
-        let (field, conquest) = if self.conquest_units {
-            (other, here)
+        replays::UnitTypes {
+            field: self.unit_names(false).to_vec(),
+            conquest: self.unit_names(true).to_vec(),
+        }
+    }
+
+    /// The names of the regiment types of Conquest's table, or the Field
+    /// Battle one's.
+    fn unit_names(&self, conquest: bool) -> &[String] {
+        if conquest == self.conquest_units {
+            &self.units.names
         } else {
-            (here, other)
-        };
-        replays::UnitTypes { field, conquest }
+            &self.other_units.names
+        }
     }
 
     /// Make the lobby map `key` names and put it on screen.
@@ -3691,7 +3699,7 @@ impl Running {
         // every machine; a Field Battle map's follow its seed.
         let trees = match key {
             MapKey::Field(k) => k.seed,
-            MapKey::Conquest(choice) => choice as u64,
+            MapKey::Conquest { choice, seed } => seed ^ choice as u64,
         };
         self.scenery = tagged_alloc::scope(Tag::Render, || {
             scenery::Scenery::new(
@@ -3745,6 +3753,9 @@ impl Running {
         self.parties = parties;
         self.sandbox.side = me;
         self.battle = Some(Battle::new(Some(me)));
+        let unit_names = self
+            .unit_names(setup.settings.mode == gc_ui::lobby::GameMode::Conquest)
+            .to_vec();
         if let Some(rec) = &mut self.recording {
             let header = rec.recorder.header_mut();
             header.build = online::version();
@@ -3752,6 +3763,7 @@ impl Running {
             header.players = replays::players(&self.parties);
             header.recorded_by = Some(me);
             header.map = Some(setup.settings.map as u8);
+            header.unit_names = unit_names;
         }
     }
 
@@ -3777,9 +3789,7 @@ impl Running {
             ));
         }
         // Look over your start.
-        let focus = self
-            .heightmap
-            .starts()
+        let focus = conquest::player_starts(&self.heightmap, setup.players.len())
             .get(usize::from(me))
             .map_or(Vec2::splat(self.heightmap.tiles as f32 / 2.0), |&(x, y)| {
                 Vec2::new(x as f32 + 0.5, y as f32 + 0.5)
@@ -4475,17 +4485,18 @@ impl Running {
         if let Some(f) = self.parties.get(side as usize).and_then(|p| p.faction) {
             return f;
         }
-        let mut counts = [0u32; 4];
+        const N: usize = gc_ai::Faction::ALL.len();
+        let mut counts = [0u32; N];
         for r in self.world.regiments.iter().filter(|r| r.owner == side) {
             if let Some(f) = self.units.factions.get(r.unit as usize) {
-                counts[f.index() as usize] += 1;
+                counts[f.index()] += 1;
             }
         }
-        let best = (0..4).max_by_key(|&f| (counts[f], 4 - f)).unwrap_or(0);
+        let best = (0..N).max_by_key(|&f| (counts[f], N - f)).unwrap_or(0);
         if counts[best] == 0 {
-            gc_ai::Faction::from_index(side)
+            gc_ai::Faction::ALL[usize::from(side) % N]
         } else {
-            gc_ai::Faction::from_index(best as u8)
+            gc_ai::Faction::ALL[best]
         }
     }
 
@@ -5108,26 +5119,30 @@ impl Running {
 }
 
 /// A map the lobby can play on: a Field Battle map made from its choice,
-/// size and seed, or one of the shipped Conquest maps.
+/// size and seed, or a Conquest map made from its choice and seed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MapKey {
     Field(FieldMap),
-    /// An index into `gc_ui::lobby::CONQUEST_MAPS`.
-    Conquest(usize),
+    /// An index into `gc_ui::lobby::CONQUEST_MAPS`, and the seed a Wilds
+    /// map is made from (`gc_ui::lobby::conquest_map_seed`).
+    Conquest {
+        choice: usize,
+        seed: u64,
+    },
 }
 
 impl MapKey {
     fn make(self) -> Map {
         match self {
             MapKey::Field(key) => key.make(),
-            MapKey::Conquest(choice) => conquest::make_map(choice),
+            MapKey::Conquest { choice, seed } => conquest::make_map(choice, seed),
         }
     }
 
     fn name(self) -> &'static str {
         match self {
             MapKey::Field(key) => gc_map::FIELD_MAPS.get(key.choice),
-            MapKey::Conquest(choice) => gc_ui::lobby::CONQUEST_MAPS.get(choice),
+            MapKey::Conquest { choice, .. } => gc_ui::lobby::CONQUEST_MAPS.get(choice),
         }
         .copied()
         .unwrap_or("?")
@@ -5146,7 +5161,7 @@ impl From<MapPreviewKey> for MapKey {
                 tiles,
                 seed,
             }),
-            MapPreviewKey::Conquest(choice) => MapKey::Conquest(choice),
+            MapPreviewKey::Conquest { choice, seed } => MapKey::Conquest { choice, seed },
         }
     }
 }

@@ -13,6 +13,8 @@
 pub mod battle;
 #[cfg(test)]
 mod battle_tables;
+#[cfg(test)]
+mod online_tests;
 pub mod play;
 pub mod terrain_view;
 
@@ -58,8 +60,10 @@ impl Tables {
     pub fn new(data: &GameData) -> Tables {
         Tables {
             units: data.units.iter().map(stats_of).collect(),
-            factions: (data.units.iter())
-                .map(|u| Faction::from_index(u.faction() as u8))
+            factions: data
+                .units
+                .iter()
+                .map(gc_data::UnitRecord::faction)
                 .collect(),
             points: data.units.iter().map(|u| u32::from(u.points)).collect(),
         }

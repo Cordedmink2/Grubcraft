@@ -322,7 +322,7 @@ fn place_objects(def: &MapDef, tiles: i32) -> Vec<Placed> {
             // also one for 3, 4 or 5. (A file with no players or a bad
             // owner builds without panicking; the map checker reports it.)
             let players = u32::from(def.players.max(1));
-            let step = (players / def.symmetry.copies() as u32).max(1);
+            let step = def.symmetry.owner_step(def.players);
             let owner = o.owner.map(|p| ((u32::from(p) + k * step) % players) as u8);
             out.push(Placed {
                 kind: o.kind,

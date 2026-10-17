@@ -130,6 +130,19 @@ fn rosters_follow_the_design_rules() {
             if u.flags.contains(&Flag::Undead) {
                 assert!(u.stats.never_routs, "{at}: undead never rout");
             }
+            // Every Brood unit that is trained hatches from a larva, and its
+            // workers are used up by the buildings they start (docs/03).
+            let brood_trained = faction == FactionDef::Brood && matches!(u.from, From::Building(_));
+            assert_eq!(
+                u.flags.contains(&Flag::Hatches),
+                brood_trained,
+                "{at}: trained Brood units, and only they, hatch from larvae"
+            );
+            assert_eq!(
+                u.flags.contains(&Flag::Consumed),
+                brood_trained && u.class == Class::Worker,
+                "{at}: Brood workers, and only they, are used up to build"
+            );
             assert!(!u.abilities.is_empty(), "{at}: no abilities");
             for a in &u.abilities {
                 check_ability(file, name, a);

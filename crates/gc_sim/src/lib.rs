@@ -26,6 +26,7 @@ pub mod events;
 pub mod fork;
 pub mod formation;
 mod hash;
+pub mod larvae;
 pub mod morale;
 pub mod nav;
 pub mod production;
@@ -91,7 +92,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 11;
+pub const SIM_VERSION: u32 = 14;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -588,6 +589,10 @@ pub enum Command {
     },
     /// Sandbox: take a building off the field (any player's).
     RemoveStructure { structure: StructureHandle },
+    /// Hand the issuing player's army to an ally, who then gives its
+    /// orders (moving, attacking, formations); `to` the issuer itself takes
+    /// it back (see [`Stances::commander`]). Refused for an enemy.
+    HandOver { to: PlayerId },
 }
 
 impl Command {
@@ -611,7 +616,8 @@ impl Command {
             | Command::Train { .. }
             | Command::Untrain { .. }
             | Command::Upgrade { .. }
-            | Command::Rally { .. } => true,
+            | Command::Rally { .. }
+            | Command::HandOver { .. } => true,
             Command::SpawnRegiment { .. }
             | Command::RemoveRegiment { .. }
             | Command::TuneUnit { .. }
@@ -755,8 +761,22 @@ impl World {
     /// How far the regiment at the front of building `h`'s queue has
     /// trained, in percent (Conquest only).
     pub fn training_percent(&self, h: StructureHandle) -> Option<u8> {
+        self.queue_percent(h, 0)
+    }
+
+    /// How far regiment `k` of building `h`'s queue has trained, in
+    /// percent (Conquest only). Behind the front only units that hatch
+    /// train, all at once.
+    pub fn queue_percent(&self, h: StructureHandle, k: usize) -> Option<u8> {
         let c = self.conquest.as_ref()?;
-        c.production.front_percent(h, &c.units)
+        c.production.percent(h, k, &c.units)
+    }
+
+    /// Larvae ready in building `h`, if it is one that holds them
+    /// (Conquest only).
+    pub fn larvae_in(&self, h: StructureHandle) -> Option<u8> {
+        let structures = self.structures()?;
+        structures.larvae_in(structures.resolve(h)?)
     }
 
     /// Whether `player` could have a worker lay a building of type
@@ -971,8 +991,16 @@ impl World {
             self.tick,
         );
         if !self.scratch {
-            self.events
-                .after(&self.regiments, &self.combat, self.vision.ambushes());
+            let consumed = self
+                .conquest
+                .as_ref()
+                .map_or(&[][..], |c| &c.structures.consumed[..]);
+            self.events.after(
+                &self.regiments,
+                &self.combat,
+                self.vision.ambushes(),
+                consumed,
+            );
             if let Some(conquest) = &self.conquest {
                 self.events.fallen(&conquest.structures.fallen);
             }
@@ -1000,12 +1028,13 @@ impl World {
         );
         if out != 0 {
             c.eliminate(out, &mut self.regiments, &mut self.nav);
+            self.stances.take_back_from(out);
         }
     }
 
     fn apply(&mut self, pc: &PlayerCommand) -> bool {
         // While the armies deploy, only setting out and placing armies,
-        // formations, bracing and readiness are accepted.
+        // formations, bracing, readiness and hand-overs are accepted.
         if self.deploying()
             && !matches!(
                 pc.command,
@@ -1016,6 +1045,7 @@ impl World {
                     | Command::SetFormation { .. }
                     | Command::Brace { .. }
                     | Command::Ready
+                    | Command::HandOver { .. }
             )
         {
             return false;
@@ -1063,9 +1093,9 @@ impl World {
                 if self.deploying() {
                     return self.place(pc.player, regiment, target, facing, files);
                 }
-                // Players may only order their own regiments.
+                // Players may only order the regiments they command.
                 match self.regiments.owner(regiment) {
-                    Some(owner) if owner == pc.player => {
+                    Some(owner) if self.stances.can_command(pc.player, owner) => {
                         let done = self.regiments.order(
                             regiment,
                             Order {
@@ -1088,7 +1118,7 @@ impl World {
             Command::Attack { regiment, target } => {
                 match (self.regiments.owner(regiment), self.regiments.owner(target)) {
                     (Some(owner), Some(enemy))
-                        if owner == pc.player
+                        if self.stances.can_command(pc.player, owner)
                             && self.stances.hostile(owner, enemy)
                             && self.sees(owner, target) =>
                     {
@@ -1114,21 +1144,20 @@ impl World {
                 regiment,
                 formation,
             } => match self.regiments.owner(regiment) {
-                Some(owner) if owner == pc.player => {
-                    self.regiments
-                        .set_formation(regiment, formation, &self.units)
-                }
+                Some(owner) if self.stances.can_command(pc.player, owner) => self
+                    .regiments
+                    .set_formation(regiment, formation, &self.units),
                 _ => false,
             },
             Command::FallBack { regiment } => match self.regiments.resolve(regiment) {
-                Some(i) if self.regiments.owner[i] == pc.player => {
+                Some(i) if self.stances.can_command(pc.player, self.regiments.owner[i]) => {
                     let to = self.fall_back_point(i);
                     self.regiments.fall_back(regiment, to)
                 }
                 _ => false,
             },
             Command::Brace { regiment, on } => match self.regiments.owner(regiment) {
-                Some(owner) if owner == pc.player => {
+                Some(owner) if self.stances.can_command(pc.player, owner) => {
                     self.regiments.brace(regiment, on, &self.units)
                 }
                 _ => false,
@@ -1138,6 +1167,10 @@ impl World {
                     .set_zone(pc.player, Zone { center, radius }, self.tick)
             }
             Command::Ready => self.deploy.set_ready(pc.player, self.tick),
+            // Nobody hands an army to, or from, a party that is out.
+            Command::HandOver { to } => {
+                !self.is_out(pc.player) && !self.is_out(to) && self.stances.hand_over(pc.player, to)
+            }
             Command::SpawnStructure { building, tile } => {
                 let Some(conquest) = &mut self.conquest else {
                     return false;
@@ -1164,12 +1197,12 @@ impl World {
                     conquest.structures.owner(structure),
                 ) {
                     (Some(r), Some(enemy))
-                        if self.regiments.owner[r] == pc.player
-                            && self.stances.hostile(pc.player, enemy)
+                        if self.stances.can_command(pc.player, self.regiments.owner[r])
+                            && self.stances.hostile(self.regiments.owner[r], enemy)
                             && !self.regiments.morale_state[r].broken()
                             // In fog of war, only a building its side has seen.
                             && (conquest.structures.get(structure))
-                                .is_some_and(|s| s.seen_by(pc.player)) =>
+                                .is_some_and(|s| s.seen_by(self.regiments.owner[r])) =>
                     {
                         conquest.stop_work(r);
                         conquest
@@ -1350,11 +1383,12 @@ impl World {
         let Some(r) = self.regiments.get(regiment) else {
             return false;
         };
-        let allowed = r.owner == player
+        // Whoever commands the regiment places it, inside its owner's zone.
+        let allowed = self.stances.can_command(player, r.owner)
             && on_map
             && self
                 .deploy
-                .zone(player)
+                .zone(r.owner)
                 .is_some_and(|z| z.contains(position))
             && self.nav.walkable(position);
         let Some(i) = allowed
@@ -1573,7 +1607,10 @@ impl World {
                     u.hash_into(h);
                 }
             }
-            "regiments" => self.regiments.hash_into(h),
+            "regiments" => {
+                self.regiments.hash_into(h);
+                self.stances.hash_into(h);
+            }
             "combat" => self.combat.hash_into(h),
             "pathfinding" => self.nav.hash_into(h),
             "vision" => self.vision.hash_into(&self.regiments, h),

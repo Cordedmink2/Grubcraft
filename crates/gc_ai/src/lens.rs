@@ -153,6 +153,6 @@ mod tests {
     #[test]
     fn the_clock_reads_minutes_and_seconds() {
         assert_eq!(clock(0), "0:00");
-        assert_eq!(clock(20 * 75), "1:15");
+        assert_eq!(clock(75 * gc_sim::TICKS_PER_SECOND), "1:15");
     }
 }

@@ -129,6 +129,7 @@ The namesake faction. Insects that grew fat and clever eating the Titan from the
 ### Faction meter: **Larvae** (0 to N)
 - Every regiment hatches from a larva. Each Hive and Hatchery pit holds up to 3 larvae and spawns one every 12 s.
 - The meter shows larvae available across all hives. It is both a production limiter and a decision: Gnawer or warrior?
+- *Built (2026-10-17, faction depth stage 1): the larvae are simulated, and every Brood unit hatches from one. Root-veins come next.*
 
 ### Signature rule: **Metamorphosis in the field**
 Every tier-1 Brood regiment can evolve, *on the battlefield*, into one of two tier-2 forms. It cocoons for 15 s (vulnerable, cannot move), then emerges as the new form with its veterancy intact. You adapt your army to the fight you are in, not the one you guessed at.

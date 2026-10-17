@@ -49,7 +49,9 @@ impl Captain {
             } else {
                 now
             });
-            let recently = self.withdrawn_at.is_some_and(|t| now < t + 30 * 20);
+            let recently = self
+                .withdrawn_at
+                .is_some_and(|t| now < t + 30 * TICKS_PER_SECOND);
             if now >= since + WITHDRAW_AFTER_TICKS
                 && !recently
                 && self.withdrawals < WITHDRAWALS
@@ -82,8 +84,8 @@ impl Captain {
                 .iter()
                 .filter(|r| r.pos.distance(self.anchor) < self.line_width * 0.5 + 10.0)
                 .count();
-            let done =
-                home * 3 >= ours.len() * 2 || now >= self.withdrawn_at.unwrap_or(now) + 20 * 20;
+            let done = home * 3 >= ours.len() * 2
+                || now >= self.withdrawn_at.unwrap_or(now) + 20 * TICKS_PER_SECOND;
             if done || gap < WITHDRAW_GAP * 0.5 {
                 self.posture = Posture::Hold;
                 self.standoff_since = now;

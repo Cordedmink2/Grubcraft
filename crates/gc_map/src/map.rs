@@ -253,6 +253,14 @@ impl Map {
         self.objects.iter().filter(move |o| o.kind == kind)
     }
 
+    /// Whether the map has a Conquest economy (seeps, veins, a Heart),
+    /// which a Field Battle map doesn't.
+    pub fn is_conquest(&self) -> bool {
+        self.objects
+            .iter()
+            .any(|o| matches!(o.kind, Kind::GrubSeep | Kind::MarrowVein | Kind::Heart))
+    }
+
     /// Each player's start tile, by player.
     pub fn starts(&self) -> Vec<Pos> {
         let mut starts: Vec<&Placed> = self.objects_of(Kind::Start).collect();

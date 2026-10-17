@@ -10,31 +10,7 @@ use serde::Deserialize;
 use crate::army::Preset;
 use crate::captain::Doctrine;
 
-/// The factions, in the same order as the game data's (`gc_data::Faction`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-pub enum Faction {
-    EmberClans,
-    Brood,
-    Choir,
-    CarrionConcord,
-}
-
-impl Faction {
-    pub const ALL: [Faction; 4] = [
-        Faction::EmberClans,
-        Faction::Brood,
-        Faction::Choir,
-        Faction::CarrionConcord,
-    ];
-
-    pub fn index(self) -> u8 {
-        self as u8
-    }
-
-    pub fn from_index(i: u8) -> Faction {
-        Faction::ALL[i as usize % Faction::ALL.len()]
-    }
-}
+pub use gc_data::Faction;
 
 /// How much a personality likes each battle plan, 0 to 100.
 #[derive(Clone, Copy, Debug, Deserialize)]

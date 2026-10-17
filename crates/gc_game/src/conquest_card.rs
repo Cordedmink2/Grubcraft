@@ -7,6 +7,7 @@
 use std::fmt::Write;
 
 use gc_data::ConquestUnitRecord;
+use gc_data::conquest::UNIT_CONSUMED;
 use gc_sim::structures::CANCEL_REFUND_PERCENT;
 use gc_sim::{
     BuildingId, Command, PlayerCommand, RegimentHandle, Regiments, StructureHandle, StructureView,
@@ -308,11 +309,20 @@ impl Running {
             return false;
         }
         let side = self.sandbox.side;
+        // Workers used up by what they build (the Brood's) can only start a
+        // foundation nothing has started, and one is enough.
+        let spent = (self.selected.iter()).any(|&h| is_consumed(regiments, units, h));
         let mend = self.building_under_cursor(|o| o == side).filter(|&h| {
             self.world
                 .structures()
                 .and_then(|s| s.get(h))
-                .is_some_and(needs_hands)
+                .is_some_and(|s| {
+                    if spent {
+                        !s.finished() && !s.growing
+                    } else {
+                        needs_hands(s)
+                    }
+                })
         });
         enum Job {
             Mend(StructureHandle),
@@ -330,11 +340,19 @@ impl Running {
             },
             Job::Gather(node) => Command::Gather { regiment, node },
         };
-        self.human_orders
-            .extend(self.selected.iter().map(|&regiment| PlayerCommand {
-                player: side,
-                command: work(regiment),
-            }));
+        let crew = match job {
+            Job::Mend(_) if spent => 1,
+            _ => self.selected.len(),
+        };
+        self.human_orders.extend(
+            self.selected
+                .iter()
+                .take(crew)
+                .map(|&regiment| PlayerCommand {
+                    player: side,
+                    command: work(regiment),
+                }),
+        );
         self.ui_sound(sounds::UiSound::Move);
         true
     }
@@ -366,6 +384,15 @@ fn is_worker(regiments: &Regiments, units: &[ConquestUnitRecord], h: RegimentHan
         units
             .get(usize::from(r.unit))
             .is_some_and(ConquestUnitRecord::worker)
+    })
+}
+
+/// Whether regiment `h` is a worker used up by the building it starts.
+fn is_consumed(regiments: &Regiments, units: &[ConquestUnitRecord], h: RegimentHandle) -> bool {
+    regiments.get(h).is_some_and(|r| {
+        units
+            .get(usize::from(r.unit))
+            .is_some_and(|u| u.flags & UNIT_CONSUMED != 0)
     })
 }
 

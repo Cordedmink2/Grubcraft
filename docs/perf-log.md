@@ -2,6 +2,28 @@
 
 Before and after numbers from each milestone's performance pass ([12 · Performance](12-performance.md#the-loop)). Newest first.
 
+## Fewer looks for friends in the way (2026-10-17)
+
+CI's macOS runner failed the drill's 2 ms p99 budget a few times after the last pass (2.34 to 2.76 ms; the same code has also passed there at 1.2 ms). In the cloud container, the drill's slowest ticks fall in its busiest stretch (ticks 800 to 2,200, blocks crowding through the passes). There a tick paid for about 235 friend-in-the-way checks, each visiting about 50 regiments in the spatial hash, on top of a full route-search budget.
+
+- **Same results, less work:** the overlap test stops at the first axis that rules a pair out (`Block::overlap_over`, also used by crowding); the hash scan's already-seen test stays inline in the loop and walks only the owner slots asked for; each friend's distance is found once for both the range and circle tests. Every hash is unchanged by these: about 5% of the drill's instructions.
+- **Fewer checks (changes play, `SIM_VERSION` 12):** a regiment marching in tight ground looks at most every other tick. One waiting behind a friend, or following a friend marching on ahead, looks every 4 ticks; before, a follower that had waited once looked every tick. That halved the checks in the busy stretch (235 to 117 a tick). The ford test crosses as cleanly as before (21 fords: 0.006% of soldiers on water, none stuck; 968 ticks on average against 958).
+
+| Scenario (bench gate, instructions) | Before | After |
+|---|---|---|
+| `drill` (150 a player, 1,200 ticks) | 7.08 G | 6.20 G (−12%) |
+| `pathing-storm` | 3.01 G | 2.80 G (−7%) |
+| `field-8000pt-2v2` | 8.42 G | 8.04 G (−5%) |
+
+| Drill, cloud container, slowest tick of each across 3 to 5 runs | Before | After |
+|---|---|---|
+| p99 | 1.67 to 1.74 ms | 1.45 to 1.5 ms |
+| Mean tick, busy stretch | 1.34 ms | 1.13 ms |
+
+**Battle tests that are chaotic:** a fifth of a tile's difference in one regiment's march early on decides some battles. The AI's "holding the ford pays off" test now fights 8 seeds per personality: it held the ford 59 times in 64 before this change and 58 after, against the single seed the test used to run. The scripted Conquest golden no longer orders routing soldiers. It now runs 6 minutes, so its soldiers reach the other side's base even after losing a fight on the way.
+
+**Left for later:** the route-search budget (32,000 work units a tick) is the other half of the slowest ticks. Halving it made the drill no faster, because waiting regiments cost more in other ways.
+
 ## Room for the whole block (2026-10-17)
 
 Routes now keep each block's whole width clear of deep water and cliffs, cost more near them, are pulled tight, and blocks queue behind friends and narrow into columns in fords ([10](10-architecture.md#pathfinding)). This is more work for the simulation on purpose, so the instruction baseline (`tools/gc_bench/baseline.json`) was re-blessed in the same PR.
@@ -91,3 +113,20 @@ Push-through added about 40%, close to the 1.35× its PR measured. The budget is
 
 **Left for later:** the sim heap is 22.4 MB on a 768-tile map with room for 1,536 regiments (the walking grid and its copies), over the 8 MB budget set for 256-tile maps; budgets for big maps, and a CI run of this bench, come with the six-player soak. Placing portals only near the change, and keeping the next free area number instead of finding the highest when a pocket is cut off, are both in `nav.rs` and left for its owner.
 
+## Six-player Conquest soak and razed bases (2026-10-17, Conquest step 6b)
+
+**Where it was measured:** the new Conquest soak (`cargo test --release -p gc_game conquest_soak -- --ignored --nocapture`): an hour of game time on a 768-tile Land: Mixed Conquest map, six scripted sides that gather, build, train and attack in fog of war until bases fall. Cloud container, wall clock.
+
+**Memory:** sim heap 25 to 26 MB all hour, all heap about 47 MB, process 57 MB (79 MB at the OS's peak). Nothing grew over the hour. That is far under the 6 GB budget; the renderer's share is measured in the game.
+
+**A stutter found and cut:** when a side is put out, all its buildings come down in the same tick, and each one updated the walking grid on its own (placing portals across the map and linking again each time).
+
+| | Before | After |
+|---|---|---|
+| Tick a base of 11 to 16 buildings is razed in | 100 to 140 ms | 25 to 33 ms |
+
+Buildings coming down together are now grouped by where they stand (any that fit in a box 64 tiles across) and each group updates the grid once. Grids come out the same as a fresh build (a test checks), and no golden replay changed; SIM_VERSION went to 13 because routes near a razed base are searched again by group, which can differ from building by building.
+
+**Big-map gates:** `conquest-6p` is now gated in CI with budgets of its own: tick p99 ≤ 5 ms and no allocations outside the ticks a building goes up in (2.7 to 3.7 ms here), each such tick ≤ 40 ms (18 ms at worst here), sim heap ≤ 48 MB (22.4 MB).
+
+**Left for later:** many buildings destroyed by hand in one tick (several `RemoveStructure` orders) still update the grid one by one; only a side going out is batched.

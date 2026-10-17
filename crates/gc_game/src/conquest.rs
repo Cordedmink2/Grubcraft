@@ -4,7 +4,7 @@
 //! the opening the host sends: each side's main building and workers at its
 //! start.
 
-use gc_data::conquest::{Class, ConquestUnitRecord, NONE};
+use gc_data::conquest::{Class, ConquestUnitRecord, NONE, UNIT_CONSUMED, UNIT_HATCHES};
 use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_map::{Kind, Map};
@@ -17,25 +17,63 @@ use gc_sim::{
 };
 use gc_ui::Settings;
 use gc_ui::lobby::{
-    COLORS, CONQUEST_MAP_PLAYERS, Faction as LobbyFaction, GameMode, LobbySettings, MatchStart,
-    Slot, SlotKind, Tempo, Victory,
+    COLORS, CONQUEST_MAP_PLAYERS, GameMode, LobbySettings, MatchStart, Slot, SlotKind, Tempo,
+    Victory,
 };
 use glam::Vec2;
 
 use crate::buildings::{self, Table};
 
-/// The Conquest map the lobby's choice `choice` names: gc_map ships them
-/// in the order the lobby lists them (`gc_ui::lobby::CONQUEST_MAPS`). A
-/// choice past the end (from another build's lobby or replay) gets the
-/// last; a replay still plays on the map it stored.
-pub fn make_map(choice: usize) -> Map {
-    let last = gc_map::SHIPPED.len() - 1;
-    let def = gc_map::SHIPPED
-        .get(choice.min(last))
-        .and_then(|&(name, _)| gc_map::shipped(name))
-        // The shipped maps parse: gc_map's tests check every one.
-        .unwrap_or_else(|| panic!("no shipped Conquest map {choice}"));
+/// How many tiles a side the six-player Wilds Conquest maps are: the
+/// Standard Field size for six, several minutes' march across.
+pub const WILDS_TILES: i32 = 768;
+
+/// The Conquest map the lobby's choice `choice` names, made from `seed`
+/// (`gc_ui::lobby::conquest_map_seed`). The shipped maps come first, in
+/// the order the lobby lists them (`gc_ui::lobby::CONQUEST_MAPS`), then
+/// the Wilds maps: as wild as the seed picks, then plains, mixed and wild
+/// land. A choice past the end (from another build's lobby or replay)
+/// gets the last; a replay still plays on the map it stored.
+pub fn make_map(choice: usize, seed: u64) -> Map {
+    let shipped = gc_map::SHIPPED.len();
+    let lands = gc_map::wilds::Wildness::ALL;
+    let choice = choice.min(shipped + lands.len());
+    let Some(land) = choice.checked_sub(shipped) else {
+        let def = gc_map::shipped(gc_map::SHIPPED[choice].0)
+            // The shipped maps parse: gc_map's tests check every one.
+            .unwrap_or_else(|| panic!("no shipped Conquest map {choice}"));
+        return Map::from_def(&def);
+    };
+    let wildness = match land.checked_sub(1) {
+        None => lands[(seed % lands.len() as u64) as usize],
+        Some(k) => lands[k],
+    };
+    let def = gc_map::conquest::describe_wilds(WILDS_TILES, seed, wildness)
+        .expect("WILDS_TILES is a size describe_wilds makes");
     Map::from_def(&def)
+}
+
+/// Each of `players` players' start on `map`, in player order. With every
+/// start taken, player `p` has start `p`. A six-start Wilds map with fewer
+/// players spreads them round it: its starts run round the map 0 to 5
+/// (north-west, north, north-east, then their turned copies south-east,
+/// south, south-west), and the players take every other one where they
+/// can, so two start across the map, three in a triangle and four in the
+/// corners.
+pub fn player_starts(map: &Map, players: usize) -> Vec<(i32, i32)> {
+    const SPREAD: [&[usize]; 6] = [
+        &[0],
+        &[0, 3],
+        &[0, 2, 4],
+        &[0, 2, 3, 5],
+        &[0, 2, 3, 5, 1],
+        &[],
+    ];
+    let starts = map.starts();
+    if starts.len() != SPREAD.len() || players == 0 || players >= starts.len() {
+        return starts;
+    }
+    SPREAD[players - 1].iter().map(|&i| starts[i]).collect()
 }
 
 /// The lobby's Conquest map choice for a shipped map's file name.
@@ -58,6 +96,8 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
         train_ticks: u.train_ticks,
         trained_at: (u.trained_at != NONE).then_some(u.trained_at),
         tier: u.tier,
+        hatches: u.flags & UNIT_HATCHES != 0,
+        consumed: u.flags & UNIT_CONSUMED != 0,
     }
 }
 
@@ -84,12 +124,7 @@ pub fn start_stores(f: Faction) -> (u32, u32) {
 
 /// Each lobby player's faction, in player order.
 pub fn factions(start: &MatchStart) -> Vec<Faction> {
-    // gc_data and the lobby list the factions in the same order.
-    start
-        .players
-        .iter()
-        .map(|s| Faction::ALL[s.faction.index()])
-        .collect()
+    start.players.iter().map(|s| s.faction).collect()
 }
 
 /// `--conquest MAP`: Conquest on the lobby's Conquest map `choice`, you at
@@ -110,8 +145,7 @@ pub fn quick_conquest(choice: usize, settings: &Settings, map_seed: u64) -> Matc
             } else {
                 format!("AI {}", i + 1)
             };
-            slot.faction =
-                LobbyFaction::ALL[(settings.faction.index() + i) % LobbyFaction::ALL.len()];
+            slot.faction = Faction::ALL[(settings.faction.index() + i) % Faction::ALL.len()];
             slot.color = (settings.player_color + i as u8) % COLORS;
             slot.team = i as u8;
             slot
@@ -213,7 +247,7 @@ fn overlaps(a: Foot, b: Foot, gap: i32) -> bool {
 
 /// The commands that put every side's starting buildings and workers on
 /// the field: each faction's buildings and units with a start count, round
-/// its start on `map` (player `p` at the map's start `p`). The host sends
+/// its start on `map` (player `p` at its start from [`player_starts`]). The host sends
 /// them in the match's first turn, as it does a Field Battle's armies;
 /// `world` is the match's fresh world, to check the ground with. Works in
 /// floats, which is safe because only the host does it.
@@ -224,7 +258,7 @@ pub fn opening(
     world: &World,
     factions: &[Faction],
 ) -> Vec<PlayerCommand> {
-    let starts = map.starts();
+    let starts = player_starts(map, factions.len());
     let mut out = Vec::new();
     let mut taken: Vec<Foot> = Vec::new();
     for (p, (&faction, &(sx, sy))) in factions.iter().zip(&starts).enumerate() {
@@ -342,6 +376,7 @@ pub(crate) fn ring(f: Foot, gap: i32) -> impl Iterator<Item = (i32, i32)> {
 mod tests {
     use super::*;
     use gc_sim::{Capacities, MatchSetup};
+    use gc_ui::lobby::SHIPPED_CONQUEST_MAPS as SHIPPED_CONQUEST;
 
     fn data() -> GameData<'static> {
         crate::data::load()
@@ -396,25 +431,63 @@ mod tests {
         assert_eq!(unit_stats(&data).len(), data.conquest_units.len());
     }
 
-    /// The lobby's Conquest maps are gc_map's shipped maps, in its order.
+    /// The lobby's Conquest maps are gc_map's shipped maps, in its order,
+    /// then one Wilds map for each choice of land.
     #[test]
-    fn the_lobby_lists_the_shipped_maps() {
+    fn the_lobby_lists_the_shipped_maps_then_the_wilds() {
         use gc_ui::lobby::{CONQUEST_MAP_PLAYERS, CONQUEST_MAPS};
-        assert_eq!(gc_map::SHIPPED.len(), CONQUEST_MAPS.len());
-        assert_eq!(make_map(99).hash(), make_map(1).hash(), "never panics");
+        assert_eq!(gc_map::SHIPPED.len(), SHIPPED_CONQUEST);
         for (i, &(file, _)) in gc_map::SHIPPED.iter().enumerate() {
             assert_eq!(gc_map::shipped(file).unwrap().name, CONQUEST_MAPS[i]);
-            assert_eq!(make_map(i).players as usize, CONQUEST_MAP_PLAYERS[i]);
+            assert_eq!(make_map(i, 0).players as usize, CONQUEST_MAP_PLAYERS[i]);
             assert_eq!(choice_of(file), Some(i));
         }
+        let lands = gc_map::wilds::Wildness::ALL;
+        assert_eq!(CONQUEST_MAPS[SHIPPED_CONQUEST], "Land: Random");
+        for (k, land) in lands.iter().enumerate() {
+            let name = format!("Land: {}", land.name());
+            assert_eq!(CONQUEST_MAPS[SHIPPED_CONQUEST + 1 + k], name);
+        }
+        assert_eq!(CONQUEST_MAPS.len(), SHIPPED_CONQUEST + 1 + lands.len());
+        assert_eq!(CONQUEST_MAP_PLAYERS.len(), CONQUEST_MAPS.len());
+        // A Wilds map is the big six-player Conquest map, and a choice past
+        // the end gets the last.
+        let wild = make_map(CONQUEST_MAPS.len() - 1, 5);
+        assert_eq!(wild.players, 6);
+        assert_eq!(wild.tiles, WILDS_TILES as u32);
+        // The Standard size for six, as the lobby sizes Field Battles.
+        let standard = gc_ui::lobby::field_map_tiles(gc_ui::lobby::MapSize::Standard, 6);
+        assert_eq!(WILDS_TILES as u32, standard);
+        assert!(wild.is_conquest());
+        assert_eq!(make_map(99, 5).hash(), wild.hash(), "never panics");
+    }
+
+    /// Fewer players than a Wilds map's six starts are spread round it;
+    /// a full map, or a map with fewer starts, keeps the map's order.
+    #[test]
+    fn players_are_spread_round_a_six_start_map() {
+        let wild = make_map(SHIPPED_CONQUEST, 9);
+        let starts = wild.starts();
+        assert_eq!(player_starts(&wild, 6), starts);
+        assert_eq!(player_starts(&wild, 2), vec![starts[0], starts[3]]);
+        assert_eq!(
+            player_starts(&wild, 3),
+            vec![starts[0], starts[2], starts[4]]
+        );
+        assert_eq!(
+            player_starts(&wild, 4),
+            vec![starts[0], starts[2], starts[3], starts[5]]
+        );
+        let teeth = make_map(1, 0);
+        assert_eq!(player_starts(&teeth, 2), teeth.starts());
     }
 
     #[test]
     fn ribcage_pass_has_two_starts_each_with_its_seeps_and_vein() {
-        let map = make_map(0);
+        let map = make_map(0, 0);
         assert_eq!(map.players, 2);
         assert_eq!(map.starts().len(), 2);
-        assert_eq!(make_map(1).starts().len(), 4);
+        assert_eq!(make_map(1, 0).starts().len(), 4);
         let nodes = nodes_of(&map);
         for (sx, sy) in map.starts() {
             let near = |r: Resource| {
@@ -438,7 +511,7 @@ mod tests {
     #[test]
     fn every_faction_opens_with_its_hall_workers_and_stores() {
         let data = data();
-        let map = make_map(1);
+        let map = make_map(1, 0);
         let factions = Faction::ALL;
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -491,7 +564,7 @@ mod tests {
     #[test]
     fn workers_stand_idle_until_they_gather() {
         let data = data();
-        let map = make_map(0);
+        let map = make_map(0, 0);
         let factions = [Faction::EmberClans, Faction::CarrionConcord];
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -539,7 +612,7 @@ mod tests {
 
     #[test]
     fn tempo_sets_the_rates() {
-        let map = make_map(0);
+        let map = make_map(0, 0);
         let (_, plan, _) = world_on(&map, &[Faction::EmberClans, Faction::Brood], Tempo::Swift);
         let s = plan.setup();
         assert_eq!((s.gather_percent, s.build_percent), (150, 75));
@@ -549,8 +622,10 @@ mod tests {
 
     #[test]
     fn every_conquest_map_has_its_heart_in_the_middle() {
-        for choice in 0..CONQUEST_MAP_PLAYERS.len() {
-            let map = make_map(choice);
+        // The shipped maps and one Wilds map (each Wilds map is made the
+        // same way).
+        for choice in 0..=SHIPPED_CONQUEST {
+            let map = make_map(choice, 3);
             let both = Victories::BOTH;
             let data = data();
             let plan = plan(&Table::new(&data), &data, &map, &[], Tempo::Epic, both);

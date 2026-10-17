@@ -32,7 +32,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::combat::Block;
 use crate::conquest::ConquestUnit;
 use crate::nav::{CELLS_PER_TILE, CLEARANCE, Nav};
-use crate::regiments::{Order, Regiments};
+use crate::regiments::{Order, RegimentHandle, Regiments};
 use crate::verdict::Mains;
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
 
@@ -166,6 +166,8 @@ pub enum Refusal {
     Node,
     /// The building is going up, already upgrading, or its queue is full.
     Busy,
+    /// It hatches from a larva, and its owner has none ready.
+    Larva,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -175,6 +177,8 @@ pub const DROP_OFF_MARROW: u8 = 2;
 pub const POWERS_FIELD: u8 = 4;
 /// Its attack can hit flying units.
 pub const ANTI_AIR: u8 = 8;
+/// Brood: holds larvae and grows them (see [`crate::larvae`]).
+pub const LARVAE: u8 = 16;
 
 /// A tower's shooting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -208,7 +212,7 @@ pub struct BuildingStats {
     pub depth: u8,
     /// What it adds to its owner's supply cap.
     pub supply: u8,
-    /// `DROP_OFF_*`, [`POWERS_FIELD`] and [`ANTI_AIR`] bits.
+    /// `DROP_OFF_*`, [`POWERS_FIELD`], [`ANTI_AIR`] and [`LARVAE`] bits.
     pub flags: u8,
     pub attack: Option<TowerAttack>,
 }
@@ -280,6 +284,9 @@ pub struct StructureView {
     /// While its main building's tier upgrade goes on: the building it
     /// becomes, and percent done.
     pub upgrading: Option<(BuildingId, u8)>,
+    /// It is going up on its own, having used up the worker that started
+    /// it (see [`ConquestUnit::consumed`]).
+    pub growing: bool,
     /// The parties that have seen it: every party outside fog of war.
     pub seen: u8,
 }
@@ -436,6 +443,13 @@ pub struct Structures {
     upgrade_full: Vec<u32>,
     /// Builders who worked on each building this tick.
     crew: Vec<u8>,
+    /// A building going up on its own, having used up the worker that
+    /// started it (the Brood's, see [`ConquestUnit::consumed`]).
+    growing: Vec<bool>,
+    /// Brood: larvae each building holds, and ticks until its next one
+    /// (0 while full); see [`crate::larvae`].
+    pub(crate) larvae: Vec<u8>,
+    pub(crate) larva_clock: Vec<u32>,
     /// Tempo: build and upgrade times at this percent of Standard.
     build_percent: u32,
     /// By regiment slot: the building it is attacking, and the generation
@@ -454,6 +468,8 @@ pub struct Structures {
     siege_stalls: Vec<u8>,
     /// Buildings brought down in the last tick, for the events.
     pub(crate) fallen: Vec<StructureHandle>,
+    /// Workers used up in the last tick by the buildings they started.
+    pub(crate) consumed: Vec<(RegimentHandle, StructureHandle)>,
     /// The parties that have seen each building, its owner first: in fog of
     /// war a building stays known once seen (see [`crate::vision`]).
     seen: Vec<u8>,
@@ -500,6 +516,9 @@ impl Structures {
             upgrade_left: vec![0; n],
             upgrade_full: vec![0; n],
             crew: vec![0; n],
+            growing: vec![false; n],
+            larvae: vec![0; n],
+            larva_clock: vec![0; n],
             build_percent: build_percent.clamp(10, 1000),
             siege: vec![None; regiments],
             siege_gen: vec![0; regiments],
@@ -508,6 +527,7 @@ impl Structures {
             siege_gap: vec![Fx::ZERO; regiments],
             siege_stalls: vec![0; regiments],
             fallen: Vec::with_capacity(n),
+            consumed: Vec::with_capacity(regiments),
             seen: vec![0; n],
             fog: false,
         }
@@ -573,6 +593,7 @@ impl Structures {
                 let done = self.upgrade_full[i] - self.upgrade_left[i];
                 (to, (done * 100 / self.upgrade_full[i].max(1)) as u8)
             }),
+            growing: self.growing(i),
             seen: self.seen(i),
         }
     }
@@ -586,6 +607,17 @@ impl Structures {
     fn finished_of(&self, owner: PlayerId) -> impl Iterator<Item = usize> + '_ {
         self.standing()
             .filter(move |&i| self.owner[i] == owner && self.finished(i))
+    }
+
+    /// The slots of `owner`'s finished buildings whose flags have `flag`,
+    /// in index order.
+    pub(crate) fn finished_with(
+        &self,
+        owner: PlayerId,
+        flag: u8,
+    ) -> impl Iterator<Item = usize> + '_ {
+        self.finished_of(owner)
+            .filter(move |&i| self.stats_of(i).flags & flag != 0)
     }
 
     /// `owner`'s tier: the highest of their finished main buildings', 0
@@ -631,6 +663,27 @@ impl Structures {
     /// The type of building slot `i`.
     pub(crate) fn kind_of(&self, i: usize) -> BuildingId {
         self.building[i]
+    }
+
+    /// The flags of building slot `i`'s type.
+    pub(crate) fn flags_of(&self, i: usize) -> u8 {
+        self.stats_of(i).flags
+    }
+
+    /// Whether a building stands in slot `i`.
+    pub(crate) fn stands(&self, i: usize) -> bool {
+        self.hp[i] > 0
+    }
+
+    /// `ticks` at Standard tempo, at the match's tempo.
+    pub(crate) fn tempo_ticks(&self, ticks: u32) -> u32 {
+        crate::conquest::at_tempo(ticks, self.build_percent)
+    }
+
+    /// Whether building slot `i` is going up on its own (see
+    /// [`ConquestUnit::consumed`]).
+    pub(crate) fn growing(&self, i: usize) -> bool {
+        self.growing[i] && !self.finished(i)
     }
 
     /// Where what building slot `i` trains comes out: two tiles off the
@@ -734,8 +787,7 @@ impl Structures {
         flag: u8,
         here: FxVec2,
     ) -> Option<[i32; 4]> {
-        self.finished_of(owner)
-            .filter(|&i| self.stats_of(i).flags & flag != 0)
+        self.finished_with(owner, flag)
             .map(|i| self.footprint(i))
             .min_by_key(|&foot| (nearest_point(foot, here) - here).length_sq_raw())
     }
@@ -818,6 +870,9 @@ impl Structures {
         self.hp[i] = u32::from(self.buildings[building as usize].hp) * HP_SCALE;
         self.work_left[i] = 0;
         self.upgrade_to[i] = None;
+        self.growing[i] = false;
+        self.larvae[i] = Structures::whole_larvae(self.buildings[building as usize].flags);
+        self.larva_clock[i] = 0;
         self.seen[i] = if self.fog { 1 << owner } else { u8::MAX };
         nav.set_built(self.footprint(i), true, regs);
         Some(self.handle(i))
@@ -840,14 +895,16 @@ impl Structures {
         self.hp[i] = (u32::from(b.hp) * HP_SCALE * FOUNDATION_PERCENT / 100).max(1);
         self.work_full[i] = u32::from(b.build_ticks) * self.build_percent;
         self.work_left[i] = self.work_full[i];
+        // A larvae building built from a foundation starts empty.
+        self.larvae[i] = 0;
         Some(h)
     }
 
     /// Start building slot `i`'s tier upgrade to building type `to`.
     pub(crate) fn start_upgrade(&mut self, i: usize, to: BuildingId) {
-        let ticks = u32::from(self.buildings[to as usize].build_ticks) * self.build_percent / 100;
+        let ticks = self.tempo_ticks(u32::from(self.buildings[to as usize].build_ticks));
         self.upgrade_to[i] = Some(to);
-        self.upgrade_full[i] = ticks.max(1);
+        self.upgrade_full[i] = ticks;
         self.upgrade_left[i] = self.upgrade_full[i];
     }
 
@@ -881,9 +938,25 @@ impl Structures {
         true
     }
 
+    /// Take every building in `all` away at once (a player put out of the
+    /// match), freeing their ground together: much cheaper than one by one.
+    pub(crate) fn despawn_all(&mut self, all: &[StructureHandle], nav: &mut Nav, regs: &Regiments) {
+        let slots: Vec<usize> = all.iter().filter_map(|&h| self.resolve(h)).collect();
+        let feet: Vec<[i32; 4]> = slots.iter().map(|&i| self.footprint(i)).collect();
+        nav.set_built_all(&feet, false, regs);
+        for i in slots {
+            self.free_slot(i);
+        }
+    }
+
     /// Free building slot `i` (standing, or just brought to nothing).
     fn remove(&mut self, i: usize, nav: &mut Nav, regs: &Regiments) {
         nav.set_built(self.footprint(i), false, regs);
+        self.free_slot(i);
+    }
+
+    /// Mark slot `i` free, its ground already given back.
+    fn free_slot(&mut self, i: usize) {
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.hp[i] = 0;
         self.work_left[i] = 0;
@@ -944,8 +1017,16 @@ impl Structures {
         nav: &mut Nav,
     ) {
         self.fallen.clear();
+        self.consumed.clear();
         self.upgrades();
         self.crew.fill(0);
+        // A building that used up its worker grows as one builder would
+        // build it.
+        for s in 0..self.hp.len() {
+            if self.hp[s] > 0 && self.growing(s) {
+                self.build(s);
+            }
+        }
         for r in 0..self.siege.len() {
             let Some(target) = self.siege_of(regs, r) else {
                 // No order, or the building or the regiment is gone.
@@ -982,6 +1063,21 @@ impl Structures {
                 continue;
             }
             way.arrive(regs, r);
+            if building
+                && kinds
+                    .get(usize::from(regs.unit[r]))
+                    .is_some_and(|k| k.consumed)
+            {
+                // Used up to start it growing, if nothing has yet.
+                if !self.finished(s) && !self.growing(s) {
+                    self.growing[s] = true;
+                    let worker = regs.handle(r);
+                    self.consumed.push((worker, target));
+                    regs.despawn(worker);
+                }
+                self.siege[r] = None;
+                continue;
+            }
             if building {
                 if !self.build(s) {
                     // Built and whole: its work is done.
@@ -1117,8 +1213,13 @@ impl Structures {
             h.u32(self.work_left[i]);
             if self.work_left[i] > 0 {
                 h.u32(self.work_full[i]);
+                h.u8(u8::from(self.growing[i]));
             }
             h.u8(self.seen[i]);
+            if self.stats_of(i).flags & LARVAE != 0 {
+                h.u8(self.larvae[i]);
+                h.u32(self.larva_clock[i]);
+            }
             if let Some(to) = self.upgrade_to[i] {
                 h.u16(to);
                 h.u32(self.upgrade_left[i]);

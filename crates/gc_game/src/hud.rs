@@ -15,7 +15,7 @@ use gc_ui::hud::{
 use glam::{Vec2, Vec3};
 
 use crate::{Running, from_fx_vec, fx_vec, sounds};
-use gc_map::Map;
+use gc_map::{Kind, Map};
 
 /// Cells per side of the minimap's ground picture: 48 up to a 384-tile
 /// map, then one for every 8 tiles, up to 80 (a 768 map's cells are
@@ -264,11 +264,25 @@ impl HudState {
     }
 }
 
-/// The ground as colours: water, woods, grass and rising hide.
+/// The colour a site stands out in on a Field Battle's minimap: villages
+/// amber, outposts and lairs dark red, standing stones pale blue. (Not on
+/// a Conquest map, whose minimap marks come from the Conquest mode: so
+/// far its gathering spots, not its sites.)
+fn site_colour(kind: Kind) -> Option<[u8; 4]> {
+    match kind {
+        Kind::Village | Kind::Town | Kind::Bazaar => Some([222, 168, 64, 255]),
+        Kind::CreepCamp => Some([150, 40, 50, 255]),
+        Kind::Shrine => Some([170, 214, 230, 255]),
+        _ => None,
+    }
+}
+
+/// The ground as colours: water, woods, grass and rising hide, and on a
+/// Field Battle map its sites, a cell each.
 pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
     let tiles = hm.tiles;
     let n = tiles as f32;
-    MinimapTerrain::from_fn(terrain_cells(tiles), |u, v| {
+    let mut picture = MinimapTerrain::from_fn(terrain_cells(tiles), |u, v| {
         let (x, z) = (u * n, v * n);
         let h = hm.height_at(x, z);
         if h < hm.water_level() {
@@ -299,7 +313,21 @@ pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
                 ]
             }
         }
-    })
+    });
+    if !hm.is_conquest() {
+        for o in &hm.objects {
+            if let Some(c) = site_colour(o.kind) {
+                let k = picture.cell_at(tile_uv(o.at.0, n), tile_uv(o.at.1, n));
+                picture.colors[k] = c;
+            }
+        }
+    }
+    picture
+}
+
+/// The middle of tile `t` across a map `n` tiles wide, from 0 to 1.
+fn tile_uv(t: i32, n: f32) -> f32 {
+    (t as f32 + 0.5) / n
 }
 
 /// Hand a frame of UI quads to the renderer.
@@ -569,7 +597,6 @@ impl Running {
         }; QUEUE_SLOTS];
         let mut queued = 0;
         if let Some((h, p)) = picked_structure.zip(self.world.production()) {
-            let front = self.world.training_percent(h).unwrap_or(0);
             for (i, &u) in p.queue_of(h).iter().take(QUEUE_SLOTS).enumerate() {
                 queue[i] = QueueItem {
                     name: self
@@ -577,7 +604,7 @@ impl Running {
                         .names
                         .get(usize::from(u))
                         .map_or("", String::as_str),
-                    progress: if i == 0 { front } else { 0 },
+                    progress: self.world.queue_percent(h, i).unwrap_or(0),
                 };
                 queued = i + 1;
             }
@@ -594,6 +621,12 @@ impl Running {
                     .upgrading
                     .map(|(to, percent)| (self.buildings.name(to), percent)),
                 queue: &queue[..queued],
+                // Your own finished ones only: a foundation grows none, and
+                // an enemy's larvae are not yours to count.
+                larvae: (s.owner == self.sandbox.side && s.finished())
+                    .then(|| self.world.larvae_in(s.handle))
+                    .flatten()
+                    .map(|n| (n, gc_sim::larvae::LARVA_CAP)),
             });
 
         let mut input = std::mem::take(&mut hud.input);
@@ -787,6 +820,8 @@ impl Running {
             supply_used: b.supply_used,
             supply_cap: b.supply_cap,
             upkeep_percent: b.upkeep_percent(),
+            larvae: b.larvae,
+            larva_room: b.larva_room,
             clock_secs: self.world.tick_count() / gc_sim::TICKS_PER_SECOND,
         })
     }
@@ -930,6 +965,39 @@ fn view_outline(view_proj: glam::Mat4, plane: f32, map: f32) -> [[f32; 2]; 4] {
 mod tests {
     use super::*;
     use crate::camera::RtsCamera;
+
+    /// A Field Battle's villages, outposts and stones show on the minimap
+    /// in their own colours; a Conquest map's don't.
+    #[test]
+    fn the_minimap_marks_a_field_maps_sites() {
+        let field = gc_map::FieldMap {
+            choice: gc_map::WILDS + 1,
+            tiles: 512,
+            seed: 3,
+        }
+        .make();
+        let amber = site_colour(Kind::Village).unwrap();
+        let picture = minimap_terrain(&field);
+        let site = field
+            .objects
+            .iter()
+            .find(|o| o.kind == Kind::Village)
+            .expect("a village");
+        let n = field.tiles as f32;
+        let k = picture.cell_at(tile_uv(site.at.0, n), tile_uv(site.at.1, n));
+        assert_eq!(picture.colors[k], amber);
+        let conquest = Map::from_def(
+            &gc_map::conquest::describe_wilds(512, 3, gc_map::wilds::Wildness::Plains).unwrap(),
+        );
+        let marked = |m: &Map| {
+            minimap_terrain(m)
+                .colors
+                .iter()
+                .filter(|&&c| c == amber)
+                .count()
+        };
+        assert_eq!(marked(&conquest), 0);
+    }
 
     #[test]
     fn the_focus_is_the_middle_of_the_screen_and_far_ground_is_off_it() {
