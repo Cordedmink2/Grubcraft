@@ -1,0 +1,42 @@
+# Written by `cargo run -p gc_artbake --release` beside models.pak and checked by
+# `cargo run -p gc_artbake -- --check` in CI. Do not edit by hand.
+# Hashes are XXH3-128. Sources marked "not in the repo" live in the project's
+# shared folder; CI cannot check them, so a change to one shows only in a re-bake.
+manifest = 1
+baker = gc_artbake 1
+schema = 4
+config = 0ed6d87e62d77185aeb5855bd0741db0
+pack = 03065a1137010d75197b6712bd11a233
+pack_bytes = 10921264
+source shared:grubcraft/buildings/ember/clan-hall/stage1.glb = 3f4c6ad0d9c4e418b051f539a2039608 not in the repo
+source shared:grubcraft/buildings/ember/clan-hall/albedo.png = e116fb7a06f6dbb2ebdc8a836e354ade not in the repo
+source shared:grubcraft/buildings/ember/clan-hall/team.png = 22af20d7ef4086b05aeebcfedf1d6ad9 not in the repo
+source shared:grubcraft/buildings/ember/clan-hall/normal.png = 2b8b03a5e15f6aebc7463bf0c3ec3585 not in the repo
+source shared:grubcraft/buildings/ember/clan-hall/orm.png = d74bcf5ad402c8cde7f94aa84a498d9a not in the repo
+source shared:grubcraft/buildings/ember/clan-hall/emissive.png = 8d4d4b1989de6ef4f4327e1dd7a2b5aa not in the repo
+source shared:grubcraft/buildings/ember/clan-hall/stage2.glb = 9caca400e0ddf7f5455196f0b4b18c0d not in the repo
+source shared:grubcraft/buildings/ember/clan-hall/stage3.glb = 07d7da4ccb5e7e3636c1724c06279a03 not in the repo
+source shared:grubcraft/buildings/ember/clan-hall/final.glb = 7508452fee14e5a64f5e484a3eec903a not in the repo
+source shared:grubcraft/buildings/ember/castle-keep/stage3.glb = e810d4e74ff24f6a9813c1b3b2261214 not in the repo
+source shared:grubcraft/buildings/ember/castle-keep/albedo.png = cf90a1cbd7cc23aabc5f2ae79c949a80 not in the repo
+source shared:grubcraft/buildings/ember/castle-keep/team.png = 014cb8702dd3823a7f09c4df0e12ae90 not in the repo
+source shared:grubcraft/buildings/ember/castle-keep/normal.png = a30cd87c05f811dc8af0b06a69cd7a51 not in the repo
+source shared:grubcraft/buildings/ember/castle-keep/orm.png = 34dfc4cebc8e93114a5afa83dc7e44fc not in the repo
+source shared:grubcraft/buildings/ember/castle-keep/emissive.png = da7e751a890198d1fc7efa6847240191 not in the repo
+source shared:grubcraft/buildings/ember/castle-keep/final.glb = 2cdb8dc00739d7592be1fd76444eeeb6 not in the repo
+source shared:grubcraft/buildings/ember/daimyos-citadel/stage3.glb = 73be73ea9f7e32ddddbf0460c5ae3d80 not in the repo
+source shared:grubcraft/buildings/ember/daimyos-citadel/albedo.png = c47955b9bbc64a0fe015fa64c3ec496d not in the repo
+source shared:grubcraft/buildings/ember/daimyos-citadel/team.png = 2e24fbf29ead4b68e96027732bbe3e4b not in the repo
+source shared:grubcraft/buildings/ember/daimyos-citadel/normal.png = 07bfffca7b5fc5f8239229ebd60b3dc9 not in the repo
+source shared:grubcraft/buildings/ember/daimyos-citadel/orm.png = a21c6db50ca393620188eba39101a938 not in the repo
+source shared:grubcraft/buildings/ember/daimyos-citadel/emissive.png = 0d9f547feb0e24e0aa3cfb0e446af641 not in the repo
+source shared:grubcraft/buildings/ember/daimyos-citadel/final.glb = f6b00b34e32a3af5775049b44ac185cb not in the repo
+source shared:grubcraft/buildings/ember/outpost-hall/stage1.glb = 409224bbf8dddc25f3c7298e386714eb not in the repo
+source shared:grubcraft/buildings/ember/outpost-hall/albedo.png = ddf3341d08099db4162a8fa0f0440889 not in the repo
+source shared:grubcraft/buildings/ember/outpost-hall/team.png = 7f1fdfed8df92ee4362f1893af5d184b not in the repo
+source shared:grubcraft/buildings/ember/outpost-hall/normal.png = bb464d85597879d41e98e4220c959f52 not in the repo
+source shared:grubcraft/buildings/ember/outpost-hall/orm.png = 282571ea523d59d7f765f2d2c8827093 not in the repo
+source shared:grubcraft/buildings/ember/outpost-hall/emissive.png = 70a501240a0397de117d06bff34328bd not in the repo
+source shared:grubcraft/buildings/ember/outpost-hall/stage2.glb = a0ab790c72a7758887959304b247157a not in the repo
+source shared:grubcraft/buildings/ember/outpost-hall/stage3.glb = 5390e77ab92c9e1b0a07a89bf44217ef not in the repo
+source shared:grubcraft/buildings/ember/outpost-hall/final.glb = 49bc40bdc5ead4cbd89d8f825b5b3806 not in the repo

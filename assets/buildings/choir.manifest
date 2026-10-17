@@ -1,0 +1,33 @@
+# Written by `cargo run -p gc_artbake --release` beside models.pak and checked by
+# `cargo run -p gc_artbake -- --check` in CI. Do not edit by hand.
+# Hashes are XXH3-128. Sources marked "not in the repo" live in the project's
+# shared folder; CI cannot check them, so a change to one shows only in a re-bake.
+manifest = 1
+baker = gc_artbake 1
+schema = 4
+config = 11461019c38169fad3021ee369effa2d
+pack = a2f2489c2d88fb0380b3fbcff7377beb
+pack_bytes = 6976512
+source shared:grubcraft/buildings/choir/spire/stage1.glb = e61c3fce4ae4057c3f781e87bea0fa69 not in the repo
+source shared:grubcraft/buildings/choir/spire/albedo.png = 2283b02e8f49383851f5a6f72d809358 not in the repo
+source shared:grubcraft/buildings/choir/spire/team.png = 9df0138e2cb974a8c13cfe306990678d not in the repo
+source shared:grubcraft/buildings/choir/spire/normal.png = 6d6a5f0d7a7b2bdf7f5d4db72b644a7b not in the repo
+source shared:grubcraft/buildings/choir/spire/orm.png = 929d17499eab7d97bbd1a117451788e1 not in the repo
+source shared:grubcraft/buildings/choir/spire/emissive.png = df7fee6abf367d6a97599e154ba6831c not in the repo
+source shared:grubcraft/buildings/choir/spire/stage2.glb = 28bf54546630ebc22fda60f1478a7f68 not in the repo
+source shared:grubcraft/buildings/choir/spire/stage3.glb = 789930f01296d43c6ebaf30905ec7676 not in the repo
+source shared:grubcraft/buildings/choir/spire/final.glb = 06bad49c67c5277c3b095e98955c6fd7 not in the repo
+source shared:grubcraft/buildings/choir/cathedral/stage3.glb = afd9c1550bf363ddcebf4ca9ac8d5eee not in the repo
+source shared:grubcraft/buildings/choir/cathedral/albedo.png = d47433a64553c68c3a1bbd130d3f5499 not in the repo
+source shared:grubcraft/buildings/choir/cathedral/team.png = 388e5ebb46283bc83a39bb5482a43afe not in the repo
+source shared:grubcraft/buildings/choir/cathedral/normal.png = 41b9b8ccb65af8a74ed5b4929ebc0d2a not in the repo
+source shared:grubcraft/buildings/choir/cathedral/orm.png = 94d61d4314035e3d705b7e32138bd479 not in the repo
+source shared:grubcraft/buildings/choir/cathedral/emissive.png = 40cb33451941f05eab119070f4febb79 not in the repo
+source shared:grubcraft/buildings/choir/cathedral/final.glb = 3318f129f93961103e6b0626b7634e08 not in the repo
+source shared:grubcraft/buildings/choir/grand-organ/stage3.glb = c3b1f877053f13488d2704122dc61685 not in the repo
+source shared:grubcraft/buildings/choir/grand-organ/albedo.png = c7ac89589f6ecfb599ce309963e24aba not in the repo
+source shared:grubcraft/buildings/choir/grand-organ/team.png = d640c9a40ff3e672a5b67475a1a23f4d not in the repo
+source shared:grubcraft/buildings/choir/grand-organ/normal.png = ebec042df9a0c1a56b233b02039c2d96 not in the repo
+source shared:grubcraft/buildings/choir/grand-organ/orm.png = bdabf725e7dc1c7593c5e5ddabd2a4a5 not in the repo
+source shared:grubcraft/buildings/choir/grand-organ/emissive.png = ac33e85386e28359e74b952ef9423eb7 not in the repo
+source shared:grubcraft/buildings/choir/grand-organ/final.glb = 7c9d579f36ff2526d9deb99be368f4e2 not in the repo

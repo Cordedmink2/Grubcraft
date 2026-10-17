@@ -1,0 +1,132 @@
+// Choir buildings, baked into assets/buildings/choir.pak by tools/gc_artbake
+// (`cargo run -p gc_artbake --release -- --config assets-src/buildings/choir.ron --out assets/buildings/choir.pak`).
+// Each building has four models: its construction stages `#1` (foundation), `#2` (frame) and `#3`
+// (nearly done), then the finished building under its own name, exactly as in data/rosters.
+// Main-building upgrades (Cathedral, Grand Organ) have only `#3` and the finished model.
+// All four share one texture set (one material) and keep their authored positions in tiles
+// (`keep_origin`), with the origin at the middle of the footprint on the ground and the door
+// facing +z. Sources and scripts: the project's design/buildings/ folder (docs/21-buildings.md).
+(
+    models: [
+        (
+            name: "Spire #1",
+            source: "shared:grubcraft/buildings/choir/spire/stage1.glb",
+            height: 6.2,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/choir/spire/albedo.png",
+                team: Some("shared:grubcraft/buildings/choir/spire/team.png"),
+                normal: Some("shared:grubcraft/buildings/choir/spire/normal.png"),
+                orm: Some("shared:grubcraft/buildings/choir/spire/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/choir/spire/emissive.png"),
+            )),
+        ),
+        (
+            name: "Spire #2",
+            source: "shared:grubcraft/buildings/choir/spire/stage2.glb",
+            height: 6.2,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/choir/spire/albedo.png",
+                team: Some("shared:grubcraft/buildings/choir/spire/team.png"),
+                normal: Some("shared:grubcraft/buildings/choir/spire/normal.png"),
+                orm: Some("shared:grubcraft/buildings/choir/spire/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/choir/spire/emissive.png"),
+            )),
+        ),
+        (
+            name: "Spire #3",
+            source: "shared:grubcraft/buildings/choir/spire/stage3.glb",
+            height: 6.2,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/choir/spire/albedo.png",
+                team: Some("shared:grubcraft/buildings/choir/spire/team.png"),
+                normal: Some("shared:grubcraft/buildings/choir/spire/normal.png"),
+                orm: Some("shared:grubcraft/buildings/choir/spire/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/choir/spire/emissive.png"),
+            )),
+        ),
+        (
+            name: "Spire",
+            source: "shared:grubcraft/buildings/choir/spire/final.glb",
+            height: 6.2,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/choir/spire/albedo.png",
+                team: Some("shared:grubcraft/buildings/choir/spire/team.png"),
+                normal: Some("shared:grubcraft/buildings/choir/spire/normal.png"),
+                orm: Some("shared:grubcraft/buildings/choir/spire/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/choir/spire/emissive.png"),
+            )),
+        ),
+        (
+            name: "Cathedral #3",
+            source: "shared:grubcraft/buildings/choir/cathedral/stage3.glb",
+            height: 6.9,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/choir/cathedral/albedo.png",
+                team: Some("shared:grubcraft/buildings/choir/cathedral/team.png"),
+                normal: Some("shared:grubcraft/buildings/choir/cathedral/normal.png"),
+                orm: Some("shared:grubcraft/buildings/choir/cathedral/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/choir/cathedral/emissive.png"),
+            )),
+        ),
+        (
+            name: "Cathedral",
+            source: "shared:grubcraft/buildings/choir/cathedral/final.glb",
+            height: 6.9,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/choir/cathedral/albedo.png",
+                team: Some("shared:grubcraft/buildings/choir/cathedral/team.png"),
+                normal: Some("shared:grubcraft/buildings/choir/cathedral/normal.png"),
+                orm: Some("shared:grubcraft/buildings/choir/cathedral/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/choir/cathedral/emissive.png"),
+            )),
+        ),
+        (
+            name: "Grand Organ #3",
+            source: "shared:grubcraft/buildings/choir/grand-organ/stage3.glb",
+            height: 7.3,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/choir/grand-organ/albedo.png",
+                team: Some("shared:grubcraft/buildings/choir/grand-organ/team.png"),
+                normal: Some("shared:grubcraft/buildings/choir/grand-organ/normal.png"),
+                orm: Some("shared:grubcraft/buildings/choir/grand-organ/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/choir/grand-organ/emissive.png"),
+            )),
+        ),
+        (
+            name: "Grand Organ",
+            source: "shared:grubcraft/buildings/choir/grand-organ/final.glb",
+            height: 7.3,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/choir/grand-organ/albedo.png",
+                team: Some("shared:grubcraft/buildings/choir/grand-organ/team.png"),
+                normal: Some("shared:grubcraft/buildings/choir/grand-organ/normal.png"),
+                orm: Some("shared:grubcraft/buildings/choir/grand-organ/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/choir/grand-organ/emissive.png"),
+            )),
+        ),
+    ],
+)

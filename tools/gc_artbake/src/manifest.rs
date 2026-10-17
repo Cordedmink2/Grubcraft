@@ -127,7 +127,7 @@ pub fn check(opts: &Options) -> Result<(), String> {
     for src in &wanted {
         let key = format!("source {src}");
         let Some(value) = m.get(&key) else {
-            stale.push(format!("{src} is in models.ron but not in the manifest"));
+            stale.push(format!("{src} is in the config but not in the manifest"));
             continue;
         };
         let then = value.split(' ').next().unwrap_or_default();
@@ -155,7 +155,7 @@ pub fn check(opts: &Options) -> Result<(), String> {
             && !wanted.contains(&src)
         {
             stale.push(format!(
-                "{src} is in the manifest but no longer in models.ron"
+                "{src} is in the manifest but no longer in the config"
             ));
         }
     }
@@ -168,8 +168,10 @@ pub fn check(opts: &Options) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "{} is stale:\n  {}\nRe-bake with `cargo run -p gc_artbake --release` (it needs the shared sources) and commit assets/models.pak and assets/models.manifest together.",
+        "{} is stale:\n  {}\nRe-bake with `cargo run -p gc_artbake --release -- --config {} --out {}` (it needs the shared sources) and commit the pack and its manifest together.",
         opts.out.display(),
-        stale.join("\n  ")
+        stale.join("\n  "),
+        opts.config.display(),
+        opts.out.display(),
     ))
 }

@@ -1,0 +1,33 @@
+# Written by `cargo run -p gc_artbake --release` beside models.pak and checked by
+# `cargo run -p gc_artbake -- --check` in CI. Do not edit by hand.
+# Hashes are XXH3-128. Sources marked "not in the repo" live in the project's
+# shared folder; CI cannot check them, so a change to one shows only in a re-bake.
+manifest = 1
+baker = gc_artbake 1
+schema = 4
+config = ce1594d585d1d6cac7c3d68d01d681de
+pack = 9f4420b71f1c78e1b889b946e85a4731
+pack_bytes = 8657056
+source shared:grubcraft/buildings/brood/hive/stage1.glb = 68352084b856e1ad4b09e43cff407019 not in the repo
+source shared:grubcraft/buildings/brood/hive/albedo.png = 2545613dc320e34144c9d5d6d1cd2c32 not in the repo
+source shared:grubcraft/buildings/brood/hive/team.png = 2775a82fa4b74e41a8028786bb58c0cb not in the repo
+source shared:grubcraft/buildings/brood/hive/normal.png = 3ebbdc8bbdd3c2f20b26bf34c6e901fa not in the repo
+source shared:grubcraft/buildings/brood/hive/orm.png = 984b2bab03ff8fcec697ec712e7a19bd not in the repo
+source shared:grubcraft/buildings/brood/hive/emissive.png = f3f2c5446ea9f82508d105fc0d125150 not in the repo
+source shared:grubcraft/buildings/brood/hive/stage2.glb = 75c67169e6dc4edd3ad3e1d4e62616e2 not in the repo
+source shared:grubcraft/buildings/brood/hive/stage3.glb = e1ea5e01641c1ca3989459e908a45c03 not in the repo
+source shared:grubcraft/buildings/brood/hive/final.glb = 088f56679d13bf3adcb91b542cf54629 not in the repo
+source shared:grubcraft/buildings/brood/great-hive/stage3.glb = 779bf02396ed40503429216d6170d084 not in the repo
+source shared:grubcraft/buildings/brood/great-hive/albedo.png = 6a89e3af31ca585acbab9f3ce0d5bf66 not in the repo
+source shared:grubcraft/buildings/brood/great-hive/team.png = f96013f611b77bd6e84473c48ff1c5f5 not in the repo
+source shared:grubcraft/buildings/brood/great-hive/normal.png = 35ce978d930ecc2969feef4a3c8fbb55 not in the repo
+source shared:grubcraft/buildings/brood/great-hive/orm.png = d111f49b83aec8aa06100e973952b2d0 not in the repo
+source shared:grubcraft/buildings/brood/great-hive/emissive.png = a66c64ea04520dd0c6c60a81148aaa5f not in the repo
+source shared:grubcraft/buildings/brood/great-hive/final.glb = c821aec74f39717e6059b7c033c0b9a8 not in the repo
+source shared:grubcraft/buildings/brood/throne-hive/stage3.glb = 3cf1b75ab40a1bd729274dc126e3da2e not in the repo
+source shared:grubcraft/buildings/brood/throne-hive/albedo.png = 2f85ce704a8e8b8a8f441620e7cf590c not in the repo
+source shared:grubcraft/buildings/brood/throne-hive/team.png = f2ef48cc02a38602b202e84547b73e06 not in the repo
+source shared:grubcraft/buildings/brood/throne-hive/normal.png = fcbd04ae2e8391cc4bc2135c18873c99 not in the repo
+source shared:grubcraft/buildings/brood/throne-hive/orm.png = 6cd6b162a6c350941e38f01e10c476ca not in the repo
+source shared:grubcraft/buildings/brood/throne-hive/emissive.png = 595072e446261d3fc16ec61c6242b877 not in the repo
+source shared:grubcraft/buildings/brood/throne-hive/final.glb = eee782cd8e05e3716522f58383f64e35 not in the repo

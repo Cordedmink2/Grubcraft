@@ -412,7 +412,7 @@ struct Job {
 struct Jobs {
     // x: jobs, y: threads
     count: vec4<u32>,
-    job: array<Job, 256>,
+    job: array<Job, 1023>,
 };
 
 struct SoldierIn {
