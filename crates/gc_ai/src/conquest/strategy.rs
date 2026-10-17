@@ -32,6 +32,12 @@ pub struct Strategy {
     /// enemy's build (docs/18-ai.md, "Difficulty": "counters what it
     /// scouts").
     pub adapts: bool,
+    /// In a game of several rival sides, goes for the leader first, or
+    /// one that attacked it, and leaves the others be.
+    pub gangs_up: bool,
+    /// Plans timing pushes: arms for a set time, then goes with
+    /// everything.
+    pub pushes: bool,
     /// What its opening changes while it lasts (docs/18-ai.md, "Steward"):
     /// the usual play outside one, see [`Strategy::opening`].
     pub early: Early,
@@ -152,6 +158,8 @@ impl Strategy {
                 expand_percent: None,
                 scouting: Scouting::Never,
                 adapts: false,
+                gangs_up: false,
+                pushes: false,
                 early: Early::USUAL,
             },
             Difficulty::Veteran => Strategy {
@@ -163,6 +171,8 @@ impl Strategy {
                 expand_percent: Some(100),
                 scouting: Scouting::Early,
                 adapts: false,
+                gangs_up: false,
+                pushes: false,
                 early: Early::USUAL,
             },
             Difficulty::General => Strategy {
@@ -174,6 +184,8 @@ impl Strategy {
                 expand_percent: Some(100),
                 scouting: Scouting::Always,
                 adapts: true,
+                gangs_up: true,
+                pushes: false,
                 early: Early::USUAL,
             },
             Difficulty::Warlord => Strategy {
@@ -185,6 +197,8 @@ impl Strategy {
                 expand_percent: Some(70),
                 scouting: Scouting::Always,
                 adapts: true,
+                gangs_up: true,
+                pushes: true,
                 early: Early::USUAL,
             },
         }
@@ -208,6 +222,9 @@ mod tests {
         // An opening's own early expansion stays if it is sooner.
         let mut early = plan;
         early.early.expand_at = Some(50);
-        assert_eq!(early.answer(Some(Read::Walls), 100).early.expand_at, Some(50));
+        assert_eq!(
+            early.answer(Some(Read::Walls), 100).early.expand_at,
+            Some(50)
+        );
     }
 }

@@ -14,6 +14,7 @@ use gc_sim::structures::{Role, StructureHandle};
 use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
+use super::sovereign::{PUSH_LEAD, PUSH_WINDOW};
 use super::{Sense, spymaster};
 use crate::captain::{Captain, Ctx};
 use crate::difficulty::Knobs;
@@ -47,6 +48,8 @@ const ODDS_STRIKE: f32 = 0.5;
 /// Tiles of distance that cost as much as 1 of odds, when choosing whom to
 /// attack.
 const ODDS_PER_DISTANCE: f32 = 400.0;
+/// What going for the enemy its Sovereign chose is worth, in odds.
+const FOCUS_BONUS: f32 = 0.3;
 /// Supply short of its current cap that counts as capped.
 const CAP_SLACK: u32 = 8;
 /// Enemies within this many tiles of its buildings are a threat to home.
@@ -152,6 +155,9 @@ pub struct Marshal {
     /// is ready to set out (its wave gathered, or its supply full), as of
     /// its last think. Only for the AI lens to show.
     pub wave: Option<(u32, u32, bool)>,
+    /// The timing push it holds the army back for, as of its last think.
+    /// Only for the AI lens to show.
+    holding_for: Option<u32>,
 }
 
 impl Marshal {
@@ -176,6 +182,7 @@ impl Marshal {
             belief: Vec::new(),
             odds: Vec::new(),
             wave: None,
+            holding_for: None,
         }
     }
 
@@ -333,10 +340,15 @@ impl Marshal {
         // its supply is full and waiting gains nothing.
         let have = s.kit.supply_of(army.iter().copied());
         let want = self.wave_size(s, c.persona);
-        let ready = have >= want || (capped(s) && have >= FIRST_WAVE);
         let enough = have >= FIRST_WAVE;
+        // Before a timing push it holds the army back while it arms; at
+        // the push it goes with everything it has.
+        let (holding, pushing) = push_phase(s);
+        let ready =
+            (have >= want || (capped(s) && have >= FIRST_WAVE)) && !holding || pushing && enough;
         self.belief = spymaster::beliefs(s);
         self.wave = Some((have.round() as u32, want.ceil() as u32, ready));
+        self.holding_for = s.push.filter(|_| holding);
         // Armies brawling on the Heart and nobody holding it long is a
         // stalemate (games of four or more): an army that has fought for it
         // a long while goes to break a base instead, or to find one on a
@@ -411,7 +423,7 @@ impl Marshal {
                             army.len()
                         ),
                     )),
-                    None if regrouped => self
+                    None if regrouped && !holding => self
                         .attack_plan(s, c.persona, army, ready, enough)
                         .map(|(t, note)| (Goal::Attack(t), note)),
                     None => None,
@@ -537,12 +549,8 @@ impl Marshal {
     /// Where to attack: the enemy building it knows of nearest `from`,
     /// else the nearest enemy start it hasn't looked at.
     fn target(&mut self, s: &Sense, from: Vec2) -> Option<Vec2> {
-        let seen = enemy_buildings(s);
-        if let Some(b) = seen
-            .iter()
-            .min_by(|a, b| a.at.distance(from).total_cmp(&b.at.distance(from)))
-        {
-            return Some(b.at);
+        if let Some(at) = nearest(focused(s, enemy_buildings(s)), from) {
+            return Some(at);
         }
         let home = s.view.regiments.iter().filter(|r| r.owner == s.party);
         // Look at starts as regiments pass them.
@@ -595,17 +603,24 @@ impl Marshal {
         let Some((t, margin)) = odds else {
             // It doesn't weigh odds, or knows nothing of theirs to weigh:
             // the nearest building it knows of, or look for them.
+            let what = if push_phase(s).1 {
+                "Timing push"
+            } else {
+                "Attacking"
+            };
             return ready
                 .then(|| self.target(s, from))
                 .flatten()
-                .map(|t| (t, format!("Attacking with {} regiments", army.len())));
+                .map(|t| (t, format!("{what} with {} regiments", army.len())));
         };
         let needed = ODDS_NEEDED + ODDS_CAUTION * persona.caution();
-        let go = ready && (margin >= needed || full) || enough && margin >= ODDS_STRIKE;
+        let pushing = push_phase(s).1;
+        let go = ready && (margin >= needed || full || pushing) || enough && margin >= ODDS_STRIKE;
+        let what = if pushing { "Timing push" } else { "Attacking" };
         go.then(|| {
             (
                 t,
-                format!("Attacking with {} regiments: odds {margin:+.2}", army.len()),
+                format!("{what} with {} regiments: odds {margin:+.2}", army.len()),
             )
         })
     }
@@ -643,9 +658,18 @@ impl Marshal {
                 None => self.odds.push((o, margin, s.now)),
             }
         }
+        // The enemy its Sovereign goes for first scores higher: the others
+        // must be much weaker to be worth turning aside for.
         weighed
             .into_iter()
-            .map(|(_, at, margin)| (at, margin, margin - at.distance(from) / ODDS_PER_DISTANCE))
+            .map(|(o, at, margin)| {
+                let focus = if s.focus == Some(o) { FOCUS_BONUS } else { 0.0 };
+                (
+                    at,
+                    margin,
+                    margin + focus - at.distance(from) / ODDS_PER_DISTANCE,
+                )
+            })
             .max_by(|a, b| a.2.total_cmp(&b.2))
             .map(|(at, margin, _)| (at, margin))
     }
@@ -665,6 +689,12 @@ impl Marshal {
     pub fn plan_note(&self, now: u32) -> Option<String> {
         let wave = self.wave;
         match self.goal {
+            Goal::Gather if self.holding_for.is_some() => self.holding_for.map(|t| {
+                format!(
+                    "holding back to arm for its timing push at {}",
+                    crate::lens::clock(t)
+                )
+            }),
             Goal::Gather if now < self.regroup_until => Some(format!(
                 "regrouping after a costly attack, {}s more",
                 (self.regroup_until - now).div_ceil(TICKS_PER_SECOND)
@@ -786,6 +816,17 @@ fn usual_wave(s: &Sense, persona: &Personality) -> f32 {
     ((FIRST_WAVE + PER_MINUTE * minutes) * boldness).min(BIGGEST_WAVE)
 }
 
+/// Whether it holds its army back for a coming timing push, and whether
+/// the push is due now.
+fn push_phase(s: &Sense) -> (bool, bool) {
+    s.push.map_or((false, false), |t| {
+        (
+            s.now < t && s.now + PUSH_LEAD >= t,
+            s.now >= t && s.now < t + PUSH_WINDOW,
+        )
+    })
+}
+
 /// Whether its supply is used up to within a regiment or so of its cap:
 /// waiting for a bigger army gains nothing.
 fn capped(s: &Sense) -> bool {
@@ -797,9 +838,27 @@ fn capped(s: &Sense) -> bool {
 /// Where to raid: the nearest enemy main building it has seen, as
 /// breaking those is what wins.
 fn raid_target(s: &Sense, from: Vec2) -> Option<Vec2> {
-    enemy_buildings(s)
+    let mains = enemy_buildings(s)
         .into_iter()
-        .filter(|b| b.role == Role::Main)
+        .filter(|b| b.role == Role::Main);
+    nearest(focused(s, mains.collect()), from)
+}
+
+/// The buildings of the enemy its Sovereign goes for first, if it has
+/// seen any; else all of them.
+fn focused(s: &Sense, mut buildings: Vec<Sighted>) -> Vec<Sighted> {
+    if let Some(f) = s.focus
+        && buildings.iter().any(|b| b.owner == f)
+    {
+        buildings.retain(|b| b.owner == f);
+    }
+    buildings
+}
+
+/// Where the building nearest `from` stands.
+fn nearest(buildings: Vec<Sighted>, from: Vec2) -> Option<Vec2> {
+    buildings
+        .into_iter()
         .map(|b| b.at)
         .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
 }
@@ -845,15 +904,15 @@ fn rally_point(s: &Sense, home: Vec2) -> Vec2 {
 }
 
 /// An enemy building its side has seen and still stands.
-struct Sighted {
+pub(super) struct Sighted {
     handle: StructureHandle,
     at: Vec2,
-    role: Role,
-    owner: u8,
+    pub(super) role: Role,
+    pub(super) owner: u8,
 }
 
 /// Every enemy building its side has seen and still stands.
-fn enemy_buildings(s: &Sense) -> Vec<Sighted> {
+pub(super) fn enemy_buildings(s: &Sense) -> Vec<Sighted> {
     let Some(st) = s.world.structures() else {
         return Vec::new();
     };

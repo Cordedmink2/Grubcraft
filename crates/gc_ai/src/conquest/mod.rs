@@ -13,6 +13,7 @@ pub mod kit;
 pub mod marshal;
 pub mod opening;
 pub mod placing;
+pub mod sovereign;
 pub mod spymaster;
 pub mod steward;
 pub mod strategy;
@@ -28,6 +29,7 @@ use crate::terrain::Terrain;
 use kit::Kit;
 use marshal::Marshal;
 use opening::Opening;
+use sovereign::Sovereign;
 use steward::Steward;
 use strategy::Strategy;
 
@@ -51,6 +53,10 @@ pub struct Sense<'a> {
     /// How its level plays the long game, with its opening's early rules
     /// while that lasts.
     pub plan: Strategy,
+    /// The enemy its Sovereign goes for first.
+    pub focus: Option<u8>,
+    /// When its Sovereign's next timing push sets out.
+    pub push: Option<u32>,
 }
 
 /// A Conquest mind's economy and army.
@@ -58,6 +64,7 @@ pub struct Realm {
     kit: Arc<Kit>,
     pub steward: Steward,
     pub marshal: Marshal,
+    pub sovereign: Sovereign,
     clicks: Hands,
     /// The tick from which it expands once its seeps are full.
     expand_after: u32,
@@ -88,6 +95,7 @@ impl Realm {
             kit,
             steward: Steward::new(),
             marshal: Marshal::new(party, knobs.reaction_ticks, opm - economy),
+            sovereign: Sovereign::default(),
             clicks: Hands::new(party, knobs.reaction_ticks, economy, 3.0),
             expand_after,
             plan,
@@ -103,20 +111,6 @@ impl Realm {
             return None;
         }
         spymaster::to_answer(&self.reads)
-    }
-
-    /// An enemy by its faction if it knows it, else by its seat.
-    fn enemy_name(&self, owner: u8) -> String {
-        match self
-            .marshal
-            .belief
-            .iter()
-            .find(|b| b.owner == owner)
-            .and_then(|b| b.faction)
-        {
-            Some(f) => f.name().to_string(),
-            None => format!("player {}", owner + 1),
-        }
     }
 
     /// The opening it plays, while it lasts at tick `now`.
@@ -147,6 +141,8 @@ impl Realm {
             terrain: captain.terrain,
             expand_after: self.expand_after,
             plan: self.plan.opening(self.opening_at(captain.view.tick)),
+            focus: self.sovereign.focus.map(|(o, _)| o),
+            push: self.sovereign.push,
         };
         // A level that adapts reads its enemies' early builds and answers
         // the most pressing.
@@ -157,7 +153,7 @@ impl Realm {
                     sense.now,
                     format!(
                         "Scouted {}: {}; answering with {}",
-                        self.enemy_name(r.owner),
+                        enemy_name(&self.marshal.belief, r.owner),
                         r.read.name(),
                         r.read.answer_name()
                     ),
@@ -166,6 +162,15 @@ impl Realm {
         }
         let answer = self.answering(sense.now);
         sense.plan = sense.plan.answer(answer.map(|a| a.read), sense.now);
+        let belief = &self.marshal.belief;
+        for note in self
+            .sovereign
+            .think(&sense, captain.persona, |o| enemy_name(belief, o))
+        {
+            captain.journal.note(sense.now, note);
+        }
+        sense.focus = self.sovereign.focus.map(|(o, _)| o);
+        sense.push = self.sovereign.push;
         self.clicks.refresh(sense.now);
         self.steward
             .think(&sense, &mut self.clicks, self.marshal.rally);
@@ -231,7 +236,7 @@ impl Realm {
         let answer = self.answering(now).map_or(String::new(), |a| {
             format!(
                 "; answering {}'s {}",
-                self.enemy_name(a.owner),
+                enemy_name(&self.marshal.belief, a.owner),
                 a.read.name()
             )
         });
@@ -278,6 +283,32 @@ impl Realm {
         if let Some(note) = self.marshal.plan_note(now) {
             lines.push(line("plan", note));
         }
+        let mut aims = Vec::new();
+        if let Some((o, why)) = self.sovereign.focus {
+            let name = enemy_name(&self.marshal.belief, o);
+            aims.push(match why {
+                sovereign::Why::Leader => format!("going for {name} first: they lead"),
+                sovereign::Why::Grudge => format!("going for {name} first: they attacked us"),
+            });
+        }
+        if let Some(t) = self.sovereign.push {
+            aims.push(format!("timing push at {}", crate::lens::clock(t)));
+        }
+        if !aims.is_empty() {
+            lines.push(line("aims", aims.join("; ")));
+        }
         lines
+    }
+}
+
+/// An enemy by its faction if it knows it, else by its seat.
+fn enemy_name(belief: &[spymaster::Belief], owner: u8) -> String {
+    match belief
+        .iter()
+        .find(|b| b.owner == owner)
+        .and_then(|b| b.faction)
+    {
+        Some(f) => f.name().to_string(),
+        None => format!("player {}", owner + 1),
     }
 }

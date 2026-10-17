@@ -19,7 +19,7 @@ use glam::Vec2;
 use super::Sense;
 use super::kit::{EconomyStyle, KitBuilding, KitUnit};
 use super::strategy::Early;
-use super::{placing, spymaster};
+use super::{placing, sovereign, spymaster};
 use crate::orders::Hands as Clicks;
 use crate::perception::{Class, Seen, to_fx_vec, v2};
 
@@ -1100,12 +1100,19 @@ impl Steward {
         if !s.plan.weighs_odds {
             return false;
         }
+        // Before a timing push it arms for it.
+        let pushing_soon = s
+            .push
+            .is_some_and(|t| s.now < t && s.now + sovereign::PUSH_LEAD >= t);
         // At the supply limit there is nothing more to arm with.
         if s.world
             .bank(s.party)
             .is_some_and(|b| b.supply_used + ARMED_SLACK >= SUPPLY_LIMIT)
         {
             return false;
+        }
+        if pushing_soon {
+            return true;
         }
         let minutes = s.now as f32 / (60 * TICKS_PER_SECOND) as f32;
         let supply = s.kit.supply_of(look.army.iter().copied());
