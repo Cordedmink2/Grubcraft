@@ -377,7 +377,7 @@
                 melee_damage: 2,
                 charge_bonus: 5,
                 morale: 50,
-                ranged: Some((range: 30.0, damage: 4, reload: 4.0, accuracy: 31)),
+                ranged: Some((range: 30.0, damage: 4, reload: 4.0, accuracy: 32)),
             ),
         ),
         (

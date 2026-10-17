@@ -75,7 +75,7 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Hands | 1 | Worker | 50 / 0 | 1 | 12 | Clan Hall | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 20 | |
 | Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 28 × 8 | 8 | 3.0 | 60 | 0.75 / 0.85 | 25 / 45 / 2 | 20 | 60 | |
-| Yumi Ashigaru | 1 | Ranged | 130 / 0 | 3 | 22 | Dojo | 16 × 8 | 8 | 3.0 | 70 | 0.8 / 1.0 | 15 / 20 / 2 | 5 | 50 | 30, 4, 4.0 s, 31% |
+| Yumi Ashigaru | 1 | Ranged | 130 / 0 | 3 | 22 | Dojo | 16 × 8 | 8 | 3.0 | 70 | 0.8 / 1.0 | 15 / 20 / 2 | 5 | 50 | 30, 4, 4.0 s, 32% |
 | Battering Ram | 1 | Siege | 100 / 0 | 4 | 25 | Ember Workshop | 1 × 300 | 1 | 2.0 | 45 | 1.5 / 3.0 | 20 / 10 / 40 | 0 | 50 | |
 | Katana Samurai | 2 | Heavy | 160 / 40 | 5 | 30 | Dojo | 16 × 14 | 8 | 3.0 | 75 | 0.8 / 0.9 | 55 / 45 / 5 | 30 | 80 | |
 | Mounted Samurai | 2 | Cavalry | 180 / 40 | 5 | 32 | Stables | 8 × 30 | 4 | 6.5 | 140 | 1.4 / 2.0 | 45 / 30 / 6 | 80 | 70 | |
@@ -275,7 +275,7 @@ Few, costly crystal soldiers who blink across the map and bend light through eac
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Tuner | 1 | Worker | 60 / 0 | 1 | 14 | Spire | 1 × 30 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 10 / 2 | 0 | 30 | |
-| Shardlings | 1 | Light | 110 / 0 | 3 | 20 | Forge of Facets | 14 × 12 | 6 | 3.25 | 80 | 0.55 / 0.9 | 40 / 40 / 4 | 30 | 56 | |
+| Shardlings | 1 | Light | 110 / 0 | 3 | 20 | Forge of Facets | 14 × 12 | 6 | 3.25 | 80 | 0.6 / 0.9 | 40 / 40 / 4 | 30 | 56 | |
 | Prism Lancers | 1 | Ranged | 140 / 0 | 4 | 24 | Forge of Facets | 10 × 8 | 5 | 3.0 | 70 | 0.9 / 1.0 | 15 / 25 / 2 | 0 | 55 | 26, 6, 4.5 s, 45% |
 | Harmonic Walkers | 2 | Heavy | 170 / 50 | 5 | 32 | Forge of Facets | 6 × 32 | 3 | 2.75 | 50 | 1.6 / 1.8 | 40 / 50 / 7 | 20 | 70 | |
 | Glass Striders (new) | 2 | Cavalry | 175 / 45 | 5 | 32 | Forge of Facets | 6 × 26 | 3 | 7.0 | 150 | 1.4 / 2.0 | 45 / 30 / 6 | 70 | 60 | |
@@ -483,13 +483,13 @@ A Field Battle army is ten regiments from the faction's roster (see [06 · Game 
 | Bone Pikes | 20 × 8, speed 2.5, spacing 0.55, Def 50 | 19 × 7, speed 2.75, spacing 0.7, Def 55 (fewer hit points, harder to hit, looser block, a little quicker) |
 | Yumi Ashigaru | unchanged | |
 
-Two Veteran AIs, one per faction, on the generated map with every rule in play (high ground and fords, [05 · Combat](05-combat.md); woods and ambushes, [20 · Ambushes](20-ambushes.md); pushing through friends; lines that push; deployment; champions allowed, the lobby default), 384 battles a pair (seeds 1 to 192 and 2001 to 2192, ends swapped every battle); the first faction's wins, after the [Choir retune](#choir-retune) below:
+Two Veteran AIs, one per faction, on the generated map with every rule in play (high ground and fords, [05 · Combat](05-combat.md); woods and ambushes, [20 · Ambushes](20-ambushes.md); pushing through friends; lines that push; deployment; champions allowed, the lobby default), 384 battles a pair (seeds 1 to 192 and 2001 to 2192, ends swapped every battle); the first faction's wins, after the [third retune](#third-retune) below:
 
 | | Brood | Choir | Carrion Concord |
 |---|---|---|---|
-| **Ember Clans** | 50% | 52% | 46% |
+| **Ember Clans** | 50% | 52% | 50% |
 | **Brood** | | 44% | 52% |
-| **Choir** | | | 54.5% |
+| **Choir** | | | 49.5% |
 
 **Weapon room retune (2026-10-15).** Reach gave the spear regiments half their second rank as extra blows, so the Yari Ashigaru went from 30 / 45 / 3 to 27 / 45 / 2 and the Bone Pikes from 25 / 55 / 3 to 28 / 54 / 2. Before the retune the table read 50%, 47%, 61% / 45%, 53% / 53%, and after it 59%, 42%, 53% / 45%, 54% / 56%. On seeds 1 to 96 it now reads 60%, 51%, 52% / 36%, 52% / 54% (the Brood against the Choir was 36% there before the retune too). These knobs are steep too: a Bone Pikes defence of 53 or 55 instead of 54 moved the Concord's matchups by 10 to 20 points.
 
@@ -504,6 +504,8 @@ Seeds 1 to 96 gave every pair between 48% and 57% except the Brood against the C
 <a id="second-concord-retune"></a>**Second retune (2026-10-16).** Sticky melee contact ([#98](05-combat.md)) left the Brood at 34% to 45% against everyone, and the stronger General AI of stage 3 (#112) then put the Clans and the Choir ahead: on main the table read Clans 56.5 / 53 / 58, Brood v Choir 32.5, Brood v Concord 51, Choir v Concord 61.5. The pass moved Skitterlings defence 25 to 26 and morale 63 to 64, Shardlings morale 57 to 56, Bone Pikes defence 51 to 52 and charge bonus 10 to 14, Yari Ashigaru attack 26 to 25, Yumi Ashigaru models 17 to 16 and accuracy 30 to 31 (champions allowed, 384 battles a pair, every pair between 44% and 54.5%; each set of 192 between 42% and 56%). Steep knobs this time: Bone Pikes attack 27 instead of 28 gave the Concord 60% to 66% against the Brood and the Choir, Yumi accuracy 33 put the Clans 58% against the Choir, and Yumi models 17 moved the Clans against the Concord from 43% to 42.5% (noise). The Brood against the Choir (44%) and the Clans against the Concord (46%) are the two to watch.
 
 <a id="choir-retune"></a>**Choir retune (2026-10-15).** On 384 battles a pair (seeds 1 to 192 and 2001 to 2192, champions allowed) the Choir won all three of its pairs after the lines that push retune: the Clans won 45% against it, the Brood 42%, and it beat the Concord 55%. So the Shardlings went from morale 60 to 57 (they break a little sooner), which gives the table above: every pair 49% to 54%, and each set of 192 between 44% and 56%. Without champions (seeds 2001 to 2192) it reads 51%, 54%, 49% / 49%, 57% / 52%. A Shardling attack of 39 instead left the Clans 42% against the Choir on seeds 1 to 192, and a defence of 39 left the Choir 43% against the Concord there. Every generated map has woods (5% to 23% of the ground on these 384 maps, 10% to 30% counting tall grass). On bare maps (`AI_COVER=off`, seeds 2001 to 2192) the table reads 54%, 22%, 48% / 43%, 44% / 57%: in the open the Choir beats the Clans' archers easily, so hand-made maps with little cover will want their own look.
+
+<a id="third-retune"></a>**Third retune (2026-10-17).** Re-measured on main after the Brace and Fall back change (#108). Nothing had moved since the table of the second retune above (Clans 50 / 52 / 46, Brood 44 / 52, Choir against the Concord 54.5, averaging seeds 1 to 192 and 2001 to 2192, champions allowed). The Choir was ahead of the Brood (56%) and the Concord (54.5%), the Clans were behind the Concord (46%), and the woods penalty found in #38 is long gone (the Choir is level in woods). Two moves were made: Yumi Ashigaru accuracy 31 to 32 and Shardlings file spacing 0.55 to 0.6. The result is Clans 50 / 52 / 50, Brood against the Choir 44, Brood against the Concord 52 and Choir against the Concord 49.5, each set of 192 within about 6 points of that. A third set (seeds 5001 to 5192) read 53 / 53 / 40 / 42 / 52 / 46, so the Brood against the Choir (about 43%) and the Clans against the Concord (about 46% over three sets) are the two to watch; per-set noise is 4 to 6 points. On bare maps (`AI_COVER=off`), before then after: Clans against the Brood 67 to 71, Clans against the Choir 32 to 36, Clans against the Concord 60 to 65, Brood against the Choir 32 to 37, Brood against the Concord 48 to 48, Choir against the Concord 66 to 57. The Choir still wins 57% to 64% on bare ground, and the Clans win 65% to 71% against the Brood and the Concord. That is cover-dependent (archers and the narrow Shardling block): woods are the balance point because every generated map has them, and hand-made maps with little cover need their own look. No stat can even out both kinds of map. Tried and dropped (woods, both seed sets): Shardlings morale 55 (Choir v Concord 49 but Brood v Choir stayed 44); Skitterlings defence 27 (Brood v Choir 47 but Clans v Brood 44.5 and Brood v Concord 55 to 57); Skitterlings charge bonus 44 and Bone Pikes charge bonus 15 (no change); Shardlings spacing 0.5 (the Choir won more: Brood v Choir 40, Choir v Concord 58); Shardlings charge bonus 24 (Choir v Concord 46.6, Brood v Choir the same); Shardlings defence 39 (Brood v Choir 47.7 but Choir v Concord 43, and with morale 57 Brood v Choir fell back to 44.8). Units are stored in replays, so the goldens did not move.
 
 ### Weapon flags and mass
 

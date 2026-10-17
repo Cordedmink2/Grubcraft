@@ -257,7 +257,7 @@
                 files: 6,
                 speed: 3.25,
                 turn_rate: 80.0,
-                file_spacing: 0.55,
+                file_spacing: 0.6,
                 rank_spacing: 0.9,
                 melee_attack: 40,
                 melee_defence: 40,
