@@ -121,6 +121,7 @@ mod conquest_card;
 mod conquest_golden;
 mod credits;
 mod data;
+mod field;
 #[cfg(test)]
 mod goldens;
 mod hud;
@@ -259,8 +260,20 @@ const BANNER_SIZE: [f32; 3] = [0.12, 0.8, 0.7];
 const HIDDEN_FLAG: [f32; 3] = [0.9, 0.5, 0.12];
 const HIDDEN_LIFT: f32 = 3.4;
 const HIDDEN_COLOR: [u8; 4] = [95, 150, 70, 120];
-/// Fallen soldiers kept on the field at once.
-const MAX_CORPSES: usize = 8192;
+/// Fallen soldiers kept on the field at once: they lie there for the whole
+/// battle, and only on a field this full does the oldest sink away. A
+/// fallen soldier costs 24 bytes in the puppets and 36 to draw, so this is
+/// 768 KB and over five times the 6,052 soldiers of the grand battle
+/// (`field-8000pt-2v2`), the biggest we run. The renderer's own room for
+/// soldiers (65,536) is the real limit on what can be drawn.
+const MAX_CORPSES: usize = 32_768;
+/// Boxes kept free of the dead for what each frame draws after them.
+const BOX_ROOM_AFTER_CORPSES: usize = 16_384;
+
+/// A body lying down shows about a third of the height of one standing, so
+/// it is drawn this many levels of detail coarser than the living; past the
+/// coarsest model, a plain box (10 triangles).
+const CORPSE_LOD_BIAS: usize = 1;
 /// Dots along a selected regiment's route: spacing and size, in tiles.
 const ROUTE_DOT_SPACING: f32 = 1.2;
 const ROUTE_DOT: [f32; 3] = [0.22, 0.04, 0.22];
@@ -271,16 +284,8 @@ const BLOCKED_COLOR: [u8; 4] = [70, 16, 22, 0];
 const BLOCKED_MARK: [f32; 3] = [0.3, 0.04, 0.3];
 /// Raised a little so steep ground doesn't hide it.
 const BLOCKED_LIFT: f32 = 0.1;
-/// Arrows drawn per volley, and how far apart they fly, in tiles.
-const ARROWS_PER_VOLLEY: usize = 6;
-const ARROW_SPREAD: f32 = 1.6;
 /// Arrows leave the bow and land at about this height above the ground.
 const ARROW_HEIGHT: f32 = 0.9;
-/// Peak of an arrow's arc as a fraction of the distance it flies.
-const ARROW_ARC: f32 = 0.22;
-/// How far, in tiles, from its archers or from where it was aimed an arrow
-/// caught by the trees stops.
-const ARROW_CAUGHT_TILES: f32 = 1.0;
 
 /// Game speeds the sandbox steps through with - and =, and the normal one.
 const SPEEDS: [f32; 6] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0];
@@ -576,6 +581,8 @@ struct Running {
     alpha: f32,
     instances: Vec<BoxInstance>,
     puppets: Puppets,
+    /// Spent arrows stuck in the ground and the fallen.
+    arrows: field::Arrows,
     /// Soldier models; None if the embedded pack failed to load (boxes then).
     art: Option<Art>,
     /// Soldiers have given way to one banner block per regiment (zoomed out).
@@ -1235,6 +1242,7 @@ impl App {
             alpha: 1.0,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
+            arrows: field::Arrows::new(field::MAX_STUCK),
             art,
             commander: false,
             shooting: vec![false; capacities.regiments as usize],
@@ -2520,8 +2528,8 @@ impl Running {
             .attack_mark
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
             .map(|(h, _)| h);
+        let cull = self.renderer.cull(view_proj);
         if let Some(art) = &mut self.art {
-            let cull = self.renderer.cull(view_proj);
             art.begin(eye, forward, pixel_scale, cull);
         }
         self.mark_shooting();
@@ -2742,8 +2750,9 @@ impl Running {
                     });
                 });
         }
+        self.keep_arrows_in_the_fallen();
         if !self.commander && !viewing {
-            self.push_corpses();
+            self.push_corpses(&cull);
         }
         if let (Some(stage), Some(art)) = (&self.viewer, &mut self.art) {
             stage.push(art, &mut self.instances, color_of(&self.parties, HUMAN));
@@ -2780,6 +2789,12 @@ impl Running {
         }
         if self.show_blocked && !viewing {
             self.instances.extend_from_slice(&self.blocked_marks);
+        }
+        // Last, with what room is left: the field's oldest arrows are the
+        // least missed.
+        if !self.commander && !viewing {
+            self.arrows
+                .push(&cull, gc_render::MAX_BOX_INSTANCES, &mut self.instances);
         }
 
         if self.menu_open {
@@ -2880,6 +2895,7 @@ impl Running {
         if self.watching.is_none() {
             self.note_losses();
         }
+        self.leave_marks();
         let took = t0.elapsed();
         self.stats.tick_time += took;
         self.stats.tick_max = self.stats.tick_max.max(took);
@@ -3526,6 +3542,7 @@ impl Running {
         self.attack_mark = None;
         self.sim_clock = Duration::ZERO;
         self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
+        self.arrows = field::Arrows::new(field::MAX_STUCK);
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
@@ -3964,31 +3981,65 @@ impl Running {
         }
     }
 
-    /// Fallen soldiers lie flat in a darker shade of their team's colour.
-    fn push_corpses(&mut self) {
+    /// The fallen lie where they fell for the whole battle: in the death pose
+    /// of their model, or flat in a darker shade of their team's colour
+    /// (as a plain box) without one, or when far away. Only those the camera
+    /// (or the sun, for shadows) can see are drawn. A body lying down gets a
+    /// level of detail coarser than a man standing at the same spot, and
+    /// past the coarsest a box, so the dead of a whole battle cost little to
+    /// draw. The living take the renderer's room for soldiers first.
+    fn push_corpses(&mut self, cull: &gc_render::Cull) {
+        profile::zone!("corpses");
+        let living = self
+            .art
+            .as_ref()
+            .map_or(0, |a| a.buckets.iter().map(Vec::len).sum::<usize>());
+        let mut room = gc_render::MAX_SOLDIER_INSTANCES.saturating_sub(living);
         for c in self.puppets.corpses() {
             let [r, g, b] = color_of(&self.parties, c.owner);
+            let ground = self.heightmap.height_at(c.pos.x, c.pos.y);
             let model = self.units.models.get(c.unit as usize).copied().flatten();
+            // Whether the model path has already found him on screen.
+            let mut seen = false;
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
                 // The death clip, held on its last frame; models without
                 // one lie down in their idle pose once the blow lands.
                 if let Some((pose, flat)) = art.clips.death(model, c.age) {
-                    let ground = self.heightmap.height_at(c.pos.x, c.pos.y);
                     let at = glam::Vec3::new(c.pos.x, ground, c.pos.y);
                     let Some(lod) = art.view.place(art.heights[model], at) else {
                         continue;
                     };
-                    art.buckets[model * LODS + lod].push(SoldierInstance {
-                        pos: c.pos.to_array(),
-                        facing: c.facing.to_array(),
-                        frames: pose.rows,
-                        flags: models::pose_flags(pose, 0, flat),
-                        color: [r, g, b, 255],
-                        lift: -0.5 * c.sink,
-                        scale: 1.0,
-                    });
-                    continue;
+                    // Still standing, waiting for the blow, he is a man.
+                    let lod = lod
+                        + if c.age >= 0.0 && art.view.force.is_none() {
+                            CORPSE_LOD_BIAS
+                        } else {
+                            0
+                        };
+                    // Out of soldier room, he is drawn as a box instead.
+                    if lod < LODS && room > 0 {
+                        room -= 1;
+                        art.buckets[model * LODS + lod].push(SoldierInstance {
+                            pos: c.pos.to_array(),
+                            facing: c.facing.to_array(),
+                            frames: pose.rows,
+                            flags: models::pose_flags(pose, 0, flat),
+                            color: [r, g, b, 255],
+                            lift: -0.5 * c.sink,
+                            scale: 1.0,
+                        });
+                        continue;
+                    }
+                    seen = true;
                 }
+            }
+            if !seen && !cull.sees(glam::Vec3::new(c.pos.x, ground + 0.1, c.pos.y), 0.5) {
+                continue;
+            }
+            // Leave room for what is drawn after the dead (arrows in the air,
+            // routes, overlays).
+            if self.instances.len() >= gc_render::MAX_BOX_INSTANCES - BOX_ROOM_AFTER_CORPSES {
+                break;
             }
             self.instances.push(BoxInstance {
                 pos: c.pos.to_array(),
@@ -4000,51 +4051,88 @@ impl Running {
         }
     }
 
+    /// Arrows that killed soldiers who fell this frame stay in their bodies.
+    fn keep_arrows_in_the_fallen(&mut self) {
+        for l in self.puppets.drain_lodged() {
+            // On the ground the body is drawn on (`push_corpses`).
+            let ground = self.heightmap.height_at(l.pos.x, l.pos.y);
+            self.arrows.stick(l.pos, l.dir, ground, field::IN_BODY);
+        }
+    }
+
+    /// Put the marks of the tick just played on the field, as the
+    /// simulation told it (so a viewer who skipped ticks, catching up or
+    /// seeking, leaves none for them): the arrows of a volley that came down
+    /// stay in the ground, and in the soldiers it killed; a regiment wiped
+    /// out leaves its last soldiers where they stood.
+    fn leave_marks(&mut self) {
+        let terrain = self.world.terrain();
+        let in_wood = |p| terrain.cover(p) == gc_sim::Cover::Wood;
+        let (heightmap, water) = (&self.heightmap, self.heightmap.water_level());
+        // Arrows that come down in the water are lost, and so are those that
+        // land on a building (the picture has no roof or wall to stick them
+        // in, and a shaft showing through a wall would look wrong).
+        let world = &self.world;
+        let dry = |p: Vec2| {
+            let ground = heightmap.height_at(p.x, p.y);
+            (ground >= water && !buildings::covers(world, p)).then_some(ground)
+        };
+        // Where each volley came from, as the arrows in the air are drawn, so
+        // they come down where they were seen to. One pass over the volleys
+        // in a tick that loosed any.
+        if self
+            .world
+            .events()
+            .iter()
+            .any(|e| matches!(e, Event::Loosed { .. }))
+        {
+            for v in self.world.volleys() {
+                self.arrows.loosed(v.id, v.from, v.shots);
+            }
+        }
+        for e in self.world.events() {
+            match *e {
+                Event::Landed {
+                    volley,
+                    target,
+                    at,
+                    lost,
+                } => {
+                    if let Some(flight) = self.arrows.landed(volley, at, in_wood, dry) {
+                        self.puppets.shot_down(target, flight.dir, lost);
+                    }
+                }
+                Event::Losses { regiment, .. } if self.world.regiments.get(regiment).is_none() => {
+                    self.puppets.wiped(regiment);
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Volleys in flight: a few arrows each, arcing from the archers to where
     /// they aimed, at `now` (the simulation's time in ticks, interpolated).
     /// Arrows loosed out of a wood or into one stick in the branches as often
     /// as the simulation's trees catch them. Only a picture; the simulation
-    /// decides what they hit.
+    /// decides what they hit. Those that come down stay (`leave_marks`).
     fn push_arrows(&mut self, now: f32) {
         let terrain = self.world.terrain();
-        let catch = gc_sim::terrain::TREES_CATCH_PERCENT as f32 / 100.0;
         for v in self.world.volleys() {
-            let flight = (v.impact_tick - v.launch_tick).max(1) as f32;
-            let flown = ((now - v.launch_tick as f32) / flight).clamp(0.0, 1.0);
-            let (from, aim) = (from_fx_vec(v.from), from_fx_vec(v.aim));
-            let travel = aim - from;
-            let length = travel.length();
-            let dir = travel.normalize_or(Vec2::X);
-            let arc_at = |t: f32| (t * std::f32::consts::PI).sin() * length * ARROW_ARC;
-            let arc_flown = arc_at(flown);
-            let seed = v.launch_tick.wrapping_mul(0x9E37_79B9) ^ v.from.x.raw() as u32;
-            let out_of = terrain.cover(v.from) == gc_sim::Cover::Wood;
-            let into = terrain.cover(v.aim) == gc_sim::Cover::Wood;
-            for k in 0..ARROWS_PER_VOLLEY.min(v.shots as usize) {
+            let flight_ticks = (v.impact_tick - v.launch_tick).max(1) as f32;
+            let flown = ((now - v.launch_tick as f32) / flight_ticks).clamp(0.0, 1.0);
+            let flight = field::Flight::new(v.launch_tick, v.from, v.aim, |p| {
+                terrain.cover(p) == gc_sim::Cover::Wood
+            });
+            for k in 0..field::ARROWS_PER_VOLLEY.min(v.shots as usize) {
                 // A caught arrow stops in the branches over the archers or
                 // over its target, and hangs there until the volley lands.
-                let caught = |axis| (spread_hash(seed, k, axis) + 1.0) * 0.5 < catch;
-                let short = (ARROW_CAUGHT_TILES / length.max(f32::EPSILON)).min(0.5);
-                let stop = if out_of && caught(2) {
-                    short
-                } else if into && caught(3) {
-                    1.0 - short
-                } else {
-                    1.0
-                };
-                let (t, arc) = if flown > stop {
-                    (stop, arc_at(stop))
-                } else {
-                    (flown, arc_flown)
-                };
-                let spread = Vec2::new(spread_hash(seed, k, 0), spread_hash(seed, k, 1));
-                let pos = from.lerp(aim, t) + spread * ARROW_SPREAD;
+                let t = flown.min(flight.stop(k));
                 self.instances.push(BoxInstance {
-                    pos: pos.to_array(),
-                    facing: dir.to_array(),
+                    pos: flight.at(k, t).to_array(),
+                    facing: flight.dir.to_array(),
                     size: [0.05, 0.05, 0.7],
                     color: [70, 52, 36, 0],
-                    lift: ARROW_HEIGHT + arc,
+                    lift: ARROW_HEIGHT + flight.arc(t),
                 });
             }
         }
@@ -4180,6 +4268,7 @@ impl Running {
              routes  {} portals   {} waiting\n\
              ai      {} computer players   {ai_avg:6.3} ms a tick\n\
              render  {} draw calls   {}/{} chunks   {} boxes   {} soldiers   {}k triangles{dropped}\n\
+             field   {} fallen   {} arrows stuck\n\
              memory  process {process}   heap {:.1} MB   gpu {:.1} MB\n\
              heap    {}\n\
              data    {}\n\
@@ -4197,6 +4286,8 @@ impl Running {
             rs.boxes_drawn,
             rs.soldiers_drawn,
             rs.triangles / 1000,
+            self.puppets.corpse_count(),
+            self.arrows.len(),
             mb(tagged_alloc::total_live_bytes()),
             mb(self.renderer.gpu_bytes() as usize),
             heap_tags.join("  "),
@@ -4854,9 +4945,11 @@ impl Running {
         let mem = gc_platform::memory::process_memory();
         let rs = self.renderer.stats();
         format!(
-            "Grubcraft{} · {fps:.0} fps · sim {tick_ms:.3} ms/tick · {} regiments · {}/{} chunks · {} MB process · {} MB heap · {} MB gpu",
+            "Grubcraft{} · {fps:.0} fps · sim {tick_ms:.3} ms/tick · {} regiments · {} fallen · {} arrows stuck · {}/{} chunks · {} MB process · {} MB heap · {} MB gpu",
             self.speed_label(),
             self.world.regiments.len(),
+            self.puppets.corpse_count(),
+            self.arrows.len(),
             rs.chunks_drawn,
             rs.chunks_total,
             mem.current
@@ -5032,7 +5125,7 @@ fn fx_vec(v: Vec2) -> gc_fixed::FxVec2 {
 
 /// The number on a digit key, for control groups.
 /// A stable value in [-1, 1) per volley, arrow and axis.
-fn spread_hash(seed: u32, k: usize, axis: u32) -> f32 {
+pub(crate) fn spread_hash(seed: u32, k: usize, axis: u32) -> f32 {
     let mut x = seed ^ (k as u32).wrapping_mul(0x85EB_CA6B) ^ axis.wrapping_mul(0xC2B2_AE35);
     x ^= x >> 15;
     x = x.wrapping_mul(0x2C1B_3C6D);
