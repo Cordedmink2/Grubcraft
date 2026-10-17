@@ -13,6 +13,7 @@
 mod debug_font;
 mod overlay;
 mod post;
+mod scenery;
 mod shadows;
 mod soldiers;
 
@@ -57,6 +58,7 @@ pub const MAX_BOX_INSTANCES: usize = 65_536;
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
+pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance};
 pub use soldiers::{MAX_SOLDIER_INSTANCES, SoldierBatch, SoldierInstance};
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 use shadows::{SHADOW_BIAS, SHADOW_FORMAT, SHADOW_SIZE};
@@ -170,6 +172,9 @@ pub struct RenderStats {
     pub chunks_total: u32,
     pub boxes_drawn: u32,
     pub soldiers_drawn: u32,
+    /// Scenery instances drawn in the world pass (trees, bushes, grass, rocks).
+    pub scenery_drawn: u32,
+    /// Triangles drawn in the world pass, soldiers and scenery.
     pub triangles: u64,
     /// Boxes and soldiers asked for beyond the fixed instance buffers this
     /// frame, so left undrawn. Zero unless a match outgrows the capacity.
@@ -202,6 +207,14 @@ impl Cull {
             camera: unit_planes(frustum_planes(camera)),
             sun: sun.map(|m| unit_planes(frustum_planes(m))),
         }
+    }
+
+    /// Whether a sphere of `radius` around `center` touches the camera's
+    /// view (not only the sun's).
+    pub fn on_screen(&self, center: Vec3, radius: f32) -> bool {
+        self.camera
+            .iter()
+            .all(|p| p.truncate().dot(center) + p.w >= -radius)
     }
 
     /// Whether a sphere of `radius` around `center` touches what is drawn.
@@ -297,6 +310,7 @@ pub struct Renderer {
     chunk_levels: Vec<u8>,
     overlay: OverlayGpu,
     soldiers: soldiers::SoldiersGpu,
+    scenery: scenery::SceneryGpu,
     /// Menu and lobby screens, drawn under the dev overlay.
     ui: OverlayGpu,
 }
@@ -596,6 +610,7 @@ impl Renderer {
         let block_shadow_pipeline = block(Target::Shadow);
 
         let soldiers = soldiers::make(&device, &bind_group_layout, &shader, hdr_format);
+        let scenery = scenery::make(&device, &layout, hdr_format);
         let shadow_texture = |label, side| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
@@ -677,6 +692,7 @@ impl Renderer {
             + chunk_indices.size()
             + box_instances.size()
             + soldiers.instances.size()
+            + scenery.instance_bytes()
             + chunk_instances.size();
 
         Ok(Renderer {
@@ -717,6 +733,7 @@ impl Renderer {
             chunk_levels: Vec::new(),
             overlay,
             soldiers,
+            scenery,
             ui,
         })
     }
@@ -787,6 +804,7 @@ impl Renderer {
             + self.post_targets.gpu_bytes
             + self.overlay.gpu_bytes
             + self.ui.gpu_bytes
+            + self.scenery.model_bytes()
             + self
                 .soldiers
                 .models
@@ -818,6 +836,19 @@ impl Renderer {
             models,
         ));
         Ok(())
+    }
+
+    /// Upload the scenery models (trees, bushes, grass, rocks) once.
+    pub fn set_scenery(&mut self, scenery: &gc_assets::scenery::Scenery<'_>) -> Result<(), String> {
+        self.scenery.upload(&self.device, &self.queue, scenery)
+    }
+
+    /// Hand over the frame's scenery: `instances` in runs, each run a batch
+    /// (a model at a level of detail) the next [`Renderer::render`] draws.
+    /// Instances past [`MAX_SCENERY_INSTANCES`] are left out and counted in
+    /// [`RenderStats::dropped`]. Does nothing before [`Renderer::set_scenery`].
+    pub fn set_scenery_frame(&mut self, instances: &[SceneryInstance], batches: &[SceneryBatch]) {
+        self.scenery.set_frame(&self.queue, instances, batches);
     }
 
     /// Show `text` in the dev overlay (lines separated by `\n`), or hide it
@@ -1247,7 +1278,7 @@ impl Renderer {
         dropped += self
             .soldiers
             .prepare(&self.device, &self.queue, soldiers.len(), batches);
-        let (mut soldiers_drawn, mut triangles) = (0, 0);
+        let (mut soldiers_drawn, mut triangles, mut scenery_drawn) = (0, 0, 0);
 
         // The overlay draws in the composite pass, which a bare frame skips.
         let overlay_visible = !bare && self.overlay.count > 0;
@@ -1335,6 +1366,9 @@ impl Renderer {
             });
             pass.set_bind_group(0, &terrain.shadow_bind_group, &[]);
             draw_calls += draw_terrain(&mut pass, true);
+            if self.options.draw_blocks {
+                draw_calls += self.scenery.draw(&mut pass, true).0;
+            }
             draw_calls += self.soldiers.draw(&mut pass, true).0;
             draw_calls += draw_boxes(&mut pass, &self.block_shadow_pipeline);
         }
@@ -1369,10 +1403,17 @@ impl Renderer {
             });
             pass.set_bind_group(0, &terrain.bind_group, &[]);
             draw_calls += draw_terrain(&mut pass, false);
+            let (calls, scenery_instances, scenery_tris) = if self.options.draw_blocks {
+                self.scenery.draw(&mut pass, false)
+            } else {
+                (0, 0, 0)
+            };
+            draw_calls += calls;
+            scenery_drawn = scenery_instances;
             let (calls, drawn, tris) = self.soldiers.draw(&mut pass, false);
             draw_calls += calls;
             soldiers_drawn = drawn;
-            triangles = tris;
+            triangles = tris + scenery_tris;
             draw_calls += draw_boxes(&mut pass, &self.block_pipeline);
             drop(pass);
             draw_calls += self.post.glow(&mut encoder, &self.post_targets);
@@ -1434,8 +1475,9 @@ impl Renderer {
             chunks_total: n * n,
             boxes_drawn: boxes.len() as u32,
             soldiers_drawn,
+            scenery_drawn,
             triangles,
-            dropped: dropped as u32,
+            dropped: dropped as u32 + self.scenery.dropped(),
         };
         FrameOutcome::Presented
     }
@@ -1981,6 +2023,7 @@ mod tests {
             include_str!("shaders/world.wgsl"),
             include_str!("shaders/overlay.wgsl"),
             include_str!("shaders/post.wgsl"),
+            scenery::shader_source().as_str(),
         ] {
             let module = naga::front::wgsl::parse_str(src)
                 .unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));

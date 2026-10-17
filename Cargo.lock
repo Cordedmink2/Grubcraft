@@ -897,6 +897,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gc_scenebake"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "gc_assets",
+ "glam",
+ "gltf",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "gc_sfx"
 version = "0.1.0"
 dependencies = [

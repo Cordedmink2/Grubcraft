@@ -1,0 +1,35 @@
+// The scenery models for gc_scenebake (see docs/25-scenery-models.md): trees,
+// bushes, grass and rocks, each a glb with four levels of detail
+// (<name>_LOD0 to <name>_LOD3) painted in vertex colours. The order here is
+// the order in assets/scenery.pak. `sway` is how far, in tiles, the top of
+// the model moves in a gust at scale 1.
+(
+    models: [
+        (name: "oak-a", source: "shared:grubcraft/scenery/oak-a/oak-a.glb", family: "tree", sway: 0.12),
+        (name: "oak-b", source: "shared:grubcraft/scenery/oak-b/oak-b.glb", family: "tree", sway: 0.12),
+        (name: "pine-a", source: "shared:grubcraft/scenery/pine-a/pine-a.glb", family: "tree", sway: 0.12),
+        (name: "pine-b", source: "shared:grubcraft/scenery/pine-b/pine-b.glb", family: "tree", sway: 0.12),
+        (name: "thicket-fir", source: "shared:grubcraft/scenery/thicket-fir/thicket-fir.glb", family: "tree", sway: 0.12),
+        (name: "birch", source: "shared:grubcraft/scenery/birch/birch.glb", family: "tree", sway: 0.12),
+        (name: "willow", source: "shared:grubcraft/scenery/willow/willow.glb", family: "tree", sway: 0.12),
+        (name: "snag", source: "shared:grubcraft/scenery/snag/snag.glb", family: "tree", sway: 0.12),
+        (name: "crag-pine", source: "shared:grubcraft/scenery/crag-pine/crag-pine.glb", family: "tree", sway: 0.12),
+        (name: "bone-spire", source: "shared:grubcraft/scenery/bone-spire/bone-spire.glb", family: "tree", sway: 0.12),
+        (name: "leafy-bush", source: "shared:grubcraft/scenery/leafy-bush/leafy-bush.glb", family: "bush", sway: 0.05),
+        (name: "fern", source: "shared:grubcraft/scenery/fern/fern.glb", family: "bush", sway: 0.05),
+        (name: "heather", source: "shared:grubcraft/scenery/heather/heather.glb", family: "bush", sway: 0.05),
+        (name: "thorn-scrub", source: "shared:grubcraft/scenery/thorn-scrub/thorn-scrub.glb", family: "bush", sway: 0.05),
+        (name: "glowcap", source: "shared:grubcraft/scenery/glowcap/glowcap.glb", family: "bush", sway: 0.05),
+        (name: "grass-clump", source: "shared:grubcraft/scenery/grass-clump/grass-clump.glb", family: "grass", sway: 0.1),
+        (name: "tall-grass", source: "shared:grubcraft/scenery/tall-grass/tall-grass.glb", family: "grass", sway: 0.1),
+        (name: "reeds", source: "shared:grubcraft/scenery/reeds/reeds.glb", family: "grass", sway: 0.1),
+        (name: "dry-grass", source: "shared:grubcraft/scenery/dry-grass/dry-grass.glb", family: "grass", sway: 0.1),
+        (name: "wildflowers", source: "shared:grubcraft/scenery/wildflowers/wildflowers.glb", family: "grass", sway: 0.1),
+        (name: "pebbles", source: "shared:grubcraft/scenery/pebbles/pebbles.glb", family: "rock", sway: 0.0),
+        (name: "boulder", source: "shared:grubcraft/scenery/boulder/boulder.glb", family: "rock", sway: 0.0),
+        (name: "mossy-boulder", source: "shared:grubcraft/scenery/mossy-boulder/mossy-boulder.glb", family: "rock", sway: 0.0),
+        (name: "crag", source: "shared:grubcraft/scenery/crag/crag.glb", family: "rock", sway: 0.0),
+        (name: "slab", source: "shared:grubcraft/scenery/slab/slab.glb", family: "rock", sway: 0.0),
+        (name: "bone-ribs", source: "shared:grubcraft/scenery/bone-ribs/bone-ribs.glb", family: "rock", sway: 0.0),
+    ],
+)

@@ -640,6 +640,8 @@ struct Running {
     show_blocked: bool,
     /// The map's trees and tall grass.
     scenery: scenery::Scenery,
+    /// Where the scenery pack's models are, by name.
+    scenery_models: scenery::SceneryModels,
     /// The models on show instead of a match, with `--showroom`.
     showroom: Option<showroom::Showroom>,
     /// The unit viewer, over the main menu, while it is open.
@@ -1107,14 +1109,17 @@ impl App {
         let capacities = Capacities::default();
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
         let blocked_marks = blocked_marks(&nav, heightmap.tiles);
+        let scenery_models = scenery::load(&mut renderer).unwrap_or_else(|e| {
+            logln!("grubcraft: scenery off: {e}");
+            scenery::SceneryModels::default()
+        });
         let scenery = tagged_alloc::scope(Tag::Render, || {
             // The showroom stands on bare ground, with no trees in the way.
-            let (cover, thicket) = if opts.showroom.is_some() {
-                (&[][..], &[][..])
+            if opts.showroom.is_some() {
+                scenery::Scenery::empty(&scenery_models)
             } else {
-                (&heightmap.cover[..], &heightmap.thicket[..])
-            };
-            scenery::Scenery::new(cover, thicket, heightmap.tiles, opts.seed)
+                scenery::Scenery::new(&heightmap, opts.seed, &scenery_models)
+            }
         });
         let building_table = buildings::Table::new(&game_data);
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
@@ -1289,6 +1294,7 @@ impl App {
             blocked_marks,
             show_blocked: false,
             scenery,
+            scenery_models,
             showroom,
             viewer: None,
             viewer_scroll: 0.0,
@@ -2534,13 +2540,10 @@ impl Running {
             art.begin(eye, forward, pixel_scale, cull);
         }
         self.mark_shooting();
-        if !viewing {
-            self.scenery.push(
-                scene_focus,
-                scene_distance,
-                !self.commander,
-                &mut self.instances,
-            );
+        if viewing {
+            self.renderer.set_scenery_frame(&[], &[]);
+        } else {
+            self.push_scenery(scene_focus, scene_distance, &cull);
         }
         let viewer = self.sandbox.side;
         if let Some(zone) = self.world.deploy_zone(viewer).filter(|_| !viewing) {
@@ -3379,12 +3382,7 @@ impl Running {
         // gets its trees back.
         if self.showroom.take().is_some() {
             self.scenery = tagged_alloc::scope(Tag::Render, || {
-                scenery::Scenery::new(
-                    &self.heightmap.cover,
-                    &self.heightmap.thicket,
-                    self.heightmap.tiles,
-                    self.seed,
-                )
+                scenery::Scenery::new(&self.heightmap, self.seed, &self.scenery_models)
             });
         }
         // The last battle's recording is done.
@@ -3670,12 +3668,7 @@ impl Running {
             MapKey::Conquest { choice, seed } => seed ^ choice as u64,
         };
         self.scenery = tagged_alloc::scope(Tag::Render, || {
-            scenery::Scenery::new(
-                &self.heightmap.cover,
-                &self.heightmap.thicket,
-                self.heightmap.tiles,
-                trees,
-            )
+            scenery::Scenery::new(&self.heightmap, trees, &self.scenery_models)
         });
     }
 
@@ -4611,6 +4604,20 @@ impl Running {
         }
         buildings::push_nodes(&self.world, &mut self.instances);
         buildings::push_heart(&self.world, parties, &mut self.instances);
+    }
+
+    /// Hand the renderer the scenery near the camera, minus what stands
+    /// under a building the viewer can see.
+    fn push_scenery(&mut self, focus: Vec2, distance: f32, cull: &gc_render::Cull) {
+        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
+        let rects = self.world.structures().into_iter().flat_map(|all| {
+            all.iter()
+                .filter(shown)
+                .map(|s| (s.tile.0, s.tile.1, s.width, s.depth))
+        });
+        self.scenery.set_footprints(rects);
+        let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
+        self.renderer.set_scenery_frame(instances, batches);
     }
 
     /// A plate under the cursor the size of the regiment B would place.
