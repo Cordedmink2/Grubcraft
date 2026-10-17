@@ -3210,13 +3210,15 @@ impl Running {
                 }
             }
             MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
-                Ok(r) => match replays::unplayable(&r.info(), self.unit_types(), self.capacities) {
-                    None => {
-                        logln!("grubcraft: watching {}", path.display());
-                        self.start_match(MatchKind::Replay(Box::new(r)));
+                Ok(r) => {
+                    match replays::unplayable(&r.info(), &self.unit_types(), self.capacities) {
+                        None => {
+                            logln!("grubcraft: watching {}", path.display());
+                            self.start_match(MatchKind::Replay(Box::new(r)));
+                        }
+                        Some(why) => self.menu.tell(why),
                     }
-                    Some(why) => self.menu.tell(why),
-                },
+                }
                 Err(e) => self.menu.tell(format!("Can't open that replay: {e}")),
             },
             MenuAction::StartMatch(setup) => {
@@ -3625,18 +3627,22 @@ impl Running {
         std::mem::swap(&mut self.units, &mut self.other_units);
     }
 
-    /// How many regiment types each table has, which a replay must match.
+    /// Each table's regiment types by name, which a replay must match.
     fn unit_types(&self) -> replays::UnitTypes {
-        let (here, other) = (
-            self.units.data_stats.len(),
-            self.other_units.data_stats.len(),
-        );
-        let (field, conquest) = if self.conquest_units {
-            (other, here)
+        replays::UnitTypes {
+            field: self.unit_names(false).to_vec(),
+            conquest: self.unit_names(true).to_vec(),
+        }
+    }
+
+    /// The names of the regiment types of Conquest's table, or the Field
+    /// Battle one's.
+    fn unit_names(&self, conquest: bool) -> &[String] {
+        if conquest == self.conquest_units {
+            &self.units.names
         } else {
-            (here, other)
-        };
-        replays::UnitTypes { field, conquest }
+            &self.other_units.names
+        }
     }
 
     /// Make the lobby map `key` names and put it on screen.
@@ -3715,6 +3721,9 @@ impl Running {
         self.parties = parties;
         self.sandbox.side = me;
         self.battle = Some(Battle::new(Some(me)));
+        let unit_names = self
+            .unit_names(setup.settings.mode == gc_ui::lobby::GameMode::Conquest)
+            .to_vec();
         if let Some(rec) = &mut self.recording {
             let header = rec.recorder.header_mut();
             header.build = online::version();
@@ -3722,6 +3731,7 @@ impl Running {
             header.players = replays::players(&self.parties);
             header.recorded_by = Some(me);
             header.map = Some(setup.settings.map as u8);
+            header.unit_names = unit_names;
         }
     }
 
