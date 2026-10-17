@@ -48,6 +48,8 @@ const ODDS_STRIKE: f32 = 0.5;
 /// Tiles of distance that cost as much as 1 of odds, when choosing whom to
 /// attack.
 const ODDS_PER_DISTANCE: f32 = 400.0;
+/// The odds below which a timing push stays home.
+const PUSH_ODDS: f32 = -0.15;
 /// What going for the enemy its Sovereign chose is worth, in odds.
 const FOCUS_BONUS: f32 = 0.3;
 /// Supply short of its current cap that counts as capped.
@@ -423,7 +425,7 @@ impl Marshal {
                             army.len()
                         ),
                     )),
-                    None if regrouped && !holding => self
+                    None if regrouped => self
                         .attack_plan(s, c.persona, army, ready, enough)
                         .map(|(t, note)| (Goal::Attack(t), note)),
                     None => None,
@@ -615,7 +617,9 @@ impl Marshal {
         };
         let needed = ODDS_NEEDED + ODDS_CAUTION * persona.caution();
         let pushing = push_phase(s).1;
-        let go = ready && (margin >= needed || full || pushing) || enough && margin >= ODDS_STRIKE;
+        // A push goes unless the odds are hopeless.
+        let go = ready && (margin >= needed || full || pushing && margin >= PUSH_ODDS)
+            || enough && margin >= ODDS_STRIKE;
         let what = if pushing { "Timing push" } else { "Attacking" };
         go.then(|| {
             (
