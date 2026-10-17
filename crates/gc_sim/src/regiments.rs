@@ -53,7 +53,7 @@ const TURN_BEFORE_MARCH: i32 = 0x2000;
 const SHUFFLE_DISTANCE: Fx = Fx::from_int(4);
 
 /// Ticks between looks at whether the way ahead has cleared, while queuing.
-const RECHECK: u16 = 4;
+const RECHECK: u8 = 4;
 /// The most ticks a regiment marches without looking for friends in its
 /// way (see `clear`).
 const CLEAR_TICKS: u8 = 8;
@@ -233,10 +233,13 @@ regiment_fields! {
     /// Tick the regiment last broke and ran, plus one (0: never).
     last_rout: u32 = 0,
     /// Ticks spent waiting behind a friendly block in its way (see
-    /// [`crate::combat::Combat::friend_in_the_way`]); 0 while marching freely.
+    /// [`crate::combat::Combat::friend_in_the_way`]), counted RECHECK at a
+    /// time at each look; 0 while marching freely.
     held: u16 = 0,
-    /// Ticks it can march before looking for friends in its way again:
-    /// none holding their ground were near enough to reach sooner.
+    /// Ticks before it looks for friends in its way again (see
+    /// `Regiments::step_movement`): standing, while it waits behind one;
+    /// marching, one after a look, or more while none holding their ground
+    /// were near enough to reach sooner.
     clear: u8 = 0,
     /// How deep the block overlaps its friends, in tiles (see
     /// `Combat::crowding`).
@@ -882,14 +885,13 @@ impl Regiments {
                 // A friendly block holding its ground in the way, where the
                 // ground leaves no room beside it (a ford, a pass): wait
                 // behind it. In the open, blocks still pass through.
-                // A regiment already waiting looks again only every few
-                // ticks.
-                if (1..PATIENCE).contains(&self.held[i]) && !self.held[i].is_multiple_of(RECHECK) {
-                    self.held[i] += 1;
-                    continue;
-                }
+                // Marching, it looks at most every other tick (`clear`);
+                // waiting, every RECHECK ticks, standing in between.
                 if self.clear[i] > 0 {
                     self.clear[i] -= 1;
+                    if (1..PATIENCE).contains(&self.held[i]) {
+                        continue;
+                    }
                 } else if !nav.open_around(here, OPEN_GROUND) {
                     let found = combat.friend_in_the_way(self, units, stances, i, next, dir);
                     // Following a friend marching on ahead (its route goes
@@ -903,16 +905,23 @@ impl Regiments {
                     match found {
                         Ok(j) if following(j) => {
                             self.held[i] = self.held[i].max(1);
+                            self.clear[i] = RECHECK - 1;
                             continue;
                         }
                         Ok(j) if !combat.room_beside(self, units, nav, i, j, dir) => {
-                            self.held[i] = self.held[i].saturating_add(1);
+                            // Patience runs for the ticks until it looks
+                            // again; once it has run out it looks every
+                            // tick, standing only while it must.
+                            self.held[i] = self.held[i].saturating_add(u16::from(RECHECK));
+                            if self.held[i] < PATIENCE {
+                                self.clear[i] = RECHECK - 1;
+                            }
                             continue;
                         }
-                        Ok(_) => {}
+                        Ok(_) => self.clear[i] = 1,
                         Err(gap) => {
                             let ticks = gap.raw() / step.raw().max(1);
-                            self.clear[i] = ticks.clamp(0, i32::from(CLEAR_TICKS)) as u8;
+                            self.clear[i] = ticks.clamp(1, i32::from(CLEAR_TICKS)) as u8;
                         }
                     }
                 }

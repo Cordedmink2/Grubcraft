@@ -1,4 +1,4 @@
-//! The Conquest golden replay (`replays/conquest-ribcage-1v1.gcr`): five
+//! The Conquest golden replay (`replays/conquest-ribcage-1v1.gcr`): six
 //! minutes on Ribcage Pass, set up as the lobby sets up Conquest, between
 //! two scripted sides that use every Conquest order. Each gathers, trains
 //! workers (and takes one back off the queue), lays a building that trains
@@ -30,7 +30,7 @@ use crate::conquest::{self, Foot};
 
 pub const NAME: &str = "conquest-ribcage-1v1";
 const SEED: u64 = 0x00C0_9E57;
-const MINUTES: u32 = 5;
+const MINUTES: u32 = 6;
 const FACTIONS: [Faction; 2] = [Faction::EmberClans, Faction::CarrionConcord];
 
 /// When each side does what, in ticks.
@@ -41,7 +41,7 @@ const LAY_FROM: u32 = 20 * TICKS_PER_SECOND;
 const SPARE_FROM: u32 = 80 * TICKS_PER_SECOND;
 const UPGRADE_FROM: u32 = 120 * TICKS_PER_SECOND;
 const MARCH_AT: u32 = 150 * TICKS_PER_SECOND;
-const REMOVE_AT: u32 = 295 * TICKS_PER_SECOND;
+const REMOVE_AT: u32 = (MINUTES * 60 - 5) * TICKS_PER_SECOND;
 /// Soldiers and workers each side trains up to.
 const FIGHTERS: usize = 6;
 const WORKERS: usize = 8;
@@ -454,8 +454,13 @@ impl Match {
             let target = self.main_of(1 - p);
             let seen = target.is_some_and(|m| m.seen_by(p));
             if let Some(target) = target.filter(|_| seen || t.is_multiple_of(TICKS_PER_SECOND)) {
-                let fighters = (self.world.regiments.iter())
-                    .filter(|r| r.owner == p && r.unit == k.fighter && k.fighter != k.worker);
+                // Routers take no orders.
+                let fighters = (self.world.regiments.iter()).filter(|r| {
+                    r.owner == p
+                        && r.unit == k.fighter
+                        && k.fighter != k.worker
+                        && !r.morale.broken()
+                });
                 for r in fighters {
                     if seen {
                         out.push(order(Command::AttackStructure {

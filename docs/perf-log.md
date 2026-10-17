@@ -2,6 +2,28 @@
 
 Before and after numbers from each milestone's performance pass ([12 · Performance](12-performance.md#the-loop)). Newest first.
 
+## Fewer looks for friends in the way (2026-10-17)
+
+CI's macOS runner failed the drill's 2 ms p99 budget a few times after the last pass (2.34 to 2.76 ms; the same code has also passed there at 1.2 ms). In the cloud container, the drill's slowest ticks fall in its busiest stretch (ticks 800 to 2,200, blocks crowding through the passes). There a tick paid for about 235 friend-in-the-way checks, each visiting about 50 regiments in the spatial hash, on top of a full route-search budget.
+
+- **Same results, less work:** the overlap test stops at the first axis that rules a pair out (`Block::overlap_over`, also used by crowding); the hash scan's already-seen test stays inline in the loop and walks only the owner slots asked for; each friend's distance is found once for both the range and circle tests. Every hash is unchanged by these: about 5% of the drill's instructions.
+- **Fewer checks (changes play, `SIM_VERSION` 12):** a regiment marching in tight ground looks at most every other tick. One waiting behind a friend, or following a friend marching on ahead, looks every 4 ticks; before, a follower that had waited once looked every tick. That halved the checks in the busy stretch (235 to 117 a tick). The ford test crosses as cleanly as before (21 fords: 0.006% of soldiers on water, none stuck; 968 ticks on average against 958).
+
+| Scenario (bench gate, instructions) | Before | After |
+|---|---|---|
+| `drill` (150 a player, 1,200 ticks) | 7.08 G | 6.20 G (−12%) |
+| `pathing-storm` | 3.01 G | 2.80 G (−7%) |
+| `field-8000pt-2v2` | 8.42 G | 8.04 G (−5%) |
+
+| Drill, cloud container, slowest tick of each across 3 to 5 runs | Before | After |
+|---|---|---|
+| p99 | 1.67 to 1.74 ms | 1.45 to 1.5 ms |
+| Mean tick, busy stretch | 1.34 ms | 1.13 ms |
+
+**Battle tests that are chaotic:** a fifth of a tile's difference in one regiment's march early on decides some battles. The AI's "holding the ford pays off" test now fights 8 seeds per personality: it held the ford 59 times in 64 before this change and 58 after, against the single seed the test used to run. The scripted Conquest golden no longer orders routing soldiers. It now runs 6 minutes, so its soldiers reach the other side's base even after losing a fight on the way.
+
+**Left for later:** the route-search budget (32,000 work units a tick) is the other half of the slowest ticks. Halving it made the drill no faster, because waiting regiments cost more in other ways.
+
 ## Room for the whole block (2026-10-17)
 
 Routes now keep each block's whole width clear of deep water and cliffs, cost more near them, are pulled tight, and blocks queue behind friends and narrow into columns in fords ([10](10-architecture.md#pathfinding)). This is more work for the simulation on purpose, so the instruction baseline (`tools/gc_bench/baseline.json`) was re-blessed in the same PR.

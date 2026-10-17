@@ -261,13 +261,27 @@ impl Block {
     /// apart along any of their edges' directions to stop overlapping
     /// (zero when apart).
     fn overlap(&self, other: &Block) -> Fx {
+        self.overlap_over(other, Fx::ZERO).unwrap_or(Fx::ZERO)
+    }
+
+    /// [`Block::overlap`], if it is more than `limit` (which is not
+    /// negative): stops at the first axis that shows it isn't, as most
+    /// pairs tested are close but not that deep.
+    fn overlap_over(&self, other: &Block, limit: Fx) -> Option<Fx> {
+        debug_assert!(
+            limit >= Fx::ZERO,
+            "overlap_over needs a limit of zero or more"
+        );
         let d = other.centre - self.centre;
-        [self.forward, self.right, other.forward, other.right]
-            .iter()
-            .map(|&axis| self.extent_along(axis) + other.extent_along(axis) - d.dot(axis).abs())
-            .min()
-            .unwrap_or(Fx::ZERO)
-            .max(Fx::ZERO)
+        let mut least = Fx::MAX;
+        for axis in [self.forward, self.right, other.forward, other.right] {
+            let depth = self.extent_along(axis) + other.extent_along(axis) - d.dot(axis).abs();
+            if depth <= limit {
+                return None;
+            }
+            least = least.min(depth);
+        }
+        Some(least)
     }
 
     /// The side of this block that faces `point`.
@@ -583,14 +597,15 @@ impl Combat {
         p: FxVec2,
         range: Fx,
         whose: Whose,
-        f: impl FnMut(usize),
+        mut f: impl FnMut(usize),
     ) {
-        self.each_near_in(regs, p, range, range, whose, f);
+        self.each_near_in(regs, p, range, range, whose, |j, _| f(j));
     }
 
     /// [`Combat::each_near`], looking only in the grid cells within `cells`
     /// of `p` (which may be less than `range` when the caller knows every
-    /// regiment it wants is filed nearer).
+    /// regiment it wants is filed nearer), and telling `f` each one's
+    /// squared distance from `p` (raw).
     fn each_near_in(
         &self,
         regs: &Placement,
@@ -598,7 +613,7 @@ impl Combat {
         cells: Fx,
         range: Fx,
         whose: Whose,
-        mut f: impl FnMut(usize),
+        mut f: impl FnMut(usize, u64),
     ) {
         let (owner, friends) = match whose {
             Whose::Enemies(owner) => (owner, false),
@@ -613,10 +628,12 @@ impl Combat {
         };
         let range_sq = i64::from(range.raw()) * i64::from(range.raw());
         self.each_filed_once(p, cells, slots, regs.alive, |j| {
-            if regs.stances.hostile(owner, regs.owner[j]) != friends
-                && ((regs.position[j] - p).length_sq_raw() as i64) <= range_sq
-            {
-                f(j);
+            if regs.stances.hostile(owner, regs.owner[j]) == friends {
+                return;
+            }
+            let d = (regs.position[j] - p).length_sq_raw();
+            if d as i64 <= range_sq {
+                f(j, d);
             }
         });
     }
@@ -676,30 +693,39 @@ impl Combat {
             // Wrapped: forget every old mark so none can match by accident.
             self.seen.iter().for_each(|c| c.set(u32::MAX));
         }
-        let mut visit = |j: usize| {
-            if self.seen[j].get() != search && alive[j] {
+        // Most entries are of regiments already seen in another cell, so
+        // this test stays inline in the loops and only new ones call `f`.
+        let first = |j: usize| {
+            let new = self.seen[j].get() != search && alive[j];
+            if new {
                 self.seen[j].set(search);
-                f(j);
             }
+            new
         };
         let (x0, y0, x1, y1) = Self::cells(p, radius);
         for y in y0..=y1 {
             for x in x0..=x1 {
                 let b = Self::bucket_of(x, y) * OWNER_SLOTS;
-                for slot in 0..OWNER_SLOTS {
-                    if slots & (1 << slot) == 0 {
-                        continue;
-                    }
+                let mut left = slots & ((1 << OWNER_SLOTS) - 1);
+                while left != 0 {
+                    let slot = left.trailing_zeros() as usize;
+                    left &= left - 1;
                     let mut e = self.head[b + slot];
                     while e != EMPTY {
-                        visit(self.entry_regiment[e as usize] as usize);
+                        let j = self.entry_regiment[e as usize] as usize;
+                        if first(j) {
+                            f(j);
+                        }
                         e = self.entry_next[e as usize];
                     }
                 }
             }
         }
         for &j in &self.big {
-            visit(j as usize);
+            let j = j as usize;
+            if first(j) {
+                f(j);
+            }
         }
     }
 
@@ -800,7 +826,7 @@ impl Combat {
             cells,
             wide,
             Whose::Friends(owner),
-            |j| {
+            |j, d| {
                 if j == i || found.is_some_and(|f| f < j) || regs.morale_state[j].broken() {
                     return;
                 }
@@ -808,7 +834,6 @@ impl Combat {
                 // start of the tick, with a tile of slack).
                 let touch = reach + self.radius[j] + Fx::ONE;
                 let r = (touch + LOOK_AHEAD).raw() as u64;
-                let d = (regs.position[j] - next).length_sq_raw();
                 if d > r * r {
                     return;
                 }
@@ -836,13 +861,15 @@ impl Combat {
                 }
                 gap = Fx::ZERO;
                 let them = Block::of(regs, units, j);
-                let after = me.overlap(&them);
                 // Where `i` stands now: the same block, before this step.
                 let now = Block {
                     centre: regs.position[i],
                     ..me
                 };
-                if after > CROWDING && after >= now.overlap(&them) {
+                if me
+                    .overlap_over(&them, CROWDING)
+                    .is_some_and(|after| now.overlap_over(&them, after).is_none())
+                {
                     found = Some(j);
                 }
             },
@@ -1062,8 +1089,11 @@ impl Combat {
                 let mut deepest = Fx::ZERO;
                 self.each_friend_touching(regs, stances, i, |j| {
                     // Deeper than this changes nothing (see `SATURATED`).
-                    if deepest < SATURATED && !regs.morale_state[j].broken() {
-                        deepest = deepest.max(me.overlap(&self.blocks[j]));
+                    if deepest < SATURATED
+                        && !regs.morale_state[j].broken()
+                        && let Some(more) = me.overlap_over(&self.blocks[j], deepest)
+                    {
+                        deepest = more;
                     }
                 });
                 regs.crowd[i] = deepest.min(SATURATED);
