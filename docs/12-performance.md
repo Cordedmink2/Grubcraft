@@ -39,7 +39,7 @@ The target is that the whole game stays under **6 GB** on the largest map with s
 | Code and static data | Executable, static tables |
 | Simulation (`sim`) | Entity pools, nav grid, route plans, vision (fog of war) state |
 | Map, CPU side (`map`) | Heightmap, tile layers, nav sectors, decals |
-| Renderer, CPU side (`render`) | Renderer setup and scenery. GPU memory is not tagged: terrain material arrays, meshes, bone animation textures (about 0.6 MB for the five M1 models), the skinned soldier vertices (6 MB at the start, growing with what frames need to at most 96 MB), colour, depth, shadow and post buffers are counted by `Renderer::gpu_bytes` instead |
+| Renderer, CPU side (`render`) | Renderer setup and scenery. GPU memory is not tagged: terrain material arrays, meshes, bone animation textures (about 0.6 MB for the five M1 models), the skinned soldier vertices (6 MB at the start, growing with what frames need to at most 96 MB), the scenery models (a few MB) and instance buffer (1.5 MB), colour, depth, shadow and post buffers are counted by `Renderer::gpu_bytes` instead |
 | Presentation (`present`) | Soldier puppets, instance buffers, interpolation, the fallen (up to 768 KB) and stuck arrows (up to 576 KB) |
 | Audio (`audio`) | Effects, music stream buffers, mixer |
 | UI (`ui`) | Layout scratch, text cache |
@@ -56,8 +56,8 @@ Each tag is tracked live by the tagged allocator. GPU memory is not: there is no
 | Input, UI build, camera | 0.5 ms |
 | Presentation (puppets, interpolation) | 1.0 ms |
 | Render encoding (CPU) | 1.5 ms |
-| GPU: shadow pass | 1.5 ms |
-| GPU: main pass | 7.0 ms |
+| GPU: shadow pass (scenery's share: 0.4 ms, trees and big rocks only, at level 2 or coarser) | 1.5 ms |
+| GPU: main pass (scenery's share: 2.0 ms; target, not yet measured on a real GPU) | 7.0 ms |
 | GPU: UI and post | 1.0 ms |
 | Slack | 4.1 ms |
 

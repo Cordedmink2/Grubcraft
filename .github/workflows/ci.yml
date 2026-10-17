@@ -47,6 +47,7 @@ jobs:
         with:
           alsa: 'true'
       - run: cargo run --release -p gc_artbake -- --check
+      - run: cargo run --release -p gc_scenebake -- --check
       - name: Building packs (one per faction)
         shell: bash
         run: |
