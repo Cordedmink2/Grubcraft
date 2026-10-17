@@ -129,7 +129,8 @@ The namesake faction. Insects that grew fat and clever eating the Titan from the
 ### Faction meter: **Larvae** (0 to N)
 - Every regiment hatches from a larva. Each Hive and Hatchery pit holds up to 3 larvae and spawns one every 12 s.
 - The meter shows larvae available across all hives. It is both a production limiter and a decision: Gnawer or warrior?
-- *Built (2026-10-17, faction depth stage 1): the larvae are simulated, and every Brood unit hatches from one. Root-veins come next.*
+- *Built (2026-10-17, faction depth stage 1): the larvae are simulated, and every Brood unit hatches from one. Root-veins came next.*
+- *Built (2026-10-17, faction depth stage 2): the root-veins are simulated. The Hive (every tier) spreads them 15 tiles from its edge, enough to reach its base's two seeps and Marrow vein on every map, and a Pustule 8 tiles from its edge. A Pustule links to the network when it stands within reach of linked veins, so Pustules chain outwards, and killing one cuts off everything linked only through it. A Gnawer sent to gather burrows in at its seep or vein and stays there: each load takes 6 s longer and then flows home through the veins, so five Gnawers on a seep bring in about 200 Grub a minute, as the other factions' walking workers do. A load waits at a node that is off the network until a Pustule links it again. The Hive no longer takes loads from walking workers. Living buildings on their owner's linked veins regrow 2 hit points a second. Burrowed Gnawers can still be seen and hurt; hiding them is a later stage.*
 
 ### Signature rule: **Metamorphosis in the field**
 Every tier-1 Brood regiment can evolve, *on the battlefield*, into one of two tier-2 forms. It cocoons for 15 s (vulnerable, cannot move), then emerges as the new form with its veterancy intact. You adapt your army to the fight you are in, not the one you guessed at.

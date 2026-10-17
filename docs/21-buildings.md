@@ -18,7 +18,7 @@ Every faction's buildings with first-pass numbers for Conquest (M3): cost, build
 ### Faction rules
 
 - **Ember Clans:** the sturdiest bases. The halls, towers and walls are Fortified, and so is the Outpost Hall used to expand.
-- **Brood:** every structure is grown by using up the Gnawer that starts it, so its real price is the listed Grub plus a worker (50 Grub and a larva). Upgrading the Hive uses no Gnawer. All Brood structures are Living. Nothing repairs them, but they regrow 2 hit points a second while on root-veins. **Built (2026-10-17, faction depth stage 1):** the Gnawer is used up at the foundation, and the building then grows on its own at one builder's speed; other Gnawers can't help it or mend it. Regrowth on root-veins is not built yet.
+- **Brood:** every structure is grown by using up the Gnawer that starts it, so its real price is the listed Grub plus a worker (50 Grub and a larva). Upgrading the Hive uses no Gnawer. All Brood structures are Living. Nothing repairs them, but they regrow 2 hit points a second while on root-veins. **Built (2026-10-17, faction depth stage 1):** the Gnawer is used up at the foundation, and the building then grows on its own at one builder's speed; other Gnawers can't help it or mend it. **Built (2026-10-17, faction depth stage 2):** a finished Living building standing within reach of its owner's linked root-veins regrows 2 hit points a second.
 - **Choir:** every building except the Spire, Resonators and Siphons needs power. It must stand inside the field of a Spire (8 tiles) or a Resonator or Siphon (6 tiles). An unpowered building stops training, researching and shooting until power returns.
 - **Carrion Concord:** the Counting House and Tollgate are Fortified, and everything else is Structure, including the Waystation. The Reliquary (75 Grub, 2×2) is small and cheap, made to be planted beside other players' fights.
 
@@ -75,7 +75,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 
 | Building | Tier | Cost (Grub / Marrow) | Build time | Hit points | Armour | Size | Supply | What it does |
 |---|---|---|---|---|---|---|---|---|
-| Hive | 1 | 300 / 0 | 100 s | 2,600 | Living | 5×5 | +12 | Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 10 tiles around it. |
+| Hive | 1 | 300 / 0 | 100 s | 2,600 | Living | 5×5 | +12 | Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 15 tiles from its edge (built: enough to reach its base's seeps and vein on every map). |
 | Great Hive (upgrades Hive) | 2 | 300 / 100 | 60 s | 3,400 | Living | 5×5 | +22 | Tier 2: evolutions, Drone-Moths, the Broodmother Bulk and a second hero. |
 | Throne Hive (upgrades Great Hive) | 3 | 600 / 250 | 90 s | 4,200 | Living | 5×5 | +32 | Tier 3: monsters, top upgrades and a third hero. |
 | Pustule | 1 | 40 / 0 | 20 s | 400 | Living | 2×2 | +8 | Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering. |

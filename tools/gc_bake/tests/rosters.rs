@@ -143,6 +143,13 @@ fn rosters_follow_the_design_rules() {
                 brood_trained && u.class == Class::Worker,
                 "{at}: Brood workers, and only they, are used up to build"
             );
+            if u.class == Class::Worker {
+                assert_eq!(
+                    u.flags.contains(&Flag::Burrows),
+                    faction == FactionDef::Brood,
+                    "{at}: Brood workers, and only they, burrow at their node"
+                );
+            }
             assert!(!u.abilities.is_empty(), "{at}: no abilities");
             for a in &u.abilities {
                 check_ability(file, name, a);
@@ -392,6 +399,21 @@ fn buildings_follow_the_design_rules() {
                 !b.flags.contains(&BuildingFlag::PowersField) || faction == FactionDef::Choir,
                 "{at}: only the Choir powers fields"
             );
+            // The Brood's Hive (every tier) and Pustule, and nothing else,
+            // spread root-veins; Brood buildings take no loads, which come
+            // home through the veins (docs/03).
+            assert_eq!(
+                b.flags.contains(&BuildingFlag::Veins),
+                brood && (b.role == Role::Main || b.name == "Pustule"),
+                "{at}: root-veins"
+            );
+            if brood {
+                assert!(
+                    !b.flags.contains(&BuildingFlag::DropOffGrub)
+                        && !b.flags.contains(&BuildingFlag::DropOffMarrow),
+                    "{at}: Brood buildings are no drop-offs"
+                );
+            }
         }
 
         // The main building: one at tier 1, upgraded twice.

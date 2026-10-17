@@ -179,6 +179,8 @@ pub const POWERS_FIELD: u8 = 4;
 pub const ANTI_AIR: u8 = 8;
 /// Brood: holds larvae and grows them (see [`crate::larvae`]).
 pub const LARVAE: u8 = 16;
+/// Brood: spreads root-veins (see [`crate::veins`]).
+pub const VEINS: u8 = 32;
 
 /// A tower's shooting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -317,7 +319,7 @@ fn footprint_centre([x, y, w, d]: [i32; 4]) -> FxVec2 {
 }
 
 /// The point of a footprint nearest `here`.
-fn nearest_point([x, y, w, d]: [i32; 4], here: FxVec2) -> FxVec2 {
+pub(crate) fn nearest_point([x, y, w, d]: [i32; 4], here: FxVec2) -> FxVec2 {
     FxVec2::new(
         here.x.clamp(Fx::from_int(x), Fx::from_int(x + w)),
         here.y.clamp(Fx::from_int(y), Fx::from_int(y + d)),
@@ -450,6 +452,12 @@ pub struct Structures {
     /// (0 while full); see [`crate::larvae`].
     pub(crate) larvae: Vec<u8>,
     pub(crate) larva_clock: Vec<u32>,
+    /// Root-veins, worked out each tick (see [`crate::veins`]): the slot
+    /// each linked veins building links through, the linked slots, and the
+    /// unlinked veins buildings looked at on the way.
+    pub(crate) vein_from: Vec<u32>,
+    pub(crate) vein_linked: Vec<u32>,
+    pub(crate) vein_cands: Vec<u32>,
     /// Tempo: build and upgrade times at this percent of Standard.
     build_percent: u32,
     /// By regiment slot: the building it is attacking, and the generation
@@ -519,6 +527,9 @@ impl Structures {
             growing: vec![false; n],
             larvae: vec![0; n],
             larva_clock: vec![0; n],
+            vein_from: vec![crate::veins::UNLINKED; n],
+            vein_linked: Vec::with_capacity(n),
+            vein_cands: Vec::with_capacity(n),
             build_percent: build_percent.clamp(10, 1000),
             siege: vec![None; regiments],
             siege_gen: vec![0; regiments],
@@ -552,7 +563,7 @@ impl Structures {
             .then_some(i)
     }
 
-    fn handle(&self, i: usize) -> StructureHandle {
+    pub(crate) fn handle(&self, i: usize) -> StructureHandle {
         StructureHandle {
             index: i as u32,
             generation: self.generation[i],
@@ -733,7 +744,7 @@ impl Structures {
         (0..self.hp.len()).filter(|&i| self.hp[i] > 0)
     }
 
-    fn stats_of(&self, i: usize) -> &BuildingStats {
+    pub(crate) fn stats_of(&self, i: usize) -> &BuildingStats {
         &self.buildings[self.building[i] as usize]
     }
 
@@ -772,8 +783,13 @@ impl Structures {
         self.seen[i] |= mask;
     }
 
+    /// Centre of building slot `i`'s footprint.
+    pub(crate) fn centre(&self, i: usize) -> FxVec2 {
+        footprint_centre(self.footprint(i))
+    }
+
     /// The footprint of building slot `i`: x, y, width, depth in tiles.
-    fn footprint(&self, i: usize) -> [i32; 4] {
+    pub(crate) fn footprint(&self, i: usize) -> [i32; 4] {
         let b = &self.buildings[self.building[i] as usize];
         let (x, y) = self.tile[i];
         [x, y, i32::from(b.width), i32::from(b.depth)]
@@ -796,6 +812,18 @@ impl Structures {
     /// [`crate::economy::SUPPLY_LIMIT`].
     pub(crate) fn supply_cap(&self, owner: PlayerId) -> u32 {
         self.supply_of(owner).min(crate::economy::SUPPLY_LIMIT)
+    }
+
+    /// Whether building slot `i` is below its full hit points.
+    pub(crate) fn hurt(&self, i: usize) -> bool {
+        self.hp[i] < u32::from(self.stats_of(i).hp) * HP_SCALE
+    }
+
+    /// Building slot `i` regrows `per_second` hit points a second, up to
+    /// its full.
+    pub(crate) fn heal(&mut self, i: usize, per_second: u32) {
+        let max = u32::from(self.stats_of(i).hp) * HP_SCALE;
+        self.hp[i] = (self.hp[i] + per_second * HP_SCALE / TICKS_PER_SECOND).min(max);
     }
 
     /// Whether building slot `i` has a tier upgrade going on.
@@ -1113,7 +1141,7 @@ impl Structures {
                 return false;
             }
             self.crew[s] += 1;
-            self.hp[s] = (self.hp[s] + REPAIR_HP * HP_SCALE / TICKS_PER_SECOND).min(max);
+            self.heal(s, REPAIR_HP);
             return true;
         }
         let hand = if self.crew[s] == 0 {

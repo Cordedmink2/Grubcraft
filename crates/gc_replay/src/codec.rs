@@ -127,6 +127,7 @@ impl Writer {
         self.u8(u.tier);
         self.bool(u.hatches);
         self.bool(u.consumed);
+        self.bool(u.burrows);
     }
 
     pub fn node(&mut self, n: &NodeSetup) {
@@ -436,6 +437,9 @@ impl<'a> Reader<'a> {
         if format >= 17 {
             u.hatches = self.bool()?;
             u.consumed = self.bool()?;
+        }
+        if format >= 18 {
+            u.burrows = self.bool()?;
         }
         Some(u)
     }

@@ -50,9 +50,8 @@
             armour: Living,
             footprint: (5, 5),
             supply: 12,
-            // Plain workers bring both here until the Brood root-veins are built.
-            flags: [DropOffGrub, DropOffMarrow, Larvae],
-            effect: "Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 10 tiles around it.",
+            flags: [Larvae, Veins],
+            effect: "Main building. Holds 3 larvae and spawns one every 12 s; every regiment hatches from a larva. Root-veins spread 15 tiles from its edge.",
         ),
         (
             name: "Great Hive",
@@ -65,8 +64,7 @@
             armour: Living,
             footprint: (5, 5),
             supply: 22,
-            // Plain workers bring both here until the Brood root-veins are built.
-            flags: [DropOffGrub, DropOffMarrow, Larvae],
+            flags: [Larvae, Veins],
             effect: "Tier 2: evolutions, Drone-Moths, the Broodmother Bulk and a second hero.",
         ),
         (
@@ -80,8 +78,7 @@
             armour: Living,
             footprint: (5, 5),
             supply: 32,
-            // Plain workers bring both here until the Brood root-veins are built.
-            flags: [DropOffGrub, DropOffMarrow, Larvae],
+            flags: [Larvae, Veins],
             effect: "Tier 3: monsters, top upgrades and a third hero.",
         ),
         (
@@ -94,6 +91,7 @@
             armour: Living,
             footprint: (2, 2),
             supply: 8,
+            flags: [Veins],
             effect: "Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering.",
         ),
         (
@@ -174,7 +172,7 @@
             supply: 1,
             train_time: 12.0,
             from: Building("Hive"),
-            flags: [Hatches, Consumed],
+            flags: [Hatches, Consumed, Burrows],
             abilities: [
                 (
                     name: "Burrow In",

@@ -240,7 +240,7 @@ Brood regiments are hatched from larvae at a Hive or Hatchery Pit; "Hive" above 
 
 Larvae are not spent on abilities. Each Hive and Hatchery Pit holds up to 3 larvae and grows one every 12 s; every Gnawer and regiment hatches from one. The meter shows larvae ready across all hives (the data file caps it at 15 for display).
 
-*Built (2026-10-17, faction depth stage 1):* every Brood unit, workers included, takes a larva when it is queued, and training is refused with "No larvae are ready." while none is. The top bar shows larvae ready and room, and a Hive's card shows its larvae as n/3. In `data/rosters/brood.ron` a building that holds larvae has the `Larvae` flag, a unit that hatches from one has `Hatches`, and the Gnawer, used up to grow buildings, has `Consumed`; the simulation reads only these flags, never the faction.
+*Built (2026-10-17, faction depth stage 1):* every Brood unit, workers included, takes a larva when it is queued, and training is refused with "No larvae are ready." while none is. The top bar shows larvae ready and room, and a Hive's card shows its larvae as n/3. In `data/rosters/brood.ron` a building that holds larvae has the `Larvae` flag, a unit that hatches from one has `Hatches`, and the Gnawer, used up to grow buildings, has `Consumed`; the simulation reads only these flags, never the faction. Since stage 2 the Hive and Pustule have `Veins` (they spread root-veins) and the Gnawer has `Burrows` (a worker with it stays at its node and sends loads home through the veins).
 
 ### Heroes
 

@@ -90,6 +90,9 @@ pub struct StructurePanel<'a> {
     pub queue: &'a [QueueItem<'a>],
     /// Larvae ready here and the most it holds (None for a building with none).
     pub larvae: Option<(u8, u8)>,
+    /// A living building of yours: whether it stands on your linked
+    /// root-veins, where it regrows (None for any other building).
+    pub rooted: Option<bool>,
 }
 
 /// Match time as "14:32", or "1:02:05" from the first hour.
@@ -298,18 +301,28 @@ fn draw_structure_card(draw: &mut DrawList, r: Rect, s: &StructurePanel) {
     draw.text(x, inner.y + 32, 1, theme::MUTED, &fit(&numbers, chars));
 
     let state = if let Some(done) = s.building {
-        Some(format!("Building {}%", done.min(100)))
+        Some((format!("Building {}%", done.min(100)), theme::ACCENT))
+    } else if let Some((to, done)) = s.upgrading {
+        Some((
+            format!("Upgrading to {to} {}%", done.min(100)),
+            theme::ACCENT,
+        ))
     } else {
-        s.upgrading
-            .map(|(to, done)| format!("Upgrading to {to} {}%", done.min(100)))
+        s.rooted.map(|on| {
+            if on {
+                ("On root-veins".to_string(), theme::GOOD)
+            } else {
+                ("Cut off: no regrowth".to_string(), theme::WARN)
+            }
+        })
     };
-    if let Some(state) = state {
+    if let Some((state, color)) = state {
         let chars = (inner.w / CELL_W).max(1) as usize;
         draw.text(
             inner.x,
             portrait.bottom() + 6,
             1,
-            theme::ACCENT,
+            color,
             &fit(&state, chars),
         );
     }

@@ -16,7 +16,7 @@ pub const BUILDINGS_PATH: &str = "data/buildings";
 /// Pack path of the Conquest unit table.
 pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 2;
+pub const BUILDING_SCHEMA: u32 = 3;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
 pub const CONQUEST_UNIT_SCHEMA: u32 = 2;
@@ -89,11 +89,14 @@ pub const BUILDING_POWERS_FIELD: u8 = 4;
 pub const BUILDING_ANTI_AIR: u8 = 8;
 /// Brood: holds larvae and grows them (schema 2).
 pub const BUILDING_LARVAE: u8 = 16;
+/// Brood: spreads root-veins (schema 3).
+pub const BUILDING_VEINS: u8 = 32;
 const BUILDING_FLAGS: u8 = BUILDING_DROP_OFF_GRUB
     | BUILDING_DROP_OFF_MARROW
     | BUILDING_POWERS_FIELD
     | BUILDING_ANTI_AIR
-    | BUILDING_LARVAE;
+    | BUILDING_LARVAE
+    | BUILDING_VEINS;
 
 /// One building. Times are simulation ticks at Standard tempo, lengths `Fx`
 /// raw values, so the simulation reads them without floating point.

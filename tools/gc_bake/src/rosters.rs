@@ -83,6 +83,8 @@ pub enum BuildingFlag {
     AntiAir,
     /// Brood: holds larvae and grows them (docs/04, "Larvae").
     Larvae,
+    /// Brood: spreads root-veins (docs/03, "the vein network").
+    Veins,
 }
 
 #[derive(Deserialize)]

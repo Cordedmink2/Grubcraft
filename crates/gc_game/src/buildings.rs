@@ -22,6 +22,7 @@ const _: () = assert!(
         && record::BUILDING_POWERS_FIELD == gc_sim::structures::POWERS_FIELD
         && record::BUILDING_ANTI_AIR == gc_sim::structures::ANTI_AIR
         && record::BUILDING_LARVAE == gc_sim::structures::LARVAE
+        && record::BUILDING_VEINS == gc_sim::structures::VEINS
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );
 
@@ -336,6 +337,229 @@ pub fn push_nodes(world: &World, out: &mut Vec<BoxInstance>) {
             color: [r, g, b, glow],
             lift: 0.0,
         });
+    }
+}
+
+/// Root-veins lie as a flat ribbon this thick (tiles), in segments this
+/// long so each follows the ground it crosses, a hair above it.
+const VEIN_THICK: f32 = 0.06;
+const VEIN_SEGMENT: f32 = 3.0;
+const VEIN_LIFT: f32 = 0.05;
+/// The links between buildings, the spokes round each, and the flow home
+/// from a node, as widths in tiles.
+const VEIN_LINK_WIDTH: f32 = 0.9;
+const VEIN_SPOKE_WIDTH: (f32, f32) = (0.7, 0.15);
+const VEIN_FLOW_WIDTH: f32 = 0.5;
+/// Spokes a veins building sends out (a main building one more), ending
+/// this share of its reach out.
+const VEIN_SPOKES: usize = 5;
+const VEIN_SPOKE_REACH: f32 = 0.85;
+/// Veins are this flesh-violet, a quarter of the way to their owner's
+/// colour; the flow of Grub is lighter.
+const VEIN_COLOR: [u8; 3] = [84, 30, 78];
+const VEIN_FLOW_COLOR: [u8; 3] = [200, 80, 170];
+const VEIN_GLOW: u8 = 45;
+/// Flow pulses along its ribbon, a pulse every this many ticks per
+/// segment (and so every few seconds along the whole ribbon).
+const FLOW_PULSE_TICKS: u32 = 12;
+/// A node the veins do not reach: a dull stub towards the network and a
+/// red cross on the node.
+const CUT_COLOR: [u8; 3] = [92, 62, 62];
+const CUT_MARK_COLOR: [u8; 3] = [210, 50, 40];
+const CUT_GLOW: u8 = 60;
+const CUT_STUB: f32 = 3.0;
+
+/// Colour `c` with `share` percent of `towards` mixed in.
+fn tint(c: [u8; 3], towards: [u8; 3], share: u32) -> [u8; 3] {
+    let mix = |a: u8, b: u8| ((u32::from(a) * (100 - share) + u32::from(b) * share) / 100) as u8;
+    [
+        mix(c[0], towards[0]),
+        mix(c[1], towards[1]),
+        mix(c[2], towards[2]),
+    ]
+}
+
+/// A flat ribbon from `from` to `to` on the ground, in segments that
+/// taper from width `widths.0` to `widths.1`, each as bright as `glow`
+/// says of its place along the ribbon.
+fn push_ribbon(
+    from: Vec2,
+    to: Vec2,
+    widths: (f32, f32),
+    colour: [u8; 3],
+    lift: f32,
+    glow: impl Fn(usize) -> u8,
+    out: &mut Vec<BoxInstance>,
+) {
+    let d = to - from;
+    let len = d.length();
+    if len < 0.05 {
+        return;
+    }
+    let dir = d / len;
+    let n = ((len / VEIN_SEGMENT).ceil() as usize).max(1);
+    for i in 0..n {
+        if out.len() >= MAX_BOX_INSTANCES {
+            return;
+        }
+        let mid = (i as f32 + 0.5) / n as f32;
+        let [r, g, b] = colour;
+        out.push(BoxInstance {
+            pos: (from + d * mid).to_array(),
+            facing: dir.to_array(),
+            // A little longer than its share, so segments meet.
+            size: [
+                widths.0 + (widths.1 - widths.0) * mid,
+                VEIN_THICK,
+                len / n as f32 + 0.1,
+            ],
+            color: [r, g, b, glow(i)],
+            lift,
+        });
+    }
+}
+
+/// Draw the Brood's root-veins (Conquest): from each linked veins building
+/// that `side` is shown, a ribbon along the ground to the building it
+/// links through (if that is shown too) and spokes out to the edge of its
+/// veins. Where `side`'s burrowed workers work a node on the veins, a
+/// brighter ribbon pulses from the node to the building that carries the
+/// load home; a node off the veins gets a dull stub and a red cross, so
+/// the break shows. `reveal_all` shows everything, every side's workers
+/// too.
+pub fn push_veins(
+    world: &World,
+    side: PlayerId,
+    reveal_all: bool,
+    team: impl Fn(PlayerId) -> [u8; 3],
+    out: &mut Vec<BoxInstance>,
+) {
+    let (Some(structures), Some(economy)) = (world.structures(), world.economy()) else {
+        return;
+    };
+    let shown = shown_to(side, reveal_all);
+    // Only the veins whose building is shown.
+    let veins = world.veins().filter_map(|v| {
+        let s = structures.get(v.building).filter(|s| shown(s))?;
+        Some((v, s))
+    });
+    for (v, s) in veins {
+        if out.len() >= MAX_BOX_INSTANCES {
+            return;
+        }
+        let colour = tint(VEIN_COLOR, team(v.owner), 25);
+        let at = crate::from_fx_vec(v.at);
+        let from = crate::from_fx_vec(v.from);
+        // The link: a thicker ribbon between buildings, when both are
+        // shown (a link must not give away a building in the fog).
+        if structures.get(v.parent).is_some_and(|p| shown(&p)) {
+            push_ribbon(
+                at,
+                from,
+                (VEIN_LINK_WIDTH, VEIN_LINK_WIDTH),
+                colour,
+                VEIN_LIFT,
+                |_| VEIN_GLOW,
+                out,
+            );
+        }
+        // Spokes at angles of their own: spread evenly, turned by where
+        // the building is, so neighbours do not mirror each other.
+        let spokes = VEIN_SPOKES + usize::from(v.at == v.from);
+        let turn = (s.handle.index.wrapping_mul(2_654_435_761) >> 8) as f32 * 1e-3;
+        let start = f32::from(s.width.max(s.depth)) / 2.0;
+        let length = start + v.reach as f32 * VEIN_SPOKE_REACH;
+        for k in 0..spokes {
+            let wobble = ((k as f32 * 7.31 + turn).sin()) * 0.25;
+            let angle = turn + (k as f32 + wobble) * std::f32::consts::TAU / spokes as f32;
+            let end = at + Vec2::new(angle.cos(), angle.sin()) * length;
+            push_ribbon(
+                at,
+                end,
+                VEIN_SPOKE_WIDTH,
+                colour,
+                VEIN_LIFT - 0.01,
+                |_| VEIN_GLOW,
+                out,
+            );
+        }
+    }
+
+    // The nodes burrowed workers are at, each once, with who works it:
+    // `side`'s own only, unless everything is shown (an enemy's workers
+    // can be in the fog).
+    let mut worked: Vec<(PlayerId, u16)> = Vec::new();
+    for r in world.regiments.iter() {
+        if (r.owner == side || reveal_all)
+            && let Some(node) = world.burrowed_at(r.handle)
+            && !worked.contains(&(r.owner, node))
+        {
+            worked.push((r.owner, node));
+        }
+    }
+    let tick = world.tick_count();
+    let nodes = economy.node_positions();
+    for &(owner, node) in &worked {
+        if out.len() >= MAX_BOX_INSTANCES {
+            return;
+        }
+        let Some(&node_at) = nodes.get(usize::from(node)) else {
+            continue;
+        };
+        let at = crate::from_fx_vec(node_at);
+        if let Some(v) = world.vein_home(owner, node_at) {
+            // The Grub flows: pulses run from the node to the building
+            // that carries it home.
+            push_ribbon(
+                at,
+                crate::from_fx_vec(v.at),
+                (VEIN_FLOW_WIDTH, VEIN_FLOW_WIDTH),
+                tint(VEIN_FLOW_COLOR, team(owner), 25),
+                VEIN_LIFT + 0.01,
+                |i| {
+                    let phase = (tick / FLOW_PULSE_TICKS) as usize % 4;
+                    if (i + 4 - phase).is_multiple_of(4) {
+                        150
+                    } else {
+                        80
+                    }
+                },
+                out,
+            );
+            continue;
+        }
+        // Cut off: a dull stub towards the nearest veins and a red cross on
+        // the node.
+        let nearest = world
+            .veins()
+            .filter(|v| v.owner == owner)
+            .min_by_key(|v| (v.at - node_at).length_sq_raw());
+        if let Some(v) = nearest {
+            let d = crate::from_fx_vec(v.at) - at;
+            let stub = d.normalize_or_zero() * CUT_STUB.min(d.length() / 2.0);
+            push_ribbon(
+                at,
+                at + stub,
+                (VEIN_FLOW_WIDTH, VEIN_FLOW_WIDTH * 0.5),
+                CUT_COLOR,
+                VEIN_LIFT + 0.01,
+                |_| 0,
+                out,
+            );
+        }
+        for facing in [Vec2::new(1.0, 1.0), Vec2::new(1.0, -1.0)] {
+            if out.len() >= MAX_BOX_INSTANCES {
+                return;
+            }
+            let [r, g, b] = CUT_MARK_COLOR;
+            out.push(BoxInstance {
+                pos: at.to_array(),
+                facing: facing.normalize().to_array(),
+                size: [0.25, 0.1, 1.5],
+                color: [r, g, b, CUT_GLOW],
+                lift: NODE_HEIGHT + 0.1,
+            });
+        }
     }
 }
 

@@ -55,6 +55,10 @@ pub struct ConquestUnit {
     /// that building then grows on its own, and such a worker can't help
     /// build or mend one.
     pub consumed: bool,
+    /// A worker that burrows in where it gathers (the Brood's Gnawers):
+    /// it stays at its node and sends each load home through its owner's
+    /// root-veins instead of carrying it (see [`crate::veins`]).
+    pub burrows: bool,
 }
 
 impl ConquestUnit {
@@ -67,7 +71,7 @@ impl ConquestUnit {
         h.u16(self.train_ticks);
         h.u16(self.trained_at.unwrap_or(u16::MAX));
         h.u8(self.tier);
-        h.u8(u8::from(self.hatches) | u8::from(self.consumed) << 1);
+        h.u8(u8::from(self.hatches) | u8::from(self.consumed) << 1 | u8::from(self.burrows) << 2);
     }
 }
 
@@ -157,10 +161,12 @@ impl Conquest {
             .unwrap_or_default()
     }
 
-    /// One tick: sieges and builders, then larvae, then gathering, then
-    /// training.
+    /// One tick: sieges and builders, then root-veins and larvae, then
+    /// gathering, then training.
     pub(crate) fn update(&mut self, regs: &mut Regiments, stats: &[UnitStats], nav: &mut Nav) {
         self.structures.update(regs, stats, &self.units, nav);
+        self.structures.link_veins();
+        self.structures.regrow();
         self.structures.grow_larvae();
         self.economy
             .update(regs, stats, &self.units, &self.structures);

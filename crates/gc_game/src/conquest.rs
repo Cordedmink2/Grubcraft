@@ -4,7 +4,9 @@
 //! the opening the host sends: each side's main building and workers at its
 //! start.
 
-use gc_data::conquest::{Class, ConquestUnitRecord, NONE, UNIT_CONSUMED, UNIT_HATCHES};
+use gc_data::conquest::{
+    Class, ConquestUnitRecord, NONE, UNIT_BURROWS, UNIT_CONSUMED, UNIT_HATCHES,
+};
 use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_map::{Kind, Map};
@@ -98,6 +100,7 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
         tier: u.tier,
         hatches: u.flags & UNIT_HATCHES != 0,
         consumed: u.flags & UNIT_CONSUMED != 0,
+        burrows: u.worker() && u.flags & UNIT_BURROWS != 0,
     }
 }
 
@@ -403,6 +406,35 @@ mod tests {
         (world, plan, table)
     }
 
+    /// On every Conquest map a Brood player's opening Hive reaches its base's
+    /// two seeps and Marrow vein with its root-veins, so Gnawers burrowed
+    /// there bring their loads home before any Pustule is grown.
+    #[test]
+    fn a_brood_hives_veins_reach_its_base_nodes() {
+        let data = data();
+        // Every shipped map, and a Wilds map of every kind of land.
+        let maps = gc_map::SHIPPED.len() + gc_map::wilds::Wildness::ALL.len();
+        for choice in 0..=maps {
+            let map = make_map(choice, 7);
+            let starts = map.starts();
+            let factions = vec![Faction::Brood; starts.len()];
+            let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
+            let opening = opening(&data, &table, &map, &world, &factions);
+            world.tick(&opening);
+            for (p, &(x, y)) in starts.iter().enumerate() {
+                let start = gc_fixed::FxVec2::from_ints(x, y);
+                let mut nodes: Vec<_> = world.economy().unwrap().nodes().collect();
+                nodes.sort_by_key(|n| (n.at - start).length_sq_raw());
+                for n in &nodes[..3] {
+                    assert!(
+                        world.on_veins(p as PlayerId, n.at),
+                        "map {choice}, player {p}: {n:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn every_conquest_unit_converts_and_trains_at_its_own_factions_building() {
         let data = data();
@@ -635,5 +667,103 @@ mod tests {
             assert!((at.y.floor_int() - middle).abs() <= 2, "{at:?}");
             assert_eq!(plan.victories, both);
         }
+    }
+
+    /// The Brood's root-veins are drawn for the buildings a side is shown
+    /// (all of them with `reveal_all`), with flow along a worked node on
+    /// the veins and a cut-off mark on one off them.
+    #[test]
+    fn root_veins_are_drawn_for_the_buildings_a_side_is_shown() {
+        let data = data();
+        let map = make_map(0, 0);
+        let factions = [Faction::Brood, Faction::Brood];
+        let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
+        let opening = opening(&data, &table, &map, &world, &factions);
+        world.tick(&opening);
+        let team = |p: PlayerId| if p == 0 { [200, 50, 50] } else { [50, 50, 200] };
+        let draw = |world: &World, side: PlayerId, reveal_all: bool| {
+            let mut out = Vec::new();
+            buildings::push_veins(world, side, reveal_all, team, &mut out);
+            out
+        };
+        // Boxes lying within `r` tiles of `at`.
+        let near = |out: &[gc_render::BoxInstance], at: gc_fixed::FxVec2, r: f32| {
+            let at = crate::from_fx_vec(at);
+            out.iter()
+                .filter(|b| (glam::Vec2::from(b.pos) - at).length() <= r)
+                .count()
+        };
+
+        let hive = |p: PlayerId| world.veins().find(|v| v.owner == p).expect("a Hive");
+        let (mine, theirs) = (hive(0), hive(1));
+        let seen = |p: PlayerId| {
+            let s = world.structures().unwrap().get(hive(p).building).unwrap();
+            s.seen_by(0)
+        };
+        assert!(seen(0), "you see your own Hive");
+        let plain = draw(&world, 0, false);
+        assert!(near(&plain, mine.at, 2.0) >= 6, "spokes leave your Hive");
+        // Ribbons stay flat on the ground and within the Hive's reach.
+        let far = (mine.reach + 8) as f32;
+        assert!(plain.iter().all(|b| b.size[1] < 0.2 && b.lift < 0.5));
+        assert_eq!(
+            near(&plain, mine.at, far),
+            plain.len() - near(&plain, theirs.at, far)
+        );
+        // The enemy's veins show only once its Hive has been seen.
+        let all = draw(&world, 0, true);
+        assert!(all.len() > near(&all, mine.at, far));
+        if !seen(1) {
+            assert_eq!(near(&plain, theirs.at, 2.0), 0, "no veins in the fog");
+            assert!(all.len() > plain.len());
+        }
+
+        // A Gnawer burrowed at a seep on the veins sends flow home (none
+        // while it walks there); at one off them, the seep is marked cut
+        // off.
+        let gnawer = world
+            .regiments
+            .iter()
+            .find(|r| r.owner == 0 && world.burrows(r.handle))
+            .expect("a Gnawer")
+            .handle;
+        let seeps: Vec<_> = world
+            .economy()
+            .unwrap()
+            .nodes()
+            .filter(|n| n.resource == Resource::Grub)
+            .collect();
+        let on = seeps.iter().find(|n| world.on_veins(0, n.at)).unwrap();
+        let off = seeps.iter().find(|n| !world.on_veins(0, n.at)).unwrap();
+        let work = |world: &mut World, node: u16| {
+            world.tick(&[PlayerCommand {
+                player: 0,
+                command: Command::Gather {
+                    regiment: gnawer,
+                    node,
+                },
+            }]);
+            assert_eq!(world.gathers_at(gnawer), Some(node));
+            // Flow shows only once it is burrowed in at the node.
+            for _ in 0..120 * gc_sim::TICKS_PER_SECOND {
+                if world.burrowed_at(gnawer) == Some(node) {
+                    return;
+                }
+                world.tick(&[]);
+            }
+            panic!("the Gnawer never reached node {node}");
+        };
+        work(&mut world, on.index);
+        let flowing = draw(&world, 0, false);
+        assert!(flowing.len() > plain.len());
+        assert!(near(&flowing, on.at, 2.0) > near(&plain, on.at, 2.0));
+        work(&mut world, off.index);
+        let cut = draw(&world, 0, false);
+        let marks = |out: &[gc_render::BoxInstance]| {
+            out.iter().filter(|b| b.size == [0.25, 0.1, 1.5]).count()
+        };
+        assert_eq!(marks(&plain) + marks(&flowing), 0);
+        assert_eq!(marks(&cut), 2, "a cross on the cut-off seep");
+        assert!(near(&cut, off.at, 0.1) >= 2);
     }
 }

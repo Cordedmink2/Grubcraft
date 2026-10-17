@@ -14,6 +14,11 @@
 //!   puts it in the store and goes back for more, until given another
 //!   order. A worker given another order keeps what it carries, and drops
 //!   it off first the next time it is sent to gather.
+//! - **Burrowing workers** (`ConquestUnit::burrows`, the Brood's Gnawers)
+//!   stay at their node: each load takes [`VEIN_FLOW_TICKS`] longer, and
+//!   then comes into the store through their owner's root-veins, if the
+//!   node is on them; off them, it waits there until it is (see
+//!   [`crate::veins`]).
 //! - **Supply.** A player's cap is what their standing buildings add, up to
 //!   [`SUPPLY_LIMIT`]; what their regiments take counts against it.
 //! - **Upkeep.** Grub brought in is cut by how much supply is in use: all
@@ -32,6 +37,7 @@ use gc_fixed::{Fx, FxVec2};
 use crate::conquest::{ConquestSetup, ConquestUnit};
 use crate::regiments::{Order, Regiments};
 use crate::structures::{Approach, DROP_OFF_GRUB, DROP_OFF_MARROW, Structures};
+use crate::veins::VEIN_FLOW_TICKS;
 use crate::{MAX_PARTIES, PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
 
 /// What a node yields.
@@ -295,7 +301,7 @@ impl Economy {
     }
 
     /// Where each node is, by index.
-    pub(crate) fn node_positions(&self) -> &[FxVec2] {
+    pub fn node_positions(&self) -> &[FxVec2] {
         &self.node_at
     }
 
@@ -417,17 +423,51 @@ impl Economy {
             }
             self.clock[r] = self.clock[r].saturating_sub(1);
             let n = usize::from(self.node[r]);
+            let burrows = kinds
+                .get(usize::from(regs.unit[r]))
+                .is_some_and(|u| u.burrows);
             match self.step[r] {
-                Step::ToNode => self.walk_to_node(regs, r, n),
+                Step::ToNode => self.walk_to_node(regs, r, n, burrows),
                 Step::Filling if self.clock[r] == 0 => self.fill(r, n),
+                Step::Carrying if burrows => self.send_home(regs, kinds, structures, r, &mut used),
                 Step::Carrying => self.carry(regs, units, kinds, structures, r, &mut used),
                 Step::Idle | Step::Filling => {}
             }
         }
     }
 
-    /// Walk to node `n`, and start filling once there and a place is free.
-    fn walk_to_node(&mut self, regs: &mut Regiments, r: usize, n: usize) {
+    /// Walk to node `n`, and start filling once there and a place is free
+    /// (a worker that `burrows` takes its load's flow home with it).
+    fn walk_to_node(&mut self, regs: &mut Regiments, r: usize, n: usize, burrows: bool) {
+        if !self.at_node(regs, r, n) {
+            return;
+        }
+        let kind = self.node_resource[n];
+        if self.node_busy[n] >= kind.slots() {
+            return;
+        }
+        self.node_busy[n] += 1;
+        self.step[r] = Step::Filling;
+        self.set_off(r);
+        // The load is taken from the node now, so workers filling at once
+        // can't take more than it holds. A dry node gives a whole load,
+        // only slower.
+        let left = self.node_left[n];
+        self.taking[r] = kind.load().min(left) as u8;
+        self.node_left[n] = left - u32::from(self.taking[r]);
+        let mut ticks = kind.fill_ticks();
+        if left == 0 {
+            ticks = ticks * 100 / DREGS_PERCENT;
+        }
+        if burrows {
+            ticks += VEIN_FLOW_TICKS;
+        }
+        ticks = ticks * 100 / self.gather_percent;
+        self.clock[r] = u16::try_from(ticks.max(1)).unwrap_or(u16::MAX);
+    }
+
+    /// Whether worker slot `r` is at node `n`; if not, it heads there.
+    fn at_node(&mut self, regs: &mut Regiments, r: usize, n: usize) -> bool {
         let at = self.node_at[n];
         let here = regs.position[r];
         let reach = u64::from(NODE_REACH.raw().unsigned_abs());
@@ -450,27 +490,10 @@ impl Economy {
                     },
                 );
             }
-            return;
+            return false;
         }
         regs.target[r] = None;
-        let kind = self.node_resource[n];
-        if self.node_busy[n] >= kind.slots() {
-            return;
-        }
-        self.node_busy[n] += 1;
-        self.step[r] = Step::Filling;
-        self.set_off(r);
-        // The load is taken from the node now, so workers filling at once
-        // can't take more than it holds. A dry node gives a whole load,
-        // only slower.
-        let left = self.node_left[n];
-        self.taking[r] = kind.load().min(left) as u8;
-        self.node_left[n] = left - u32::from(self.taking[r]);
-        let mut ticks = kind.fill_ticks() * 100 / self.gather_percent;
-        if left == 0 {
-            ticks = ticks * 100 / DREGS_PERCENT;
-        }
-        self.clock[r] = u16::try_from(ticks.max(1)).unwrap_or(u16::MAX);
+        true
     }
 
     /// The load from node `n` is full: take it and head for a drop-off.
@@ -501,7 +524,7 @@ impl Economy {
             // On the way, or waiting to try again.
             return;
         }
-        let Some((kind, amount)) = self.load[r] else {
+        let Some((kind, _)) = self.load[r] else {
             self.step[r] = Step::ToNode;
             return;
         };
@@ -519,7 +542,46 @@ impl Economy {
             }
             return;
         }
-        let p = usize::from(owner);
+        self.bank(regs, kinds, r, used);
+    }
+
+    /// A burrowed worker's load comes home through the root-veins once it
+    /// is at its node and the node is on its owner's veins; else it tries
+    /// again in a while. (A worker sent elsewhere with a load takes it to
+    /// its new node first.)
+    fn send_home(
+        &mut self,
+        regs: &mut Regiments,
+        kinds: &[ConquestUnit],
+        structures: &Structures,
+        r: usize,
+        used: &mut Option<[u32; MAX_PARTIES]>,
+    ) {
+        let n = usize::from(self.node[r]);
+        if self.clock[r] > 0 || !self.at_node(regs, r, n) {
+            return;
+        }
+        if !structures.on_veins(regs.owner[r], self.node_at[n]) {
+            self.clock[r] = RETRY_TICKS;
+            return;
+        }
+        self.bank(regs, kinds, r, used);
+    }
+
+    /// Worker slot `r`'s load goes into its owner's store, and it goes back
+    /// for more.
+    fn bank(
+        &mut self,
+        regs: &Regiments,
+        kinds: &[ConquestUnit],
+        r: usize,
+        used: &mut Option<[u32; MAX_PARTIES]>,
+    ) {
+        let Some((kind, amount)) = self.load[r] else {
+            self.step[r] = Step::ToNode;
+            return;
+        };
+        let p = usize::from(regs.owner[r]);
         let amount = u32::from(amount);
         match kind {
             Resource::Grub => {

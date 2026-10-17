@@ -36,6 +36,7 @@ pub mod stances;
 mod state;
 pub mod structures;
 pub mod terrain;
+pub mod veins;
 pub mod verdict;
 pub mod vision;
 
@@ -92,7 +93,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 14;
+pub const SIM_VERSION: u32 = 15;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -777,6 +778,57 @@ impl World {
     pub fn larvae_in(&self, h: StructureHandle) -> Option<u8> {
         let structures = self.structures()?;
         structures.larvae_in(structures.resolve(h)?)
+    }
+
+    /// The root-veins buildings linked to a main building (Conquest only).
+    pub fn veins(&self) -> impl Iterator<Item = veins::VeinView> + '_ {
+        self.structures()
+            .into_iter()
+            .flat_map(Structures::vein_views)
+    }
+
+    /// For a building that regrows on root-veins (a finished Living one):
+    /// whether it stands on its owner's linked veins now. `None` for any
+    /// other (Conquest only).
+    pub fn rooted(&self, h: StructureHandle) -> Option<bool> {
+        let s = self.structures()?;
+        let i = s.resolve(h)?;
+        s.regrows(i).then(|| s.rooted(i))
+    }
+
+    /// Whether regiment `h` is a worker that burrows in where it gathers
+    /// (see [`ConquestUnit::burrows`]).
+    pub fn burrows(&self, h: RegimentHandle) -> bool {
+        let Some(c) = &self.conquest else {
+            return false;
+        };
+        self.regiments
+            .get(h)
+            .is_some_and(|r| c.unit(r.unit).burrows)
+    }
+
+    /// The node regiment `h` is burrowed at, if it is a worker that burrows
+    /// standing at the node it works.
+    pub fn burrowed_at(&self, h: RegimentHandle) -> Option<u16> {
+        if !self.burrows(h) {
+            return None;
+        }
+        let node = self.gathers_at(h)?;
+        let at = *self.economy()?.node_positions().get(usize::from(node))?;
+        let reach = u64::from(economy::NODE_REACH.raw().unsigned_abs());
+        let here = self.regiments.get(h)?.position;
+        ((at - here).length_sq_raw() <= reach * reach).then_some(node)
+    }
+
+    /// The linked root-veins building that carries home what `owner`
+    /// gathers at `point`: of those whose veins reach it, the nearest.
+    pub fn vein_home(&self, owner: PlayerId, point: FxVec2) -> Option<veins::VeinView> {
+        self.structures()?.vein_home_view(owner, point)
+    }
+
+    /// Whether `point` lies on `owner`'s linked root-veins.
+    pub fn on_veins(&self, owner: PlayerId, point: FxVec2) -> bool {
+        self.structures().is_some_and(|s| s.on_veins(owner, point))
     }
 
     /// Whether `player` could have a worker lay a building of type

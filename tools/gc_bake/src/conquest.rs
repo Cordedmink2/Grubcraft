@@ -284,6 +284,7 @@ fn building_flag(f: rosters::BuildingFlag) -> u8 {
         rosters::BuildingFlag::PowersField => cq::BUILDING_POWERS_FIELD,
         rosters::BuildingFlag::AntiAir => cq::BUILDING_ANTI_AIR,
         rosters::BuildingFlag::Larvae => cq::BUILDING_LARVAE,
+        rosters::BuildingFlag::Veins => cq::BUILDING_VEINS,
     }
 }
 

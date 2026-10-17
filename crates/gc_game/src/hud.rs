@@ -642,6 +642,10 @@ impl Running {
                     .then(|| self.world.larvae_in(s.handle))
                     .flatten()
                     .map(|n| (n, gc_sim::larvae::LARVA_CAP)),
+                // Your own finished living buildings regrow on your veins.
+                rooted: (s.owner == self.sandbox.side)
+                    .then(|| self.world.rooted(s.handle))
+                    .flatten(),
             });
 
         let mut input = std::mem::take(&mut hud.input);

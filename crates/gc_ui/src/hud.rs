@@ -1301,6 +1301,7 @@ mod tests {
                 upgrading: Some(("Clan Keep", 25)),
                 queue,
                 larvae: None,
+                rooted: None,
             }),
             ..Extras::default()
         }
