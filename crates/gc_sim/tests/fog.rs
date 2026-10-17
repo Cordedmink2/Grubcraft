@@ -6,7 +6,7 @@ use gc_fixed::{Fx, FxVec2};
 use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::structures::{Armour, Role};
-use gc_sim::vision::SIGHT;
+use gc_sim::vision::{SIGHT, SIGHT_EVERY};
 use gc_sim::{
     BuildingStats, Capacities, Command, ConquestSetup, MatchSetup, PlayerCommand, RegimentHandle,
     StructureHandle, TICKS_PER_SECOND, UnitStats, Victories, World,
@@ -165,10 +165,25 @@ fn a_regiment_sees_so_far_and_no_further() {
     assert!(w.sees(0, ours), "a side sees its own");
     march(&mut w, 1, theirs, 45, 64);
     until(&mut w, 60 * TICKS_PER_SECOND, |w| w.sees(0, theirs));
+    // Each regiment is looked round on its own tick, a few apart.
+    run(&mut w, SIGHT_EVERY);
     assert!(w.sees(1, ours), "sight works both ways");
     // Out of sight again: unseen once the sighting lingers out.
     march(&mut w, 1, theirs, 120, 64);
     until(&mut w, 60 * TICKS_PER_SECOND, |w| !w.sees(0, theirs));
+}
+
+#[test]
+fn a_regiment_placed_in_sight_is_seen_at_once() {
+    // Each regiment is looked round on its own tick, but a new one on
+    // the tick it is placed (placing takes a tick here), so it is never
+    // unseen by a side with it in sight.
+    let mut w = fogged();
+    let ours = spawn(&mut w, 0, 20, 64);
+    let theirs = spawn(&mut w, 1, 30, 64);
+    assert!(w.sees(0, theirs));
+    run(&mut w, SIGHT_EVERY);
+    assert!(w.sees(1, ours));
 }
 
 #[test]

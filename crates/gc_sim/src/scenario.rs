@@ -154,28 +154,34 @@ impl Drill {
         )
     }
 
+    /// The tile `player`'s regiments start round: a corner a quarter of
+    /// the way in, players past four taking the middles of the north and
+    /// south.
+    pub fn corner(&self, player: u8) -> (i32, i32) {
+        let quarter = self.map_tiles / 4;
+        let far = self.map_tiles - quarter;
+        let cx = match player {
+            4.. => self.map_tiles / 2,
+            p if p & 1 == 0 => quarter,
+            _ => far,
+        };
+        let north = if player >= 4 {
+            player & 1 == 0
+        } else {
+            player & 2 == 0
+        };
+        (cx, if north { quarter } else { far })
+    }
+
     /// Fill `out` with the commands for the world's next tick (clears it first).
     pub fn commands_for(&mut self, world: &World, out: &mut Vec<PlayerCommand>) {
         out.clear();
         let tick = world.tick_count();
         if tick == 0 {
             // Each player's block of regiments starts in its own corner.
-            let quarter = self.map_tiles / 4;
             let unit_types = world.units().len().max(1);
             for player in 0..self.players {
-                // Players past four take the middles of the north and south.
-                let cx = if player >= 4 {
-                    self.map_tiles / 2
-                } else if player & 1 == 0 {
-                    quarter
-                } else {
-                    self.map_tiles - quarter
-                };
-                let cy = if (player >= 4 && player & 1 == 0) || (player < 4 && player & 2 == 0) {
-                    quarter
-                } else {
-                    self.map_tiles - quarter
-                };
+                let (cx, cy) = self.corner(player);
                 for k in 0..self.regiments_per_player as i32 {
                     let position =
                         FxVec2::from_ints(cx + (k % 10) * 7 - 32, cy + (k / 10) * 5 - 14);

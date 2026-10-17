@@ -12,13 +12,21 @@
 //! - `field-8000pt-2v2`: the recorded grand battle in
 //!   `replays/field-8000pt-2v2.gcr`, played back: four armies of 1,500
 //!   soldiers on a generated 384-tile map, charging into one brawl.
+//! - `conquest-6p`: six players in a Conquest match played in fog of war on
+//!   a 768-tile ridged map, each with 100 regiments drilling about the map
+//!   and 40 buildings keeping watch round its corner, laid one a tick at
+//!   first. `--no-fog` plays it as the sandbox does, with no fog, to show
+//!   what fog costs. Run only when asked for: the budgets below are for
+//!   256-tile maps, and a 768-tile map's walking grid alone is bigger than
+//!   the heap budget (big-map budgets come with the six-player soak).
 //!
-//! Usage: gc_bench [--scenario drill|pathing-storm|field-8000pt-2v2]
+//! Usage: gc_bench [--scenario drill|pathing-storm|field-8000pt-2v2|conquest-6p]
 //!                 [--ticks N] [--regiments-per-player N] [--seed N] [--open]
+//!                 [--no-fog]
 //! `--open` runs the scripted scenarios on an open plane with no obstacles
 //! (no route searches); `--ticks` cuts the replay short. The grand battle
 //! takes its map, armies and seed from the replay. With no `--scenario`,
-//! runs all three.
+//! runs the first three.
 
 use std::time::Instant;
 
@@ -26,7 +34,10 @@ use gc_fixed::{Fx, FxVec2};
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
 use gc_replay::Replay;
 use gc_sim::scenario::{DRILL_UNITS, Drill, NORTH, ribs_map};
-use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, World};
+use gc_sim::structures::{Armour, Role};
+use gc_sim::{
+    BuildingStats, Capacities, Command, ConquestSetup, MatchSetup, PlayerCommand, Victories, World,
+};
 
 #[global_allocator]
 static ALLOC: TaggedAlloc = TaggedAlloc;
@@ -43,7 +54,9 @@ const MAP_TILES: u32 = 256;
 /// The recorded grand battle, built into the benchmark so it runs from
 /// any folder.
 const GRAND_BATTLE: &[u8] = include_bytes!("../../../replays/field-8000pt-2v2.gcr");
-const SCENARIOS: [&str; 3] = ["drill", "pathing-storm", "field-8000pt-2v2"];
+const SCENARIOS: [&str; 4] = ["drill", "pathing-storm", "field-8000pt-2v2", "conquest-6p"];
+/// The six-player Conquest map's edge, the largest map size.
+const CONQUEST_TILES: u32 = 768;
 
 struct Options {
     scenario: Option<String>,
@@ -52,6 +65,8 @@ struct Options {
     seed: u64,
     /// Run on an open plane instead of the ridged map (no pathfinding).
     open: bool,
+    /// Play `conquest-6p` with no fog of war.
+    no_fog: bool,
 }
 
 fn main() {
@@ -61,11 +76,16 @@ fn main() {
         per_player: None,
         seed: 1,
         open: false,
+        no_fog: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         if flag == "--open" {
             opts.open = true;
+            continue;
+        }
+        if flag == "--no-fog" {
+            opts.no_fog = true;
             continue;
         }
         let value = args.next();
@@ -79,13 +99,17 @@ fn main() {
         }
     }
 
-    let nav = if opts.open {
-        Vec::new()
+    let run_all = opts.scenario.is_none();
+    let scripted = matches!(
+        opts.scenario.as_deref(),
+        None | Some("drill" | "pathing-storm")
+    );
+    let nav = if scripted {
+        opts.nav(MAP_TILES)
     } else {
-        ribs_map(MAP_TILES)
+        Vec::new()
     };
     let mut failed = false;
-    let run_all = opts.scenario.is_none();
     if run_all || opts.scenario.as_deref() == Some("drill") {
         failed |= drill(&opts, &nav);
     }
@@ -101,6 +125,9 @@ fn main() {
         }
         failed |= grand_battle(&opts);
     }
+    if opts.scenario.as_deref() == Some("conquest-6p") {
+        failed |= conquest_six(&opts);
+    }
     if !run_all && !SCENARIOS.contains(&opts.scenario.as_deref().unwrap_or("")) {
         usage();
     }
@@ -112,13 +139,33 @@ fn main() {
 fn usage() -> ! {
     eprintln!(
         "usage: gc_bench [--scenario {}] [--ticks N] \
-         [--regiments-per-player N] [--seed N] [--open]",
+         [--regiments-per-player N] [--seed N] [--open] [--no-fog]",
         SCENARIOS.join("|")
     );
     std::process::exit(2);
 }
 
-fn new_world(seed: u64, regiments: u32, nav: &[u8]) -> World {
+impl Options {
+    /// The walking grid of the map the scripted scenarios run on, `tiles`
+    /// across (empty for the open plane).
+    fn nav(&self, tiles: u32) -> Vec<u8> {
+        if self.open {
+            Vec::new()
+        } else {
+            ribs_map(tiles)
+        }
+    }
+
+    fn map_name(&self) -> &'static str {
+        if self.open {
+            "open plane"
+        } else {
+            "ridged map"
+        }
+    }
+}
+
+fn new_world(seed: u64, regiments: u32, nav: &[u8], map_tiles: u32) -> World {
     let capacities = Capacities {
         regiments: regiments.max(Capacities::default().regiments),
     };
@@ -127,7 +174,7 @@ fn new_world(seed: u64, regiments: u32, nav: &[u8]) -> World {
             seed,
             capacities,
             units: &DRILL_UNITS,
-            map_tiles: MAP_TILES,
+            map_tiles,
             nav,
             teams: &[],
             ground: gc_sim::Ground::FLAT,
@@ -201,7 +248,7 @@ impl Timings {
 fn drill(opts: &Options, nav: &[u8]) -> bool {
     let ticks = opts.ticks.unwrap_or(12_000); // ten minutes of game time
     let per_player = opts.per_player.unwrap_or(300);
-    let mut world = new_world(opts.seed, per_player * 4, nav);
+    let mut world = new_world(opts.seed, per_player * 4, nav, MAP_TILES);
     let mut drill = Drill::new(opts.seed);
     drill.regiments_per_player = per_player;
     let mut commands = Vec::with_capacity(4096);
@@ -212,11 +259,7 @@ fn drill(opts: &Options, nav: &[u8]) -> bool {
         timings.tick(&mut world, &commands);
         most_queued = most_queued.max(world.nav().queued());
     }
-    let map = if opts.open {
-        "open plane"
-    } else {
-        "ridged map"
-    };
+    let map = opts.map_name();
     println!("scenario     drill, 4 players x {per_player} regiments, {ticks} ticks, {map}");
     println!("route queue  {most_queued:>9}      (most waiting at once)");
     timings.report(&world)
@@ -225,7 +268,7 @@ fn drill(opts: &Options, nav: &[u8]) -> bool {
 fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
     let ticks = opts.ticks.unwrap_or(1_200);
     let per_player = opts.per_player.unwrap_or(30);
-    let mut world = new_world(opts.seed, per_player * 4, nav);
+    let mut world = new_world(opts.seed, per_player * 4, nav, MAP_TILES);
     // Each player's regiments stand in a block in their corner...
     let corner = |player: u8| {
         let near = MAP_TILES as i32 / 8;
@@ -348,6 +391,120 @@ fn grand_battle(opts: &Options) -> bool {
     if golden == Some(false) {
         // Not a failure here: `gc_replay verify` is the determinism check.
         println!("note         the simulation no longer plays this replay as recorded");
+    }
+    timings.report(&world)
+}
+
+/// Six players in Conquest on the largest map, in fog of war unless
+/// `--no-fog`: the drill's orders, and buildings round each corner.
+fn conquest_six(opts: &Options) -> bool {
+    const PLAYERS: u8 = 6;
+    const BUILDINGS_PER_PLAYER: i32 = 40;
+    let ticks = opts.ticks.unwrap_or(6_000); // five minutes of game time
+    let per_player = opts.per_player.unwrap_or(100);
+    let nav = opts.nav(CONQUEST_TILES);
+    let hall = BuildingStats {
+        role: Role::Main,
+        tier: 1,
+        upgrades_from: None,
+        cost_grub: 0,
+        cost_marrow: 0,
+        build_ticks: 1,
+        hp: 3000,
+        armour: Armour::Fortified,
+        width: 3,
+        depth: 3,
+        supply: 10,
+        flags: 0,
+        attack: None,
+    };
+    let buildings = [
+        hall,
+        BuildingStats {
+            role: Role::Housing,
+            width: 2,
+            depth: 2,
+            ..hall
+        },
+        BuildingStats {
+            role: Role::Defence,
+            width: 2,
+            depth: 2,
+            ..hall
+        },
+    ];
+    let fog = !opts.no_fog;
+    let mut world = new_world(
+        opts.seed,
+        per_player * u32::from(PLAYERS),
+        &nav,
+        CONQUEST_TILES,
+    );
+    let set_up = tagged_alloc::scope(Tag::Sim, || {
+        world.conquest(&ConquestSetup {
+            buildings: &buildings,
+            structures: 512,
+            victories: Victories {
+                annihilation: fog,
+                heart: false,
+            },
+            ..ConquestSetup::default()
+        })
+    });
+    assert!(set_up);
+    let mut drill = Drill::new(opts.seed);
+    drill.players = PLAYERS;
+    drill.regiments_per_player = per_player;
+    drill.map_tiles = CONQUEST_TILES as i32;
+    let mut commands = Vec::with_capacity(4096);
+    // Each player's buildings in rows south of where its regiments start
+    // (the drill's corners): a hall, then houses and a tower in every five.
+    let mut setup = Vec::new();
+    for player in 0..PLAYERS {
+        let (cx, cy) = drill.corner(player);
+        for k in 0..BUILDINGS_PER_PLAYER {
+            let building = match k {
+                0 => 0,
+                k if k % 5 == 0 => 2,
+                _ => 1,
+            };
+            let tile = (cx - 40 + (k % 10) * 8, cy + 45 + (k / 10) * 8);
+            setup.push(PlayerCommand {
+                player,
+                command: Command::SpawnStructure {
+                    building,
+                    tile: (tile.0 as i16, tile.1 as i16),
+                },
+            });
+        }
+    }
+    // One building goes up each tick at first, as players lay them one by
+    // one; each changes the walking grid.
+    let mut setup = setup.into_iter();
+    let mut timings = Timings::new(ticks);
+    let mut laid_us = Vec::new();
+    let standing = |w: &World| w.structures().map_or(0, |s| s.iter().count());
+    for _ in 0..ticks {
+        drill.commands_for(&world, &mut commands);
+        commands.extend(setup.next());
+        let before = standing(&world);
+        timings.tick(&mut world, &commands);
+        if standing(&world) > before {
+            laid_us.extend(timings.times_us.last());
+        }
+    }
+    let standing = standing(&world);
+    let map = opts.map_name();
+    println!(
+        "scenario     conquest-6p, {PLAYERS} players x {per_player} regiments, {standing} buildings, \
+         {ticks} ticks, {CONQUEST_TILES}-tile {map}, {}",
+        if fog { "fog of war" } else { "no fog" }
+    );
+    laid_us.sort_by(f64::total_cmp);
+    if let (Some(typical), Some(worst)) = (laid_us.get(laid_us.len() / 2), laid_us.last()) {
+        println!(
+            "laying       {typical:>9.1} us   (typical tick a building went up in; worst {worst:.1} us)"
+        );
     }
     timings.report(&world)
 }

@@ -91,7 +91,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 10;
+pub const SIM_VERSION: u32 = 11;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -723,7 +723,11 @@ impl World {
             if let Some(c) = &mut self.conquest {
                 c.structures.fog();
             }
-            (self.vision).fog(self.regiments.capacity(), setup.structures as usize);
+            (self.vision).fog(
+                self.regiments.capacity(),
+                setup.structures as usize,
+                self.map_tiles,
+            );
         }
         true
     }
@@ -964,6 +968,7 @@ impl World {
             &self.stances,
             &self.terrain,
             self.conquest.as_mut().map(|c| &mut c.structures),
+            self.tick,
         );
         if !self.scratch {
             self.events

@@ -79,7 +79,7 @@ impl World {
         // A rehearsal in fog of war is in fog too (without the buildings'
         // watch, as it has no buildings).
         if self.vision.fogged() {
-            vision.fog(n as usize, 0);
+            vision.fog(n as usize, 0, self.map_tiles);
         }
         World {
             tick: self.tick,

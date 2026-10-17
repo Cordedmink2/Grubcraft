@@ -46,7 +46,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use gc_fixed::Fx;
+use gc_fixed::{Fx, FxVec2};
 
 use crate::combat::{Block, Combat, Whose, placement};
 use crate::morale;
@@ -68,6 +68,19 @@ pub const WOOD_STILL: Fx = Fx::from_int(4);
 pub const WOOD_MOVING: Fx = Fx::from_int(10);
 /// How long a regiment stays seen after the last reason to see it.
 pub const LINGER_TICKS: u8 = 3 * TICKS_PER_SECOND as u8;
+
+/// In fog of war, each regiment and building looks round it once in this
+/// many ticks (each on its own tick), not every tick: sight is the
+/// costliest search in a big match, and a sighting lingers anyway. A
+/// stopgap until sight is kept on per-player tile grids, stamped only as
+/// things cross tiles (docs/10-architecture.md, "Fog of war").
+pub const SIGHT_EVERY: u32 = 4;
+
+/// Whether the thing in `slot` looks round it on `tick` (see
+/// [`SIGHT_EVERY`]).
+fn looks_now(slot: u32, tick: u32) -> bool {
+    slot.wrapping_add(tick).is_multiple_of(SIGHT_EVERY)
+}
 /// How long loosing a volley keeps a regiment seen by everyone.
 pub const VOLLEY_REVEAL_TICKS: u8 = 5 * TICKS_PER_SECOND as u8;
 /// Contact made less than this long after the victim's side first saw the
@@ -137,9 +150,32 @@ pub(crate) struct Vision {
     /// the party's last watcher loses it, so sight does not flicker at the
     /// edge.
     sight_linger: Vec<u8>,
+    /// Per slot, in fog of war: placed and not yet looked round, so it
+    /// looks on its first tick whatever its turn (see [`SIGHT_EVERY`]).
+    unlooked: Vec<bool>,
     /// In fog of war, this tick: each building's owner, footprint and
     /// sight.
     posts: Vec<Post>,
+    /// The same posts by where they stand, in square cells
+    /// [`POST_CELL`] tiles across, row by row: cell `k`'s posts are
+    /// `by_cell[cell_start[k]..cell_start[k + 1]]`.
+    by_cell: Vec<Post>,
+    cell_start: Vec<u32>,
+    /// Cells a side.
+    cells: usize,
+    /// The furthest any post sees, and the largest post's radius.
+    post_sight: Fx,
+    post_radius: Fx,
+}
+
+/// The side of a cell posts are sorted into, in tiles.
+const POST_CELL: i32 = 32;
+
+/// The cell (column, row) of a map `cells` cells across that a point is
+/// sorted into; points off the map go to the nearest cell.
+fn post_cell(cells: usize, p: FxVec2) -> (usize, usize) {
+    let at = |v: Fx| (v.floor_int() / POST_CELL).clamp(0, cells as i32 - 1) as usize;
+    (at(p.x), at(p.y))
 }
 
 impl Vision {
@@ -167,7 +203,13 @@ impl Vision {
             fog: false,
             in_sight: Vec::new(),
             sight_linger: Vec::new(),
+            unlooked: Vec::new(),
             posts: Vec::new(),
+            by_cell: Vec::new(),
+            cell_start: Vec::new(),
+            cells: 0,
+            post_sight: Fx::ZERO,
+            post_radius: Fx::ZERO,
         };
         if active {
             v.reserve(n);
@@ -187,8 +229,9 @@ impl Vision {
     }
 
     /// Play in fog of war from now on, with room for `capacity` regiments
-    /// and `buildings` buildings. Only before the first tick.
-    pub(crate) fn fog(&mut self, capacity: usize, buildings: usize) {
+    /// and `buildings` buildings, on a map `map_tiles` across. Only before
+    /// the first tick.
+    pub(crate) fn fog(&mut self, capacity: usize, buildings: usize, map_tiles: u32) {
         if !self.active {
             self.active = true;
             self.reserve(capacity);
@@ -196,7 +239,11 @@ impl Vision {
         self.fog = true;
         self.in_sight = vec![0; capacity];
         self.sight_linger = vec![0; capacity * PARTIES];
+        self.unlooked = vec![false; capacity];
         self.posts = Vec::with_capacity(buildings);
+        self.by_cell = Vec::with_capacity(buildings);
+        self.cells = (map_tiles as usize).div_ceil(POST_CELL as usize).max(1);
+        self.cell_start = vec![0; self.cells * self.cells + 1];
     }
 
     pub(crate) fn fogged(&self) -> bool {
@@ -254,6 +301,7 @@ impl Vision {
 
     /// Work out who sees whom after this tick's moves and blows, spring
     /// any ambushes, and end chases after targets gone out of sight.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn update(
         &mut self,
         regs: &mut Regiments,
@@ -262,6 +310,7 @@ impl Vision {
         stances: &Stances,
         terrain: &Terrain,
         structures: Option<&mut Structures>,
+        tick: u32,
     ) {
         if !self.active {
             return;
@@ -277,6 +326,7 @@ impl Vision {
                 block: s.block(slot),
                 sight: s.sight(slot),
             }));
+            self.sort_posts();
         }
         // Timers, and regiments new to their slots.
         for i in 0..regs.alive.len() {
@@ -328,9 +378,10 @@ impl Vision {
                 .copied()
                 .unwrap_or(u8::MAX);
             let cover = self.spotting(regs, units, terrain, i);
+            let fog_now = self.fog && (looks_now(i as u32, tick) || self.unlooked[i]);
             let (near, far) = match owner as usize {
                 o if o < PARTIES => {
-                    let far = self.fog.then_some(SIGHT);
+                    let far = fog_now.then_some(SIGHT);
                     self.spotters(regs, combat, units, stances, i, cover, far)
                 }
                 _ => (u8::MAX, u8::MAX),
@@ -340,7 +391,7 @@ impl Vision {
             } else {
                 u8::MAX
             };
-            if self.fog {
+            if fog_now {
                 let now = friends | far;
                 let mut in_sight = 0;
                 for p in 0..PARTIES {
@@ -348,13 +399,15 @@ impl Vision {
                     if now & (1 << p) != 0 {
                         self.sight_linger[k] = LINGER_TICKS;
                     } else {
-                        self.sight_linger[k] = self.sight_linger[k].saturating_sub(1);
+                        self.sight_linger[k] =
+                            self.sight_linger[k].saturating_sub(SIGHT_EVERY as u8);
                     }
                     if self.sight_linger[k] > 0 {
                         in_sight |= 1 << p;
                     }
                 }
                 self.in_sight[i] = in_sight;
+                self.unlooked[i] = false;
             }
             for p in 0..PARTIES {
                 let k = i * PARTIES + p;
@@ -371,7 +424,7 @@ impl Vision {
         }
 
         if let Some(s) = structures {
-            self.look_at_buildings(regs, combat, units, stances, s);
+            self.look_at_buildings(regs, combat, units, stances, s, tick);
         }
 
         // A chase after a target its side no longer sees ends where the
@@ -412,6 +465,7 @@ impl Vision {
                 .copied()
                 .unwrap_or(u8::MAX);
             self.sight_linger[i * PARTIES..(i + 1) * PARTIES].fill(0);
+            self.unlooked[i] = true;
         }
         self.revealed[i] = 0;
         self.off_guard[i] = 0;
@@ -460,6 +514,7 @@ impl Vision {
         if self.fog && from.fog {
             self.in_sight[i] = from.in_sight[i];
             self.sight_linger[k..k + PARTIES].copy_from_slice(&from.sight_linger[k..k + PARTIES]);
+            self.unlooked[i] = from.unlooked[i];
         }
     }
 
@@ -593,33 +648,74 @@ impl Vision {
         (seen_near | posts(near), seen_far | posts(far))
     }
 
+    /// Sort this tick's posts into their cells (a counting sort into room
+    /// reserved at the start).
+    fn sort_posts(&mut self) {
+        let cells = self.cells;
+        let cell = |p: &Post| {
+            let (x, y) = post_cell(cells, p.block.centre);
+            y * cells + x
+        };
+        // Count each cell's posts, sum them so each cell holds where its
+        // posts end, then fill backwards, leaving where each one starts.
+        self.cell_start.fill(0);
+        (self.post_sight, self.post_radius) = (Fx::ZERO, Fx::ZERO);
+        for p in &self.posts {
+            self.cell_start[cell(p)] += 1;
+            self.post_sight = self.post_sight.max(p.sight);
+            self.post_radius = self.post_radius.max(p.block.radius());
+        }
+        for k in 1..self.cell_start.len() {
+            self.cell_start[k] += self.cell_start[k - 1];
+        }
+        self.by_cell.clear();
+        self.by_cell.extend_from_slice(&self.posts);
+        for p in self.posts.iter().rev() {
+            let k = cell(p);
+            self.cell_start[k] -= 1;
+            self.by_cell[self.cell_start[k] as usize] = *p;
+        }
+    }
+
     /// The parties hostile to `owner` with a building within `distance` of
     /// `me` (and within its own sight), edge to edge.
     fn posts_near(&self, me: &Block, owner: PlayerId, distance: Fx) -> u8 {
+        if self.by_cell.is_empty() {
+            return 0;
+        }
         let mut seen = 0u8;
-        for post in &self.posts {
-            let p = post.owner as usize;
-            if p >= PARTIES || seen & (1 << p) != 0 || self.allies[p] & (1 << owner) != 0 {
-                continue;
-            }
-            // Far off by the centres: no need for the block test.
-            let gap = distance.min(post.sight);
-            let reach = u64::from(
-                (gap + me.radius() + post.block.radius())
-                    .raw()
-                    .unsigned_abs(),
-            );
-            if (post.block.centre - me.centre).length_sq_raw() <= reach * reach
-                && me.touches(&post.block, gap)
-            {
-                seen |= self.allies[p];
+        // Only cells a post seeing `me` could stand in.
+        let reach = distance.min(self.post_sight) + me.radius() + self.post_radius;
+        let (x0, y0) = post_cell(self.cells, me.centre - FxVec2::new(reach, reach));
+        let (x1, y1) = post_cell(self.cells, me.centre + FxVec2::new(reach, reach));
+        for y in y0..=y1 {
+            let row = y * self.cells;
+            let (from, to) = (self.cell_start[row + x0], self.cell_start[row + x1 + 1]);
+            for post in &self.by_cell[from as usize..to as usize] {
+                let p = post.owner as usize;
+                if p >= PARTIES || seen & (1 << p) != 0 || self.allies[p] & (1 << owner) != 0 {
+                    continue;
+                }
+                // Far off by the centres: no need for the block test.
+                let gap = distance.min(post.sight);
+                let reach = u64::from(
+                    (gap + me.radius() + post.block.radius())
+                        .raw()
+                        .unsigned_abs(),
+                );
+                if (post.block.centre - me.centre).length_sq_raw() <= reach * reach
+                    && me.touches(&post.block, gap)
+                {
+                    seen |= self.allies[p];
+                }
             }
         }
         seen
     }
 
     /// Mark who has now seen each building: its side, and any party with a
-    /// regiment within [`SIGHT`] of it or a building within its sight.
+    /// regiment within [`SIGHT`] of it or a building within its sight. Each
+    /// building looks once in [`SIGHT_EVERY`] ticks.
     fn look_at_buildings(
         &self,
         regs: &Regiments,
@@ -627,6 +723,7 @@ impl Vision {
         units: &[UnitStats],
         stances: &Stances,
         structures: &mut Structures,
+        tick: u32,
     ) {
         let at = placement!(regs, stances);
         // The parties in play: once all of them have seen a building there
@@ -639,7 +736,10 @@ impl Vision {
             .fold(0u8, |m, p| m | 1 << p);
         for post in &self.posts {
             let o = post.owner as usize;
-            if o >= PARTIES || structures.seen(post.slot) & present == present {
+            if o >= PARTIES
+                || !looks_now(post.slot as u32, tick)
+                || structures.seen(post.slot) & present == present
+            {
                 continue;
             }
             let block = post.block;
@@ -685,6 +785,7 @@ impl Vision {
                 for k in i * PARTIES..(i + 1) * PARTIES {
                     h.u8(self.sight_linger[k]);
                 }
+                h.u8(u8::from(self.unlooked[i]));
             }
         }
     }

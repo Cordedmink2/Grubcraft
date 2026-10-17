@@ -130,6 +130,8 @@ Target suite, replayed headless (sim) and rendered with a scripted camera (frame
 
 - `field-8000pt-2v2` (headless half): the recorded battle `replays/field-8000pt-2v2.gcr` played back. Four armies of about 1,500 soldiers (276 regiments, 6,052 soldiers; points arrive with the army builder, so "8,000 points" means 1,500 soldiers for now) on a generated 384-tile map with hills and rivers, every regiment ordered to attack the nearest enemy each second. Up to about 2,000 soldiers are in melee at once and half the field falls in the first minute. It measures about 0.05 ms p50, 0.3 ms p99 and 0.7 ms at worst a tick, 5.2 MB of sim heap and 0 allocations, in the cloud build container. The frame half (puppets and rendering of the same battle) needs a real GPU and the game to show a 384-tile map (it plays replays since M2 step 6a, on its own 256-tile map), so it is measured on Mario's machines later.
 
+- `conquest-6p` (2026-10-17, Conquest step 6, run only when asked for): six players in a Conquest match played in fog of war on a 768-tile ridged map, 100 regiments each drilling about the map and 40 buildings each ordered one a tick round their corners (about 230 of the 240 go up; the rest fall on ridges or regiments), for 6,000 ticks; `--no-fog` plays it without fog. It is outside CI's gates for now (a 768-tile walking grid alone is over the 8 MB heap budget); big-map budgets come with the six-player soak. Numbers in the [perf log](perf-log.md).
+
 The other scenarios need features that don't exist yet (a recorded hour-long 6-player match, rendering benchmarks).
 
 ### Gates in CI
