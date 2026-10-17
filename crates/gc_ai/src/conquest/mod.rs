@@ -13,6 +13,7 @@ pub mod kit;
 pub mod marshal;
 pub mod opening;
 pub mod placing;
+pub mod scout;
 pub mod sovereign;
 pub mod spymaster;
 pub mod steward;
@@ -296,6 +297,9 @@ impl Realm {
         }
         if !aims.is_empty() {
             lines.push(line("aims", aims.join("; ")));
+        }
+        if let Some(note) = self.marshal.scout.note(now) {
+            lines.push(line("scout", note));
         }
         lines
     }

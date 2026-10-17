@@ -14,6 +14,7 @@ use gc_sim::structures::{Role, StructureHandle};
 use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
+use super::scout::Scout;
 use super::sovereign::{PUSH_LEAD, PUSH_WINDOW};
 use super::{Sense, spymaster};
 use crate::captain::{Captain, Ctx};
@@ -71,6 +72,8 @@ const RALLY_OUT: f32 = 16.0;
 const AT_TARGET: f32 = 20.0;
 /// A start counts as looked at once a regiment comes this near it.
 const SCOUTED: f32 = 14.0;
+/// Regiments within this many tiles of the rally point are waiting there.
+const WAITING: f32 = 20.0;
 /// Tiles between regiments marching abreast.
 const ABREAST: f32 = 7.0;
 /// An attack falls back once the army is down to this share of the
@@ -147,6 +150,8 @@ pub struct Marshal {
     orders: Orders,
     wants: Vec<Want>,
     battle_wants: Vec<Want>,
+    /// The fast regiment it lends to look at the map: not part of the army.
+    pub scout: Scout,
     /// What it believes of each enemy's army, as of its last think. Only
     /// for the AI lens to show.
     pub belief: Vec<spymaster::Belief>,
@@ -181,6 +186,7 @@ impl Marshal {
             orders: Orders::new(party, reaction_ticks, orders_per_minute),
             wants: Vec::new(),
             battle_wants: Vec::new(),
+            scout: Scout::new(),
             belief: Vec::new(),
             odds: Vec::new(),
             wave: None,
@@ -221,10 +227,22 @@ impl Marshal {
         {
             self.rally = Some(rally_point(s, home));
         }
-        let army: Vec<&Seen> = view
+        let fighters: Vec<&Seen> = view
             .regiments
             .iter()
             .filter(|r| r.owner == party && s.kit.is_fighter(r.unit) && !r.broken())
+            .collect();
+        // The scout is not part of the army: no wave, battle or attack
+        // counts it or sends it anywhere.
+        if s.now >= self.next_think {
+            let waiting = self.waiting(&fighters);
+            self.scout.update(s, &fighters, &waiting, self.rally, home);
+        }
+        let scout = self.scout.regiment();
+        let army: Vec<&Seen> = fighters
+            .iter()
+            .copied()
+            .filter(|r| Some(r.handle) != scout)
             .collect();
         self.out.retain(|h| army.iter().any(|r| r.handle == *h));
         if army.is_empty() {
@@ -241,9 +259,31 @@ impl Marshal {
             if let Some(b) = self.battle.as_ref() {
                 self.wants.retain(|w| b.view.get(w.regiment).is_none());
             }
+            self.scout.steer(s, self.rally, &mut self.wants);
             self.orders.decide(view, &mut self.wants);
         }
         self.orders.release(s.now, out);
+    }
+
+    /// The fighters standing at the rally point with nothing to do: not
+    /// out on an attack, not holding the Heart, not in a battle.
+    fn waiting<'a>(&self, fighters: &[&'a Seen]) -> Vec<&'a Seen> {
+        let Some(rally) = self.rally else {
+            return Vec::new();
+        };
+        if self.battle.is_some() {
+            return Vec::new();
+        }
+        fighters
+            .iter()
+            .copied()
+            .filter(|r| {
+                !self.out.contains(&r.handle)
+                    && !self.holders.contains(&r.handle)
+                    && !r.engaged
+                    && r.pos.distance(rally) <= WAITING
+            })
+            .collect()
     }
 
     /// Start, run or end a battle where enemies come near the army.
@@ -305,9 +345,10 @@ impl Marshal {
         // stands there; the rest of the army goes on as the Marshal says.
         let at = b.at;
         let holders = &self.holders;
+        let scout = self.scout.regiment();
         view.subset(&mut b.view, |r| {
             let fights = if r.owner == party {
-                s.kit.is_fighter(r.unit) && !holders.contains(&r.handle)
+                s.kit.is_fighter(r.unit) && !holders.contains(&r.handle) && Some(r.handle) != scout
             } else {
                 !s.kit.all_workers.contains(&r.unit)
             };
@@ -499,7 +540,7 @@ impl Marshal {
             .collect();
         if matches!(self.goal, Goal::Attack(_) | Goal::Heart(_))
             && waiting.len() >= REINFORCE
-            && waiting.iter().all(|r| r.pos.distance(rally) <= 20.0)
+            && waiting.iter().all(|r| r.pos.distance(rally) <= WAITING)
         {
             self.out.extend(waiting.iter().map(|r| r.handle));
             self.set_out_with += waiting.iter().map(|r| u32::from(r.models)).sum::<u32>();
