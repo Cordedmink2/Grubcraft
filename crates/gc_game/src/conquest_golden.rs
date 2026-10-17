@@ -18,7 +18,7 @@
 use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_replay::{Recorder, Replay};
-use gc_sim::structures::Role;
+use gc_sim::structures::{Role, StructureView};
 use gc_sim::{
     BuildingId, Capacities, Command, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, Resource,
     TICKS_PER_SECOND, UnitId, Victories, World,
@@ -51,23 +51,23 @@ const WORKERS: usize = 8;
 /// soldier, a house, and the cheapest other building (laid to be called
 /// off).
 #[derive(Clone, Copy, Debug)]
-struct Kit {
-    main: BuildingId,
-    keep: Option<BuildingId>,
-    worker: UnitId,
-    barracks: BuildingId,
-    fighter: UnitId,
-    house: BuildingId,
-    spare: BuildingId,
+pub(crate) struct Kit {
+    pub main: BuildingId,
+    pub keep: Option<BuildingId>,
+    pub worker: UnitId,
+    pub barracks: BuildingId,
+    pub fighter: UnitId,
+    pub house: BuildingId,
+    pub spare: BuildingId,
     /// What a worker, a soldier and the upgrade cost: Grub, Marrow and
     /// supply.
-    worker_cost: [u32; 3],
-    fighter_cost: [u32; 3],
-    keep_cost: [u32; 3],
+    pub worker_cost: [u32; 3],
+    pub fighter_cost: [u32; 3],
+    pub keep_cost: [u32; 3],
 }
 
 impl Kit {
-    fn of(data: &GameData, table: &Table, faction: Faction) -> Kit {
+    pub fn of(data: &GameData, table: &Table, faction: Faction) -> Kit {
         let ids = |f: &dyn Fn(usize) -> bool| -> Vec<u16> {
             (0..data.buildings.len())
                 .filter(|&i| data.buildings[i].faction() == faction && f(i))
@@ -91,11 +91,13 @@ impl Kit {
             .iter()
             .find(|&&b| trains(b, false).is_some())
             .expect("a tier-1 building trains soldiers");
+        // A house, or for a faction without one (the Choir) the cheapest
+        // other building that adds supply.
         let house = *plain
             .iter()
-            .filter(|&&b| stats(b).role == Role::Housing)
-            .min_by_key(|&&b| (stats(b).cost_grub, b))
-            .expect("a house");
+            .filter(|&&b| b != barracks && stats(b).supply > 0)
+            .min_by_key(|&&b| (stats(b).role != Role::Housing, stats(b).cost_grub, b))
+            .expect("a building that adds supply");
         let spare = *plain
             .iter()
             .filter(|&&b| b != barracks && b != house)
@@ -153,7 +155,7 @@ impl Match {
     pub fn new() -> Match {
         let data = crate::data::load();
         let table = Table::new(&data);
-        let map = conquest::make_map(0);
+        let map = conquest::make_map(0, 0);
         let units = conquest::unit_stats(&data);
         let nav = map.nav_costs();
         let setup = MatchSetup {
@@ -221,65 +223,24 @@ impl Match {
         replay
     }
 
-    /// Side `p`'s buildings of type `b` (or any type, for `None`).
-    fn own(&self, p: PlayerId, b: Option<BuildingId>) -> Vec<gc_sim::structures::StructureView> {
-        self.world
-            .structures()
-            .map(|s| {
-                s.iter()
-                    .filter(|v| v.owner == p && b.is_none_or(|b| v.building == b))
-                    .collect()
-            })
-            .unwrap_or_default()
+    fn own(&self, p: PlayerId, b: Option<BuildingId>) -> Vec<StructureView> {
+        own(&self.world, p, b)
     }
 
-    /// Side `p`'s main building, kept or not.
-    fn main_of(&self, p: PlayerId) -> Option<gc_sim::structures::StructureView> {
-        let k = self.kits[usize::from(p)];
-        self.own(p, None)
-            .into_iter()
-            .find(|v| v.building == k.main || Some(v.building) == k.keep)
+    fn main_of(&self, p: PlayerId) -> Option<StructureView> {
+        main_of(&self.world, &self.kits[usize::from(p)], p)
     }
 
     fn workers(&self, p: PlayerId) -> Vec<RegimentHandle> {
-        let w = self.kits[usize::from(p)].worker;
-        self.world
-            .regiments
-            .iter()
-            .filter(|r| r.owner == p && r.unit == w)
-            .map(|r| r.handle)
-            .collect()
+        regiments_of(&self.world, p, self.kits[usize::from(p)].worker)
     }
 
-    /// Where side `p` can lay building `b` near its main building, the
-    /// nearest first.
     fn site(&self, p: PlayerId, b: BuildingId) -> Option<(i16, i16)> {
-        let main = self.main_of(p)?;
-        let foot: Foot = [
-            main.tile.0,
-            main.tile.1,
-            i32::from(main.width),
-            i32::from(main.depth),
-        ];
-        conquest::ring(foot, 3)
-            .find(|&t| self.world.can_lay(p, b, t).is_ok())
-            .map(|(x, y)| (x as i16, y as i16))
+        site(&self.world, &self.kits[usize::from(p)], p, b)
     }
 
-    /// The nodes of `resource`, nearest side `p`'s start first.
     fn nodes_near(&self, p: PlayerId, resource: Resource) -> Vec<u16> {
-        let (sx, sy) = self.starts[usize::from(p)];
-        let start = FxVec2::from_ints(sx, sy);
-        let mut nodes: Vec<(u64, u16)> = self
-            .world
-            .economy()
-            .into_iter()
-            .flat_map(gc_sim::Economy::nodes)
-            .filter(|n| n.resource == resource && n.left > 0)
-            .map(|n| ((n.at - start).length_sq_raw(), n.index))
-            .collect();
-        nodes.sort_unstable();
-        nodes.into_iter().map(|(_, i)| i).collect()
+        nodes_near(&self.world, self.starts[usize::from(p)], resource)
     }
 
     fn script(&mut self, p: PlayerId, out: &mut Vec<PlayerCommand>) {
@@ -296,11 +257,7 @@ impl Match {
         let marrow = self.nodes_near(p, Resource::Marrow);
         let builders = 2.min(workers.len().saturating_sub(1));
         let bank = self.world.bank(p).unwrap_or_default();
-        let affords = |[grub, marrow, supply]: [u32; 3]| {
-            bank.grub >= grub
-                && bank.marrow >= marrow
-                && bank.supply_used + supply <= bank.supply_cap
-        };
+        let affords = |cost| affords(&bank, cost);
         if t == GATHER_AT || t.is_multiple_of(10 * TICKS_PER_SECOND) {
             for (i, &w) in workers.iter().enumerate() {
                 let building =
@@ -508,6 +465,70 @@ impl Match {
             .filter(|r| r.owner == p && r.unit == unit)
             .count()
     }
+}
+
+/// Side `p`'s buildings of type `b` (or any type, for `None`).
+pub(crate) fn own(world: &World, p: PlayerId, b: Option<BuildingId>) -> Vec<StructureView> {
+    world
+        .structures()
+        .map(|s| {
+            s.iter()
+                .filter(|v| v.owner == p && b.is_none_or(|b| v.building == b))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Side `p`'s main building, kept or not.
+pub(crate) fn main_of(world: &World, k: &Kit, p: PlayerId) -> Option<StructureView> {
+    own(world, p, None)
+        .into_iter()
+        .find(|v| v.building == k.main || Some(v.building) == k.keep)
+}
+
+/// Side `p`'s regiments of type `unit`.
+pub(crate) fn regiments_of(world: &World, p: PlayerId, unit: UnitId) -> Vec<RegimentHandle> {
+    world
+        .regiments
+        .iter()
+        .filter(|r| r.owner == p && r.unit == unit)
+        .map(|r| r.handle)
+        .collect()
+}
+
+/// Where side `p` can lay building `b` near its main building, the
+/// nearest first.
+pub(crate) fn site(world: &World, k: &Kit, p: PlayerId, b: BuildingId) -> Option<(i16, i16)> {
+    let main = main_of(world, k, p)?;
+    let foot: Foot = [
+        main.tile.0,
+        main.tile.1,
+        i32::from(main.width),
+        i32::from(main.depth),
+    ];
+    conquest::ring(foot, 3)
+        .find(|&t| world.can_lay(p, b, t).is_ok())
+        .map(|(x, y)| (x as i16, y as i16))
+}
+
+/// The nodes of `resource` with something left, nearest `start` first.
+pub(crate) fn nodes_near(world: &World, (sx, sy): (i32, i32), resource: Resource) -> Vec<u16> {
+    let start = FxVec2::from_ints(sx, sy);
+    let mut nodes: Vec<(u64, u16)> = world
+        .economy()
+        .into_iter()
+        .flat_map(gc_sim::Economy::nodes)
+        .filter(|n| n.resource == resource && n.left > 0)
+        .map(|n| ((n.at - start).length_sq_raw(), n.index))
+        .collect();
+    nodes.sort_unstable();
+    nodes.into_iter().map(|(_, i)| i).collect()
+}
+
+/// Whether `bank` holds `cost`'s Grub and Marrow and has room for its
+/// supply.
+pub(crate) fn affords(bank: &gc_sim::Bank, [grub, marrow, supply]: [u32; 3]) -> bool {
+    bank.grub >= grub && bank.marrow >= marrow && bank.supply_used + supply <= bank.supply_cap
 }
 
 /// The golden as recorded.

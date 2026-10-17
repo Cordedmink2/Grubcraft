@@ -231,10 +231,32 @@ pub const MAPS: [&str; 10] = [
 /// (`gc_map::WILDS`).
 pub const DEFAULT_MAP: usize = 6;
 
-/// The Conquest maps the lobby offers, and how many players each is for.
-/// The game makes them from the shipped maps of the same names.
-pub const CONQUEST_MAPS: [&str; 2] = ["Ribcage Pass", "The Four Teeth"];
-pub const CONQUEST_MAP_PLAYERS: [usize; 2] = [2, 4];
+/// The Conquest maps the lobby offers, and how many players each is for:
+/// first the shipped maps (the game makes them from the shipped maps of
+/// the same names), then the big six-player Wilds maps made from the map
+/// seed, as wild as the seed picks or as plains, mixed or wild land.
+pub const CONQUEST_MAPS: [&str; 6] = [
+    "Ribcage Pass",
+    "The Four Teeth",
+    "Land: Random",
+    "Land: Plains",
+    "Land: Mixed",
+    "Land: Wild",
+];
+pub const CONQUEST_MAP_PLAYERS: [usize; 6] = [2, 4, 6, 6, 6, 6];
+/// How many of [`CONQUEST_MAPS`] are shipped maps, which the map seed
+/// doesn't change; the rest are made from it.
+pub const SHIPPED_CONQUEST_MAPS: usize = 2;
+
+/// The seed Conquest map `choice` is made from: the map seed for a made
+/// map, nothing for a shipped one (so a new seed doesn't remake it).
+pub fn conquest_map_seed(choice: usize, map_seed: u64) -> u64 {
+    if choice < SHIPPED_CONQUEST_MAPS {
+        0
+    } else {
+        map_seed
+    }
+}
 
 /// The maps a match of `mode` can be played on: [`MAPS`] or
 /// [`CONQUEST_MAPS`]. [`LobbySettings::map`] indexes this.

@@ -44,7 +44,7 @@ fn work(jobs: mpsc::Receiver<MapPreviewKey>, made: mpsc::Sender<Made>) {
         let map = make_map(MapKey::from(key));
         let starts = match key {
             MapPreviewKey::Field { tiles, .. } => starts_of(tiles),
-            MapPreviewKey::Conquest(_) => {
+            MapPreviewKey::Conquest { .. } => {
                 let side = map.tiles as f32;
                 map.start_positions()
                     .iter()

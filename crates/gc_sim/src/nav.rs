@@ -906,51 +906,9 @@ impl Nav {
     /// Put up (`on`) or pull down a building on the tiles `x..x + w` ×
     /// `y..y + d`, all on the map: while one stands there no regiment may
     /// walk on them. Routes that might cross the changed ground are searched
-    /// again. No effect with no map.
+    /// again. No effect with no map. See [`Nav::set_built_all`].
     pub(crate) fn set_built(&mut self, tiles: [i32; 4], on: bool, regs: &Regiments) {
-        let Some(grid) = &mut self.grid else {
-            return;
-        };
-        // Linking the grid again isn't the routes' search work this tick.
-        let work = self.search.work;
-        let changed = Arc::make_mut(grid).set_built(tiles, on, &mut self.search);
-        self.search.work = work;
-        let Some([x0, y0, x1, y1]) = changed else {
-            return;
-        };
-        // Any route passing near the change is found again, and, once ground
-        // is freed, any that found no way may find one now.
-        let reach = i32::from(CLEAR_CAP);
-        let tile = |c: i32| Fx::from_ratio(c, CELLS_PER_TILE);
-        let (lo, hi) = (
-            FxVec2::new(tile(x0 - reach), tile(y0 - reach)),
-            FxVec2::new(tile(x1 + reach), tile(y1 + reach)),
-        );
-        for i in 0..self.route.len() {
-            if !regs.alive[i] {
-                continue;
-            }
-            let ahead = match self.route[i] {
-                Route::Direct => core::slice::from_ref(&self.goal[i]),
-                Route::Waypoints => {
-                    &self.way[i * MAX_WAYPOINTS..]
-                        [self.way_next[i] as usize..self.way_len[i] as usize]
-                }
-                Route::Failed if !on => {
-                    self.lost(i);
-                    continue;
-                }
-                Route::Failed | Route::Idle | Route::Waiting => continue,
-            };
-            let (mut a, mut b) = (regs.position[i], regs.position[i]);
-            for p in ahead {
-                a = FxVec2::new(a.x.min(p.x), a.y.min(p.y));
-                b = FxVec2::new(b.x.max(p.x), b.y.max(p.y));
-            }
-            if a.x <= hi.x && a.y <= hi.y && b.x >= lo.x && b.y >= lo.y {
-                self.lost(i);
-            }
-        }
+        self.set_built_all(&[tiles], on, regs);
     }
 
     /// Whether a building could stand on the tiles `x..x + w` × `y..y + d`:
@@ -1494,31 +1452,6 @@ impl Grid {
         let c = [x, y, x + w, y + d].map(|v| v * CELLS_PER_TILE);
         let on = |v: i32| (0..=self.side).contains(&v);
         (c.iter().all(|&v| on(v)) && c[0] < c[2] && c[1] < c[3]).then_some(c)
-    }
-
-    /// Put up or pull down a building on the tiles `x..x + w` × `y..y + d`
-    /// and bring the grid up to date, searching in `search`'s room. Returns
-    /// the cells changed; `None` (and no change) unless the tiles are on
-    /// the map.
-    fn set_built(&mut self, tiles: [i32; 4], on: bool, search: &mut Search) -> Option<[i32; 4]> {
-        let [x0, y0, x1, y1] = self.cells(tiles)?;
-        for cy in y0..y1 {
-            for cx in x0..x1 {
-                let i = self.idx(cx, cy) as usize;
-                self.built[i] = if on {
-                    self.built[i].saturating_add(1)
-                } else {
-                    self.built[i].saturating_sub(1)
-                };
-                self.cost[i] = if self.built[i] > 0 {
-                    BLOCKED
-                } else {
-                    self.ground[i]
-                };
-            }
-        }
-        self.changed(x0, y0, x1, y1, search);
-        Some([x0, y0, x1, y1])
     }
 
     /// Number the connected areas of open ground, so a search never starts

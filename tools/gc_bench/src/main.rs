@@ -16,9 +16,10 @@
 //!   a 768-tile ridged map, each with 100 regiments drilling about the map
 //!   and 40 buildings keeping watch round its corner, laid one a tick at
 //!   first. `--no-fog` plays it as the sandbox does, with no fog, to show
-//!   what fog costs. Run only when asked for: the budgets below are for
-//!   256-tile maps, and a 768-tile map's walking grid alone is bigger than
-//!   the heap budget (big-map budgets come with the six-player soak).
+//!   what fog costs. Held to the big-map budgets (a 768-tile map's walking
+//!   grid alone is bigger than the 256-tile heap budget), with the ticks a
+//!   building goes up in, which may allocate, held to their own. Run only
+//!   when asked for; CI runs it as a step of its own.
 //!
 //! Usage: gc_bench [--scenario drill|pathing-storm|field-8000pt-2v2|conquest-6p]
 //!                 [--ticks N] [--regiments-per-player N] [--seed N] [--open]
@@ -42,11 +43,30 @@ use gc_sim::{
 #[global_allocator]
 static ALLOC: TaggedAlloc = TaggedAlloc;
 
-/// Simulation memory budget from the budget table.
-const SIM_HEAP_BUDGET: usize = 8 * 1024 * 1024;
-/// p99 tick budget. The real target is 2 ms on the low-tier laptop running a
-/// full game; the benchmark must stay below it on any CI machine.
-const P99_TICK_BUDGET_US: f64 = 2_000.0;
+/// The budgets a scenario's ticks are held to.
+struct Budgets {
+    /// p99 tick time.
+    p99_us: f64,
+    /// Simulation heap at the end.
+    sim_heap: usize,
+}
+
+/// The budget table's: a 2 ms p99 is the real target on the low-tier
+/// laptop running a full game, so the benchmark must stay below it on any
+/// CI machine; 8 MB of simulation heap on a 256-tile map.
+const BUDGETS: Budgets = Budgets {
+    p99_us: 2_000.0,
+    sim_heap: 8 * 1024 * 1024,
+};
+/// Six-player Conquest on a 768-tile map (docs/12-performance.md, "Big
+/// maps"): its ticks with no building going up, and a heap that holds the
+/// map's walking grid and fog, nine times a 256-tile map's.
+const BIG_MAP_BUDGETS: Budgets = Budgets {
+    p99_us: 5_000.0,
+    sim_heap: 48 * 1024 * 1024,
+};
+/// The longest a tick a building goes up in may take on a 768-tile map.
+const LAYING_BUDGET_US: f64 = 40_000.0;
 /// The pathing storm's last regiment must have its route within this many
 /// ticks of the order (2 s).
 const STORM_WAIT_BUDGET: u32 = 40;
@@ -205,22 +225,30 @@ impl Timings {
         self.allocs += tagged_alloc::allocation_count() - a0;
     }
 
-    /// Print the common report; returns true if a budget was missed.
-    fn report(mut self, world: &World) -> bool {
+    /// Print the common report; returns true if one of `budgets` was
+    /// missed.
+    fn report(mut self, world: &World, budgets: &Budgets) -> bool {
         self.times_us.sort_by(f64::total_cmp);
-        let pct = |p: f64| self.times_us[((self.times_us.len() - 1) as f64 * p) as usize];
+        let pct = |p: f64| {
+            let last = self.times_us.len().saturating_sub(1);
+            self.times_us
+                .get((last as f64 * p) as usize)
+                .copied()
+                .unwrap_or(0.0)
+        };
         let sim_heap = tagged_alloc::live_bytes(Tag::Sim);
         let mem = gc_platform::memory::process_memory();
         println!("tick p50     {:>9.1} us", pct(0.50));
         println!(
-            "tick p99     {:>9.1} us   (budget {P99_TICK_BUDGET_US:.0} us)",
-            pct(0.99)
+            "tick p99     {:>9.1} us   (budget {:.0} us)",
+            pct(0.99),
+            budgets.p99_us
         );
         println!("tick max     {:>9.1} us", pct(1.0));
         println!(
             "sim heap     {:>9.2} MB   (budget {:.0} MB)",
             mb(sim_heap),
-            mb(SIM_HEAP_BUDGET)
+            mb(budgets.sim_heap)
         );
         println!("tick allocs  {:>9}      (budget 0)", self.allocs);
         if let Some(c) = mem.current {
@@ -229,11 +257,11 @@ impl Timings {
         println!("final hash   {:#018x}", world.state_hash());
 
         let mut failed = false;
-        if pct(0.99) > P99_TICK_BUDGET_US {
+        if pct(0.99) > budgets.p99_us {
             eprintln!("FAIL: p99 tick time over budget");
             failed = true;
         }
-        if sim_heap > SIM_HEAP_BUDGET {
+        if sim_heap > budgets.sim_heap {
             eprintln!("FAIL: simulation heap over budget");
             failed = true;
         }
@@ -262,7 +290,7 @@ fn drill(opts: &Options, nav: &[u8]) -> bool {
     let map = opts.map_name();
     println!("scenario     drill, 4 players x {per_player} regiments, {ticks} ticks, {map}");
     println!("route queue  {most_queued:>9}      (most waiting at once)");
-    timings.report(&world)
+    timings.report(&world, &BUDGETS)
 }
 
 fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
@@ -329,7 +357,7 @@ fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
     println!(
         "route wait   {wait:>9} ticks (budget {STORM_WAIT_BUDGET}; last regiment's wait for its route)"
     );
-    let mut failed = timings.report(&world);
+    let mut failed = timings.report(&world, &BUDGETS);
     if wait > STORM_WAIT_BUDGET {
         eprintln!("FAIL: routes took too long to find");
         failed = true;
@@ -392,7 +420,7 @@ fn grand_battle(opts: &Options) -> bool {
         // Not a failure here: `gc_replay verify` is the determinism check.
         println!("note         the simulation no longer plays this replay as recorded");
     }
-    timings.report(&world)
+    timings.report(&world, &BUDGETS)
 }
 
 /// Six players in Conquest on the largest map, in fog of war unless
@@ -481,16 +509,20 @@ fn conquest_six(opts: &Options) -> bool {
     // One building goes up each tick at first, as players lay them one by
     // one; each changes the walking grid.
     let mut setup = setup.into_iter();
+    // A tick a building goes up in changes the walking grid, which may
+    // allocate; it is held to its own budget, and every other tick to the
+    // big-map budgets.
     let mut timings = Timings::new(ticks);
     let mut laid_us = Vec::new();
     let standing = |w: &World| w.structures().map_or(0, |s| s.iter().count());
     for _ in 0..ticks {
         drill.commands_for(&world, &mut commands);
         commands.extend(setup.next());
-        let before = standing(&world);
+        let (before, allocs) = (standing(&world), timings.allocs);
         timings.tick(&mut world, &commands);
         if standing(&world) > before {
-            laid_us.extend(timings.times_us.last());
+            laid_us.extend(timings.times_us.pop());
+            timings.allocs = allocs;
         }
     }
     let standing = standing(&world);
@@ -501,12 +533,18 @@ fn conquest_six(opts: &Options) -> bool {
         if fog { "fog of war" } else { "no fog" }
     );
     laid_us.sort_by(f64::total_cmp);
-    if let (Some(typical), Some(worst)) = (laid_us.get(laid_us.len() / 2), laid_us.last()) {
-        println!(
-            "laying       {typical:>9.1} us   (typical tick a building went up in; worst {worst:.1} us)"
-        );
+    let worst = laid_us.last().copied().unwrap_or(0.0);
+    println!(
+        "laying       {:>9.1} us   (typical tick a building went up in; worst {worst:.1} us, \
+         budget {LAYING_BUDGET_US:.0} us)",
+        laid_us.get(laid_us.len() / 2).copied().unwrap_or(0.0)
+    );
+    let mut failed = worst > LAYING_BUDGET_US;
+    if failed {
+        eprintln!("FAIL: a building took too long to go up");
     }
-    timings.report(&world)
+    failed |= timings.report(&world, &BIG_MAP_BUDGETS);
+    failed
 }
 
 fn mb(bytes: usize) -> f64 {

@@ -113,3 +113,20 @@ Push-through added about 40%, close to the 1.35× its PR measured. The budget is
 
 **Left for later:** the sim heap is 22.4 MB on a 768-tile map with room for 1,536 regiments (the walking grid and its copies), over the 8 MB budget set for 256-tile maps; budgets for big maps, and a CI run of this bench, come with the six-player soak. Placing portals only near the change, and keeping the next free area number instead of finding the highest when a pocket is cut off, are both in `nav.rs` and left for its owner.
 
+## Six-player Conquest soak and razed bases (2026-10-17, Conquest step 6b)
+
+**Where it was measured:** the new Conquest soak (`cargo test --release -p gc_game conquest_soak -- --ignored --nocapture`): an hour of game time on a 768-tile Land: Mixed Conquest map, six scripted sides that gather, build, train and attack in fog of war until bases fall. Cloud container, wall clock.
+
+**Memory:** sim heap 25 to 26 MB all hour, all heap about 47 MB, process 57 MB (79 MB at the OS's peak). Nothing grew over the hour. That is far under the 6 GB budget; the renderer's share is measured in the game.
+
+**A stutter found and cut:** when a side is put out, all its buildings come down in the same tick, and each one updated the walking grid on its own (placing portals across the map and linking again each time).
+
+| | Before | After |
+|---|---|---|
+| Tick a base of 11 to 16 buildings is razed in | 100 to 140 ms | 25 to 33 ms |
+
+Buildings coming down together are now grouped by where they stand (any that fit in a box 64 tiles across) and each group updates the grid once. Grids come out the same as a fresh build (a test checks), and no golden replay changed; SIM_VERSION went to 13 because routes near a razed base are searched again by group, which can differ from building by building.
+
+**Big-map gates:** `conquest-6p` is now gated in CI with budgets of its own: tick p99 ≤ 5 ms and no allocations outside the ticks a building goes up in (2.7 to 3.7 ms here), each such tick ≤ 40 ms (18 ms at worst here), sim heap ≤ 48 MB (22.4 MB).
+
+**Left for later:** many buildings destroyed by hand in one tick (several `RemoveStructure` orders) still update the grid one by one; only a side going out is batched.

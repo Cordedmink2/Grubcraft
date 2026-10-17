@@ -28,9 +28,150 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
 
-use super::{BLOCKED, CLEAR_CAP, CLEARANCE, GRAPH_BERTH, Grid, SECTOR, Search};
+use alloc::sync::Arc;
+use gc_fixed::{Fx, FxVec2};
+
+use super::{
+    BLOCKED, CELLS_PER_TILE, CLEAR_CAP, CLEARANCE, GRAPH_BERTH, Grid, MAX_WAYPOINTS, Nav, Route,
+    SECTOR, Search,
+};
+use crate::regiments::Regiments;
+
+/// Buildings put up or pulled down together whose footprints fit in a box
+/// this many cells across are brought up to date as one change: a whole
+/// base razed at once costs about one building's work, not one per
+/// building (most of a change's cost is the same whatever its size).
+const GROUP: i32 = 4 * SECTOR;
+
+impl Nav {
+    /// Put up (`on`) or pull down a building on each of `all`'s tiles
+    /// (`[x, y, w, d]`, all on the map), bringing the grid up to date once
+    /// for each group of them close together. Routes that might cross the
+    /// changed ground are searched again. No effect with no map.
+    pub(crate) fn set_built_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
+        let Some(grid) = &mut self.grid else {
+            return;
+        };
+        // Linking the grid again isn't the routes' search work this tick.
+        let work = self.search.work;
+        let changed = Arc::make_mut(grid).set_built_all(all, on, &mut self.search);
+        self.search.work = work;
+        // Any route passing near a change is found again, and, once ground
+        // is freed, any that found no way may find one now.
+        let reach = i32::from(CLEAR_CAP);
+        let tile = |c: i32| Fx::from_ratio(c, CELLS_PER_TILE);
+        let near: Vec<(FxVec2, FxVec2)> = changed
+            .iter()
+            .map(|&[x0, y0, x1, y1]| {
+                (
+                    FxVec2::new(tile(x0 - reach), tile(y0 - reach)),
+                    FxVec2::new(tile(x1 + reach), tile(y1 + reach)),
+                )
+            })
+            .collect();
+        if near.is_empty() {
+            return;
+        }
+        for i in 0..self.route.len() {
+            if !regs.alive[i] {
+                continue;
+            }
+            let ahead = match self.route[i] {
+                Route::Direct => core::slice::from_ref(&self.goal[i]),
+                Route::Waypoints => {
+                    &self.way[i * MAX_WAYPOINTS..]
+                        [self.way_next[i] as usize..self.way_len[i] as usize]
+                }
+                Route::Failed if !on => {
+                    self.lost(i);
+                    continue;
+                }
+                Route::Failed | Route::Idle | Route::Waiting => continue,
+            };
+            let (mut a, mut b) = (regs.position[i], regs.position[i]);
+            for p in ahead {
+                a = FxVec2::new(a.x.min(p.x), a.y.min(p.y));
+                b = FxVec2::new(b.x.max(p.x), b.y.max(p.y));
+            }
+            if near
+                .iter()
+                .any(|(lo, hi)| a.x <= hi.x && a.y <= hi.y && b.x >= lo.x && b.y >= lo.y)
+            {
+                self.lost(i);
+            }
+        }
+    }
+}
 
 impl Grid {
+    /// Put up or pull down a building on the tiles `x..x + w` × `y..y + d`
+    /// and bring the grid up to date, searching in `search`'s room. Returns
+    /// the cells changed; `None` (and no change) unless the tiles are on
+    /// the map.
+    #[cfg(test)]
+    pub(super) fn set_built(
+        &mut self,
+        tiles: [i32; 4],
+        on: bool,
+        search: &mut Search,
+    ) -> Option<[i32; 4]> {
+        self.set_built_all(&[tiles], on, search).pop()
+    }
+
+    /// [`Grid::set_built`] for each of `all`'s tiles (those on the map),
+    /// bringing the grid up to date once for each group of them that fits
+    /// in a [`GROUP`]-wide box. Returns each group's box of changed cells.
+    pub(super) fn set_built_all(
+        &mut self,
+        all: &[[i32; 4]],
+        on: bool,
+        search: &mut Search,
+    ) -> Vec<[i32; 4]> {
+        // Each footprint's cells join the first group they fit in: the
+        // group's box of cells, and its footprints' cells.
+        let mut groups: Vec<([i32; 4], Vec<[i32; 4]>)> = Vec::new();
+        for c in all.iter().filter_map(|&tiles| self.cells(tiles)) {
+            let joined = |g: [i32; 4]| {
+                [
+                    g[0].min(c[0]),
+                    g[1].min(c[1]),
+                    g[2].max(c[2]),
+                    g[3].max(c[3]),
+                ]
+            };
+            let fits = |u: [i32; 4]| u[2] - u[0] <= GROUP && u[3] - u[1] <= GROUP;
+            match groups.iter_mut().find(|(g, _)| fits(joined(*g))) {
+                Some((g, feet)) => {
+                    *g = joined(*g);
+                    feet.push(c);
+                }
+                None => groups.push((c, vec![c])),
+            }
+        }
+        for (g, feet) in &groups {
+            for &[cx0, cy0, cx1, cy1] in feet {
+                for cy in cy0..cy1 {
+                    for cx in cx0..cx1 {
+                        let i = self.idx(cx, cy) as usize;
+                        self.built[i] = if on {
+                            self.built[i].saturating_add(1)
+                        } else {
+                            self.built[i].saturating_sub(1)
+                        };
+                        self.cost[i] = if self.built[i] > 0 {
+                            BLOCKED
+                        } else {
+                            self.ground[i]
+                        };
+                    }
+                }
+            }
+            let [x0, y0, x1, y1] = *g;
+            self.changed(x0, y0, x1, y1, search);
+        }
+        groups.into_iter().map(|(g, _)| g).collect()
+    }
+
     /// Bring the grid up to date after the cells `x0..x1` × `y0..y1` (cell
     /// coordinates, end exclusive) changed cost, searching in `search`'s
     /// room and leaving it room for searches over the new graph.
@@ -524,6 +665,39 @@ mod tests {
         for b in standing.drain(..) {
             build_on(&mut g, b, false);
         }
+        same(&g, &Grid::build(&ground, side));
+    }
+
+    #[test]
+    fn buildings_put_up_and_pulled_down_together_leave_the_grid_built_afresh() {
+        // Two bases' worth of buildings far apart, and a few strays: all
+        // put up in one go, half pulled down in another, then the rest.
+        let tiles: i32 = 192;
+        let side = tiles * CELLS_PER_TILE;
+        let ground = ribs_map(tiles as u32);
+        let mut g = Grid::build(&ground, side);
+        let mut search = Search::for_grid(&g);
+        let mut rng = Pcg32::new(4, 7);
+        let mut all: Vec<[i32; 4]> = Vec::new();
+        for (bx, by) in [(20, 20), (150, 140), (90, 30)] {
+            for _ in 0..12 {
+                let (w, d) = (2 + rng.below(4) as i32, 2 + rng.below(4) as i32);
+                all.push([bx + rng.below(30) as i32, by + rng.below(30) as i32, w, d]);
+            }
+        }
+        let check = |g: &Grid| {
+            let mut fresh = Grid::build(&g.cost, side);
+            fresh.ground.clone_from(&g.ground);
+            fresh.built.clone_from(&g.built);
+            same(g, &fresh);
+        };
+        let groups = g.set_built_all(&all, true, &mut search);
+        assert!(groups.len() >= 3 && groups.len() < all.len(), "{groups:?}");
+        check(&g);
+        let (half, rest) = all.split_at(all.len() / 2);
+        g.set_built_all(half, false, &mut search);
+        check(&g);
+        g.set_built_all(rest, false, &mut search);
         same(&g, &Grid::build(&ground, side));
     }
 

@@ -421,9 +421,7 @@ impl Conquest {
             .filter(|s| out & (1 << s.owner) != 0)
             .map(|s| s.handle)
             .collect();
-        for h in gone {
-            self.structures.despawn(h, nav, regs);
-        }
+        self.structures.despawn_all(&gone, nav, regs);
     }
 
     /// The "structures" part of the state hash: the unit table and the

@@ -82,6 +82,13 @@ jobs:
         run: cargo test --release -p gc_ai --test versus warlord
       - name: Simulation benchmark and budgets
         run: cargo run --release -p gc_bench
+      - name: Big-map benchmark and budgets (six-player Conquest, 768 tiles)
+        run: cargo run --release -p gc_bench -- --scenario conquest-6p
+      # An hour of six-player Conquest on a 768-tile Wilds map, held to the
+      # 6 GB budget and the simulation's big-map heap budget.
+      - name: Conquest soak
+        if: runner.os == 'Linux'
+        run: cargo test --release -p gc_game conquest_soak -- --ignored --nocapture
       # Counts instructions under valgrind, which a busy runner cannot skew,
       # and compares them with tools/gc_bench/baseline.json.
       - name: Benchmark instruction counts

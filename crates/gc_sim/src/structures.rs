@@ -881,9 +881,25 @@ impl Structures {
         true
     }
 
+    /// Take every building in `all` away at once (a player put out of the
+    /// match), freeing their ground together: much cheaper than one by one.
+    pub(crate) fn despawn_all(&mut self, all: &[StructureHandle], nav: &mut Nav, regs: &Regiments) {
+        let slots: Vec<usize> = all.iter().filter_map(|&h| self.resolve(h)).collect();
+        let feet: Vec<[i32; 4]> = slots.iter().map(|&i| self.footprint(i)).collect();
+        nav.set_built_all(&feet, false, regs);
+        for i in slots {
+            self.free_slot(i);
+        }
+    }
+
     /// Free building slot `i` (standing, or just brought to nothing).
     fn remove(&mut self, i: usize, nav: &mut Nav, regs: &Regiments) {
         nav.set_built(self.footprint(i), false, regs);
+        self.free_slot(i);
+    }
+
+    /// Mark slot `i` free, its ground already given back.
+    fn free_slot(&mut self, i: usize) {
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.hp[i] = 0;
         self.work_left[i] = 0;

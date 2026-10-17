@@ -116,6 +116,8 @@ mod conquest;
 mod conquest_card;
 #[cfg(test)]
 mod conquest_golden;
+#[cfg(test)]
+mod conquest_soak;
 mod credits;
 mod data;
 mod field;
@@ -3426,7 +3428,10 @@ impl Running {
             MatchKind::Replay(r) => {
                 let choice = r.header.map.map_or(0, usize::from);
                 let key = if conquest {
-                    MapKey::Conquest(choice)
+                    MapKey::Conquest {
+                        choice,
+                        seed: gc_ui::lobby::conquest_map_seed(choice, r.seed),
+                    }
                 } else {
                     MapKey::Field(FieldMap {
                         choice,
@@ -3659,7 +3664,7 @@ impl Running {
         // every machine; a Field Battle map's follow its seed.
         let trees = match key {
             MapKey::Field(k) => k.seed,
-            MapKey::Conquest(choice) => choice as u64,
+            MapKey::Conquest { choice, seed } => seed ^ choice as u64,
         };
         self.scenery = tagged_alloc::scope(Tag::Render, || {
             scenery::Scenery::new(
@@ -3745,9 +3750,7 @@ impl Running {
             ));
         }
         // Look over your start.
-        let focus = self
-            .heightmap
-            .starts()
+        let focus = conquest::player_starts(&self.heightmap, setup.players.len())
             .get(usize::from(me))
             .map_or(Vec2::splat(self.heightmap.tiles as f32 / 2.0), |&(x, y)| {
                 Vec2::new(x as f32 + 0.5, y as f32 + 0.5)
@@ -5008,26 +5011,30 @@ impl Running {
 }
 
 /// A map the lobby can play on: a Field Battle map made from its choice,
-/// size and seed, or one of the shipped Conquest maps.
+/// size and seed, or a Conquest map made from its choice and seed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MapKey {
     Field(FieldMap),
-    /// An index into `gc_ui::lobby::CONQUEST_MAPS`.
-    Conquest(usize),
+    /// An index into `gc_ui::lobby::CONQUEST_MAPS`, and the seed a Wilds
+    /// map is made from (`gc_ui::lobby::conquest_map_seed`).
+    Conquest {
+        choice: usize,
+        seed: u64,
+    },
 }
 
 impl MapKey {
     fn make(self) -> Map {
         match self {
             MapKey::Field(key) => key.make(),
-            MapKey::Conquest(choice) => conquest::make_map(choice),
+            MapKey::Conquest { choice, seed } => conquest::make_map(choice, seed),
         }
     }
 
     fn name(self) -> &'static str {
         match self {
             MapKey::Field(key) => gc_map::FIELD_MAPS.get(key.choice),
-            MapKey::Conquest(choice) => gc_ui::lobby::CONQUEST_MAPS.get(choice),
+            MapKey::Conquest { choice, .. } => gc_ui::lobby::CONQUEST_MAPS.get(choice),
         }
         .copied()
         .unwrap_or("?")
@@ -5046,7 +5053,7 @@ impl From<MapPreviewKey> for MapKey {
                 tiles,
                 seed,
             }),
-            MapPreviewKey::Conquest(choice) => MapKey::Conquest(choice),
+            MapPreviewKey::Conquest { choice, seed } => MapKey::Conquest { choice, seed },
         }
     }
 }

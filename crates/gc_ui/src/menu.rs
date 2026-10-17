@@ -76,9 +76,11 @@ pub enum MapPreviewKey {
         tiles: u32,
         seed: u64,
     },
-    /// A shipped Conquest map, an index into
-    /// [`CONQUEST_MAPS`](crate::lobby::CONQUEST_MAPS).
-    Conquest(usize),
+    /// A Conquest map: the choice (an index into
+    /// [`CONQUEST_MAPS`](crate::lobby::CONQUEST_MAPS)) and the seed it is
+    /// made from ([`conquest_map_seed`](crate::lobby::conquest_map_seed),
+    /// 0 for a shipped map).
+    Conquest { choice: usize, seed: u64 },
 }
 
 /// The map `settings` pick for `players` players.
@@ -89,7 +91,10 @@ pub fn preview_key(settings: &LobbySettings, players: usize) -> MapPreviewKey {
             tiles: field_map_tiles(settings.map_size, players),
             seed: settings.map_seed,
         },
-        GameMode::Conquest => MapPreviewKey::Conquest(settings.map),
+        GameMode::Conquest => MapPreviewKey::Conquest {
+            choice: settings.map,
+            seed: crate::lobby::conquest_map_seed(settings.map, settings.map_seed),
+        },
     }
 }
 
@@ -1556,7 +1561,7 @@ mod tests {
     fn seed_of(key: MapPreviewKey) -> u64 {
         match key {
             MapPreviewKey::Field { seed, .. } => seed,
-            MapPreviewKey::Conquest(_) => panic!("a Conquest map has no seed"),
+            MapPreviewKey::Conquest { seed, .. } => seed,
         }
     }
     use crate::draw::{DrawList, SOLID};
