@@ -12,6 +12,7 @@ gc_ai.workspace = true
 gc_data.workspace = true
 gc_fixed.workspace = true
 gc_map.workspace = true
+gc_replay.workspace = true
 gc_sim.workspace = true
 gc_ui.workspace = true
 glam.workspace = true

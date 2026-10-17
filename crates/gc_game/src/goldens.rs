@@ -29,7 +29,8 @@ use gc_sim::{
 };
 use glam::Vec2;
 
-use gc_match::battle::{battle_starts, zone_order};
+use gc_match::battle::{Party, SetOut, battle_starts, zone_order};
+use gc_match::play::Match;
 use gc_match::terrain_view::plateau_positions;
 
 /// One side of a recorded battle: a computer player.
@@ -460,7 +461,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         ground: heightmap.ground(),
         champions: golden.champions,
     };
-    let mut world = World::new(&setup);
+    let world = World::new(&setup);
     let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&heightmap, &nav));
     let mut out = Vec::new();
 
@@ -522,17 +523,31 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         .chain(out.drain(..))
         .chain(ready)
         .collect();
-    let mut rec = Recorder::new(&setup, &world, String::new());
-    rec.tick(&mut world, &first);
+    let rec = Recorder::new(&setup, &world, String::new());
+    let set = SetOut {
+        parties: golden
+            .sides
+            .iter()
+            .map(|s| Party {
+                name: format!("{:?}", s.faction),
+                color: [255; 3],
+                faction: None,
+            })
+            .collect(),
+        me: 0,
+        my_start: starts[0],
+        my_forward: Vec2::NEG_Y,
+    };
+    let mut m = Match::from_parts(world, minds, set, &first, Some(rec));
     let limit = golden.minutes * 60 * gc_sim::TICKS_PER_SECOND;
     let mut most_engaged = (0, 0);
     let mut ambushes = 0;
-    while world.tick_count() < limit {
+    while m.world.tick_count() < limit {
         out.clear();
-        minds.tick(&world, &mut out);
-        (golden.extra)(&world, &mut out);
-        let tick = world.tick_count();
-        let stats = rec.tick(&mut world, &out);
+        (golden.extra)(&m.world, &mut out);
+        let tick = m.world.tick_count();
+        let report = m.step(&out);
+        let (stats, world) = (report.stats, &m.world);
         if golden.deployment {
             if let Some(&(_, applied, refused)) = DEPLOY_ORDERS.iter().find(|o| o.0 == tick) {
                 assert_eq!(
@@ -551,8 +566,8 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         ambushes += world.ambushes().len();
         if std::env::var_os("AI_TRACE").is_some() && world.tick_count().is_multiple_of(400) {
             println!("t={}s", world.tick_count() / 20);
-            for m in minds.iter() {
-                println!("  {}", m.summary());
+            for mind in m.minds.iter() {
+                println!("  {}", mind.summary());
             }
         }
         let engaged: u32 = world
@@ -571,11 +586,12 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         if engaged > most_engaged.0 {
             most_engaged = (engaged, world.tick_count());
         }
-        if world.verdict().is_some() {
+        if report.decided {
             break;
         }
     }
 
+    let world = &m.world;
     let secs = world.tick_count() / gc_sim::TICKS_PER_SECOND;
     let armies: Vec<String> = golden
         .sides
@@ -631,7 +647,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         most_engaged.1 / 20 % 60,
     );
     println!("{note}");
-    let mut replay = rec.finish();
+    let mut replay = m.finish().expect("the match was recorded");
     replay.note = note;
     replay
 }

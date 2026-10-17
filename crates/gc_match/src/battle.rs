@@ -866,7 +866,7 @@ pub(crate) mod tests {
         // twice.
         let live = std::env::var_os("AI_LIVE").is_some();
         let tables = crate::Tables::new(crate::test_data());
-        let mut m = crate::play::Match::new(setup, seed, &map, &tables, live);
+        let mut m = crate::play::Match::new(setup, seed, &map, &tables, live, None);
         tune(&mut m.minds);
         // The people are happy with the standard deployment.
         let ready: Vec<PlayerCommand> = (0..setup.players.len())
@@ -886,7 +886,7 @@ pub(crate) mod tests {
             })
             .collect();
         let limit = minutes * 60 * gc_sim::TICKS_PER_SECOND;
-        while m.world.tick_count() < limit && !m.step(&[]) {
+        while m.world.tick_count() < limit && !m.step(&[]).decided {
             if std::env::var_os("AI_TRACE").is_some() && m.world.tick_count().is_multiple_of(400) {
                 println!("t={}s", m.world.tick_count() / 20);
                 for mind in m.minds.iter() {

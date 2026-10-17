@@ -848,6 +848,7 @@ dependencies = [
  "gc_data",
  "gc_fixed",
  "gc_map",
+ "gc_replay",
  "gc_sim",
  "gc_ui",
  "glam",
