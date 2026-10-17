@@ -8,7 +8,10 @@
 //! The second side also puts up three of the Choir's Resonators in a chord
 //! and spends the Resonance it charges on the Choir's powers: Overclock on
 //! its main building, Phase Shift for two soldiers, and Overclock on a
-//! soldier.
+//! soldier (the script gives this Concord side the Choir's meter). The
+//! first side, the Clans, puts up Ancestor Shrines and spends the Honor
+//! they earn on its Edicts: Rice Tax, Forced March for its soldiers, and
+//! the Banner of the Ancestors over them.
 //!
 //! The test below plays it through a recorder and checks it plays back
 //! alike after a trip through the file format. To record the golden again
@@ -24,7 +27,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use gc_replay::{Recorder, Replay};
 use gc_sim::structures::{Role, StructureView};
 use gc_sim::{
-    BuildingId, Capacities, Command, MatchSetup, PlayerCommand, PlayerId, PowerTarget,
+    BuildingId, Capacities, Command, MatchSetup, Meter, PlayerCommand, PlayerId, PowerTarget,
     RegimentHandle, Resource, TICKS_PER_SECOND, UnitId, Victories, World,
 };
 use gc_ui::lobby::Tempo;
@@ -48,6 +51,9 @@ const MARCH_AT: u32 = 150 * TICKS_PER_SECOND;
 const REMOVE_AT: u32 = (MINUTES * 60 - 5) * TICKS_PER_SECOND;
 /// When the second side's chord goes up.
 const CHORD_AT: u32 = 10 * TICKS_PER_SECOND;
+/// When the first side's Shrines go up, one a tick, and how many.
+const SHRINES_AT: u32 = 5 * TICKS_PER_SECOND;
+const SHRINES: u8 = 12;
 /// Soldiers and workers each side trains up to.
 const FIGHTERS: usize = 6;
 const WORKERS: usize = 8;
@@ -149,6 +155,38 @@ struct Side {
     /// The chord is up, and how many of its powers' uses are done.
     chord: bool,
     powers: u8,
+    /// Shrines put up, and how many Edicts are done.
+    shrines: u8,
+    edicts: u8,
+}
+
+/// The Clans' Shrine and their three built Edicts, as the first side plays
+/// them.
+#[derive(Clone, Copy, Debug)]
+struct Clans {
+    shrine: BuildingId,
+    tax: u8,
+    march: u8,
+    banner: u8,
+}
+
+impl Clans {
+    fn of(data: &GameData) -> Clans {
+        let shrine = (data.buildings.iter())
+            .position(|b| b.name() == "Ancestor Shrine")
+            .expect("the Clans' Shrine") as BuildingId;
+        let power = |name: &str| {
+            (data.powers.iter())
+                .position(|p| p.name() == name && p.built())
+                .expect("the Clans' Edict") as u8
+        };
+        Clans {
+            shrine,
+            tax: power("Rice Tax"),
+            march: power("Forced March"),
+            banner: power("Banner of the Ancestors"),
+        }
+    }
 }
 
 /// The Choir's Resonator and its two powers, as the second side plays them.
@@ -186,6 +224,7 @@ pub struct Match {
     kits: [Kit; 2],
     sides: [Side; 2],
     choir: Choir,
+    clans: Clans,
     starts: Vec<(i32, i32)>,
 }
 
@@ -206,7 +245,7 @@ impl Match {
             ground: map.ground(),
             champions: false,
         };
-        let plan = conquest::plan(
+        let mut plan = conquest::plan(
             &table,
             &data,
             &map,
@@ -214,6 +253,8 @@ impl Match {
             Tempo::Swift,
             Victories::BOTH,
         );
+        // The Concord side plays the Choir's powers.
+        plan.meters[1] = Meter::Resonance;
         let mut world = World::new(&setup);
         assert!(world.conquest(&plan.setup()));
         let rec = Recorder::new(&setup, &world, String::new()).conquest(plan);
@@ -222,6 +263,7 @@ impl Match {
             kits: FACTIONS.map(|f| Kit::of(&data, &table, f)),
             sides: Default::default(),
             choir: Choir::of(&data),
+            clans: Clans::of(&data),
             starts: map.starts(),
             world,
             rec,
@@ -356,9 +398,10 @@ impl Match {
             }
         }
         // The barracks: laid by the first worker, helped by the second,
-        // then training soldiers who rally ahead.
+        // then training soldiers who rally ahead (and not laid again once
+        // the host takes it away).
         match barracks {
-            None if t >= LAY_FROM && t.is_multiple_of(TICKS_PER_SECOND) => {
+            None if (LAY_FROM..REMOVE_AT).contains(&t) && t.is_multiple_of(TICKS_PER_SECOND) => {
                 if let (Some(&w), Some(tile)) = (workers.first(), self.site(p, k.barracks)) {
                     out.push(order(Command::Build {
                         regiment: w,
@@ -478,6 +521,8 @@ impl Match {
         }
         if p == 1 {
             self.powers(p, out);
+        } else {
+            self.edicts(p, out);
         }
         // The host takes the first side's barracks away.
         if t == REMOVE_AT
@@ -552,6 +597,66 @@ impl Match {
             }
             _ => {}
         }
+    }
+
+    /// Side `p`'s Shrines and Edicts: Shrines put up one a tick, then Rice
+    /// Tax, Forced March for all its soldiers once they have seen the
+    /// other's main building (marched sooner, they reach the fight strung
+    /// out and rout), and the Banner of the Ancestors over its first
+    /// soldier (once it is tier 2), each as soon as it has the Honor.
+    fn edicts(&mut self, p: PlayerId, out: &mut Vec<PlayerCommand>) {
+        let t = self.world.tick_count();
+        let c = self.clans;
+        let order = |command| PlayerCommand { player: p, command };
+        let side = self.sides[usize::from(p)];
+        if side.shrines < SHRINES && t >= SHRINES_AT {
+            // Behind the base, out of its workers' way.
+            let behind = self.ahead(p, -20);
+            let (bx, by) = (behind.x.floor_int(), behind.y.floor_int());
+            let tile = conquest::ring([bx, by, 1, 1], 0)
+                .take(400)
+                .find(|&t| self.world.can_build(c.shrine, t).is_ok())
+                .map(|(x, y)| (x as i16, y as i16))
+                .expect("room for a Shrine behind the main building");
+            out.push(order(Command::SpawnStructure {
+                building: c.shrine,
+                tile,
+            }));
+            self.sides[usize::from(p)].shrines += 1;
+        }
+        let power = match side.edicts {
+            0 => c.tax,
+            1 if side.charged => c.march,
+            2 => c.banner,
+            _ => return,
+        };
+        if self.world.can_use_power(p, power).is_err() {
+            return;
+        }
+        let k = self.kits[usize::from(p)];
+        let fighters: Vec<(RegimentHandle, FxVec2)> = (self.world.regiments.iter())
+            .filter(|r| r.owner == p && r.unit == k.fighter && !r.morale.broken())
+            .map(|r| (r.handle, r.position))
+            .collect();
+        let targets: Vec<PowerTarget> = match side.edicts {
+            0 => vec![PowerTarget::Caster],
+            1 => fighters
+                .iter()
+                .map(|&(r, _)| PowerTarget::Regiment(r))
+                .collect(),
+            _ => fighters
+                .first()
+                .map(|&(_, at)| PowerTarget::Point(at))
+                .into_iter()
+                .collect(),
+        };
+        if targets.is_empty() {
+            return;
+        }
+        for target in targets {
+            out.push(order(Command::UsePower { power, target }));
+        }
+        self.sides[usize::from(p)].edicts += 1;
     }
 
     /// A point `tiles` from side `p`'s start towards the other's.
@@ -708,6 +813,7 @@ mod tests {
             assert!(side.charged, "side {p} found the other's main building");
         }
         assert_eq!(m.sides[1].powers, 3, "side 1 used its powers");
+        assert_eq!(m.sides[0].edicts, 3, "side 0 used its Edicts");
         assert!(m.own(0, Some(m.kits[0].barracks)).is_empty(), "removed");
         let played = m.world.tick_count();
         let replay = m.finish();

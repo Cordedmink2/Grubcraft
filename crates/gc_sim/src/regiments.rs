@@ -271,6 +271,15 @@ regiment_fields! {
     /// many percent faster it reloads, strikes and builds.
     haste_left: u16 = 0,
     haste: u8 = 0,
+    /// Ticks left of a march (see [`crate::powers`]) and how many percent
+    /// faster it goes.
+    march_left: u16 = 0,
+    march: u8 = 0,
+    /// Ticks left that it can't rout (see [`crate::powers`]).
+    steadfast_left: u16 = 0,
+    /// Ticks left of a summoned regiment's life (see [`crate::powers`]);
+    /// 0 for one that isn't summoned. It never routs while it lasts.
+    summoned_left: u16 = 0,
 }
 
 impl Regiments {
@@ -504,6 +513,18 @@ impl Regiments {
         (i < self.alive.len() && self.alive[i] && self.generation[i] == h.generation).then_some(i)
     }
 
+    /// Regiment `h`'s slot, if it is alive and `player`'s.
+    pub(crate) fn owned(&self, h: RegimentHandle, player: PlayerId) -> Option<usize> {
+        self.resolve(h).filter(|&i| self.owner[i] == player)
+    }
+
+    /// Regiment `h`'s slot, if it is alive, `player`'s and not routing: one
+    /// that takes their orders.
+    pub(crate) fn standing(&self, h: RegimentHandle, player: PlayerId) -> Option<usize> {
+        self.owned(h, player)
+            .filter(|&i| !self.morale_state[i].broken())
+    }
+
     /// The live regiment `i` is locked in melee with, if any.
     pub(crate) fn foe(&self, i: usize) -> Option<usize> {
         self.engaged[i].and_then(|h| self.resolve(h))
@@ -597,11 +618,29 @@ impl Regiments {
     pub(crate) fn berth(&self, units: &[UnitStats], i: usize) -> u8 {
         let stats = &units[self.unit[i] as usize];
         let files = self.frontage[i].max(self.files[i]);
-        let (w, d) = stats.block_size_in(self.formation[i], files, self.models[i]);
+        Self::berth_of(stats, self.formation[i], files, self.models[i])
+    }
+
+    /// The berth of a block of `models` soldiers of `stats` in `files`
+    /// files in `formation` (see [`Regiments::berth`]).
+    pub(crate) fn berth_of(stats: &UnitStats, formation: Formation, files: u16, models: u16) -> u8 {
+        let (w, d) = stats.block_size_in(formation, files, models);
         // Half the side in cells is the side in tiles (2 cells a tile),
         // rounded up, plus one cell.
         let cells = w.max(d).ceil_int() + 1;
         cells.clamp(i32::from(nav::CLEARANCE), i32::from(nav::MAX_BERTH)) as u8
+    }
+
+    /// Whether slot `i` is standing, not marching (it may be fighting).
+    /// What the formation discipline bonus and its readouts go by.
+    pub(crate) fn still(&self, i: usize) -> bool {
+        self.target[i].is_none()
+    }
+
+    /// Whether slot `i` can't rout: steadfast, or a summoned regiment (see
+    /// [`crate::powers`]).
+    pub(crate) fn cant_rout(&self, i: usize) -> bool {
+        self.steadfast_left[i] > 0 || self.summoned_left[i] > 0
     }
 
     /// Slot `i` narrows into a deeper column where the ground beside it
@@ -806,6 +845,7 @@ impl Regiments {
             formation: self.formation[i],
             models: self.models[i],
             moving: self.target[i].is_some() || self.target_facing[i].is_some(),
+            still: self.still(i),
             engaged: self.engaged[i].is_some(),
             charge: self.charge[i],
             morale: self.morale_state[i],
@@ -876,6 +916,8 @@ impl Regiments {
                     100 => self.pace[i],
                     p => self.pace[i].min(Fx::from_raw((self.speed[i].raw() * p / 100).max(1))),
                 };
+                // On a march (see [`crate::powers`]), further.
+                let pace = self.marched(i, pace);
                 // Falling back, it backs away all the way, facing its foe.
                 let shuffle = ((last && dist <= SHUFFLE_DISTANCE) || self.falling_back[i] > 0)
                     && self.target_facing[i].is_some();
@@ -1025,6 +1067,9 @@ pub struct RegimentView {
     pub models: u16,
     /// Walking or turning to an ordered facing.
     pub moving: bool,
+    /// Not marching: standing, turning or fighting. Formation discipline
+    /// goes by this, not `moving` (see [`Regiments::still`]).
+    pub still: bool,
     /// Fighting in melee.
     pub engaged: bool,
     /// Ticks of charge bonus left: it hit home at speed within the last

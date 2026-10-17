@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 
 use gc_assets::Pack;
 use gc_data::conquest::{
-    BUILDING_DROP_OFF_GRUB, Class, METER_RESONANCE, NONE, POWER_HASTE, POWER_NOT_BUILT, POWER_SHIFT,
+    BUILDING_DROP_OFF_GRUB, BUILDING_HONOR, Class, METER_HONOR, METER_RESONANCE, NONE, POWER_GRANT,
+    POWER_HASTE, POWER_MARCH, POWER_NOT_BUILT, POWER_SHIFT, POWER_STEADFAST, POWER_SUMMON,
 };
-use gc_data::{Faction, GameData};
+use gc_data::{Faction, GameData, WEAPON_DISCIPLINE};
 
 fn data_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
@@ -161,12 +162,11 @@ fn overclock_and_phase_shift_bake_as_the_choirs_resonance_powers() {
         assert_eq!(overclock.faction(), Faction::Choir);
         assert_eq!(overclock.meter, METER_RESONANCE);
         assert_eq!(overclock.effect, POWER_HASTE);
-        assert_eq!(overclock.percent, 50);
+        assert_eq!(overclock.arg, 50, "percent");
         assert_eq!(overclock.cost, 20);
         assert_eq!(overclock.tier, 1);
         assert_eq!(overclock.cooldown_ticks, 400);
         assert_eq!(overclock.duration_ticks, 400);
-        assert_eq!(overclock.to_building, NONE);
         assert!(overclock.built());
 
         let resonator = data
@@ -182,23 +182,127 @@ fn overclock_and_phase_shift_bake_as_the_choirs_resonance_powers() {
         assert_eq!(shift.faction(), Faction::Choir);
         assert_eq!(shift.meter, METER_RESONANCE);
         assert_eq!(shift.effect, POWER_SHIFT);
-        assert_eq!(usize::from(shift.to_building), resonator);
+        assert_eq!(usize::from(shift.arg), resonator);
         assert_eq!(shift.cost, 60);
         assert_eq!(shift.tier, 2);
         assert_eq!(shift.cooldown_ticks, 1800);
         assert_eq!(shift.duration_ticks, 0);
-        assert_eq!(shift.percent, 0);
         assert!(shift.built());
     });
 }
 
-/// Every other faction's meter ability is listed as not built yet.
+/// Rice Tax, Forced March, Banner of the Ancestors and Ancestral Return
+/// bake as the Clans' Honor Edicts.
+#[test]
+fn the_clans_edicts_bake_as_honor_powers() {
+    with_real_data(|data| {
+        let edict = |name: &str| {
+            let p = (data.powers.iter())
+                .find(|p| p.name() == name)
+                .unwrap_or_else(|| panic!("no {name}"));
+            assert_eq!(p.faction(), Faction::EmberClans, "{name}");
+            p
+        };
+        let tax = edict("Rice Tax");
+        assert_eq!(
+            (tax.effect, tax.arg, tax.meter),
+            (POWER_GRANT, 300, METER_HONOR)
+        );
+        assert_eq!(
+            (tax.cost, tax.tier, tax.cooldown_ticks, tax.duration_ticks),
+            (25, 1, 1200, 0)
+        );
+        let march = edict("Forced March");
+        assert_eq!(
+            (march.effect, march.arg, march.meter),
+            (POWER_MARCH, 30, METER_HONOR)
+        );
+        assert_eq!(
+            (
+                march.cost,
+                march.tier,
+                march.cooldown_ticks,
+                march.duration_ticks
+            ),
+            (20, 1, 900, 600)
+        );
+        let banner = edict("Banner of the Ancestors");
+        assert_eq!(
+            (banner.effect, banner.arg, banner.meter),
+            (POWER_STEADFAST, 12, METER_HONOR)
+        );
+        assert_eq!(
+            (
+                banner.cost,
+                banner.tier,
+                banner.cooldown_ticks,
+                banner.duration_ticks
+            ),
+            (35, 2, 1800, 400)
+        );
+        let ret = edict("Ancestral Return");
+        assert_eq!(banner.meter_name(), "Honor");
+        assert_eq!((ret.effect, ret.meter), (POWER_SUMMON, METER_HONOR));
+        assert_eq!(
+            (ret.cost, ret.tier, ret.cooldown_ticks, ret.duration_ticks),
+            (80, 3, 3600, 1200)
+        );
+        // It summons the Spectral Samurai, by their place in the unit table.
+        let spectral = (data.conquest_units.iter())
+            .position(|u| u.stats.name() == "Spectral Samurai")
+            .expect("no Spectral Samurai");
+        assert_eq!(usize::from(ret.arg), spectral);
+        let u = &data.conquest_units[spectral];
+        assert_eq!(u.stats.faction(), Faction::EmberClans);
+        assert_eq!((u.tier, u.supply, u.trained_at), (0, 0, NONE), "summoned");
+        assert_eq!(u.stats.morale, 0, "never routs");
+        let shrine = (data.buildings.iter())
+            .find(|b| b.name() == "Ancestor Shrine")
+            .expect("no Ancestor Shrine");
+        assert_ne!(shrine.flags & BUILDING_HONOR, 0, "a Shrine earns Honor");
+    });
+}
+
+/// A unit with the "Formation Discipline" passive bakes with the discipline
+/// weapon bit, and no other Conquest unit has it. The Field Battle regiments
+/// that have it in `units.ron` agree.
+#[test]
+fn formation_discipline_bakes_as_a_unit_trait() {
+    with_real_data(|data| {
+        let with: Vec<&str> = (data.conquest_units.iter())
+            .filter(|u| u.stats.discipline())
+            .map(|u| u.stats.name())
+            .collect();
+        assert_eq!(with, ["Yari Ashigaru", "Yumi Ashigaru", "Katana Samurai"]);
+        for u in data.conquest_units {
+            assert_eq!(
+                u.stats.weapons & WEAPON_DISCIPLINE != 0,
+                u.stats.discipline()
+            );
+            if u.stats.discipline() {
+                assert_eq!(u.stats.faction(), Faction::EmberClans, "{}", u.stats.name());
+            }
+        }
+        // Field Battles read the same trait from `units.ron`.
+        let field: Vec<&str> = (data.units.iter())
+            .filter(|u| u.discipline())
+            .map(gc_data::UnitRecord::name)
+            .collect();
+        assert_eq!(field, ["Yari Ashigaru", "Yumi Ashigaru"]);
+    });
+}
+
+/// Every other meter ability but the Clans' Edicts is listed as not built
+/// yet.
 #[test]
 fn every_other_faction_meter_ability_is_not_built_yet() {
     with_real_data(|data| {
         let mut others = 0;
         for p in data.powers {
-            if p.name() == "Overclock" || p.name() == "Phase Shift" {
+            if p.faction() == Faction::EmberClans
+                || p.name() == "Overclock"
+                || p.name() == "Phase Shift"
+            {
                 continue;
             }
             others += 1;

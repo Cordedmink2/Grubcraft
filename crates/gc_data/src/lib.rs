@@ -26,7 +26,7 @@ pub const UNITS_PATH: &str = "data/units";
 /// Pack path of the data manifest (the data hash).
 pub const MANIFEST_PATH: &str = "data/manifest";
 /// Bump whenever [`UnitRecord`]'s layout or meaning changes.
-pub const UNIT_SCHEMA: u32 = 6;
+pub const UNIT_SCHEMA: u32 = 7;
 /// Longest unit name, in UTF-8 bytes.
 pub const NAME_BYTES: usize = 32;
 /// Most soldiers in one regiment. Must equal `gc_sim::formation::MAX_MODELS`
@@ -35,10 +35,12 @@ pub const MAX_MODELS: u16 = 32;
 /// Angle steps in a full turn (`gc_fixed::Angle`).
 pub const ANGLE_STEPS_PER_TURN: u32 = 65_536;
 /// Bits of [`UnitRecord::weapons`]: spears and pikes that fight from two
-/// ranks, big swinging weapons that need room, and shields.
+/// ranks, big swinging weapons that need room, shields, and the Clans'
+/// formation discipline (more melee defence standing still in close order).
 pub const WEAPON_REACH: u8 = 1;
 pub const WEAPON_SWING_ROOM: u8 = 2;
 pub const WEAPON_SHIELD: u8 = 4;
+pub const WEAPON_DISCIPLINE: u8 = 8;
 /// Heaviest [`UnitRecord::mass`]: 0 light, 1 medium, 2 heavy.
 pub const MAX_MASS: u8 = 2;
 
@@ -125,7 +127,8 @@ pub struct UnitRecord {
     pub accuracy: u8,
     /// Morale when fresh, 1 to 100; 0 means the regiment never routs.
     pub morale: u8,
-    /// [`WEAPON_REACH`], [`WEAPON_SWING_ROOM`] and [`WEAPON_SHIELD`] bits.
+    /// [`WEAPON_REACH`], [`WEAPON_SWING_ROOM`], [`WEAPON_SHIELD`] and
+    /// [`WEAPON_DISCIPLINE`] bits.
     pub weapons: u8,
     /// What the regiment costs from a Field Battle army's points budget.
     pub points: u16,
@@ -169,6 +172,10 @@ impl UnitRecord {
 
     pub fn shield(&self) -> bool {
         self.weapons & WEAPON_SHIELD != 0
+    }
+
+    pub fn discipline(&self) -> bool {
+        self.weapons & WEAPON_DISCIPLINE != 0
     }
 }
 
@@ -251,7 +258,7 @@ impl<'a> GameData<'a> {
         }
         let powers = table::<PowerRecord>(pack, POWERS_PATH, conquest::POWER_SCHEMA)?;
         for (i, p) in powers.iter().enumerate() {
-            conquest::validate_power(p, buildings.len())
+            conquest::validate_power(p, buildings.len(), conquest_units)
                 .map_err(|why| DataError::BadPower(i, why))?;
         }
 
@@ -373,7 +380,7 @@ pub fn validate_stats(u: &UnitRecord) -> Result<(), &'static str> {
     if u.mass > MAX_MASS {
         return Err("mass is light, medium or heavy");
     }
-    if u.weapons & !(WEAPON_REACH | WEAPON_SWING_ROOM | WEAPON_SHIELD) != 0 {
+    if u.weapons & !(WEAPON_REACH | WEAPON_SWING_ROOM | WEAPON_SHIELD | WEAPON_DISCIPLINE) != 0 {
         return Err("unknown weapon flags");
     }
     if u.reserved != 0 {

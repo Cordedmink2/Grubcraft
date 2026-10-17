@@ -108,6 +108,8 @@ pub struct Seen {
     pub models: u16,
     pub full: u16,
     pub moving: bool,
+    /// Not marching (it may be fighting): what formation discipline goes by.
+    pub still: bool,
     pub engaged: bool,
     pub morale: MoraleState,
     /// Morale in points, 0 to 100 (meaningless for units that never rout).
@@ -275,6 +277,7 @@ impl Perception {
                 models: r.models,
                 full: stats.models,
                 moving: r.moving,
+                still: r.still,
                 engaged: r.engaged,
                 morale: r.morale,
                 morale_points: r.morale_points,

@@ -895,6 +895,15 @@ impl Nav {
         }
     }
 
+    /// Whether a block wanting `berth` fits with its centre at `p`: the
+    /// ground there is that far from blocked ground (always true with no
+    /// map).
+    pub(crate) fn fits(&self, p: FxVec2, berth: u8) -> bool {
+        self.grid
+            .as_ref()
+            .is_none_or(|g| g.clear[g.cell_at(p) as usize] >= berth)
+    }
+
     /// Whether a regiment's centre could walk the straight line from `from`
     /// to `to` (always true with no map).
     pub fn clear_line(&self, from: FxVec2, to: FxVec2) -> bool {

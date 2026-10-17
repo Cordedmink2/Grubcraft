@@ -544,7 +544,7 @@ impl Combat {
             self.blocks[i] = Block::of(regs, units, i);
             self.radius[i] = self.blocks[i].radius();
             self.max_radius = self.max_radius.max(self.radius[i]);
-            self.max_step = self.max_step.max(regs.speed[i]);
+            self.max_step = self.max_step.max(regs.marched(i, regs.speed[i]));
             let (x0, y0, x1, y1) = Self::cells(regs.position[i], self.radius[i] + REACH);
             if ((x1 - x0 + 1) * (y1 - y0 + 1)) as usize > MAX_CELLS_PER_REGIMENT {
                 self.big.push(i as u32);
@@ -1370,7 +1370,10 @@ impl Combat {
                 Side::Rear => 100 * u64::from(files.min(models).div_ceil(2)),
             };
             let side = them.side_facing(me.centre);
-            let defence = defender.melee_defence_in(regs.formation[j], side == Side::Front);
+            // Not marching: a disciplined regiment holds its ground (see
+            // `UnitStats::melee_defence_in`).
+            let defence =
+                defender.melee_defence_in(regs.formation[j], side == Side::Front, regs.still(j));
             let hit = hit_percent(i32::from(attacker.melee_attack), defence) as u128;
             let charge = 100
                 + u128::from(regs.charge_bonus[i]) * u128::from(regs.charge[i])

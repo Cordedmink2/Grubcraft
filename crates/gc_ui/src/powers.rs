@@ -1,5 +1,5 @@
 //! Faction power buttons (Conquest): a short row over the battlefield, just
-//! under the top bar's Resonance meter. Docs: docs/08-ui-ux.md#screen-layout-1080p-reference.
+//! under the top bar's faction meter (Resonance or Honor). Docs: docs/08-ui-ux.md#screen-layout-1080p-reference.
 //!
 //! The game says what each button is called, what its second line says
 //! (the price, or why it can't be used now) and whether it can be pressed;
@@ -12,7 +12,8 @@ use crate::ui::{Press, theme};
 
 /// The key on each button, first to last (the game binds the same keys).
 pub const POWER_KEYS: [&str; 4] = ["F2", "F3", "F4", "F5"];
-const BUTTON_W: i32 = 168;
+/// Wide enough for "Banner of the Ancestors" beside its key.
+const BUTTON_W: i32 = 216;
 const BUTTON_H: i32 = 38;
 const GAP: i32 = 4;
 const MARGIN: i32 = 8;
@@ -172,6 +173,26 @@ mod tests {
         let has = |d: &DrawList, c| d.quads.iter().any(|q| q.color == c);
         assert!(has(&armed, theme::PRIMARY) && !has(&ready, theme::PRIMARY));
         assert!(has(&blocked, theme::DISABLED) && !has(&ready, theme::DISABLED));
+    }
+
+    #[test]
+    fn the_longest_power_name_fits_its_button_whole() {
+        let long = PowerButton {
+            name: "Banner of the Ancestors",
+            detail: "Needs 35 Honor",
+            state: SlotState::Ready,
+        };
+        let (a, b) = (
+            frame(&[long], HudInput::default()).2,
+            frame(&[PowerButton { name: "", ..long }], HudInput::default()).2,
+        );
+        assert_eq!(
+            a.quads.len() - b.quads.len(),
+            "Banner of the Ancestors"
+                .chars()
+                .filter(|c| *c != ' ')
+                .count()
+        );
     }
 
     #[test]

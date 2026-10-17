@@ -172,6 +172,7 @@ fn stat_facts(s: &Stats, flags: &[Flag]) -> Vec<(String, String)> {
         (s.reach, "long reach"),
         (s.swing_room, "needs room to swing"),
         (s.shield, "shield"),
+        (s.discipline, "formation discipline"),
     ] {
         if on {
             traits.push(name.into());

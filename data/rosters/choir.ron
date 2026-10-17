@@ -14,7 +14,7 @@
 // build_time (seconds at Standard tempo), hp, armour (Fortified, Structure,
 // Living), footprint (tiles across and deep), supply (cap it adds), flags
 // (DropOffGrub, DropOffMarrow, PowersField, NeedsPower, AntiAir, Larvae,
-// Veins), field (tiles a PowersField's power or Veins' root-veins reach from
+// Veins, Honor), field (tiles a PowersField's power or Veins' root-veins reach from
 // its edge), tunes (Choir: Some((node: Seeps or Veins, tiles))), links
 // (Choir: tiles apart, centre to centre, that two link into chords), attack
 // (towers: range in tiles, damage per shot, seconds between shots, shots per
@@ -33,8 +33,11 @@
 // effect primitives it would be built from), and where they apply cooldown
 // (s), range (tiles), radius (tiles), duration (s). Meter abilities add cost
 // (meter points) and tier, and the ones the game has built say what the
-// simulation does: haste (percent faster for the duration) or shift_to
-// (regiments step to one of the caster's buildings of that name).
+// simulation does in `built`: Haste(percent faster for the duration),
+// Shift("building": regiments step to one of the caster's of that name),
+// Grant(Grub gained at once), March(percent faster marching for the
+// duration) or Steadfast (the caster's regiments within the radius of the
+// chosen point can't rout for the duration).
 (
     faction: Choir,
     meter: (
@@ -50,7 +53,7 @@
                 duration: 20.0,
                 effect: "A structure or regiment works, reloads and strikes 50% faster for 20 s.",
                 primitives: [ModifyStat],
-                haste: 50,
+                built: Some(Haste(50)),
             ),
             (
                 name: "Phase Shift",
@@ -60,7 +63,7 @@
                 cooldown: 90.0,
                 effect: "Teleport selected regiments to any of your Resonators.",
                 primitives: [Teleport],
-                shift_to: Some("Resonator"),
+                built: Some(Shift("Resonator")),
             ),
             (
                 name: "Silence the Chord",

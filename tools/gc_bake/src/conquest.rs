@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use gc_data::conquest::{self as cq, BuildingRecord, ConquestUnitRecord, PowerRecord};
-use gc_data::{Faction, UnitRecord};
+use gc_data::{Faction, UnitRecord, WEAPON_DISCIPLINE};
 
 use crate::rosters::{self, FactionDef, Roster};
 use crate::{BakeError, invalid, name_bytes, to_fx, to_ticks, unit_record};
@@ -19,6 +19,10 @@ pub(crate) const ROSTER_FILES: [(&str, FactionDef); 4] = [
     ("rosters/choir.ron", FactionDef::Choir),
     ("rosters/carrion_concord.ron", FactionDef::CarrionConcord),
 ];
+
+/// The passive ability that gives a unit the discipline trait
+/// (`WEAPON_DISCIPLINE`).
+const DISCIPLINE_ABILITY: &str = "Formation Discipline";
 
 /// Where each name stands in a table, within one faction.
 type Index<'a> = BTreeMap<&'a str, u16>;
@@ -53,6 +57,8 @@ pub(crate) fn bake_rosters(data_dir: &Path, units: &[UnitRecord]) -> Result<Tabl
     // either order, by their place in the whole table.
     let mut building_at: Vec<Index> = Vec::new();
     let mut unit_at: Vec<Index> = Vec::new();
+    // The summoned units alone, for what a power may summon.
+    let mut summoned_at: Vec<Index> = Vec::new();
     let (mut buildings, mut conquest_units) = (0, 0);
     let (mut building_names, mut unit_names) = (BTreeSet::new(), BTreeSet::new());
     for (file, r) in &loaded {
@@ -65,15 +71,20 @@ pub(crate) fn bake_rosters(data_dir: &Path, units: &[UnitRecord]) -> Result<Tabl
             buildings += 1;
         }
         building_at.push(here);
-        let mut here = Index::new();
+        let (mut here, mut summoned) = (Index::new(), Index::new());
         for u in &r.units {
             if !unit_names.insert(u.stats.name.as_str()) {
                 return Err(invalid(file, &u.stats.name, "defined twice"));
             }
-            here.insert(&u.stats.name, index(file, &u.stats.name, conquest_units)?);
+            let at = index(file, &u.stats.name, conquest_units)?;
+            here.insert(&u.stats.name, at);
+            if matches!(u.from, rosters::From::Summoned(_)) {
+                summoned.insert(&u.stats.name, at);
+            }
             conquest_units += 1;
         }
         unit_at.push(here);
+        summoned_at.push(summoned);
     }
 
     let mut building_records = Vec::with_capacity(buildings);
@@ -115,8 +126,15 @@ pub(crate) fn bake_rosters(data_dir: &Path, units: &[UnitRecord]) -> Result<Tabl
             unit_records.push(record);
         }
         for a in &r.meter.abilities {
-            let record = power_record(file, faction, &r.meter.name, a, &building_at[i])?;
-            cq::validate_power(&record, buildings).map_err(|why| invalid(file, &a.name, why))?;
+            let record = power_record(
+                file,
+                faction,
+                &r.meter.name,
+                a,
+                (&building_at[i], &summoned_at[i]),
+            )?;
+            cq::validate_power(&record, buildings, &unit_records)
+                .map_err(|why| invalid(file, &a.name, why))?;
             power_records.push(record);
         }
     }
@@ -133,14 +151,14 @@ pub(crate) fn bake_rosters(data_dir: &Path, units: &[UnitRecord]) -> Result<Tabl
     })
 }
 
-/// A faction meter's ability. One that names no `haste` or `shift_to` is
-/// not built yet: it is listed, but the game doesn't offer it.
+/// A faction meter's ability. One that says nothing is `built` is not
+/// built yet: it is listed, but the game doesn't offer it.
 fn power_record(
     file: &Path,
     faction: Faction,
     meter: &str,
     a: &rosters::Ability,
-    building_at: &Index,
+    (building_at, summoned_at): (&Index, &Index),
 ) -> Result<PowerRecord, BakeError> {
     let bad = |why: &str| invalid(file, &a.name, why.to_string());
     let ticks = |seconds: f64| -> Result<u32, BakeError> {
@@ -150,39 +168,53 @@ fn power_record(
             to_ticks(seconds).map(u32::from).map_err(bad)
         }
     };
-    let to_building = match &a.shift_to {
-        Some(n) => *building_at
-            .get(n.as_str())
-            .ok_or_else(|| bad(&format!("shift_to names no building {n}")))?,
-        None => cq::NONE,
+    use rosters::Built;
+    let (effect, arg) = match &a.built {
+        None => (cq::POWER_NOT_BUILT, 0),
+        Some(Built::Haste(p)) => (cq::POWER_HASTE, u16::from(*p)),
+        Some(Built::Shift(n)) => (
+            cq::POWER_SHIFT,
+            *building_at
+                .get(n.as_str())
+                .ok_or_else(|| bad(&format!("it shifts to no building {n}")))?,
+        ),
+        Some(Built::Grant(grub)) => (cq::POWER_GRANT, *grub),
+        Some(Built::March(p)) => (cq::POWER_MARCH, u16::from(*p)),
+        Some(Built::Steadfast) => (cq::POWER_STEADFAST, whole_tiles(a.radius).map_err(bad)?),
+        Some(Built::Summon(n)) => (
+            cq::POWER_SUMMON,
+            *summoned_at
+                .get(n.as_str())
+                .ok_or_else(|| bad(&format!("{n} is not a summoned unit")))?,
+        ),
     };
-    let effect = match (a.haste, &a.shift_to) {
-        (0, None) => cq::POWER_NOT_BUILT,
-        (_, None) => cq::POWER_HASTE,
-        (0, Some(_)) => cq::POWER_SHIFT,
-        _ => return Err(bad("a power hastes or shifts, not both")),
-    };
-    let meter = match meter {
+    let meter = match cq::METER_NAMES.iter().position(|&n| n == meter) {
         _ if effect == cq::POWER_NOT_BUILT => cq::METER_NOT_BUILT,
-        "Resonance" => cq::METER_RESONANCE,
+        Some(m) if m > 0 => m as u8,
         _ => return Err(bad("its meter is not built yet")),
     };
+    let lasts = cq::power_lasts(effect);
     Ok(PowerRecord {
         name: name_bytes(&a.name).map_err(|why| bad(&why))?,
         cooldown_ticks: ticks(a.cooldown)?,
-        duration_ticks: if effect == cq::POWER_HASTE {
-            ticks(a.duration)?
-        } else {
-            0
-        },
-        to_building,
+        duration_ticks: if lasts { ticks(a.duration)? } else { 0 },
+        arg,
         faction: faction as u8,
         tier: a.tier,
         cost: u8::try_from(a.cost).map_err(|_| bad("costs more than 255"))?,
         meter,
         effect,
-        percent: a.haste,
+        pad: 0,
     })
+}
+
+/// A radius in whole tiles, 1 or more.
+fn whole_tiles(radius: f64) -> Result<u16, &'static str> {
+    if radius >= 1.0 && radius.fract() == 0.0 && radius <= f64::from(u16::MAX) {
+        Ok(radius as u16)
+    } else {
+        Err("its radius is a whole number of tiles, 1 or more")
+    }
 }
 
 /// `n` as a table index, which must leave `NONE` free.
@@ -311,8 +343,13 @@ impl UnitContext<'_> {
             ),
             rosters::From::Summoned(_) => (cq::NONE, cq::NONE, 0),
         };
+        let mut stats = unit_record(self.file, &u.stats, points)?;
+        // A unit that drills in close order has the trait.
+        if u.abilities.iter().any(|a| a.name == DISCIPLINE_ABILITY) {
+            stats.weapons |= WEAPON_DISCIPLINE;
+        }
         Ok(ConquestUnitRecord {
-            stats: unit_record(self.file, &u.stats, points)?,
+            stats,
             cost_grub: u.cost.grub,
             cost_marrow: u.cost.marrow,
             train_ticks,
@@ -363,6 +400,7 @@ fn building_flag(f: rosters::BuildingFlag) -> u8 {
         rosters::BuildingFlag::AntiAir => cq::BUILDING_ANTI_AIR,
         rosters::BuildingFlag::Larvae => cq::BUILDING_LARVAE,
         rosters::BuildingFlag::Veins => cq::BUILDING_VEINS,
+        rosters::BuildingFlag::Honor => cq::BUILDING_HONOR,
     }
 }
 

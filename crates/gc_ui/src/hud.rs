@@ -1176,6 +1176,7 @@ mod tests {
             larva_room: 0,
             resonance: 0,
             chords: 0,
+            honor: None,
             clock_secs: 14 * 60 + 32,
         }
     }
@@ -1297,6 +1298,37 @@ mod tests {
         });
         assert_eq!(in_top_bar(&full, theme::GOOD), "100/100".len());
         assert_eq!(in_top_bar(&plain, theme::GOOD), 0);
+    }
+
+    #[test]
+    fn honor_shows_in_the_top_bar_for_a_side_with_the_meter_even_at_zero() {
+        let mut hud = Hud::default();
+        let mut bar = |top| run_with(&mut hud, HudInput::default(), &[], &[], with_top(top)).1;
+        let plain = bar(top_bar());
+        let text_quads = |d: &DrawList| in_top_bar(d, theme::TEXT) + in_top_bar(d, theme::MUTED);
+        let clans = bar(TopBar {
+            honor: Some(40),
+            ..top_bar()
+        });
+        assert_eq!(
+            text_quads(&clans),
+            text_quads(&plain) + "Honor".len() + "40/100".len()
+        );
+        let empty = bar(TopBar {
+            honor: Some(0),
+            ..top_bar()
+        });
+        assert_eq!(
+            text_quads(&empty),
+            text_quads(&plain) + "Honor".len() + "0/100".len()
+        );
+        // A full meter turns green.
+        let full = bar(TopBar {
+            honor: Some(100),
+            ..top_bar()
+        });
+        assert_eq!(in_top_bar(&full, theme::GOOD), "100/100".len());
+        assert_eq!(in_top_bar(&clans, theme::GOOD), 0);
     }
 
     #[test]

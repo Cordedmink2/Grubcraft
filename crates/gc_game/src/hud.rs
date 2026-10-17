@@ -377,6 +377,8 @@ pub(crate) fn tuning_of(
 
 // The top bar's Resonance meter tops out where the simulation's does.
 const _: () = assert!(gc_ui::conquest::RESONANCE_FULL == gc_sim::chords::MAX_RESONANCE);
+// So does its Honor meter.
+const _: () = assert!(gc_ui::conquest::HONOR_FULL == gc_sim::honor::MAX_HONOR);
 
 impl Running {
     /// `side`'s idle workers. A worker that only builds (the Choir's Tuner)
@@ -903,6 +905,7 @@ impl Running {
             larva_room: b.larva_room,
             resonance: b.resonance,
             chords: b.chords,
+            honor: (self.world.meter(self.sandbox.side) == gc_sim::Meter::Honor).then_some(b.honor),
             clock_secs: self.world.tick_count() / gc_sim::TICKS_PER_SECOND,
         })
     }
