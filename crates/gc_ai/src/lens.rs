@@ -6,7 +6,9 @@
 //! or the place it is heading to, and the enemy regiment it has picked as
 //! its point of attack. In the panel: its plan, what it expects from the
 //! fight now against what it expected at the start, its ground, its roles,
-//! the orders it has sent, and the latest entries in its journal.
+//! the orders it has sent, and the latest entries in its journal; in
+//! Conquest, also its economy, what it believes of each enemy's army, and
+//! what its army waits for.
 //!
 //! Only a picture of decisions already made: nothing here changes them.
 
@@ -14,7 +16,7 @@ use gc_sim::{PlayerId, RegimentHandle};
 use glam::Vec2;
 
 use crate::Mind;
-use crate::captain::{Role, describe_margin};
+use crate::captain::{Captain, Role, describe_margin};
 use crate::perception::{Perception, TICKS};
 
 /// Journal entries the panel shows, newest last.
@@ -61,7 +63,7 @@ pub struct Lens {
 impl Mind {
     /// What the lens shows for this mind, against the field in `view`.
     pub fn lens(&self, view: &Perception) -> Lens {
-        let c = self.captain();
+        let c = self.fighting_captain();
         let standing = |h: RegimentHandle| view.get(h).is_some_and(|r| !r.broken());
         let marks = c
             .members
@@ -84,13 +86,20 @@ impl Mind {
             party: self.party(),
             front,
             focus: c.focus.filter(|&f| standing(f)),
-            text: self.lens_text(&marks),
+            text: self.lens_text(c, &marks, view.tick),
             marks,
         }
     }
 
-    fn lens_text(&self, marks: &[Mark]) -> Vec<String> {
-        let c = self.captain();
+    /// The Captain whose battle the lens shows: in Conquest the one the
+    /// Marshal has in the field, in a Field Battle the mind's own.
+    fn fighting_captain(&self) -> &Captain {
+        self.realm()
+            .and_then(|r| r.marshal.captain())
+            .unwrap_or_else(|| self.captain())
+    }
+
+    fn lens_text(&self, c: &Captain, marks: &[Mark], tick: u32) -> Vec<String> {
         let mut text = vec![self.summary()];
         let odds = match (c.estimate, c.first_estimate) {
             (Some(now), Some(start)) => format!(
@@ -135,6 +144,9 @@ impl Mind {
         let entries: Vec<_> = self.journal().entries().rev().take(JOURNAL_LINES).collect();
         for e in entries.iter().rev() {
             text.push(format!("  {:<7} {}", clock(e.tick), e.text));
+        }
+        if let Some(realm) = self.realm() {
+            text.extend(realm.lens_lines(tick));
         }
         text
     }

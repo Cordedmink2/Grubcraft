@@ -172,6 +172,11 @@ struct Look<'a> {
 }
 
 impl Steward {
+    /// Whether it is short of an army and training soldiers first.
+    pub fn arming(&self) -> bool {
+        self.arming
+    }
+
     pub fn new() -> Steward {
         Steward::default()
     }
@@ -527,7 +532,11 @@ impl Steward {
             EconomyStyle::Tuned => BUILDERS + usize::from(look.tier),
             _ => {
                 let want = (slots + SPARE_WORKERS + rising * 4).min(MAX_WORKERS);
-                want * usize::from(s.plan.workers_percent) / 100
+                let want = want * usize::from(s.plan.workers_percent) / 100;
+                match s.plan.early.worker_cap {
+                    Some(cap) => want.min(usize::from(cap)),
+                    None => want,
+                }
             }
         };
         self.ledger.workers = look.workers.len() as u16;
@@ -628,10 +637,22 @@ impl Steward {
             .then(|| (b, self.inner_spot(look)))
         };
         let first = || {
-            (production == 0 && workers >= 6)
+            (production == 0 && workers >= usize::from(s.plan.early.workers_first))
                 .then(|| self.production_type(s, look))
                 .flatten()
                 .map(|b| (b, self.inner_spot(look)))
+        };
+        // The opening's towers by the hall.
+        let tower = || {
+            let towers = look
+                .mine
+                .iter()
+                .filter(|m| m.stats.role == Role::Defence)
+                .count();
+            if towers >= usize::from(s.plan.early.towers) {
+                return None;
+            }
+            Some((s.kit.tower(look.tier)?, self.inner_spot(look)))
         };
         let expand = || {
             let b = match s.kit.economy {
@@ -647,11 +668,14 @@ impl Steward {
             }
             Some((b, self.expansion_site(s, look, self.home?)?))
         };
+        // The opening's production buildings after the first go up
+        // whatever the workers, and while it is arming.
+        let opening_more = production > 0 && production < usize::from(s.plan.early.producers);
+        let grown = !self.arming
+            && production < usize::from(s.plan.producers_per_tier) * usize::from(look.tier.max(1))
+            && workers >= 8 + 6 * production;
         let more = || {
-            (!self.arming
-                && production
-                    < usize::from(s.plan.producers_per_tier) * usize::from(look.tier.max(1))
-                && workers >= 8 + 6 * production)
+            (opening_more || grown)
                 .then(|| self.production_type(s, look))
                 .flatten()
                 .map(|b| (b, self.inner_spot(look)))
@@ -659,6 +683,7 @@ impl Steward {
         let wanted: Option<(&KitBuilding, Vec2)> = housing()
             .or_else(tune)
             .or_else(first)
+            .or_else(tower)
             .or_else(hatch)
             .or_else(expand)
             .or_else(more);
@@ -825,12 +850,21 @@ impl Steward {
         let left: u32 = grub.iter().map(|n| n.3).sum();
         let running_out = left < LOW * grub.len().max(1) as u32 || grub.len() < 2;
         let time = s.now >= s.expand_after;
+        // An opening that expands early does, seeps full or not, once: while
+        // every hub it has is at home.
+        let early = s.plan.early.expand_at.is_some_and(|t| s.now >= t)
+            && self.home.is_some_and(|home| {
+                look.mine
+                    .iter()
+                    .filter(|m| m.hub(s.kit.economy))
+                    .all(|m| m.at().distance(home) <= SERVE)
+            });
         let rising = look
             .mine
             .iter()
             .any(|m| !m.finished() && m.hub(s.kit.economy));
         // Arming puts off growing, but not replacing seeps that run dry.
-        !rising && (running_out || (time && full && !self.arming))
+        !rising && (running_out || early || (time && full && !self.arming))
     }
 
     /// The middle of the nearest cluster of Grub seeps no hall of its own

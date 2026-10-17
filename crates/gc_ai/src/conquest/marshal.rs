@@ -33,7 +33,7 @@ const QUIET_TICKS: u32 = 8 * TICKS_PER_SECOND;
 const LOOK_TICKS: u32 = 4;
 /// How long it gathers after falling back before setting out again.
 const REGROUP_TICKS: u32 = 30 * TICKS_PER_SECOND;
-/// Ticks it contests the Titan's Heart with a full army, never holding it,
+/// Ticks it contests the Titan's Heart, never holding it,
 /// before it gives the Heart a rest and raids a base instead.
 const HEART_PATIENCE: u32 = 10 * 60 * TICKS_PER_SECOND;
 /// Ticks such a raid lasts, Heart or no Heart.
@@ -47,8 +47,6 @@ const ODDS_STRIKE: f32 = 0.5;
 /// Tiles of distance that cost as much as 1 of odds, when choosing whom to
 /// attack.
 const ODDS_PER_DISTANCE: f32 = 400.0;
-/// Supply short of the limit that still counts as a full army.
-const FULL_SLACK: u32 = 12;
 /// Supply short of its current cap that counts as capped.
 const CAP_SLACK: u32 = 8;
 /// Enemies within this many tiles of its buildings are a threat to home.
@@ -138,9 +136,22 @@ pub struct Marshal {
     contesting_since: Option<u32>,
     /// Until this tick it raids and leaves the Heart alone.
     raid_until: u32,
+    /// It has set out on an attack or for the Heart: its opening's first
+    /// wave is spent.
+    attacked: bool,
     orders: Orders,
     wants: Vec<Want>,
     battle_wants: Vec<Want>,
+    /// What it believes of each enemy's army, as of its last think. Only
+    /// for the AI lens to show.
+    pub belief: Vec<spymaster::Belief>,
+    /// How it last weighed its army against each enemy's (-1 to +1), by
+    /// owner, and the tick it did. Only for the AI lens to show.
+    pub odds: Vec<(u8, f32, u32)>,
+    /// The supply it has gathered, the wave it waits for, and whether it
+    /// is ready to set out (its wave gathered, or its supply full), as of
+    /// its last think. Only for the AI lens to show.
+    pub wave: Option<(u32, u32, bool)>,
 }
 
 impl Marshal {
@@ -158,9 +169,13 @@ impl Marshal {
             regroup_until: 0,
             contesting_since: None,
             raid_until: 0,
+            attacked: false,
             orders: Orders::new(party, reaction_ticks, orders_per_minute),
             wants: Vec::new(),
             battle_wants: Vec::new(),
+            belief: Vec::new(),
+            odds: Vec::new(),
+            wave: None,
         }
     }
 
@@ -314,28 +329,36 @@ impl Marshal {
     /// Choose the army's goal and march it there.
     fn decide(&mut self, c: &mut Ctx, s: &Sense, army: &[&Seen], home: Option<Vec2>) {
         let Some(rally) = self.rally else { return };
-        let ready = wave_ready(s, c.persona, army);
-        // Every army full and on the Heart, and nobody holding it, is a
-        // stalemate (four-way games): a full army that has fought for it a
-        // long while goes to break a base instead, and leaves the Heart be
-        // until it is back.
+        // It sets out once its wave is gathered, or with what it has when
+        // its supply is full and waiting gains nothing.
+        let have = s.kit.supply_of(army.iter().copied());
+        let want = self.wave_size(s, c.persona);
+        let ready = have >= want || (capped(s) && have >= FIRST_WAVE);
+        let enough = have >= FIRST_WAVE;
+        self.belief = spymaster::beliefs(s);
+        self.wave = Some((have.round() as u32, want.ceil() as u32, ready));
+        // Armies brawling on the Heart and nobody holding it long is a
+        // stalemate (games of four or more): an army that has fought for it
+        // a long while goes to break a base instead, or to find one on a
+        // big map where it has seen none, and leaves the Heart be until it
+        // is back.
         if we_hold_heart(s) || !s.world.heart().is_some_and(|h| h.open) {
             self.contesting_since = None;
         }
-        let full = s
-            .world
-            .bank(s.party)
-            .is_some_and(|b| b.supply_used + FULL_SLACK >= SUPPLY_LIMIT);
-        if full
+        if ready
+            && s.now >= self.regroup_until
             && self
                 .contesting_since
                 .is_some_and(|t| s.now >= t + HEART_PATIENCE)
-            && let Some(t) = raid_target(s, centroid(army))
+            && let Some((t, note)) = raid_target(s, centroid(army))
+                .map(|t| (t, "going to break a base"))
+                .or_else(|| {
+                    self.target(s, centroid(army))
+                        .map(|t| (t, "going to find a base"))
+                })
         {
-            c.journal.note(
-                s.now,
-                "The Heart is a stalemate: going to break a base".to_string(),
-            );
+            c.journal
+                .note(s.now, format!("The Heart is a stalemate: {note}"));
             self.contesting_since = None;
             self.raid_until = s.now + RAID_TICKS;
             self.goal = Goal::Attack(t);
@@ -377,7 +400,6 @@ impl Marshal {
                 // Beaten back, it gathers a while before going again; and it
                 // goes to stop an enemy on the Heart only with an army.
                 let regrouped = s.now >= self.regroup_until;
-                let enough = s.kit.supply_of(army.iter().copied()) >= FIRST_WAVE;
                 let heart = heart_to_take(s)
                     .filter(|_| regrouped && (ready || enemy_holds_heart(s) && enough));
                 let ready = ready && regrouped;
@@ -400,6 +422,7 @@ impl Marshal {
                     if matches!(goal, Goal::Heart(_)) {
                         self.contesting_since.get_or_insert(s.now);
                     }
+                    self.attacked = true;
                     self.goal = goal;
                     c.journal.note(s.now, note);
                 }
@@ -591,7 +614,7 @@ impl Marshal {
     /// knows a building of, the nearest such building, scored by how a
     /// fight against the army defending it would go, less a little for
     /// distance.
-    fn best_odds(&self, s: &Sense, army: &[&Seen], from: Vec2) -> Option<(Vec2, f32)> {
+    fn best_odds(&mut self, s: &Sense, army: &[&Seen], from: Vec2) -> Option<(Vec2, f32)> {
         let mut nearest: Vec<(u8, Vec2)> = Vec::new();
         // Only enemies whose army it has seen: odds against an army it
         // knows nothing of would be a guess.
@@ -605,15 +628,67 @@ impl Marshal {
                 None => nearest.push((b.owner, b.at)),
             }
         }
-        nearest
+        let weighed: Vec<(u8, Vec2, f32)> = nearest
             .into_iter()
             .map(|(o, at)| {
                 let margin =
                     spymaster::odds(s, army.iter().copied(), spymaster::defenders(s, o, at));
-                (at, margin, margin - at.distance(from) / ODDS_PER_DISTANCE)
+                (o, at, margin)
             })
+            .collect();
+        // Keep the odds for the lens.
+        for &(o, _, margin) in &weighed {
+            match self.odds.iter_mut().find(|(owner, ..)| *owner == o) {
+                Some(kept) => *kept = (o, margin, s.now),
+                None => self.odds.push((o, margin, s.now)),
+            }
+        }
+        weighed
+            .into_iter()
+            .map(|(_, at, margin)| (at, margin, margin - at.distance(from) / ODDS_PER_DISTANCE))
             .max_by(|a, b| a.2.total_cmp(&b.2))
             .map(|(at, margin, _)| (at, margin))
+    }
+
+    /// The supply it waits for before setting out: the usual wave, or its
+    /// opening's smaller first wave until it has attacked once.
+    fn wave_size(&self, s: &Sense, persona: &Personality) -> f32 {
+        let usual = usual_wave(s, persona);
+        match s.plan.early.first_wave.filter(|_| !self.attacked) {
+            Some(w) => usual.min(f32::from(w)),
+            None => usual,
+        }
+    }
+
+    /// What the army is waiting for or doing beyond what its goal says, in
+    /// a few words, for the AI lens.
+    pub fn plan_note(&self, now: u32) -> Option<String> {
+        let wave = self.wave;
+        match self.goal {
+            Goal::Gather if now < self.regroup_until => Some(format!(
+                "regrouping after a costly attack, {}s more",
+                (self.regroup_until - now).div_ceil(TICKS_PER_SECOND)
+            )),
+            Goal::Gather => wave.map(|(have, want, ready)| {
+                if ready && have < want {
+                    format!("supply is full at {have}: waiting for a target or better odds")
+                } else if ready {
+                    format!("wave of {want} supply is ready: waiting for a target or better odds")
+                } else {
+                    format!("gathering until its wave is ready: {have} of {want} supply")
+                }
+            }),
+            Goal::Attack(_) if now < self.raid_until => {
+                Some("raiding enemy main buildings, leaving the Heart alone".to_string())
+            }
+            Goal::Heart(_) => self.contesting_since.map(|t| {
+                format!(
+                    "has fought for the Heart for {} min",
+                    (now - t) / (60 * TICKS_PER_SECOND)
+                )
+            }),
+            _ => None,
+        }
     }
 
     /// At the target: every regiment goes for one of the nearest enemy
@@ -703,15 +778,12 @@ impl Marshal {
     }
 }
 
-/// Whether the army gathered at the rally is big enough to set out: a
-/// wave that grows with the game and shrinks with aggression, or a full
-/// supply cap.
-fn wave_ready(s: &Sense, persona: &Personality, army: &[&Seen]) -> bool {
-    let supply = s.kit.supply_of(army.iter().copied());
+/// The supply in fighters it waits for before setting out: a wave that
+/// grows with the game and shrinks with aggression.
+fn usual_wave(s: &Sense, persona: &Personality) -> f32 {
     let minutes = s.now as f32 / (60.0 * TICKS_PER_SECOND as f32);
     let boldness = 1.3 - 0.6 * persona.aggression();
-    let wave = ((FIRST_WAVE + PER_MINUTE * minutes) * boldness).min(BIGGEST_WAVE);
-    supply >= wave || (capped(s) && supply >= FIRST_WAVE)
+    ((FIRST_WAVE + PER_MINUTE * minutes) * boldness).min(BIGGEST_WAVE)
 }
 
 /// Whether its supply is used up to within a regiment or so of its cap:

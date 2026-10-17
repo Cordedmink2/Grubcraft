@@ -18,6 +18,14 @@ pub struct KitBuilding {
     pub stats: BuildingStats,
 }
 
+impl KitBuilding {
+    /// What it costs, Marrow counted at twice Grub as the rarer of the
+    /// two: for choosing the cheapest of several.
+    pub fn price(&self) -> u32 {
+        u32::from(self.stats.cost_grub) + 2 * u32::from(self.stats.cost_marrow)
+    }
+}
+
 /// One of the faction's unit types.
 #[derive(Clone, Copy, Debug)]
 pub struct KitUnit {
@@ -67,19 +75,23 @@ pub struct Kit {
     /// The worker types of every faction: anyone can tell a worker when
     /// they see one, and an army doesn't stop to fight them.
     pub all_workers: Vec<UnitId>,
+    /// Every unit type of every faction, by id: whose it is and what it
+    /// takes of supply. A player knows these by sight, and the Spymaster
+    /// sizes an enemy army by them.
+    pub all_units: Vec<(Faction, u8)>,
     /// Every start on the map, in tiles (centre of the start tile), in the
     /// map's order. Public knowledge: the map shows them.
     pub starts: Vec<Vec2>,
 }
 
 impl Kit {
-    /// The supply `regiments` of this faction take up: how big an army
-    /// they are. Units not in its kit count for nothing.
+    /// The supply `regiments` take up, whoever's they are: how big an
+    /// army they are.
     pub fn supply_of<'a>(&self, regiments: impl IntoIterator<Item = &'a Seen>) -> f32 {
         regiments
             .into_iter()
-            .filter_map(|r| self.unit(r.unit))
-            .map(|u| f32::from(u.unit.supply))
+            .filter_map(|r| self.all_units.get(usize::from(r.unit)))
+            .map(|&(_, supply)| f32::from(supply))
             .sum()
     }
 
@@ -128,10 +140,7 @@ impl Kit {
                     && b.stats.upgrades_from.is_none()
                     && !matches!(b.stats.role, Role::Main | Role::Outpost)
             })
-            .min_by_key(|b| {
-                (u32::from(b.stats.cost_grub) + 2 * u32::from(b.stats.cost_marrow)) * 100
-                    / u32::from(b.stats.supply)
-            })
+            .min_by_key(|b| b.price() * 100 / u32::from(b.stats.supply))
     }
 
     /// What to put up by a far seep: an outpost hall if the faction has
@@ -155,6 +164,15 @@ impl Kit {
             .iter()
             .filter(|b| b.stats.tunes.is_some_and(|(r, _)| r == resource))
             .min_by_key(|b| b.stats.cost_grub)
+    }
+
+    /// The cheapest defence tower it can put up at `tier`.
+    pub fn tower(&self, tier: u8) -> Option<&KitBuilding> {
+        self.buildings
+            .iter()
+            .filter(|b| b.stats.role == Role::Defence && b.stats.tier <= tier.max(1))
+            .filter(|b| b.stats.upgrades_from.is_none())
+            .min_by_key(|b| b.price())
     }
 
     /// The building that adds larvae, main buildings aside: the Brood's

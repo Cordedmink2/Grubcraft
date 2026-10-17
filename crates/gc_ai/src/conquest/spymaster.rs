@@ -9,6 +9,7 @@ use glam::Vec2;
 use super::{Sense, steward};
 use crate::estimator::{Approach, Force, estimate};
 use crate::perception::Seen;
+use crate::personality::Faction;
 
 /// How a fight is taken to start, for weighing armies before one: the
 /// fronts a little apart, closing at a walk.
@@ -84,4 +85,29 @@ pub fn classes<'a>(s: &Sense, regiments: impl IntoIterator<Item = &'a Seen>) -> 
     }
     let all: f32 = hp.iter().sum();
     if all > 0.0 { hp.map(|h| h / all) } else { hp }
+}
+
+/// What it believes of one enemy's army, kept for the AI lens to show:
+/// nothing here is read back to decide anything.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Belief {
+    pub owner: u8,
+    /// Its faction, told by the units it has seen.
+    pub faction: Option<Faction>,
+    /// The supply of the regiments it knows of.
+    pub supply: u32,
+}
+
+/// What it believes now of every enemy whose army it knows any of.
+pub fn beliefs(s: &Sense) -> Vec<Belief> {
+    enemies(s)
+        .into_iter()
+        .map(|owner| Belief {
+            owner,
+            faction: army_of(s, owner)
+                .find_map(|r| s.kit.all_units.get(usize::from(r.unit)))
+                .map(|&(f, _)| f),
+            supply: s.kit.supply_of(army_of(s, owner)).round() as u32,
+        })
+        .collect()
 }

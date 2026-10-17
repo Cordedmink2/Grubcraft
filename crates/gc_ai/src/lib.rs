@@ -157,19 +157,33 @@ impl Mind {
         }
     }
 
-    /// A Conquest player of `kit`'s faction: it runs its economy and army
-    /// as well as its battles.
-    pub fn conquest(config: MindConfig, kit: Arc<conquest::kit::Kit>) -> Mind {
+    /// A Conquest player of `kit`'s faction against `rivals` (the other
+    /// players' factions): it runs its economy and army as well as its
+    /// battles. It picks its own opening unless given one (for tests and
+    /// tuning).
+    pub fn conquest(
+        config: MindConfig,
+        kit: Arc<conquest::kit::Kit>,
+        rivals: &[personality::Faction],
+        opening: Option<&'static conquest::opening::Opening>,
+    ) -> Mind {
         let mut mind = Mind::new(config);
         let plan = conquest::strategy::Strategy::of(config.difficulty);
+        let opening = opening.unwrap_or_else(|| {
+            conquest::opening::pick(mind.persona, config.difficulty, rivals, config.seed)
+        });
+        mind.journal.note(
+            0,
+            format!("Takes up the Conquest: opens with {}", opening.name),
+        );
         mind.realm = Some(conquest::Realm::new(
             kit,
             config.party,
             plan,
+            opening,
             &mind.knobs,
             plan.expand_after(mind.persona.greed),
         ));
-        mind.journal.note(0, "Takes up the Conquest".to_string());
         mind
     }
 

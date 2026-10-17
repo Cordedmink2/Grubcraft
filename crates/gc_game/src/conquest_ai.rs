@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use gc_ai::conquest::kit::{EconomyStyle, Kit, KitBuilding, KitUnit};
+use gc_ai::conquest::opening::Opening;
 use gc_ai::{Difficulty, Mind, MindConfig, Minds};
 use gc_data::conquest::Class;
 use gc_data::{Faction, GameData};
@@ -71,6 +72,11 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
             .filter(|(_, rec)| rec.worker())
             .map(|(u, _)| u as u16)
             .collect(),
+        all_units: data
+            .conquest_units
+            .iter()
+            .map(|rec| (rec.faction(), conquest::unit_of(rec).supply))
+            .collect(),
         starts: map
             .starts()
             .into_iter()
@@ -96,7 +102,7 @@ pub fn seat(
     roll: u64,
     minds: &mut Minds,
 ) {
-    let factions = conquest::factions(setup);
+    let sides: Vec<(Faction, u8)> = setup.players.iter().map(|s| (s.faction, s.team)).collect();
     for (i, slot) in setup.players.iter().enumerate() {
         if slot.kind != SlotKind::Ai {
             continue;
@@ -104,43 +110,47 @@ pub fn seat(
         let level = Difficulty::from_index(usize::from(slot.ai_level));
         let temper = temper(roll, i);
         minds.add(mind_for(
-            data,
-            table,
-            map,
-            i,
-            factions[i],
-            level,
-            temper,
-            roll,
+            data, table, map, i, &sides, level, temper, roll, None,
         ));
     }
 }
 
-/// The Conquest mind for player `i`, playing `faction` at `level`, its
-/// personality picked by `temper` and its seed from `roll`.
+/// The Conquest mind for player `i` of `sides` (each player's faction and
+/// team) at `level`, its personality picked by `temper` and its seed from
+/// `roll`; it picks its own opening unless given one.
 #[allow(clippy::too_many_arguments)]
 fn mind_for(
     data: &GameData,
     table: &Table,
     map: &Map,
     i: usize,
-    faction: Faction,
+    sides: &[(Faction, u8)],
     level: Difficulty,
     temper: u32,
     roll: u64,
+    opening: Option<&'static Opening>,
 ) -> Mind {
+    let (faction, team) = sides[i];
     let config = MindConfig {
         party: i as u8,
         difficulty: level,
         personality: gc_ai::personality::pick(faction, temper),
         seed: roll ^ i as u64,
     };
-    Mind::conquest(config, Arc::new(kit(data, table, map, faction)))
+    // The factions it faces: its allies are no rivals.
+    let rivals: Vec<Faction> = sides
+        .iter()
+        .filter(|&&(_, t)| t != team)
+        .map(|&(f, _)| f)
+        .collect();
+    let kit = Arc::new(kit(data, table, map, faction));
+    Mind::conquest(config, kit, &rivals, opening)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gc_ai::conquest::opening;
     use gc_sim::economy::Bank;
     use gc_sim::{
         Capacities, MatchSetup, PlayerId, TICKS_PER_SECOND, Verdict, Victories, Win, World,
@@ -152,6 +162,8 @@ mod tests {
         pub faction: Faction,
         /// The mind's one-line summary of what it is doing.
         pub summary: String,
+        /// The AI lens's panel for the mind, after the summary line.
+        pub lens: Vec<String>,
         pub bank: Bank,
         pub buildings: usize,
         pub regiments: usize,
@@ -199,12 +211,13 @@ mod tests {
 
     impl Standing {
         /// "side 0 EmberClans: bank 300/0, supply 8/10, ..." and, below,
-        /// the mind's summary.
+        /// the mind's summary and what its lens panel says.
         pub fn line(&self, p: usize) -> String {
             let b = &self.bank;
+            let lens: String = self.lens.iter().map(|l| format!("\n  {l}")).collect();
             format!(
                 "side {p} {:?}: bank {}/{}, supply {}/{}, {} buildings, {} regiments, \
-                 {} orders ({} economy)\n    {}",
+                 {} orders ({} economy)\n    {}{lens}",
                 self.faction,
                 b.grub,
                 b.marrow,
@@ -225,6 +238,7 @@ mod tests {
         Standing {
             faction,
             summary: mind.summary(),
+            lens: mind.lens(minds.view()).text.split_off(1),
             bank: world.bank(p).unwrap_or_default(),
             buildings: world
                 .structures()
@@ -248,7 +262,7 @@ mod tests {
         seed: u64,
         max_minutes: u32,
     ) -> Played {
-        play_with(choice, factions, levels, seed, max_minutes, None)
+        play_with(choice, factions, levels, seed, max_minutes, None, &[])
     }
 
     /// [`play`], every side with the personality `temper` picks for its
@@ -260,6 +274,7 @@ mod tests {
         seed: u64,
         max_minutes: u32,
         temper: Option<u32>,
+        openings: &[Option<&'static Opening>],
     ) -> Played {
         let trace = std::env::var("AI_TRACE").unwrap_or_default();
         // AI_TRACE=2 also prints every journal entry as it is written.
@@ -271,6 +286,7 @@ mod tests {
         let units = conquest::unit_stats(&data);
         let nav = map.nav_costs();
         let teams: Vec<u8> = (0..factions.len() as u8).collect();
+        let sides: Vec<(Faction, u8)> = factions.iter().copied().zip(teams.clone()).collect();
         let setup = MatchSetup {
             seed,
             capacities: Capacities::default(),
@@ -294,11 +310,12 @@ mod tests {
         let mut world = World::new(&setup);
         assert!(world.conquest(&plan.setup()));
         let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&map, &nav));
-        for (i, &faction) in factions.iter().enumerate() {
+        for i in 0..factions.len() {
             let level = levels[i.min(levels.len() - 1)];
             let temper = temper.unwrap_or_else(|| super::temper(seed, i));
+            let opening = openings.get(i).copied().flatten();
             minds.add(mind_for(
-                &data, &table, &map, i, faction, level, temper, seed,
+                &data, &table, &map, i, &sides, level, temper, seed, opening,
             ));
         }
         let opening = conquest::opening(&data, &table, &map, &world, factions);
@@ -361,6 +378,13 @@ mod tests {
         var.split(',')
             .map(|v| level_named(v).unwrap_or(Difficulty::Veteran))
             .collect()
+    }
+
+    /// Openings named in `var`, a comma list, one a side (unset or
+    /// unknown: the side picks its own).
+    fn openings_from_env(var: &str) -> Vec<Option<&'static Opening>> {
+        let v = std::env::var(var).unwrap_or_default();
+        v.split(',').map(opening::find).collect()
     }
 
     /// A level by its name or its number.
@@ -436,7 +460,8 @@ mod tests {
         // AI_SAME=1 gives every side the same personality, as the arena does.
         let same = std::env::var("AI_SAME").is_ok_and(|v| v == "1");
         let temper = same.then(|| super::temper(seed, 0));
-        let played = play_with(choice, &factions, &levels, seed, minutes, temper);
+        let openings = openings_from_env("AI_OPENINGS");
+        let played = play_with(choice, &factions, &levels, seed, minutes, temper, &openings);
         println!("{}", played.report());
         println!(
             "{} game minutes in {:.1?}",
@@ -459,6 +484,11 @@ mod tests {
         };
         let a = find("AI_A", Difficulty::General);
         let b = find("AI_B", Difficulty::Veteran);
+        // AI_OPEN_A and AI_OPEN_B set each level's opening, by name.
+        let (open_a, open_b) = (
+            openings_from_env("AI_OPEN_A"),
+            openings_from_env("AI_OPEN_B"),
+        );
         let games = env_number("AI_GAMES", 3);
         let (mut won, mut lost, mut drawn) = (0, 0, 0);
         for f in Faction::ALL {
@@ -469,7 +499,9 @@ mod tests {
                     // The same game with the sides swapped.
                     let roll = seed * 31;
                     let temper = Some(super::temper(roll, 0));
-                    let played = play_with(0, &[f, f], &levels, roll, 45, temper);
+                    let (oa, ob) = (open_a[0], open_b[0]);
+                    let openings = if a_side == 0 { [oa, ob] } else { [ob, oa] };
+                    let played = play_with(0, &[f, f], &levels, roll, 45, temper, &openings);
                     match played.winner() {
                         Some(w) if w == a_side => (won, fw) = (won + 1, fw + 1),
                         Some(_) => (lost, fl) = (lost + 1, fl + 1),
@@ -486,6 +518,42 @@ mod tests {
             b.name(),
             won * 100 / all
         );
+    }
+
+    /// The lens panel of a Conquest mind has its economy and belief lines
+    /// after the battle lines, and what the army waits for once it is
+    /// gathering.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_lens_panel_shows_its_economy_belief_and_plan() {
+        let factions = [Faction::EmberClans, Faction::CarrionConcord];
+        let played = play(0, &factions, &[Difficulty::Veteran], 7, 8);
+        let mut weighed = false;
+        for (p, side) in played.sides.iter().enumerate() {
+            let find = |label: &str| {
+                let start = format!("  {label:<7} ");
+                side.lens.iter().position(|l| l.starts_with(&start))
+            };
+            let roles = find("roles").expect("battle lines come first");
+            let economy = find("economy").unwrap_or_else(|| panic!("side {p}: {:?}", side.lens));
+            assert!(economy > roles, "{:?}", side.lens);
+            assert!(
+                side.lens[economy].contains("keeps 70% workers, 2 producers a tier"),
+                "{}",
+                side.lens[economy]
+            );
+            assert!(side.lens[economy].contains("saving: "));
+            assert!(side.lens[economy].contains("arming: "));
+            assert_eq!(find("belief"), Some(economy + 1), "{:?}", side.lens);
+            weighed |= side.lens[economy + 1].contains(", odds ");
+            if let Some(plan) = find("plan") {
+                assert_eq!(plan, economy + 2, "{:?}", side.lens);
+            }
+            assert!(side.lens.iter().all(|l| l.starts_with("  ")));
+        }
+        // By eight minutes the armies have met, and somebody weighed up
+        // the other's.
+        assert!(weighed, "{:#?}", played.sides[0].lens);
     }
 
     // A game takes seconds in a release build and minutes in a debug one,
@@ -510,5 +578,17 @@ mod tests {
             let played = play(1, &Faction::ALL, &[Difficulty::Veteran], seed, 90);
             assert!(played.winner().is_some(), "{}", played.report());
         }
+    }
+
+    /// Six computer players on a big Wilds map (the first choice past the
+    /// shipped maps).
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_six_player_wilds_ends_in_a_win() {
+        use gc_ai::personality::Faction::*;
+        let factions = [EmberClans, Brood, Choir, CarrionConcord, EmberClans, Brood];
+        let wilds = gc_map::SHIPPED.len();
+        let played = play(wilds, &factions, &[Difficulty::Veteran], 1, 120);
+        assert!(played.winner().is_some(), "{}", played.report());
     }
 }
