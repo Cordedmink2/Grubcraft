@@ -18,7 +18,7 @@ use glam::Vec2;
 
 use super::Sense;
 use super::kit::{EconomyStyle, KitBuilding, KitUnit};
-use super::placing;
+use super::{placing, spymaster};
 use crate::orders::Hands as Clicks;
 use crate::perception::{Class, Seen, to_fx_vec, v2};
 
@@ -36,10 +36,12 @@ const QUEUE: usize = 2;
 const MAX_WORKERS: usize = 48;
 /// Workers it keeps beyond those its nodes take: builders.
 const SPARE_WORKERS: usize = 2;
-/// Most production buildings per tier.
-const PRODUCERS_PER_TIER: usize = 2;
 /// Army make-up it aims for, by class: line, shock, ranged.
 const MIX: [f32; 3] = [0.5, 0.2, 0.3];
+/// How far a level that counters shifts its make-up towards the answer to
+/// the enemy army it has seen: its share of each class moves this much of
+/// the class it beats into it.
+const COUNTER_SHIFT: f32 = 0.5;
 /// One siege or artillery regiment per this many fighters, at most
 /// [`MAX_BREAKERS`].
 const PER_BREAKER: usize = 6;
@@ -48,6 +50,15 @@ const MAX_BREAKERS: usize = 3;
 const MARROW_ENOUGH: u32 = 600;
 /// A node with less than this left counts as running out.
 const LOW: u32 = 1_500;
+/// The army a level that weighs the odds keeps up before it spends on
+/// growth: this much supply a minute of game time, up to the floor.
+const ARMY_PER_MINUTE: f32 = 4.0;
+const ARMY_FLOOR: f32 = 40.0;
+/// Odds against an enemy army it knows of that make it arm.
+const OUTMATCHED: f32 = -0.1;
+/// Supply short of the limit at which it stops arming: it is as armed as
+/// it can be.
+const ARMED_SLACK: u32 = 8;
 /// How often a Marrow gatherer may move to Grub.
 const REBALANCE_TICKS: u32 = 5 * TICKS_PER_SECOND;
 /// Workers the Choir keeps, all builders.
@@ -96,6 +107,9 @@ pub struct Steward {
     busy: Vec<(StructureHandle, Option<UnitId>, u32)>,
     /// Nodes it found no spot to tune from.
     untunable: Vec<u16>,
+    /// It is short of an army: it trains soldiers first, and puts off
+    /// timed expansion and new production meanwhile.
+    arming: bool,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -193,13 +207,21 @@ impl Steward {
         self.ledger.saving = (0, 0);
         self.ledger.tier = look.tier;
 
+        self.arming = self.must_arm(s, &look);
         self.put_to_work(s, clicks, &look);
         self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);
+        // Short of an army, soldiers come before more workers, and the
+        // money it has goes on them first.
+        if self.arming {
+            self.train_army(s, clicks, &look);
+        }
         self.train_workers(s, clicks, &look);
         self.build(s, clicks, &look);
         self.tier_up(s, clicks, &look);
-        self.train_army(s, clicks, &look);
+        if !self.arming {
+            self.train_army(s, clicks, &look);
+        }
         if let Some(rally) = rally {
             self.rally(s, clicks, &look, rally);
         }
@@ -503,7 +525,10 @@ impl Steward {
             .count();
         let want = match s.kit.economy {
             EconomyStyle::Tuned => BUILDERS + usize::from(look.tier),
-            _ => (slots + SPARE_WORKERS + rising * 4).min(MAX_WORKERS),
+            _ => {
+                let want = (slots + SPARE_WORKERS + rising * 4).min(MAX_WORKERS);
+                want * usize::from(s.plan.workers_percent) / 100
+            }
         };
         self.ledger.workers = look.workers.len() as u16;
         self.ledger.want_workers = want as u16;
@@ -623,7 +648,9 @@ impl Steward {
             Some((b, self.expansion_site(s, look, self.home?)?))
         };
         let more = || {
-            (production < PRODUCERS_PER_TIER * usize::from(look.tier.max(1))
+            (!self.arming
+                && production
+                    < usize::from(s.plan.producers_per_tier) * usize::from(look.tier.max(1))
                 && workers >= 8 + 6 * production)
                 .then(|| self.production_type(s, look))
                 .flatten()
@@ -791,10 +818,10 @@ impl Steward {
             .filter(|n| n.1 == Resource::Grub)
             .collect();
         // The Choir's tuned seeps need nobody: they are as full as they get.
+        // Others count as full with as many on each as their level keeps.
+        let keeps = (u16::from(GRUB_SLOTS) - 1) * u16::from(s.plan.workers_percent) / 100;
         let full = s.kit.economy == EconomyStyle::Tuned
-            || grub
-                .iter()
-                .all(|n| look.at_node[usize::from(n.0)] >= u16::from(GRUB_SLOTS) - 1);
+            || grub.iter().all(|n| look.at_node[usize::from(n.0)] >= keeps);
         let left: u32 = grub.iter().map(|n| n.3).sum();
         let running_out = left < LOW * grub.len().max(1) as u32 || grub.len() < 2;
         let time = s.now >= s.expand_after;
@@ -802,7 +829,8 @@ impl Steward {
             .mine
             .iter()
             .any(|m| !m.finished() && m.hub(s.kit.economy));
-        !rising && (running_out || (time && full))
+        // Arming puts off growing, but not replacing seeps that run dry.
+        !rising && (running_out || (time && full && !self.arming))
     }
 
     /// The middle of the nearest cluster of Grub seeps no hall of its own
@@ -860,15 +888,10 @@ impl Steward {
             .iter()
             .any(|m| m.finished() && trains_fighters(s, m.view.building));
         let workers = working(s, look);
-        let army: u32 = look
-            .army
-            .iter()
-            .filter_map(|r| s.kit.unit(r.unit))
-            .map(|u| u32::from(u.unit.supply))
-            .sum();
+        let army = s.kit.supply_of(look.army.iter().copied());
         let ready = production
             && workers >= 12 + 6 * usize::from(look.tier.saturating_sub(1))
-            && army >= 8 * u32::from(look.tier);
+            && army >= 8.0 * f32::from(look.tier);
         if !ready {
             return;
         }
@@ -934,6 +957,7 @@ impl Steward {
             }
         }
         let (save_grub, save_marrow) = self.ledger.saving;
+        let mix = self.mix(s);
         for m in look.mine.iter().filter(|m| m.finished()) {
             if self.queued(p, m.view.handle) >= QUEUE {
                 continue;
@@ -957,7 +981,7 @@ impl Steward {
                     return -1.0;
                 };
                 let k = class_slot(info.class);
-                MIX[k] - by_class[k] as f32 / total
+                mix[k] - by_class[k] as f32 / total
             };
             // The class it is shortest of first, the higher tier first
             // within a class; the first it can pay for (so Grub piling up
@@ -1002,6 +1026,54 @@ impl Steward {
             count(unit.id, &mut by_class, &mut breakers);
             self.busy.push((m.view.handle, Some(unit.id), s.now));
         }
+    }
+
+    /// Whether it must build up its army before anything else: for a level
+    /// that weighs the odds, while its army is smaller than what an enemy
+    /// could have by now, or would lose to an enemy army it knows of.
+    fn must_arm(&self, s: &Sense, look: &Look) -> bool {
+        if !s.plan.weighs_odds {
+            return false;
+        }
+        // At the supply limit there is nothing more to arm with.
+        if s.world
+            .bank(s.party)
+            .is_some_and(|b| b.supply_used + ARMED_SLACK >= SUPPLY_LIMIT)
+        {
+            return false;
+        }
+        let minutes = s.now as f32 / (60 * TICKS_PER_SECOND) as f32;
+        let supply = s.kit.supply_of(look.army.iter().copied());
+        if supply < (ARMY_PER_MINUTE * minutes).min(ARMY_FLOOR) {
+            return true;
+        }
+        let ours = look.army.iter().copied();
+        spymaster::enemies(s)
+            .into_iter()
+            .any(|o| spymaster::odds(s, ours.clone(), spymaster::army_of(s, o)) < OUTMATCHED)
+    }
+
+    /// The army make-up it aims for: [`MIX`], or for a level that
+    /// counters, shifted towards what beats the enemy armies it has seen:
+    /// spears and line against riders, riders against archers, archers
+    /// against a line.
+    fn mix(&self, s: &Sense) -> [f32; 3] {
+        if !s.plan.counters {
+            return MIX;
+        }
+        let [line, shock, ranged] = spymaster::classes(s, spymaster::enemy_army(s));
+        if line + shock + ranged == 0.0 {
+            return MIX;
+        }
+        // What beats each of theirs: line beats shock, shock beats ranged,
+        // ranged beats line.
+        let want = [
+            MIX[0] + COUNTER_SHIFT * shock,
+            MIX[1] + COUNTER_SHIFT * ranged,
+            MIX[2] + COUNTER_SHIFT * line,
+        ];
+        let all: f32 = want.iter().sum();
+        want.map(|w| w / all)
     }
 
     /// Point every production building's rally at `at`.
@@ -1068,7 +1140,7 @@ fn is_breaker(u: &KitUnit) -> bool {
     )
 }
 
-fn class_slot(c: Class) -> usize {
+pub(super) fn class_slot(c: Class) -> usize {
     match c {
         Class::Line => 0,
         Class::Shock => 1,

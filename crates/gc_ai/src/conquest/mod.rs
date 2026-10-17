@@ -13,7 +13,9 @@
 pub mod kit;
 pub mod marshal;
 pub mod placing;
+pub mod spymaster;
 pub mod steward;
+pub mod strategy;
 
 use std::sync::Arc;
 
@@ -26,6 +28,7 @@ use crate::terrain::Terrain;
 use kit::Kit;
 use marshal::Marshal;
 use steward::Steward;
+use strategy::Strategy;
 
 /// The share of its orders a minute (percent) that goes on the economy;
 /// the army has the rest.
@@ -44,6 +47,8 @@ pub struct Sense<'a> {
     pub terrain: &'a Terrain,
     /// The tick from which it expands once its seeps are full.
     pub expand_after: u32,
+    /// How its level plays the long game.
+    pub plan: &'a Strategy,
 }
 
 /// A Conquest mind's economy and army.
@@ -54,10 +59,17 @@ pub struct Realm {
     clicks: Hands,
     /// The tick from which it expands once its seeps are full.
     expand_after: u32,
+    plan: Strategy,
 }
 
 impl Realm {
-    pub fn new(kit: Arc<Kit>, party: PlayerId, knobs: &Knobs, expand_after: u32) -> Realm {
+    pub fn new(
+        kit: Arc<Kit>,
+        party: PlayerId,
+        plan: Strategy,
+        knobs: &Knobs,
+        expand_after: u32,
+    ) -> Realm {
         // One budget of orders a minute, split between the army and the
         // economy as a player splits their attention.
         let opm = knobs.orders_per_minute;
@@ -68,6 +80,7 @@ impl Realm {
             marshal: Marshal::new(party, knobs.reaction_ticks, opm - economy),
             clicks: Hands::new(party, knobs.reaction_ticks, economy, 3.0),
             expand_after,
+            plan,
         }
     }
 
@@ -93,6 +106,7 @@ impl Realm {
             reaction: captain.knobs.reaction_ticks,
             terrain: captain.terrain,
             expand_after: self.expand_after,
+            plan: &self.plan,
         };
         self.clicks.refresh(sense.now);
         self.steward

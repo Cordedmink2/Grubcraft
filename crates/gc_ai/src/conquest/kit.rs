@@ -8,6 +8,7 @@ use gc_sim::structures::{BuildingStats, DROP_OFF_GRUB, LARVAE, Role, VEINS};
 use gc_sim::{BuildingId, ConquestUnit, Resource, UnitId, World};
 use glam::Vec2;
 
+use crate::perception::Seen;
 use crate::personality::Faction;
 
 /// One of the faction's building types.
@@ -72,6 +73,16 @@ pub struct Kit {
 }
 
 impl Kit {
+    /// The supply `regiments` of this faction take up: how big an army
+    /// they are. Units not in its kit count for nothing.
+    pub fn supply_of<'a>(&self, regiments: impl IntoIterator<Item = &'a Seen>) -> f32 {
+        regiments
+            .into_iter()
+            .filter_map(|r| self.unit(r.unit))
+            .map(|u| f32::from(u.unit.supply))
+            .sum()
+    }
+
     pub fn unit(&self, id: UnitId) -> Option<&KitUnit> {
         self.units.iter().find(|u| u.id == id)
     }

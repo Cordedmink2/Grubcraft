@@ -79,6 +79,12 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
     }
 }
 
+/// The temper (personality roll) of player `i`'s mind in a game rolled
+/// `roll`.
+fn temper(roll: u64, i: usize) -> u32 {
+    Pcg32::new(roll, i as u64).next_u32()
+}
+
 /// Put a Conquest mind in charge of every AI slot of `setup` (player `i`
 /// is slot `i`), picking each one's temper and seed from `roll` as Field
 /// Battle does. The caller does this on the host or alone only.
@@ -96,12 +102,23 @@ pub fn seat(
             continue;
         }
         let level = Difficulty::from_index(usize::from(slot.ai_level));
-        minds.add(mind_for(data, table, map, i, factions[i], level, roll));
+        let temper = temper(roll, i);
+        minds.add(mind_for(
+            data,
+            table,
+            map,
+            i,
+            factions[i],
+            level,
+            temper,
+            roll,
+        ));
     }
 }
 
 /// The Conquest mind for player `i`, playing `faction` at `level`, its
-/// temper and seed picked from `roll`.
+/// personality picked by `temper` and its seed from `roll`.
+#[allow(clippy::too_many_arguments)]
 fn mind_for(
     data: &GameData,
     table: &Table,
@@ -109,12 +126,13 @@ fn mind_for(
     i: usize,
     faction: Faction,
     level: Difficulty,
+    temper: u32,
     roll: u64,
 ) -> Mind {
     let config = MindConfig {
         party: i as u8,
         difficulty: level,
-        personality: gc_ai::personality::pick(faction, Pcg32::new(roll, i as u64).next_u32()),
+        personality: gc_ai::personality::pick(faction, temper),
         seed: roll ^ i as u64,
     };
     Mind::conquest(config, Arc::new(kit(data, table, map, faction)))
@@ -230,6 +248,19 @@ mod tests {
         seed: u64,
         max_minutes: u32,
     ) -> Played {
+        play_with(choice, factions, levels, seed, max_minutes, None)
+    }
+
+    /// [`play`], every side with the personality `temper` picks for its
+    /// faction if given (for the arena, so only the level differs).
+    pub(crate) fn play_with(
+        choice: usize,
+        factions: &[Faction],
+        levels: &[Difficulty],
+        seed: u64,
+        max_minutes: u32,
+        temper: Option<u32>,
+    ) -> Played {
         let trace = std::env::var("AI_TRACE").unwrap_or_default();
         // AI_TRACE=2 also prints every journal entry as it is written.
         let journal = trace == "2";
@@ -265,7 +296,10 @@ mod tests {
         let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&map, &nav));
         for (i, &faction) in factions.iter().enumerate() {
             let level = levels[i.min(levels.len() - 1)];
-            minds.add(mind_for(&data, &table, &map, i, faction, level, seed));
+            let temper = temper.unwrap_or_else(|| super::temper(seed, i));
+            minds.add(mind_for(
+                &data, &table, &map, i, faction, level, temper, seed,
+            ));
         }
         let opening = conquest::opening(&data, &table, &map, &world, factions);
         let stats = world.tick(&opening);
@@ -319,14 +353,23 @@ mod tests {
         }
     }
 
-    /// The level named by `AI_LEVEL` (a name or an index), Veteran if unset.
-    fn level_from_env() -> Difficulty {
+    /// The levels named by `AI_LEVEL`, a name or an index each, one per
+    /// side and comma-separated (the last covers any more sides); Veteran
+    /// if unset.
+    fn levels_from_env() -> Vec<Difficulty> {
         let var = std::env::var("AI_LEVEL").unwrap_or_default();
+        var.split(',')
+            .map(|v| level_named(v).unwrap_or(Difficulty::Veteran))
+            .collect()
+    }
+
+    /// A level by its name or its number.
+    fn level_named(v: &str) -> Option<Difficulty> {
+        let v = v.trim();
         Difficulty::ALL
             .into_iter()
-            .find(|d| d.name().eq_ignore_ascii_case(&var))
-            .or_else(|| var.parse().ok().map(Difficulty::from_index))
-            .unwrap_or(Difficulty::Veteran)
+            .find(|d| d.name().eq_ignore_ascii_case(v))
+            .or_else(|| v.parse().ok().map(Difficulty::from_index))
     }
 
     fn env_number(name: &str, default: u64) -> u64 {
@@ -377,7 +420,7 @@ mod tests {
         let choice = env_number("AI_MAP", 0) as usize;
         let seed = env_number("AI_SEED", 7);
         let minutes = env_number("AI_MINUTES", 40) as u32;
-        let level = level_from_env();
+        let levels = levels_from_env();
         let players = gc_ui::lobby::CONQUEST_MAP_PLAYERS[choice];
         // AI_FACTIONS picks them by their index in `Faction::ALL`, such as
         // "12" for the Brood against the Choir.
@@ -390,12 +433,58 @@ mod tests {
             })
             .collect();
         let started = std::time::Instant::now();
-        let played = play(choice, &factions, &[level], seed, minutes);
+        // AI_SAME=1 gives every side the same personality, as the arena does.
+        let same = std::env::var("AI_SAME").is_ok_and(|v| v == "1");
+        let temper = same.then(|| super::temper(seed, 0));
+        let played = play_with(choice, &factions, &levels, seed, minutes, temper);
         println!("{}", played.report());
         println!(
             "{} game minutes in {:.1?}",
             played.ticks / 60 / TICKS_PER_SECOND,
             started.elapsed()
+        );
+    }
+
+    /// The Conquest arena (docs/18-ai.md, "Difficulty"): how often level
+    /// `AI_A` beats `AI_B` one-on-one on Ribcage Pass, in mirror matches
+    /// (both sides the same faction and personality, so only the level
+    /// counts),
+    /// each faction on each side, over `AI_GAMES` seeds per pairing.
+    /// `cargo test --release -p gc_game conquest_arena -- --ignored --nocapture`
+    #[test]
+    #[ignore = "an arena run, not a check: run it by hand with --release"]
+    fn conquest_arena() {
+        let find = |var: &str, or: Difficulty| {
+            level_named(&std::env::var(var).unwrap_or_default()).unwrap_or(or)
+        };
+        let a = find("AI_A", Difficulty::General);
+        let b = find("AI_B", Difficulty::Veteran);
+        let games = env_number("AI_GAMES", 3);
+        let (mut won, mut lost, mut drawn) = (0, 0, 0);
+        for f in Faction::ALL {
+            let (mut fw, mut fl) = (0, 0);
+            for seed in 1..=games {
+                for a_side in 0..2u8 {
+                    let levels = if a_side == 0 { [a, b] } else { [b, a] };
+                    // The same game with the sides swapped.
+                    let roll = seed * 31;
+                    let temper = Some(super::temper(roll, 0));
+                    let played = play_with(0, &[f, f], &levels, roll, 45, temper);
+                    match played.winner() {
+                        Some(w) if w == a_side => (won, fw) = (won + 1, fw + 1),
+                        Some(_) => (lost, fl) = (lost + 1, fl + 1),
+                        None => drawn += 1,
+                    }
+                }
+            }
+            println!("{f:?}: {} won {fw}, {} won {fl}", a.name(), b.name());
+        }
+        let all = (won + lost + drawn).max(1);
+        println!(
+            "{} beat {} in {won} of {all} ({}%), lost {lost}, {drawn} undecided",
+            a.name(),
+            b.name(),
+            won * 100 / all
         );
     }
 

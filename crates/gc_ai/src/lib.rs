@@ -161,18 +161,13 @@ impl Mind {
     /// as well as its battles.
     pub fn conquest(config: MindConfig, kit: Arc<conquest::kit::Kit>) -> Mind {
         let mut mind = Mind::new(config);
-        // Greedy minds expand sooner; a Recruit forgets to until its seeps
-        // run low.
-        let seconds = 300.0 - 150.0 * f32::from(mind.persona.greed) / 100.0;
-        let expand_after = match config.difficulty {
-            Difficulty::Recruit => u32::MAX,
-            _ => (seconds * perception::TICKS) as u32,
-        };
+        let plan = conquest::strategy::Strategy::of(config.difficulty);
         mind.realm = Some(conquest::Realm::new(
             kit,
             config.party,
+            plan,
             &mind.knobs,
-            expand_after,
+            plan.expand_after(mind.persona.greed),
         ));
         mind.journal.note(0, "Takes up the Conquest".to_string());
         mind
