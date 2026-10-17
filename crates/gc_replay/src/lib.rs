@@ -44,6 +44,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 20: the buildings' chord links (read as none);
 /// - 19: the buildings' fields and tuning (root-veins read as reaching 15
 ///   tiles from a main building and 8 from any other) and the Conquest
 ///   units' builds-only trait (read as none);
@@ -67,7 +68,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 19;
+pub const FORMAT: u16 = 20;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -1289,6 +1290,7 @@ mod tests {
             attack: None,
             field: 0,
             tunes: None,
+            links: 0,
         };
         let buildings = [
             hall,

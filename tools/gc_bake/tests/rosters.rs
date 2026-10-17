@@ -446,6 +446,12 @@ fn buildings_follow_the_design_rules() {
                 _ => None,
             };
             assert_eq!(tunes, expected, "{at}: tunes");
+            // Resonators and Siphons link into chords 14 tiles apart.
+            assert_eq!(
+                b.links,
+                if expected.is_some() { 14 } else { 0 },
+                "{at}: only the Choir's tuners link"
+            );
         }
 
         // The main building: one at tier 1, upgraded twice.

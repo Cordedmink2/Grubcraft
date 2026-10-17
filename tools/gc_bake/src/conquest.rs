@@ -197,7 +197,7 @@ fn building_record(
             None => cq::TUNES_NOTHING,
         },
         tune_tiles: b.tunes.as_ref().map_or(0, |t| t.tiles),
-        reserved: 0,
+        link_tiles: b.links,
     })
 }
 

@@ -122,6 +122,7 @@ impl Writer {
             }
             None => self.u8(0),
         }
+        self.u8(b.links);
     }
 
     pub fn conquest_unit(&mut self, u: &ConquestUnit) {
@@ -430,6 +431,7 @@ impl<'a> Reader<'a> {
             },
             field: 0,
             tunes: None,
+            links: 0,
         };
         if format >= 19 {
             b.field = self.u8()?;
@@ -437,6 +439,9 @@ impl<'a> Reader<'a> {
                 0 => None,
                 r => Some((Resource::from_u8(r - 1)?, self.u8()?)),
             };
+            if format >= 20 {
+                b.links = self.u8()?;
+            }
         } else if b.flags & VEINS != 0 {
             // Before fields were data, root-veins reached 15 tiles from a
             // main building and 8 from any other.

@@ -86,6 +86,7 @@ fn buildings() -> [BuildingStats; 5] {
         attack: None,
         field: 0,
         tunes: None,
+        links: 0,
     };
     let small = |role, tier, cost_grub, build_ticks, hp, side, supply| BuildingStats {
         role,

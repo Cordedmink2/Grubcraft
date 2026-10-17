@@ -348,22 +348,28 @@ pub fn upload_ui(
 }
 
 /// What building `s` tunes now, if it is a tuning building.
-fn tuning_of(
+pub(crate) fn tuning_of(
     world: &gc_sim::World,
     table: &crate::buildings::Table,
     s: &gc_sim::StructureView,
 ) -> Option<Tuning> {
     let (resource, _) = table.stats.get(usize::from(s.building))?.tunes?;
     let economy = world.economy()?;
-    let nodes = (economy.nodes())
-        .filter(|n| n.tuner == Some(s.handle))
-        .count();
+    let (mut nodes, mut harmony) = (0usize, 0);
+    for n in (economy.nodes()).filter(|n| n.tuner == Some(s.handle)) {
+        nodes += 1;
+        harmony = harmony.max(n.harmony);
+    }
     Some(Tuning {
         vein: resource == gc_sim::Resource::Marrow,
         nodes: nodes.min(usize::from(u8::MAX)) as u8,
         per_minute: economy.tuned_per_minute(s.handle),
+        harmony,
     })
 }
+
+// The top bar's Resonance meter tops out where the simulation's does.
+const _: () = assert!(gc_ui::conquest::RESONANCE_FULL == gc_sim::chords::MAX_RESONANCE);
 
 impl Running {
     /// `side`'s idle workers. A worker that only builds (the Choir's Tuner)
@@ -877,6 +883,8 @@ impl Running {
             upkeep_percent: b.upkeep_percent(),
             larvae: b.larvae,
             larva_room: b.larva_room,
+            resonance: b.resonance,
+            chords: b.chords,
             clock_secs: self.world.tick_count() / gc_sim::TICKS_PER_SECOND,
         })
     }

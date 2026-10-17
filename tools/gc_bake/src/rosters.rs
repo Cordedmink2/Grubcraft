@@ -57,6 +57,10 @@ pub struct Building {
     /// Choir: the nodes it works with no workers.
     #[serde(default)]
     pub tunes: Option<Tunes>,
+    /// Choir: how far apart, centre to centre in tiles, two of these link
+    /// (three mutually linked form a chord); 0 for none.
+    #[serde(default)]
+    pub links: u8,
     pub effect: String,
 }
 

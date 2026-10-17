@@ -69,6 +69,7 @@ fn buildings() -> [BuildingStats; 2] {
         attack: None,
         field: 0,
         tunes: None,
+        links: 0,
     };
     [
         base,

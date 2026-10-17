@@ -113,6 +113,7 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
             record::TUNES_VEINS => Some((Resource::Marrow, b.tune_tiles)),
             _ => None,
         },
+        links: b.link_tiles,
     }
 }
 
@@ -757,6 +758,42 @@ pub fn push_tuning(world: &World, side: PlayerId, reveal_all: bool, out: &mut Ve
             |_| BEAM_GLOW,
             out,
         );
+    }
+}
+
+/// A chord's edge: a glowing Choir cyan-violet ribbon, a little wider and
+/// brighter than a tuning beam, brighter still for a stronger chord. A link
+/// that is no chord's edge is a thin, faint line.
+const CHORD_WIDTH: f32 = 0.34;
+const CHORD_COLOR: [u8; 3] = [150, 150, 255];
+const CHORD_GLOW: u8 = 170;
+const CHORD_LIFT: f32 = BEAM_LIFT + 0.02;
+const LINK_WIDTH: f32 = 0.08;
+const LINK_COLOR: [u8; 3] = [120, 170, 235];
+const LINK_GLOW: u8 = 55;
+const LINK_LIFT: f32 = BEAM_LIFT - 0.01;
+
+/// Draw the Choir's chords and links (Conquest): each link of `side`'s
+/// between two of its buildings as a ribbon, a glowing one if it is a
+/// chord's edge (brighter for a stronger chord), else a thin faint line.
+/// `reveal_all` shows every side's. (An enemy's are never drawn from what
+/// was once seen: they change in the fog.)
+pub fn push_chords(world: &World, side: PlayerId, reveal_all: bool, out: &mut Vec<BoxInstance>) {
+    for l in world.links() {
+        if l.owner != side && !reveal_all {
+            continue;
+        }
+        if out.len() >= MAX_BOX_INSTANCES {
+            return;
+        }
+        let (width, colour, lift, glow) = if l.harmony > 0 {
+            let glow = CHORD_GLOW.saturating_add(l.harmony);
+            (CHORD_WIDTH, CHORD_COLOR, CHORD_LIFT, glow)
+        } else {
+            (LINK_WIDTH, LINK_COLOR, LINK_LIFT, LINK_GLOW)
+        };
+        let [from, to] = l.at.map(crate::from_fx_vec);
+        push_ribbon(from, to, (width, width), colour, lift, |_| glow, out);
     }
 }
 

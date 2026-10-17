@@ -18,6 +18,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 pub mod champions;
+pub mod chords;
 pub mod combat;
 pub mod conquest;
 pub mod deploy;
@@ -94,7 +95,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 16;
+pub const SIM_VERSION: u32 = 17;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -830,6 +831,17 @@ impl World {
     /// Whether `point` lies on `owner`'s linked root-veins.
     pub fn on_veins(&self, owner: PlayerId, point: FxVec2) -> bool {
         self.structures().is_some_and(|s| s.on_veins(owner, point))
+    }
+
+    /// This tick's chords (Conquest only; see [`chords`]).
+    pub fn chords(&self) -> &[chords::Chord] {
+        self.structures().map_or(&[], Structures::chords)
+    }
+
+    /// This tick's links, each with the harmony of the best chord it is an
+    /// edge of (Conquest only; see [`chords`]).
+    pub fn links(&self) -> &[chords::Link] {
+        self.structures().map_or(&[], Structures::links)
     }
 
     /// The finished buildings powering a field (Conquest only).

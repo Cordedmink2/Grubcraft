@@ -4679,6 +4679,12 @@ impl Running {
             self.reveal_all,
             &mut self.instances,
         );
+        buildings::push_chords(
+            &self.world,
+            self.sandbox.side,
+            self.reveal_all,
+            &mut self.instances,
+        );
         // The fields of power stand out while a building that needs one is
         // being placed.
         let lit = self.laying().is_some_and(|id| {

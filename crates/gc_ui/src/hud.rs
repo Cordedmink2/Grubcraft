@@ -1148,6 +1148,8 @@ mod tests {
             upkeep_percent: 100,
             larvae: 0,
             larva_room: 0,
+            resonance: 0,
+            chords: 0,
             clock_secs: 14 * 60 + 32,
         }
     }
@@ -1235,6 +1237,40 @@ mod tests {
         });
         assert_eq!(in_top_bar(&empty, theme::WARN), "0/3".len());
         assert_eq!(in_top_bar(&plain, theme::WARN), 0);
+    }
+
+    #[test]
+    fn resonance_shows_in_the_top_bar_only_with_a_chord_or_a_charge() {
+        let mut hud = Hud::default();
+        let mut bar = |top| run_with(&mut hud, HudInput::default(), &[], &[], with_top(top)).1;
+        let plain = bar(top_bar());
+        let text_quads = |d: &DrawList| in_top_bar(d, theme::TEXT) + in_top_bar(d, theme::MUTED);
+        let choir = bar(TopBar {
+            resonance: 37,
+            chords: 2,
+            ..top_bar()
+        });
+        assert_eq!(
+            text_quads(&choir),
+            text_quads(&plain) + "Resonance".len() + "37/100".len() + "Chords".len() + "2".len()
+        );
+        // A charge left with no chord standing still shows, without a count.
+        let spent = bar(TopBar {
+            resonance: 5,
+            ..top_bar()
+        });
+        assert_eq!(
+            text_quads(&spent),
+            text_quads(&plain) + "Resonance".len() + "5/100".len()
+        );
+        // A full meter turns green.
+        let full = bar(TopBar {
+            resonance: 100,
+            chords: 1,
+            ..top_bar()
+        });
+        assert_eq!(in_top_bar(&full, theme::GOOD), "100/100".len());
+        assert_eq!(in_top_bar(&plain, theme::GOOD), 0);
     }
 
     #[test]

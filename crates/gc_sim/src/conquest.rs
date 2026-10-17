@@ -167,13 +167,14 @@ impl Conquest {
             .unwrap_or_default()
     }
 
-    /// One tick: sieges and builders, then root-veins, power and larvae,
-    /// then gathering and tuning, then training.
+    /// One tick: sieges and builders, then root-veins, power, chords,
+    /// Resonance and larvae, then gathering and tuning, then training.
     pub(crate) fn update(&mut self, regs: &mut Regiments, stats: &[UnitStats], nav: &mut Nav) {
         self.structures.update(regs, stats, &self.units, nav);
         self.structures.link_veins();
         self.structures.regrow();
         self.structures.link_power();
+        self.structures.charge_resonance();
         self.structures.grow_larvae();
         self.economy
             .update(regs, stats, &self.units, &self.structures);
@@ -198,6 +199,8 @@ impl Conquest {
             supply_cap: self.structures.supply_cap(p),
             larvae,
             larva_room,
+            resonance: self.structures.resonance(p),
+            chords: (self.structures.chord_count.get(usize::from(p))).map_or(0, |&c| u32::from(c)),
         }
     }
 

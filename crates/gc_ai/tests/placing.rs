@@ -47,6 +47,7 @@ fn hall_stats() -> BuildingStats {
         attack: None,
         field: 0,
         tunes: None,
+        links: 0,
     }
 }
 

@@ -334,7 +334,7 @@ mod tests {
         let hex: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,
-            "762f8702faa3599aa8233cfbc6db4f6631c3a96c74091833849aa54e087f4ad0"
+            "c8700bfbaa1580e668c6024df9681c0d0103999af58ab167f0ef6443dab3b947"
         );
     }
 

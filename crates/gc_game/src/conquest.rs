@@ -961,4 +961,329 @@ mod tests {
         assert!(lit.iter().all(|b| b.color[3] > 100));
         assert!(lit[0].size[0] > plain[0].size[0]);
     }
+
+    /// How far point `p` lies from the segment `a` to `b`.
+    fn off_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+        let d = b - a;
+        let t = ((p - a).dot(d) / d.length_squared()).clamp(0.0, 1.0);
+        (p - (a + d * t)).length()
+    }
+
+    fn resonator_id(table: &Table) -> gc_sim::BuildingId {
+        (0..table.len() as gc_sim::BuildingId)
+            .find(|&b| table.name(b) == "Resonator")
+            .unwrap()
+    }
+
+    /// Put finished Resonators of `owner`'s centred on `at` (by the sandbox
+    /// spawn command) and let the world settle.
+    fn spawn_resonators(world: &mut World, table: &Table, owner: PlayerId, at: &[Vec2]) {
+        let building = resonator_id(table);
+        let spawns: Vec<_> = at
+            .iter()
+            .map(|&c| {
+                let tile = buildings::tile_for(c, 2, 2);
+                PlayerCommand {
+                    player: owner,
+                    command: Command::SpawnStructure {
+                        building,
+                        tile: (tile.0 as i16, tile.1 as i16),
+                    },
+                }
+            })
+            .collect();
+        assert_eq!(world.tick(&spawns).commands_applied, at.len() as u32);
+        world.tick(&[]);
+        world.tick(&[]);
+    }
+
+    /// The seeps `owner`'s buildings tune, as points on the ground.
+    fn tuned_seeps(world: &World, owner: PlayerId) -> Vec<Vec2> {
+        let all = world.structures().unwrap();
+        (world.economy().unwrap().nodes())
+            .filter(|n| {
+                n.tuner
+                    .and_then(|h| all.get(h))
+                    .is_some_and(|s| s.owner == owner)
+            })
+            .map(|n| crate::from_fx_vec(n.at))
+            .collect()
+    }
+
+    /// Three spots for Resonators of `owner`'s that make a chord round one
+    /// of the seeps they tune: the corners of a triangle 5 to 8 tiles out
+    /// from it, all free to build on.
+    fn chord_spots(world: &World, table: &Table, owner: PlayerId) -> Option<[Vec2; 3]> {
+        let id = resonator_id(table);
+        let free = |c: Vec2| {
+            let t = buildings::tile_for(c, 2, 2);
+            world.can_build(id, t).is_ok()
+        };
+        for seep in tuned_seeps(world, owner) {
+            for radius in [7.0f32, 6.0, 5.0, 8.0] {
+                for turn in 0..24 {
+                    let start = turn as f32 * std::f32::consts::TAU / 72.0;
+                    let corners = [0.0f32, 1.0, 2.0].map(|k| {
+                        let a = start + k * std::f32::consts::TAU / 3.0;
+                        seep + Vec2::new(a.cos(), a.sin()) * radius
+                    });
+                    if corners.iter().all(|&c| free(c)) {
+                        return Some(corners);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Three spots for Resonators of `owner`'s that link with each other
+    /// (10 to 12 tiles apart, in a proper triangle) but with none of its
+    /// buildings that link already (at least 15 tiles from each).
+    fn lonely_spots(world: &World, table: &Table, owner: PlayerId) -> Option<[Vec2; 3]> {
+        let id = resonator_id(table);
+        let all = world.structures().unwrap();
+        let linkers: Vec<Vec2> = all
+            .iter()
+            .filter(|s| s.owner == owner && table.stats[usize::from(s.building)].links > 0)
+            .map(|s| buildings::centre_of(s.tile, s.width, s.depth))
+            .collect();
+        let from = *linkers.first()?;
+        let (x0, y0) = (from.x as i32, from.y as i32);
+        let spots: Vec<Vec2> = (y0 - 45..=y0 + 45)
+            .flat_map(|y| (x0 - 45..=x0 + 45).map(move |x| (x, y)))
+            .filter(|&t| world.can_build(id, t).is_ok())
+            .map(|t| buildings::centre_of(t, 2, 2))
+            .filter(|c| linkers.iter().all(|l| (*l - *c).length() >= 15.0))
+            .collect();
+        let apart = |p: Vec2, q: Vec2| (10.0..=12.0).contains(&(p - q).length());
+        for &a in &spots {
+            for &b in spots.iter().filter(|&&b| apart(a, b)) {
+                let third = spots
+                    .iter()
+                    .find(|&&c| apart(a, c) && apart(b, c) && (b - a).perp_dot(c - a).abs() > 40.0);
+                if let Some(&c) = third {
+                    return Some([a, b, c]);
+                }
+            }
+        }
+        None
+    }
+
+    /// A two-player Choir world, its opening laid and settled.
+    fn opened_choir_world() -> (World, Table) {
+        let data = data();
+        let map = make_map(0, 0);
+        let factions = [Faction::Choir, Faction::Choir];
+        let (mut world, _, table) = world_for(&map, &factions, Tempo::Standard, Victories::BOTH);
+        let opening = opening(&data, &table, &map, &world, &factions);
+        world.tick(&opening);
+        world.tick(&[]);
+        (world, table)
+    }
+
+    /// Whether a drawn piece is a chord's edge, not a plain link.
+    fn chord_piece(b: &gc_render::BoxInstance) -> bool {
+        b.size[0] > 0.2
+    }
+
+    /// A Choir world, opened, where each of `owners` has three more
+    /// Resonators round one of its seeps. Returns the corners each got.
+    fn chord_world(owners: &[PlayerId]) -> (World, Table, Vec<[Vec2; 3]>) {
+        let (mut world, table) = opened_choir_world();
+        assert!(world.chords().is_empty(), "no chords in the opening");
+        let mut spots = Vec::new();
+        for &owner in owners {
+            let at = chord_spots(&world, &table, owner).expect("room for a chord");
+            spawn_resonators(&mut world, &table, owner, &at);
+            spots.push(at);
+        }
+        (world, table, spots)
+    }
+
+    /// Chords are drawn along their triangle's edges for the side that has
+    /// them (every side's with `reveal_all`, never an enemy's from the fog),
+    /// as glowing ribbons a little wider and brighter than tuning beams.
+    #[test]
+    fn chords_are_drawn_for_your_own_side_and_not_an_enemys_without_reveal_all() {
+        let (world, _, spots) = chord_world(&[0, 1]);
+        let own = |o: PlayerId| world.chords().iter().filter(move |c| c.owner == o);
+        assert!(own(0).count() >= 1 && own(1).count() >= 1);
+        // The chords' edges (links that are no chord's edge are drawn too,
+        // thinner).
+        let draw = |side: PlayerId, reveal_all: bool| {
+            let mut out = Vec::new();
+            buildings::push_chords(&world, side, reveal_all, &mut out);
+            out.retain(chord_piece);
+            out
+        };
+        // Every chord edge of `owner`'s, as a pair of points.
+        let edges = |o: PlayerId| {
+            own(o)
+                .flat_map(|c| {
+                    let at = c.at.map(crate::from_fx_vec);
+                    [(at[0], at[1]), (at[1], at[2]), (at[2], at[0])]
+                })
+                .collect::<Vec<_>>()
+        };
+        let on_edges = |out: &[gc_render::BoxInstance], o: PlayerId| {
+            let edges = edges(o);
+            out.iter()
+                .filter(|b| {
+                    let p = Vec2::from(b.pos);
+                    edges.iter().any(|&(x, y)| off_segment(p, x, y) < 0.05)
+                })
+                .count()
+        };
+        let plain = draw(0, false);
+        let all = draw(0, true);
+        let theirs = draw(1, false);
+        assert!(!plain.is_empty() && !theirs.is_empty());
+        // Yours only, unless everything is shown.
+        assert_eq!(on_edges(&plain, 0), plain.len());
+        assert_eq!(on_edges(&plain, 1), 0);
+        assert_eq!(on_edges(&theirs, 1), theirs.len());
+        assert_eq!(all.len(), plain.len() + theirs.len());
+        assert_eq!(on_edges(&all, 1), theirs.len());
+        // The pieces lie along the triangle: every edge of the one we built
+        // has a piece within half a segment of its middle, and they run
+        // along it.
+        let [a, b, c] = spots[0];
+        for (x, y) in [(a, b), (b, c), (c, a)] {
+            let mid = (x + y) / 2.0;
+            let near = |b: &&gc_render::BoxInstance| (Vec2::from(b.pos) - mid).length() <= 1.6;
+            let piece = plain.iter().find(near).expect("a piece mid-edge");
+            let along = (y - x).normalize();
+            assert!(Vec2::from(piece.facing).dot(along).abs() > 0.99);
+        }
+        // Wider and brighter than a tuning beam, still flat on the ground.
+        assert!(
+            all.iter()
+                .all(|b| b.size[0] > 0.2 && b.size[1] < 0.2 && b.lift < 0.5 && b.color[3] > 160)
+        );
+        // The sandbox's own side sees nothing of a world with no chords.
+        let mut none = Vec::new();
+        let map = make_map(0, 0);
+        let factions = [Faction::Choir, Faction::Choir];
+        let (empty, _, _) = world_for(&map, &factions, Tempo::Standard, Victories::BOTH);
+        buildings::push_chords(&empty, 0, true, &mut none);
+        assert!(none.is_empty());
+    }
+
+    /// An edge two chords share is drawn once.
+    #[test]
+    fn an_edge_two_chords_share_is_drawn_once() {
+        let (mut world, table, spots) = chord_world(&[0]);
+        // A fourth Resonator on the far side of the first edge links with
+        // its two ends, making a second chord on it.
+        let [a, b, c] = spots[0];
+        let d = a + b - c;
+        spawn_resonators(&mut world, &table, 0, &[d]);
+        let chords: Vec<_> = world.chords().iter().filter(|c| c.owner == 0).collect();
+        assert!(chords.len() >= 2, "{} chords", chords.len());
+        let mut edges: Vec<(u32, u32, f32)> = Vec::new();
+        for c in &chords {
+            for k in 0..3 {
+                let (i, j) = (c.corners[k].index, c.corners[(k + 1) % 3].index);
+                let len =
+                    (crate::from_fx_vec(c.at[k]) - crate::from_fx_vec(c.at[(k + 1) % 3])).length();
+                let key = (i.min(j), i.max(j), len);
+                if !edges.iter().any(|e| (e.0, e.1) == (key.0, key.1)) {
+                    edges.push(key);
+                }
+            }
+        }
+        assert!(edges.len() < 3 * chords.len(), "chords share an edge");
+        // As many pieces as the distinct edges need, three tiles each.
+        let pieces: usize = edges.iter().map(|e| (e.2 / 3.0).ceil() as usize).sum();
+        let mut out = Vec::new();
+        buildings::push_chords(&world, 0, false, &mut out);
+        out.retain(chord_piece);
+        assert_eq!(out.len(), pieces);
+    }
+
+    /// Links that are not part of a chord are thin, faint lines between
+    /// your Resonators, which a chord then replaces.
+    #[test]
+    fn links_are_drawn_between_resonators_that_are_not_a_chord() {
+        let (mut world, table) = opened_choir_world();
+        let [a, b, c] = lonely_spots(&world, &table, 0).expect("room away from the rest");
+        let links = |world: &World, side: PlayerId| {
+            let mut out = Vec::new();
+            buildings::push_chords(world, side, false, &mut out);
+            out.retain(|b| !chord_piece(b));
+            out
+        };
+        let on = |out: &[gc_render::BoxInstance], x: Vec2, y: Vec2| {
+            out.iter()
+                .filter(|b| off_segment(Vec2::from(b.pos), x, y) < 0.05)
+                .count()
+        };
+        let before = links(&world, 0);
+        // Two Resonators 12 tiles or so apart link, and are no chord.
+        spawn_resonators(&mut world, &table, 0, &[a, b]);
+        assert!(world.chords().is_empty());
+        let pair = links(&world, 0);
+        assert!(on(&pair, a, b) >= 1, "a link between them");
+        assert!(pair.len() > before.len());
+        assert!(pair.iter().all(|p| p.size[0] < 0.12 && p.color[3] < 100));
+        // Yours only.
+        assert_eq!(links(&world, 1).len(), 0);
+        // The third makes a chord of the three, so no thin link is left on
+        // its edges (they are drawn as the chord).
+        spawn_resonators(&mut world, &table, 0, &[c]);
+        assert!(!world.chords().is_empty());
+        let chord = links(&world, 0);
+        for (x, y) in [(a, b), (b, c), (c, a)] {
+            assert_eq!(on(&chord, x, y), 0, "{x} to {y}");
+        }
+    }
+
+    /// Chords charge the Resonance meter the top bar shows, for their
+    /// owner only.
+    #[test]
+    fn resonance_charges_in_the_bank_for_the_side_with_chords() {
+        let (mut world, _, _) = chord_world(&[0]);
+        let mine = world.chords().iter().filter(|c| c.owner == 0).count() as u32;
+        let bank = world.bank(0).unwrap();
+        assert_eq!((bank.chords, bank.resonance), (mine, 0));
+        for _ in 0..gc_sim::TICKS_PER_SECOND * 7 {
+            world.tick(&[]);
+        }
+        let bank = world.bank(0).unwrap();
+        assert!(bank.resonance >= 2, "{}", bank.resonance);
+        assert_eq!(bank.chords, mine);
+        let enemy = world.bank(1).unwrap();
+        assert_eq!((enemy.chords, enemy.resonance), (0, 0));
+    }
+
+    /// A Resonator inside a chord says so on its card: its tuned seeps
+    /// yield more, by the best of their harmonies.
+    #[test]
+    fn a_resonators_card_carries_its_chords_harmony() {
+        let (mut world, table) = opened_choir_world();
+        let tuner = |world: &World| {
+            let all = world.structures().unwrap();
+            all.iter()
+                .find(|s| s.owner == 0 && s.finished() && table.name(s.building) == "Resonator")
+                .unwrap()
+        };
+        let card = |world: &World| crate::hud::tuning_of(world, &table, &tuner(world)).unwrap();
+        let before = card(&world);
+        assert!(before.nodes >= 1);
+        assert_eq!(before.harmony, 0);
+        let at = chord_spots(&world, &table, 0).expect("room for a chord");
+        spawn_resonators(&mut world, &table, 0, &at);
+        let after = card(&world);
+        assert!(
+            (10..=60).contains(&after.harmony),
+            "harmony {}",
+            after.harmony
+        );
+        let best = (world.economy().unwrap().nodes())
+            .filter(|n| n.tuner == Some(tuner(&world).handle))
+            .map(|n| n.harmony)
+            .max();
+        assert_eq!(best, Some(after.harmony));
+        assert!(after.per_minute > before.per_minute);
+    }
 }

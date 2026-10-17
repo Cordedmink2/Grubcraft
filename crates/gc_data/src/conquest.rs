@@ -16,7 +16,7 @@ pub const BUILDINGS_PATH: &str = "data/buildings";
 /// Pack path of the Conquest unit table.
 pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 4;
+pub const BUILDING_SCHEMA: u32 = 5;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
 pub const CONQUEST_UNIT_SCHEMA: u32 = 3;
@@ -105,7 +105,7 @@ const BUILDING_FLAGS: u8 = BUILDING_DROP_OFF_GRUB
 pub const TUNES_NOTHING: u8 = 0;
 pub const TUNES_SEEPS: u8 = 1;
 pub const TUNES_VEINS: u8 = 2;
-/// The furthest a field or tuning reaches, in tiles.
+/// The furthest a field, tuning or link reaches, in tiles.
 pub const MAX_REACH_TILES: u8 = 30;
 
 /// One building. Times are simulation ticks at Standard tempo, lengths `Fx`
@@ -157,8 +157,10 @@ pub struct BuildingRecord {
     /// its edge, in tiles (0 for none).
     pub tunes: u8,
     pub tune_tiles: u8,
-    /// Zero.
-    pub reserved: u8,
+    /// How far apart, centre to centre in tiles, two such buildings of
+    /// one owner link (and three mutually linked form a chord); 0 for a
+    /// building that doesn't link (schema 5).
+    pub link_tiles: u8,
 }
 
 impl BuildingRecord {
@@ -331,8 +333,8 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     {
         return Err("a building tunes seeps or veins 1 to 30 tiles off, or nothing");
     }
-    if b.reserved != 0 {
-        return Err("reserved bytes must be zero");
+    if b.link_tiles > MAX_REACH_TILES {
+        return Err("a building links 1 to 30 tiles off, or not at all");
     }
     if b.upgrades_from != NONE && usize::from(b.upgrades_from) >= count {
         return Err("upgrades_from is past the end of the table");

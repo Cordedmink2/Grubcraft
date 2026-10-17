@@ -34,6 +34,7 @@ fn building(hp: u16, armour: Armour, width: u8, depth: u8) -> BuildingStats {
         attack: None,
         field: 0,
         tunes: None,
+        links: 0,
     }
 }
 

@@ -467,6 +467,7 @@ fn conquest_six(opts: &Options) -> bool {
         attack: None,
         field: 0,
         tunes: None,
+        links: 0,
     };
     let buildings = [
         hall,

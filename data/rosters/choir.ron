@@ -15,7 +15,8 @@
 // Living), footprint (tiles across and deep), supply (cap it adds), flags
 // (DropOffGrub, DropOffMarrow, PowersField, NeedsPower, AntiAir, Larvae,
 // Veins), field (tiles a PowersField's power or Veins' root-veins reach from
-// its edge), tunes (Choir: Some((node: Seeps or Veins, tiles))), attack
+// its edge), tunes (Choir: Some((node: Seeps or Veins, tiles))), links
+// (Choir: tiles apart, centre to centre, that two link into chords), attack
 // (towers: range in tiles, damage per shot, seconds between shots, shots per
 // volley) and effect (plain words). starting_buildings and starting_units (unit name and count)
 // are what a player starts Conquest with (docs/04-economy.md; Brood larvae are
@@ -130,6 +131,7 @@
             flags: [PowersField],
             field: 6,
             tunes: Some((node: Seeps, tiles: 4)),
+            links: 14,
             effect: "Tunes a seep within 4 tiles to make Grub with no workers, links with Resonators within 14 tiles into chords, and powers buildings within 6 tiles.",
         ),
         (
@@ -145,6 +147,7 @@
             flags: [PowersField],
             field: 6,
             tunes: Some((node: Veins, tiles: 3)),
+            links: 14,
             effect: "A Resonator built against a Marrow vein (within 3 tiles): about 50 Marrow a minute. Links chords and powers buildings like a Resonator.",
         ),
         (

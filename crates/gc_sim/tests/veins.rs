@@ -83,6 +83,7 @@ fn building(role: Role, armour: Armour, side: u8, hp: u16, flags: u8) -> Buildin
         attack: None,
         field: 0,
         tunes: None,
+        links: 0,
     }
 }
 

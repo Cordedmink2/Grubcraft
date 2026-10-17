@@ -43,6 +43,10 @@ pub struct TopBar {
     /// Shown only when the room is above 0.
     pub larvae: u32,
     pub larva_room: u32,
+    /// Choir: the Resonance meter (0 to 100) and the chords charging it.
+    /// Shown only while either is above 0.
+    pub resonance: u32,
+    pub chords: u32,
     /// Match time.
     pub clock_secs: u32,
 }
@@ -110,6 +114,8 @@ pub struct Tuning {
     /// What they yield together, a minute, at the match tempo (before any
     /// upkeep cut to Grub).
     pub per_minute: u32,
+    /// How many percent more its seeps yield under a chord (0 for none).
+    pub harmony: u8,
 }
 
 impl Tuning {
@@ -120,16 +126,26 @@ impl Tuning {
         } else {
             ("seep", "Grub")
         };
+        let chord = match self.harmony {
+            0 => String::new(),
+            h => format!(" (chord +{h}%)"),
+        };
         match self.nodes {
             0 => format!("No {node} in reach"),
-            1 => format!("Tuning a {node}: about {} {what} a minute", self.per_minute),
+            1 => format!(
+                "Tuning a {node}: about {} {what} a minute{chord}",
+                self.per_minute
+            ),
             n => format!(
-                "Tuning {n} {node}s: about {} {what} a minute",
+                "Tuning {n} {node}s: about {} {what} a minute{chord}",
                 self.per_minute
             ),
         }
     }
 }
+
+/// The Resonance meter's top (the simulation's `MAX_RESONANCE`).
+pub const RESONANCE_FULL: u32 = 100;
 
 /// A building that needs power, with none.
 const UNPOWERED: &str = "Unpowered: stopped until a field of power reaches it";
@@ -178,6 +194,18 @@ pub(crate) fn draw_top_bar(draw: &mut DrawList, bar: Rect, t: &TopBar) {
             theme::TEXT
         };
         x = top_item(draw, x, y, "Larvae", &larvae, color);
+    }
+    if t.resonance > 0 || t.chords > 0 {
+        let color = if t.resonance >= RESONANCE_FULL {
+            theme::GOOD
+        } else {
+            theme::TEXT
+        };
+        let meter = format!("{}/{RESONANCE_FULL}", t.resonance);
+        x = top_item(draw, x, y, "Resonance", &meter, color);
+        if t.chords > 0 {
+            x = top_item(draw, x, y, "Chords", &t.chords.to_string(), theme::TEXT);
+        }
     }
     if t.upkeep_percent < 100 {
         top_item(
@@ -395,6 +423,7 @@ mod tests {
                 vein,
                 nodes,
                 per_minute,
+                harmony: 0,
             }
             .line()
         };
@@ -409,6 +438,30 @@ mod tests {
             line(false, 2, 400),
             "Tuning 2 seeps: about 400 Grub a minute"
         );
+    }
+
+    #[test]
+    fn a_chord_adds_its_bonus_to_the_tuning_line() {
+        let line = |nodes, harmony| {
+            Tuning {
+                vein: false,
+                nodes,
+                per_minute: 240,
+                harmony,
+            }
+            .line()
+        };
+        assert_eq!(
+            line(2, 35),
+            "Tuning 2 seeps: about 240 Grub a minute (chord +35%)"
+        );
+        assert_eq!(
+            line(1, 10),
+            "Tuning a seep: about 240 Grub a minute (chord +10%)"
+        );
+        assert_eq!(line(2, 0), "Tuning 2 seeps: about 240 Grub a minute");
+        // Nothing tuned, nothing to sing over.
+        assert_eq!(line(0, 35), "No seep in reach");
     }
 
     #[test]

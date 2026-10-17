@@ -157,6 +157,8 @@ pub struct NodeView {
     pub workers: u8,
     /// The building tuning it, as of the last tick.
     pub tuner: Option<StructureHandle>,
+    /// How many percent more it yields under its tuner's best chord.
+    pub harmony: u8,
 }
 
 /// A player's store and supply, as the game's top bar shows them.
@@ -170,6 +172,10 @@ pub struct Bank {
     /// how many those can hold (both 0 for a player with none).
     pub larvae: u32,
     pub larva_room: u32,
+    /// Choir: Resonance, 0 to [`crate::chords::MAX_RESONANCE`], and the
+    /// chords charging it (both 0 for a player with none).
+    pub resonance: u32,
+    pub chords: u32,
 }
 
 impl Bank {
@@ -211,11 +217,15 @@ pub struct Economy {
     /// Workers filling a load at each node; counted afresh each tick.
     node_busy: Vec<u8>,
     /// The building tuning each node, worked out again whenever the
-    /// tuners change (the [`Structures::tuner_stamp`] last seen), and
+    /// tuners change (the [`Structures::power_stamp`] last seen), and
     /// ticks it has worked towards its next load (back to 0 when another
     /// takes over).
     node_tuner: Vec<Option<StructureHandle>>,
-    tuners_seen: Option<u32>,
+    /// How many percent more each tuned seep yields from its tuner's
+    /// owner's best chord over it (see [`crate::chords`]), worked out at
+    /// the same time.
+    node_harmony: Vec<u8>,
+    power_seen: Option<u32>,
     tune_clock: Vec<u32>,
     /// Grub in hundredths, and Marrow, by player.
     grub: [u32; MAX_PARTIES],
@@ -249,7 +259,8 @@ impl Economy {
             node_full: setup.nodes.iter().map(|n| n.amount).collect(),
             node_busy: vec![0; setup.nodes.len()],
             node_tuner: vec![None; setup.nodes.len()],
-            tuners_seen: None,
+            node_harmony: vec![0; setup.nodes.len()],
+            power_seen: None,
             tune_clock: vec![0; setup.nodes.len()],
             grub: setup.start.map(|(g, _)| g.saturating_mul(GRUB_SCALE)),
             marrow: setup.start.map(|(_, m)| m),
@@ -329,6 +340,7 @@ impl Economy {
             full: self.node_full[i],
             workers: self.node_busy[i],
             tuner: self.node_tuner[i],
+            harmony: self.node_harmony[i],
         })
     }
 
@@ -610,8 +622,8 @@ impl Economy {
         structures: &Structures,
         used: &mut Option<[u32; MAX_PARTIES]>,
     ) {
-        if self.tuners_seen != Some(structures.tuner_stamp) {
-            self.tuners_seen = Some(structures.tuner_stamp);
+        if self.power_seen != Some(structures.power_stamp) {
+            self.power_seen = Some(structures.power_stamp);
             for n in 0..self.node_at.len() {
                 let tuner = structures.tuner_of(self.node_resource[n], self.node_at[n]);
                 let handle = tuner.map(|s| structures.handle(s));
@@ -619,6 +631,14 @@ impl Economy {
                     self.node_tuner[n] = handle;
                     self.tune_clock[n] = 0;
                 }
+                // Chords sing over seeps, not veins.
+                let harmony = match (tuner, self.node_resource[n]) {
+                    (Some(s), Resource::Grub) => {
+                        structures.harmony_at(structures.owner_of(s), self.node_at[n])
+                    }
+                    _ => 0,
+                };
+                self.node_harmony[n] = harmony;
             }
         }
         for n in 0..self.node_at.len() {
@@ -645,17 +665,19 @@ impl Economy {
     }
 
     /// Ticks between loads from tuned node `n`: slower once it runs dry,
-    /// and scaled by tempo.
+    /// faster under a chord, and scaled by tempo.
     fn tune_period(&self, n: usize) -> u32 {
         let mut ticks = self.node_resource[n].tune_ticks();
         if self.node_left[n] == 0 {
             ticks = ticks * 100 / DREGS_PERCENT;
         }
+        ticks = ticks * 100 / (100 + u32::from(self.node_harmony[n]));
         (ticks * 100 / self.gather_percent).max(1)
     }
 
     /// How much the nodes tuned by building `h` yield a minute, as things
-    /// stand: dry nodes and tempo counted, before any upkeep cut to Grub.
+    /// stand: dry nodes, chords and tempo counted, before any upkeep cut
+    /// to Grub.
     pub fn tuned_per_minute(&self, h: StructureHandle) -> u32 {
         (0..self.node_at.len())
             .filter(|&n| self.node_tuner[n] == Some(h))

@@ -41,6 +41,8 @@ impl Structures {
         self.powerers.clear();
         core::mem::swap(&mut self.tuners, &mut self.tuners_was);
         self.tuners.clear();
+        core::mem::swap(&mut self.linkers, &mut self.linkers_was);
+        self.linkers.clear();
         for i in 0..self.slots() {
             if !self.stands(i) || !self.finished(i) {
                 continue;
@@ -52,9 +54,20 @@ impl Structures {
             if b.tunes.is_some() {
                 self.tuners.push(self.handle(i));
             }
+            if b.links > 0 {
+                self.linkers.push(self.handle(i));
+            }
         }
-        if self.tuners != self.tuners_was {
-            self.tuner_stamp = self.tuner_stamp.wrapping_add(1);
+        // By owner, so each owner's lie together for the chords.
+        let mut linkers = core::mem::take(&mut self.linkers);
+        linkers.sort_unstable_by_key(|h| (self.owner_of(h.index as usize), h.index));
+        self.linkers = linkers;
+        let relink = core::mem::take(&mut self.restats) || self.linkers != self.linkers_was;
+        if relink {
+            self.find_chords();
+        }
+        if relink || self.tuners != self.tuners_was {
+            self.power_stamp = self.power_stamp.wrapping_add(1);
         }
     }
 
