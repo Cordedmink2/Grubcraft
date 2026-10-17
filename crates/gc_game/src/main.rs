@@ -110,9 +110,6 @@
 //! `--viewer NAME|start` opens the Unit viewer (main menu) on the named unit,
 //! or on the first unit with a model.
 
-mod battle;
-#[cfg(test)]
-mod battle_tables;
 mod buildings;
 mod camera;
 mod conquest;
@@ -137,15 +134,15 @@ mod sandbox;
 mod scenery;
 mod showroom;
 mod sounds;
-mod terrain_view;
 mod viewer;
 
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use battle::{Battle, Party, party_name};
 use gc_ai::{Difficulty, Mind, MindConfig, Minds};
 use gc_assets::model::LODS;
+use gc_match::battle::{self, Battle, Party, party_name};
+use gc_match::terrain_view;
 use gc_net::Lan;
 use gc_platform::logln;
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
@@ -706,7 +703,7 @@ impl UnitTable {
         models: Option<&gc_assets::model::Models<'_>>,
     ) -> UnitTable {
         let units: Vec<&gc_data::UnitRecord> = units.collect();
-        let stats: Vec<UnitStats> = units.iter().map(|u| sandbox::stats_of(u)).collect();
+        let stats: Vec<UnitStats> = units.iter().map(|u| gc_match::stats_of(u)).collect();
         UnitTable {
             data_stats: stats.clone(),
             stats,
@@ -1145,7 +1142,7 @@ impl App {
         let drill = (!opts.sandbox && opts.showroom.is_none())
             .then(|| make_drill(opts.seed, heightmap.tiles));
         let minds = tagged_alloc::scope(Tag::Ai, || {
-            Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav)).live()
+            Minds::new(terrain_view::ai_terrain(&heightmap, &nav)).live()
         });
 
         let start = heightmap.start_positions().first().copied();
@@ -3537,7 +3534,7 @@ impl Running {
             });
         }
         self.minds = tagged_alloc::scope(Tag::Ai, || {
-            Minds::new(crate::terrain_view::ai_terrain(&self.heightmap, &nav)).live()
+            Minds::new(terrain_view::ai_terrain(&self.heightmap, &nav)).live()
         });
         self.matches += 1;
         self.drill = None;

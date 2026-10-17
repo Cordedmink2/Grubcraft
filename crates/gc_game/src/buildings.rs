@@ -603,8 +603,7 @@ mod tests {
     fn placement_is_refused_for_the_reasons_the_simulation_has() {
         let data = crate::data::load();
         let table = Table::new(&data);
-        let units: Vec<gc_sim::UnitStats> =
-            data.units.iter().map(crate::sandbox::stats_of).collect();
+        let units: Vec<gc_sim::UnitStats> = data.units.iter().map(gc_match::stats_of).collect();
         let tiles = 32u32;
         let side = tiles as usize * gc_sim::nav::CELLS_PER_TILE as usize;
         let mut costs = vec![1u8; side * side];

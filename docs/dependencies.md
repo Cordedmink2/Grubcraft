@@ -8,7 +8,7 @@ Every third-party crate the game uses, why, and what it costs. Policy: see [10 Â
 |---|---|---|---|
 | `wgpu` 30 | `gc_render` | One GPU API over Metal (Mac), DirectX 12 (Windows) and Vulkan | The largest dependency. Built with only the `metal`, `dx12`, `vulkan`, `wgsl` backends/frontends; GL and WebGPU are off |
 | `winit` 0.30 | `gc_game` | Windows, input, Mac trackpad gestures | 0.31 is still in beta; move when it's stable |
-| `glam` 0.34 | `gc_render`, `gc_game`, `gc_ai`, `gc_map` | Vector/matrix maths for rendering, the camera, the computer players' tactics and the map's drawing views (floats, never in the sim) | Small, SIMD |
+| `glam` 0.34 | `gc_render`, `gc_game`, `gc_ai`, `gc_map`, `gc_match` | Vector/matrix maths for rendering, the camera, the computer players' tactics and the map's drawing views (floats, never in the sim) | Small, SIMD |
 | `bytemuck` 1 | `gc_render`, `gc_game`, `gc_assets`, `gc_data` | Safe casting of instance data to GPU bytes | Tiny |
 | `pollster` 1 | `gc_game` | Blocks on wgpu's async setup calls; avoids an async runtime | Tiny |
 | `xxhash-rust` 0.8 (`xxh3` only) | `gc_sim`, `gc_assets` | Fast, well-distributed per-tick state hashes for desync detection; asset ids | Pure Rust, `no_std` |

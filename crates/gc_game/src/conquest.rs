@@ -69,7 +69,7 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
 pub(crate) fn unit_stats(data: &GameData) -> Vec<gc_sim::UnitStats> {
     data.conquest_units
         .iter()
-        .map(|u| crate::sandbox::stats_of(&u.stats))
+        .map(|u| gc_match::stats_of(&u.stats))
         .collect()
 }
 

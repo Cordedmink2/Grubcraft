@@ -1,35 +1,8 @@
 //! Sandbox tools: the unit stats you can tune live, and reloading
 //! `data/units.ron` from disk while the game runs.
 
-use gc_data::UnitRecord;
 use gc_fixed::Fx;
 use gc_sim::{Mass, UnitStats};
-
-/// The simulation's stats for a unit type from the game data.
-pub fn stats_of(u: &UnitRecord) -> UnitStats {
-    UnitStats {
-        speed: u.speed(),
-        turn_rate: u.turn_rate,
-        models: u.models,
-        hp_per_model: u.hp_per_model,
-        files: u.files,
-        file_spacing: u.file_spacing(),
-        rank_spacing: u.rank_spacing(),
-        melee_attack: u.melee_attack,
-        melee_defence: u.melee_defence,
-        melee_damage: u.melee_damage,
-        charge_bonus: u.charge_bonus,
-        range: u.range(),
-        missile_damage: u.missile_damage,
-        reload_ticks: u.reload_ticks,
-        accuracy: u.accuracy,
-        morale: u.morale,
-        mass: Mass::from_u8(u.mass).unwrap_or_default(),
-        reach: u.reach(),
-        swing_room: u.swing_room(),
-        shield: u.shield(),
-    }
-}
 
 /// One row of the tuning panel: how to show a stat and how to change it by
 /// a number of steps (negative lowers it).
@@ -171,7 +144,7 @@ pub mod disk {
     use gc_data::GameData;
     use gc_sim::UnitStats;
 
-    use super::stats_of;
+    use gc_match::stats_of;
 
     /// Where `data/` is when the game runs from a checkout of the repository:
     /// `GRUBCRAFT_DATA` if set, else `data/` under the working directory, else
@@ -252,7 +225,7 @@ mod tests {
 
     #[test]
     fn nudges_stay_in_range() {
-        let mut s = stats_of(&crate::data::load().units[0]);
+        let mut s = gc_match::stats_of(&crate::data::load().units[0]);
         for t in TUNABLES {
             (t.nudge)(&mut s, -1000);
             assert_eq!(s, s.sanitized(), "{} went out of range", t.label);
@@ -264,7 +237,7 @@ mod tests {
 
     #[test]
     fn speed_steps_by_a_quarter_tile() {
-        let mut s = stats_of(&crate::data::load().units[0]);
+        let mut s = gc_match::stats_of(&crate::data::load().units[0]);
         let before = s.speed;
         (TUNABLES[0].nudge)(&mut s, 2);
         assert_eq!(s.speed.raw() - before.raw(), 1 << 15);
@@ -303,7 +276,7 @@ mod tests {
         let data = crate::data::load();
         assert_eq!(names.len(), data.units.len());
         for (u, s) in data.units.iter().zip(&stats) {
-            assert_eq!(stats_of(u), *s);
+            assert_eq!(gc_match::stats_of(u), *s);
         }
     }
 }

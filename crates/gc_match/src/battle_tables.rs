@@ -3,8 +3,8 @@
 //! commanders without them, in six-player battles and on battlefields built
 //! around a hill, a river or woods. Slow; run by hand in release:
 //!
-//! - `cargo test -p gc_game --release team_table -- --ignored --nocapture`
-//! - `cargo test -p gc_game --release terrain_table -- --ignored --nocapture`
+//! - `cargo test -p gc_match --release team_table -- --ignored --nocapture`
+//! - `cargo test -p gc_match --release terrain_table -- --ignored --nocapture`
 //!
 //! Both read `AI_LEVEL` (default General), `AI_BATTLES` and `AI_FROM` (the
 //! first seed, default 1). `AI_OFF=team_play` or `AI_OFF=read_ground` takes

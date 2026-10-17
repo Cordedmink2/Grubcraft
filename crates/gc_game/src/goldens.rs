@@ -29,8 +29,8 @@ use gc_sim::{
 };
 use glam::Vec2;
 
-use crate::battle::{battle_starts, zone_order};
-use crate::terrain_view::plateau_positions;
+use gc_match::battle::{battle_starts, zone_order};
+use gc_match::terrain_view::plateau_positions;
 
 /// One side of a recorded battle: a computer player.
 struct Side {
@@ -444,12 +444,9 @@ fn record_golden_replays() {
 
 fn record(golden: &Golden) -> gc_replay::Replay {
     let data = crate::data::load();
-    let units: Vec<UnitStats> = data.units.iter().map(crate::sandbox::stats_of).collect();
-    let factions: Vec<Faction> = data
-        .units
-        .iter()
-        .map(|u| Faction::from_index(u.faction() as u8))
-        .collect();
+    let gc_match::Tables {
+        units, factions, ..
+    } = gc_match::Tables::new(&data);
     let heightmap = gc_map::Map::generate(golden.seed, golden.map_tiles);
     let nav = heightmap.nav_costs();
     let teams: Vec<u8> = golden.sides.iter().map(|s| s.team).collect();
@@ -464,7 +461,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         champions: golden.champions,
     };
     let mut world = World::new(&setup);
-    let mut minds = Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav));
+    let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&heightmap, &nav));
     let mut out = Vec::new();
 
     let starts = battle_starts(&teams, 0, plateau_positions(golden.map_tiles));

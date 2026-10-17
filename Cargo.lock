@@ -805,6 +805,7 @@ dependencies = [
  "gc_data",
  "gc_fixed",
  "gc_map",
+ "gc_match",
  "gc_net",
  "gc_platform",
  "gc_render",
@@ -834,6 +835,22 @@ version = "0.1.0"
 dependencies = [
  "gc_map",
  "gc_sim",
+]
+
+[[package]]
+name = "gc_match"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "gc_ai",
+ "gc_assets",
+ "gc_bake",
+ "gc_data",
+ "gc_fixed",
+ "gc_map",
+ "gc_sim",
+ "gc_ui",
+ "glam",
 ]
 
 [[package]]

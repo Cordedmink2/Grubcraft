@@ -204,11 +204,7 @@ pub fn shift_into_zone(world: &World, player: PlayerId, commands: &mut [Command]
 
 /// `party`'s deployment zone round `starts[party]`, holding its standard
 /// deployment `placed` (the zones of `starts` stay clear of each other).
-pub(crate) fn zone_order(
-    party: PlayerId,
-    placed: &[army::Placement],
-    starts: &[Vec2],
-) -> PlayerCommand {
+pub fn zone_order(party: PlayerId, placed: &[army::Placement], starts: &[Vec2]) -> PlayerCommand {
     let start = starts[party as usize];
     PlayerCommand {
         player: party,
@@ -528,7 +524,7 @@ pub fn quick_battle(level: u8, settings: &Settings, map_seed: u64) -> MatchStart
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::terrain_view::plateau_positions;
+    use crate::terrain_view::{ai_terrain, plateau_positions};
     use gc_map::Map as Heightmap;
     use gc_sim::{Capacities, MatchSetup};
 
@@ -589,19 +585,6 @@ pub(crate) mod tests {
             .unwrap_or_else(|| panic!("no AI level called {name:?}"))
     }
 
-    /// The real game data's unit stats, factions and points, as `set_out`
-    /// takes them.
-    pub(crate) fn tables(data: &gc_data::GameData) -> (Vec<UnitStats>, Vec<Faction>, Vec<u32>) {
-        let units = data.units.iter().map(crate::sandbox::stats_of).collect();
-        let factions = data
-            .units
-            .iter()
-            .map(|u| Faction::from_index(u.faction() as u8))
-            .collect();
-        let points = data.units.iter().map(|u| u32::from(u.points)).collect();
-        (units, factions, points)
-    }
-
     /// A lobby setup: slot `k` is `who[k]` (None for you), on team
     /// `teams[k]`, everyone Ember Clans so the armies match.
     pub(crate) fn lobby(who: &[Option<Difficulty>], teams: &[u8]) -> MatchStart {
@@ -652,15 +635,19 @@ pub(crate) mod tests {
     /// nothing.
     #[test]
     fn armies_are_what_was_built_within_the_budget() {
-        let data = crate::data::load();
-        let (units, factions, points) = tables(&data);
+        let data = crate::test_data();
+        let crate::Tables {
+            units,
+            factions,
+            points,
+        } = crate::Tables::new(data);
         let (yari, _) = data.unit_by_name("Yari Ashigaru").unwrap();
         let (yumi, _) = data.unit_by_name("Yumi Ashigaru").unwrap();
         let (pikes, _) = data.unit_by_name("Bone Pikes").unwrap();
         let heightmap = Heightmap::generate(1, MAP);
         let nav = heightmap.nav_costs();
         let fielded = |setup: &MatchStart| {
-            let mut minds = Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav));
+            let mut minds = Minds::new(ai_terrain(&heightmap, &nav));
             let mut out = Vec::new();
             set_out(
                 setup,
@@ -708,8 +695,12 @@ pub(crate) mod tests {
     /// computers alone has no deployment.
     #[test]
     fn people_deploy_and_computers_are_ready_at_once() {
-        let data = crate::data::load();
-        let (units, factions, points) = tables(&data);
+        let data = crate::test_data();
+        let crate::Tables {
+            units,
+            factions,
+            points,
+        } = crate::Tables::new(data);
         let heightmap = Heightmap::generate(3, MAP);
         let nav = heightmap.nav_costs();
         let start = |setup: &MatchStart| {
@@ -724,7 +715,7 @@ pub(crate) mod tests {
                 ground: heightmap.ground(),
                 champions: false,
             });
-            let mut minds = Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav));
+            let mut minds = Minds::new(ai_terrain(&heightmap, &nav));
             let mut out = Vec::new();
             set_out(
                 setup,
@@ -797,8 +788,12 @@ pub(crate) mod tests {
     /// neighbouring plateaus (64 tiles apart on the 256-tile map).
     #[test]
     fn six_deployment_zones_do_not_overlap() {
-        let data = crate::data::load();
-        let (units, factions, points) = tables(&data);
+        let data = crate::test_data();
+        let crate::Tables {
+            units,
+            factions,
+            points,
+        } = crate::Tables::new(data);
         let heightmap = Heightmap::generate(3, MAP);
         let nav = heightmap.nav_costs();
         let ai = Some(Difficulty::Recruit);
@@ -818,7 +813,7 @@ pub(crate) mod tests {
                 ground: heightmap.ground(),
                 champions: false,
             });
-            let mut minds = Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav));
+            let mut minds = Minds::new(ai_terrain(&heightmap, &nav));
             let mut out = Vec::new();
             set_out(
                 &setup,
@@ -851,53 +846,26 @@ pub(crate) mod tests {
         play_on(setup, seed, minutes, Heightmap::generate(seed, MAP), |_| {})
     }
 
-    /// [`play`] on `heightmap`, with `tune` free to change the minds once
-    /// they are seated.
+    /// [`play`] on `map`, with `tune` free to change the minds once they
+    /// are seated.
     pub(crate) fn play_on(
         setup: &MatchStart,
         seed: u64,
         minutes: u32,
-        mut heightmap: Heightmap,
+        mut map: Heightmap,
         tune: impl FnOnce(&mut Minds),
     ) -> Played {
-        let data = crate::data::load();
-        let (units, factions, points) = tables(&data);
         // `AI_COVER=off` plays on bare maps, without woods or tall grass.
         if std::env::var("AI_COVER").as_deref() == Ok("off") {
-            heightmap.cover.clear();
+            map.cover.clear();
         }
-        let nav = heightmap.nav_costs();
-        let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
-        let mut world = World::new(&MatchSetup {
-            seed,
-            capacities: Capacities::default(),
-            units: &units,
-            map_tiles: MAP,
-            nav: &nav,
-            teams: &teams,
-            ground: heightmap.ground(),
-            champions: champions_allowed(setup),
-        });
-        let mut minds = Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav));
-        // As in a real game (for measuring what the minds cost the game's
-        // thread): the battle may not play out the same way twice.
-        if std::env::var_os("AI_LIVE").is_some() {
-            minds = minds.live();
-        }
-        let mut out = Vec::new();
-        let set = set_out(
-            setup,
-            &units,
-            &factions,
-            &points,
-            plateau_positions(MAP),
-            seed,
-            true,
-            &mut minds,
-            &mut out,
-        );
-        tune(&mut minds);
-        world.tick(&out);
+        // `AI_LIVE` thinks as in a real game (for measuring what the minds
+        // cost the game's thread): the battle may not play out the same way
+        // twice.
+        let live = std::env::var_os("AI_LIVE").is_some();
+        let tables = crate::Tables::new(crate::test_data());
+        let mut m = crate::play::Match::new(setup, seed, &map, &tables, live);
+        tune(&mut m.minds);
         // The people are happy with the standard deployment.
         let ready: Vec<PlayerCommand> = (0..setup.players.len())
             .filter(|&p| setup.players[p].kind == SlotKind::Human)
@@ -906,36 +874,24 @@ pub(crate) mod tests {
                 command: Command::Ready,
             })
             .collect();
-        world.tick(&ready);
-        assert!(!world.deploying());
+        m.world.tick(&ready);
+        assert!(!m.world.deploying());
         let fielded = (0..setup.players.len())
             .map(|p| {
-                world
-                    .regiments
-                    .iter()
+                (m.world.regiments.iter())
                     .filter(|r| r.owner == p as PlayerId)
                     .count()
             })
             .collect();
-        let mut battle = Battle::new(Some(set.me));
         let limit = minutes * 60 * gc_sim::TICKS_PER_SECOND;
-        let (mut ai_time, mut ai_worst) = Default::default();
-        while world.tick_count() < limit && battle.outcome.is_none() {
-            out.clear();
-            let t0 = std::time::Instant::now();
-            minds.tick(&world, &mut out);
-            let took = t0.elapsed();
-            ai_time += took;
-            ai_worst = took.max(ai_worst);
-            world.tick(&out);
-            battle.judge(&world, &set.parties);
-            if std::env::var_os("AI_TRACE").is_some() && world.tick_count().is_multiple_of(400) {
-                println!("t={}s", world.tick_count() / 20);
-                for m in minds.iter() {
-                    println!("  {}", m.summary());
+        while m.world.tick_count() < limit && !m.step(&[]) {
+            if std::env::var_os("AI_TRACE").is_some() && m.world.tick_count().is_multiple_of(400) {
+                println!("t={}s", m.world.tick_count() / 20);
+                for mind in m.minds.iter() {
+                    println!("  {}", mind.summary());
                 }
-                for r in world.regiments.iter() {
-                    let p = crate::from_fx_vec(r.position);
+                for r in m.world.regiments.iter() {
+                    let p = v2(r.position);
                     println!(
                         "  {} u{} ({:5.1},{:5.1}) {:>2} {:?}{}{}",
                         r.owner,
@@ -945,7 +901,7 @@ pub(crate) mod tests {
                         r.models,
                         r.morale,
                         if r.engaged { " ENG" } else { "" },
-                        if world.hidden(r.handle) {
+                        if m.world.hidden(r.handle) {
                             " HIDDEN"
                         } else {
                             ""
@@ -955,19 +911,19 @@ pub(crate) mod tests {
             }
         }
         if std::env::var_os("AI_JOURNAL").is_some() {
-            for m in minds.iter() {
-                for e in m.journal().entries() {
-                    println!("{} {:>5}: {}", m.party(), e.tick, e.text);
+            for mind in m.minds.iter() {
+                for e in mind.journal().entries() {
+                    println!("{} {:>5}: {}", mind.party(), e.tick, e.text);
                 }
             }
         }
         Played {
-            battle,
-            holder: world.verdict().map(|v| v.holder),
-            ticks: world.tick_count(),
+            holder: m.world.verdict().map(|v| v.holder),
+            ticks: m.world.tick_count(),
             fielded,
-            ai_time,
-            ai_worst,
+            ai_time: m.minds_time,
+            ai_worst: m.minds_worst,
+            battle: m.battle,
         }
     }
 
@@ -1009,7 +965,7 @@ pub(crate) mod tests {
     /// battles a pair: how many the AI wins and loses, and which it leaves
     /// undecided after eight minutes (it never found the last survivors).
     /// `AI_LEVEL=General` (or any level's name) plays that level instead.
-    /// `cargo test -p gc_game --release matchups -- --ignored --nocapture`
+    /// `cargo test -p gc_match --release matchups -- --ignored --nocapture`
     #[test]
     #[ignore = "slow: 64 full battles, run by hand"]
     fn matchups() {
@@ -1070,7 +1026,7 @@ pub(crate) mod tests {
     /// `AI_CHAMPIONS=off`, on maps with woods unless `AI_COVER=off`.
     /// Prints the first faction's wins, losses and battles nobody had won
     /// after ten minutes.
-    /// `cargo test -p gc_game --release faction_table -- --ignored --nocapture`
+    /// `cargo test -p gc_match --release faction_table -- --ignored --nocapture`
     #[test]
     #[ignore = "slow: the full faction balance table, run by hand"]
     fn faction_table() {
@@ -1128,7 +1084,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[ignore = "opens a window to watch a battle"]
+    #[ignore = "slow: plays battles and prints what the minds cost, run by hand"]
     fn watch() {
         let a = std::env::var("AI_A").map_or(None, |v| Some(level(&v)));
         let b = level(&std::env::var("AI_B").unwrap_or_default());

@@ -16,7 +16,7 @@ use gc_replay::{EXTENSION, Header, Info, Player, Replay};
 use gc_sim::{Capacities, TICKS_PER_SECOND};
 use gc_ui::ReplayEntry;
 
-use crate::battle::Party;
+use gc_match::battle::Party;
 
 /// Saved replays kept in the folder; older ones are deleted.
 pub const KEEP: usize = 50;

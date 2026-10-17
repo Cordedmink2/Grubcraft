@@ -1,0 +1,25 @@
+[package]
+name = "gc_match"
+description = "A Grubcraft match without a window: setting out a battle, playing it with computer players and judging it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gc_ai.workspace = true
+gc_data.workspace = true
+gc_fixed.workspace = true
+gc_map.workspace = true
+gc_sim.workspace = true
+gc_ui.workspace = true
+glam.workspace = true
+
+[dev-dependencies]
+bytemuck.workspace = true
+gc_assets.workspace = true
+gc_bake.workspace = true
+
+[lints]
+workspace = true
