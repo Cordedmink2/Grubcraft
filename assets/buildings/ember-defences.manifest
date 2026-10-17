@@ -1,0 +1,55 @@
+# Written by `cargo run -p gc_artbake --release` beside models.pak and checked by
+# `cargo run -p gc_artbake -- --check` in CI. Do not edit by hand.
+# Hashes are XXH3-128. Sources marked "not in the repo" live in the project's
+# shared folder; CI cannot check them, so a change to one shows only in a re-bake.
+manifest = 1
+baker = gc_artbake 1
+schema = 4
+config = 4d5d1e19f43c0ddac17e1415fed80b02
+pack = 4b01065ac0a70310ed99578803035116
+pack_bytes = 8958816
+source shared:grubcraft/buildings/ember/ancestor-shrine/stage1.glb = 6e9e3794f24fd81e888610673ce10c5f not in the repo
+source shared:grubcraft/buildings/ember/ancestor-shrine/albedo.png = 77017a018fc38c9d501d71c7a356d166 not in the repo
+source shared:grubcraft/buildings/ember/ancestor-shrine/team.png = 06fabfd6513afebcc3e33a29af4b4d1c not in the repo
+source shared:grubcraft/buildings/ember/ancestor-shrine/normal.png = 84ccdec71dd6f6781374b72a5d0bdb59 not in the repo
+source shared:grubcraft/buildings/ember/ancestor-shrine/orm.png = 6e071daf7f7064711b6ceac2259bdf5b not in the repo
+source shared:grubcraft/buildings/ember/ancestor-shrine/emissive.png = 7bdf5e5218a4206833b0c01efec49c04 not in the repo
+source shared:grubcraft/buildings/ember/ancestor-shrine/stage2.glb = 8c5f608af8075e1ea4f203fa905d3c5a not in the repo
+source shared:grubcraft/buildings/ember/ancestor-shrine/stage3.glb = 0e5ba3df1198e59387ba364f022000ec not in the repo
+source shared:grubcraft/buildings/ember/ancestor-shrine/final.glb = 91cd243027ee151f7043becda14a03ca not in the repo
+source shared:grubcraft/buildings/ember/forge/stage1.glb = d240f64b2f0cc9b1615aa1ea94ecd354 not in the repo
+source shared:grubcraft/buildings/ember/forge/albedo.png = cda1df4d09f8ab347221f6fbfea271b6 not in the repo
+source shared:grubcraft/buildings/ember/forge/team.png = b837c7ac9faacf3ed06c93b9407f7bc1 not in the repo
+source shared:grubcraft/buildings/ember/forge/normal.png = 0e2331bb7c25ce60be74b36ed9d4a940 not in the repo
+source shared:grubcraft/buildings/ember/forge/orm.png = 335f47779b0cdcc00e944398c802c4b6 not in the repo
+source shared:grubcraft/buildings/ember/forge/emissive.png = abae00d542be0593174e9cda2002b567 not in the repo
+source shared:grubcraft/buildings/ember/forge/stage2.glb = f419f319f3560a46942aba89b1d68b0f not in the repo
+source shared:grubcraft/buildings/ember/forge/stage3.glb = 1739d336e04d16e064dec82339406795 not in the repo
+source shared:grubcraft/buildings/ember/forge/final.glb = 11728ebab3ed8e47ff45d462ca317a42 not in the repo
+source shared:grubcraft/buildings/ember/watchtower/stage1.glb = 10004627a28e4d3aed18d76fbde95ac8 not in the repo
+source shared:grubcraft/buildings/ember/watchtower/albedo.png = fd62585bca13944208e295ee49ee1919 not in the repo
+source shared:grubcraft/buildings/ember/watchtower/team.png = 3880e8124c15a48a706c8a7540b8b57a not in the repo
+source shared:grubcraft/buildings/ember/watchtower/normal.png = 9fef7c5a3e21cb8f7c1b0a2a3fde008a not in the repo
+source shared:grubcraft/buildings/ember/watchtower/orm.png = 94ea8ad4eaeb4e2668ec0d86f536f271 not in the repo
+source shared:grubcraft/buildings/ember/watchtower/emissive.png = e765b707b18015aa3b0074d3b0f675c9 not in the repo
+source shared:grubcraft/buildings/ember/watchtower/stage2.glb = c42e238d59acd0dc9ad51ede54ad757c not in the repo
+source shared:grubcraft/buildings/ember/watchtower/stage3.glb = e32cecbef606da8a09921c463420ce6b not in the repo
+source shared:grubcraft/buildings/ember/watchtower/final.glb = bf272b76de3f215443548c3cde00b035 not in the repo
+source shared:grubcraft/buildings/ember/palisade/stage1.glb = dd440941dcce1aa4abe759356167348f not in the repo
+source shared:grubcraft/buildings/ember/palisade/albedo.png = 29e7bd3f0538c074baa316c18c2f7858 not in the repo
+source shared:grubcraft/buildings/ember/palisade/team.png = 49165e7058a887083a223987fcba6505 not in the repo
+source shared:grubcraft/buildings/ember/palisade/normal.png = fad88537154a0f36e27b222f60b101a6 not in the repo
+source shared:grubcraft/buildings/ember/palisade/orm.png = 71511efa561b98e489e55eef51def59c not in the repo
+source shared:grubcraft/buildings/ember/palisade/emissive.png = a878190bff3c11257e549720f29fd9f2 not in the repo
+source shared:grubcraft/buildings/ember/palisade/stage2.glb = a4abc503f09a802d918864110d52ec6d not in the repo
+source shared:grubcraft/buildings/ember/palisade/stage3.glb = 24938ec106e4b4d5a95559d47226eb0d not in the repo
+source shared:grubcraft/buildings/ember/palisade/final.glb = 2159168ea9ea4fa9280dba2402a9066c not in the repo
+source shared:grubcraft/buildings/ember/gate/stage1.glb = c6bb7c03166028bee7fbaf5783bf4de4 not in the repo
+source shared:grubcraft/buildings/ember/gate/albedo.png = 92df3983b0f7816933f24f157f6534d7 not in the repo
+source shared:grubcraft/buildings/ember/gate/team.png = 96472dade6bd912b59a9205c01d8fcb5 not in the repo
+source shared:grubcraft/buildings/ember/gate/normal.png = c8f0683400c68df294b3afbcc5077597 not in the repo
+source shared:grubcraft/buildings/ember/gate/orm.png = c93d93e457c17857d7c28e8f5f41a399 not in the repo
+source shared:grubcraft/buildings/ember/gate/emissive.png = 3f4b091580f4e5930d6e22e66c51684b not in the repo
+source shared:grubcraft/buildings/ember/gate/stage2.glb = bc9129b8096c4a2f9baa6e26ef6cf162 not in the repo
+source shared:grubcraft/buildings/ember/gate/stage3.glb = e7b52b77cfaf7c52195da55274151ae9 not in the repo
+source shared:grubcraft/buildings/ember/gate/final.glb = 618656123be2e4b92045e77ebcfc3ee0 not in the repo

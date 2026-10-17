@@ -1076,11 +1076,14 @@ mod tests {
         let mut dressed = 0;
         for (b, stages) in looks.stages.iter().enumerate() {
             let stats = table.stats[b];
-            for m in stages.iter().flatten() {
+            for (stage, m) in stages.iter().enumerate() {
+                let Some(m) = m else { continue };
                 let r = models.models[*m];
                 assert_eq!(r.bones, 1, "{} is rigged", r.name());
-                // Inside its footprint, give or take the eaves.
-                let reach = f32::from(stats.width.max(stats.depth)) / 2.0 + 0.35;
+                // Inside its footprint, give or take the eaves (and the
+                // scaffolding, while it goes up).
+                let over = if stage == FINISHED { 0.45 } else { 0.6 };
+                let reach = f32::from(stats.width.max(stats.depth)) / 2.0 + over;
                 let first = r.first_vertex as usize;
                 for v in &models.vertices[first..first + r.vertex_count as usize] {
                     let [x, _, z] = v

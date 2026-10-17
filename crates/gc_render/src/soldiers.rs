@@ -226,6 +226,9 @@ pub(crate) struct ModelGpu {
     pub levels: Vec<([Level; LODS], bool)>,
     /// Everything but the skinned buffers.
     fixed_bytes: u64,
+    /// Vertices in the skinning pass's first vertex binding (see
+    /// [`vertex_split`]).
+    split: u32,
 }
 
 impl ModelGpu {
@@ -236,6 +239,7 @@ impl ModelGpu {
     fn parts(&self) -> Parts<'_> {
         Parts {
             vertices: &self.vertices,
+            split: self.split,
             origins: &self.origins,
             jobs: &self.jobs,
             skin_pos: &self.skin_pos,
@@ -273,6 +277,43 @@ fn skin_buffers(device: &wgpu::Device, capacity: usize) -> (wgpu::Buffer, wgpu::
     (make("skinned positions"), make("skinned normals"))
 }
 
+/// How many model vertices the skinning pass's first vertex binding holds:
+/// all of them when the GPU's storage binding limit allows (most do), else
+/// as many as fit, the rest going to the second binding (`set_vertices_hi`
+/// in world.wgsl). The split is a multiple of the offset alignment.
+pub(crate) fn vertex_split(device: &wgpu::Device, vertices: u64) -> u64 {
+    let limits = device.limits();
+    let step = (u64::from(limits.min_storage_buffer_offset_alignment) / VERTEX_BYTES).max(1);
+    let most = limits.max_storage_buffer_binding_size / VERTEX_BYTES / step * step;
+    vertices.min(most)
+}
+
+/// Bytes in one stored model vertex (`SetVertex` in world.wgsl).
+pub(crate) const VERTEX_BYTES: u64 = size_of::<ModelVertex>() as u64;
+// A split at a multiple of the offset alignment's worth of vertices is
+// aligned only while the vertex size divides that (power of two) alignment.
+const _: () = assert!(VERTEX_BYTES.is_power_of_two());
+
+/// The two vertex bindings of the skinning pass, split after `split`
+/// vertices (see [`vertex_split`]).
+fn vertex_entries(vertices: &wgpu::Buffer, split: u32) -> [wgpu::BindGroupEntry<'_>; 2] {
+    let all = vertices.size() / VERTEX_BYTES;
+    let split = u64::from(split);
+    let range = |binding, from: u64, to: u64| wgpu::BindGroupEntry {
+        binding,
+        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+            buffer: vertices,
+            offset: from * VERTEX_BYTES,
+            size: wgpu::BufferSize::new((to - from) * VERTEX_BYTES),
+        }),
+    };
+    if all == 0 || split == all {
+        // Everything in the first binding; the second, never read, repeats it.
+        return [entry(9, vertices), entry(14, vertices)];
+    }
+    [range(9, 0, split), range(14, split, all)]
+}
+
 /// A buffer, whole, as the resource of a binding.
 fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
@@ -284,6 +325,7 @@ fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
 /// What the bind groups bind.
 struct Parts<'a> {
     vertices: &'a wgpu::Buffer,
+    split: u32,
     origins: &'a wgpu::Buffer,
     jobs: &'a wgpu::Buffer,
     skin_pos: &'a wgpu::Buffer,
@@ -321,6 +363,7 @@ fn bind_groups(
             entry(5, m.origins),
         ],
     });
+    let [lo, hi] = vertex_entries(m.vertices, m.split);
     let skin = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("soldier skinning"),
         layout: &soldiers.skin_layout,
@@ -329,7 +372,8 @@ fn bind_groups(
                 binding: 8,
                 resource: wgpu::BindingResource::TextureView(m.bones),
             },
-            entry(9, m.vertices),
+            lo,
+            hi,
             entry(10, &soldiers.instances),
             entry(11, m.jobs),
             entry(12, m.skin_pos),
@@ -435,6 +479,7 @@ pub(crate) fn make(
             },
             storage(12, compute, false),
             storage(13, compute, false),
+            storage(14, compute, true),
         ],
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -669,7 +714,7 @@ impl SoldiersGpu {
                 self.models = Some(models);
             }
             let models = self.models.as_ref().expect("models were just put back");
-            let header = [self.jobs.len() as u32, self.threads, 0, 0];
+            let header = [self.jobs.len() as u32, self.threads, models.split, 0];
             queue.write_buffer(&models.jobs, 0, bytemuck::bytes_of(&header));
             queue.write_buffer(&models.jobs, 16, bytemuck::cast_slice(&self.jobs));
             queue.write_buffer(
@@ -739,7 +784,7 @@ pub(crate) fn upload(
     queue: &wgpu::Queue,
     soldiers: &SoldiersGpu,
     m: &Models<'_>,
-) -> ModelGpu {
+) -> Result<ModelGpu, String> {
     let buffer = |label, bytes: &[u8], usage| {
         let b = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
@@ -762,6 +807,20 @@ pub(crate) fn upload(
         })
     };
     let levels = level_vertices(m);
+    // The skinning pass binds the vertices in two halves at most (see
+    // `vertex_split`), and the buffer itself must fit.
+    let count = levels.vertices.len() as u64;
+    let split = vertex_split(device, count);
+    let limits = device.limits();
+    if count - split > split || count * VERTEX_BYTES > limits.max_buffer_size {
+        return Err(format!(
+            "{} MB of model vertices, more than this GPU binds ({} MB twice) or holds ({} MB)",
+            (count * VERTEX_BYTES) >> 20,
+            limits.max_storage_buffer_binding_size >> 20,
+            limits.max_buffer_size >> 20
+        ));
+    }
+    let split = split as u32;
     let vertices = buffer(
         "model vertices",
         bytemuck::cast_slice(&levels.vertices),
@@ -855,6 +914,7 @@ pub(crate) fn upload(
         soldiers,
         &Parts {
             vertices: &vertices,
+            split,
             origins: &origins,
             jobs: &jobs,
             skin_pos: &skin_pos,
@@ -865,7 +925,7 @@ pub(crate) fn upload(
             sampler: &sampler,
         },
     );
-    ModelGpu {
+    Ok(ModelGpu {
         fixed_bytes: vertices.size()
             + indices.size()
             + origins.size()
@@ -886,7 +946,8 @@ pub(crate) fn upload(
         bind_group,
         skin_group,
         levels: levels_of.collect(),
-    }
+        split,
+    })
 }
 
 /// The material texture array, every layer with its mips (BC7); a single

@@ -386,6 +386,15 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
 @group(1) @binding(11) var<uniform> jobs: Jobs;
 @group(1) @binding(12) var<storage, read_write> out_pos: array<f32>;
 @group(1) @binding(13) var<storage, read_write> out_shade: array<u32>;
+// The model vertices past `jobs.count.z`, when a GPU binds too few at once.
+@group(1) @binding(14) var<storage, read> set_vertices_hi: array<SetVertex>;
+
+fn set_vertex(i: u32) -> SetVertex {
+    if i < jobs.count.z {
+        return set_vertices[i];
+    }
+    return set_vertices_hi[i - jobs.count.z];
+}
 
 // A model vertex as stored (`ModelVertex`), in words.
 struct SetVertex {
@@ -410,7 +419,8 @@ struct Job {
 };
 
 struct Jobs {
-    // x: jobs, y: threads
+    // x: jobs, y: threads, z: model vertices in `set_vertices` (the rest
+    // are in `set_vertices_hi`)
     count: vec4<u32>,
     job: array<Job, 1023>,
 };
@@ -501,7 +511,7 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
     let run = jobs.job[lo].run;
     let at = n - run.w;
     let soldier = run.x + at / run.z;
-    let sv = set_vertices[run.y + at % run.z];
+    let sv = set_vertex(run.y + at % run.z);
 
     // The instance (`SoldierInstance`), nine words.
     let i = soldier * 9u;
