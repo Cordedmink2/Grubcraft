@@ -37,7 +37,7 @@ fn lobby_map(settings: &LobbySettings, players: usize) -> Map {
             seed,
         }
         .make(),
-        MapPreviewKey::Conquest(_) => unreachable!("a Field Battle"),
+        MapPreviewKey::Conquest { .. } => unreachable!("a Field Battle"),
     }
 }
 

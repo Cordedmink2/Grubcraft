@@ -427,6 +427,21 @@ impl Running {
         let camera = self.active_camera();
         let (view_proj, plane) = (camera.view_proj(), camera.ground_plane());
 
+        // The rubber band of a left-drag that will box select on release
+        // (not one that places, builds or carries out an armed order).
+        let band = self
+            .selection_box()
+            .filter(|_| {
+                (self.hud.armed.is_none() || self.hud_wants_mouse())
+                    && !self.sandbox.placing
+                    && !self.sandbox.building_tool
+            })
+            .map(|(lo, hi)| {
+                let (x0, y0) = ((lo.x / scale) as i32, (lo.y / scale) as i32);
+                let (x1, y1) = ((hi.x / scale) as i32, (hi.y / scale) as i32);
+                gc_ui::Rect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1))
+            });
+
         let hud = &mut self.hud;
         if self.selected.is_empty() {
             hud.armed = None;
@@ -629,6 +644,11 @@ impl Running {
         input.shift = self.input.shift;
         input.now_ms = now_ms;
         hud.draw.clear();
+        // Drawn first, so the bar and panels stay on top of it.
+        if let Some(r) = band {
+            hud.draw.rect(r, [120, 255, 140, 36]);
+            hud.draw.border(r, 1, [170, 255, 180, 230]);
+        }
         hud.events.clear();
         let data = HudData {
             grid: &grid,
@@ -676,7 +696,6 @@ impl Running {
                 });
             draw_ride_hint(&mut self.hud.draw, screen, name);
         }
-
         upload_ui(
             &mut self.renderer,
             &mut self.ui_quads,
