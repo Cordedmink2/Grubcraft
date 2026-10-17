@@ -838,31 +838,12 @@ impl Renderer {
                 models.bone_rows()
             ));
         }
-        // The skinning pass binds the model vertices in two halves.
-        let vertices = models.vertices.len() as u64;
-        let first = soldiers::vertex_split(&self.device, vertices);
-        if vertices - first > first {
-            let binding = self.device.limits().max_storage_buffer_binding_size;
-            return Err(format!(
-                "{} MB of model vertices, more than twice this GPU's {} MB storage binding",
-                (vertices * soldiers::VERTEX_BYTES) >> 20,
-                binding >> 20
-            ));
-        }
-        // One batch per model and level of detail is one skinning job.
-        if models.models.len() * gc_assets::model::LODS > soldiers::MAX_JOBS {
-            return Err(format!(
-                "{} models, more than the {} the soldier skinning pass takes",
-                models.models.len(),
-                soldiers::MAX_JOBS / gc_assets::model::LODS
-            ));
-        }
         self.soldiers.models = Some(soldiers::upload(
             &self.device,
             &self.queue,
             &self.soldiers,
             models,
-        ));
+        )?);
         Ok(())
     }
 
