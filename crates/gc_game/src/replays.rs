@@ -108,7 +108,7 @@ pub fn players(parties: &[Party]) -> Vec<Player> {
         .map(|p| Player {
             name: p.name.clone(),
             color: p.color,
-            faction: p.faction.map(gc_ai::Faction::index),
+            faction: p.faction.map(|f| f.index() as u8),
         })
         .collect()
 }
@@ -121,7 +121,8 @@ pub fn parties(header: &Header) -> Vec<Party> {
         .map(|p| Party {
             name: p.name.clone(),
             color: p.color,
-            faction: p.faction.map(gc_ai::Faction::from_index),
+            // A number no faction has (a newer build's) reads as unknown.
+            faction: p.faction.and_then(gc_ai::Faction::from_u8),
         })
         .collect()
 }
@@ -148,24 +149,33 @@ pub fn title(replay: &Info) -> String {
     sides.join(" v ")
 }
 
-/// How many regiment types the game has for each kind of match.
-#[derive(Clone, Copy, Debug)]
+/// The game's regiment types for each kind of match, by name in table
+/// order.
+#[derive(Clone, Debug, Default)]
 pub struct UnitTypes {
-    pub field: usize,
-    pub conquest: usize,
+    pub field: Vec<String>,
+    pub conquest: Vec<String>,
 }
 
 /// Why this build can't show `replay`, if it can't: unit ids name entries
 /// in the game's unit table (Conquest's own in a Conquest match), so a
-/// table of another size names other regiments, and the game draws no more
-/// regiments than its capacity.
-pub fn unplayable(replay: &Info, unit_types: UnitTypes, capacity: Capacities) -> Option<String> {
+/// table that names other types, or in another order, names other
+/// regiments (a file from before the header kept the names can only be
+/// checked for the table's size), and the game draws no more regiments
+/// than its capacity.
+pub fn unplayable(replay: &Info, unit_types: &UnitTypes, capacity: Capacities) -> Option<String> {
     let types = if replay.conquest {
-        unit_types.conquest
+        &unit_types.conquest
     } else {
-        unit_types.field
+        &unit_types.field
     };
-    if replay.units != types {
+    let names = &replay.header.unit_names;
+    let same = if names.is_empty() {
+        replay.units == types.len()
+    } else {
+        names == types
+    };
+    if !same {
         Some("Made with other unit data: this build can't show it".into())
     } else if replay.regiments > capacity.regiments {
         Some("Too many regiments for this build to show".into())
@@ -179,7 +189,7 @@ pub fn unplayable(replay: &Info, unit_types: UnitTypes, capacity: Capacities) ->
 /// different size, so its unit ids name other regiments) says why.
 pub fn list(
     dir: &Path,
-    unit_types: UnitTypes,
+    unit_types: &UnitTypes,
     capacity: Capacities,
     data_hash: u64,
 ) -> Vec<ReplayEntry> {
@@ -241,7 +251,7 @@ pub fn list_in_background(
         .name("replay-list".into())
         .spawn(move || {
             // The receiver is gone if the menu asked again; nobody wants this one.
-            let _ = send.send(list(&dir, unit_types, capacity, data_hash));
+            let _ = send.send(list(&dir, &unit_types, capacity, data_hash));
         });
     if let Err(e) = started {
         logln!("grubcraft: could not start the replay list: {e}");
@@ -284,7 +294,7 @@ mod tests {
             Party {
                 name: "Red (Mario)".into(),
                 color: [1, 2, 3],
-                faction: Some(gc_ai::Faction::from_index(1)),
+                faction: Some(gc_ai::Faction::Brood),
             },
             Party {
                 name: "Blue (AI 2)".into(),
@@ -301,11 +311,13 @@ mod tests {
         assert!(again.ends_with("2026-10-15 21-50-04 Field Battle 2.gcr"));
         std::fs::write(dir.join("junk.gcr"), b"not a replay").unwrap();
         prune(&dir, 3);
-        let types = |field| UnitTypes {
-            field,
-            conquest: field + 1,
+        // The recording keeps no unit names, as files from before format
+        // 15 don't, so only the table's size is checked.
+        let types = |n: usize| UnitTypes {
+            field: (0..n).map(|i| format!("unit {i}")).collect(),
+            conquest: (0..=n).map(|i| format!("unit {i}")).collect(),
         };
-        let listed = list(&dir, types(units.len()), Capacities::default(), 0);
+        let listed = list(&dir, &types(units.len()), Capacities::default(), 0);
         assert_eq!(listed.len(), 3, "{listed:?}");
         // "junk" sorts after the dates, so it is the newest.
         assert!(listed[0].unplayable.is_some());
@@ -317,7 +329,7 @@ mod tests {
         );
         assert!(listed[1].unplayable.is_none());
         assert_eq!(
-            list(&dir, types(units.len() + 1), Capacities::default(), 0)[1]
+            list(&dir, &types(units.len() + 1), Capacities::default(), 0)[1]
                 .unplayable
                 .as_deref()
                 .map(|s| &s[..10]),
@@ -331,7 +343,34 @@ mod tests {
         assert_eq!(later[1].title, listed[1].title);
         assert_eq!(later[1].path, listed[1].path);
         let back = parties(&Replay::load(&listed[1].path).unwrap().header);
-        assert_eq!(back[0].faction, Some(gc_ai::Faction::from_index(1)));
+        assert_eq!(back[0].faction, Some(gc_ai::Faction::Brood));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_replay_with_unit_names_needs_the_same_table() {
+        let names = |n: &[&str]| n.iter().map(|&s| s.to_string()).collect::<Vec<_>>();
+        let types = UnitTypes {
+            field: names(&["Spears", "Bows"]),
+            conquest: names(&["Hand"]),
+        };
+        let mut info = Info {
+            units: 2,
+            header: Header {
+                unit_names: names(&["Spears", "Bows"]),
+                ..Header::default()
+            },
+            ..Info::default()
+        };
+        let caps = Capacities::default();
+        assert_eq!(unplayable(&info, &types, caps), None);
+        // The same size in another order names other regiments.
+        info.header.unit_names = names(&["Bows", "Spears"]);
+        assert!(unplayable(&info, &types, caps).is_some());
+        // A Conquest replay is checked against Conquest's table.
+        info.conquest = true;
+        info.units = 1;
+        info.header.unit_names = names(&["Hand"]);
+        assert_eq!(unplayable(&info, &types, caps), None);
     }
 }

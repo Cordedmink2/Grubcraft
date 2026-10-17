@@ -109,6 +109,40 @@ fn time_stands_still_and_orders_place_regiments() {
 }
 
 #[test]
+fn an_ally_handed_the_army_places_it_in_its_owners_zone() {
+    let mut w = World::new(&MatchSetup {
+        seed: 5,
+        capacities: Capacities::default(),
+        units: &DRILL_UNITS,
+        map_tiles: 256,
+        nav: &[],
+        teams: &[0, 1, 0],
+        ground: gc_sim::Ground::FLAT,
+        champions: false,
+    });
+    let stats = w.tick(&[
+        pc(0, zone(100, 140)),
+        pc(2, zone(160, 140)),
+        pc(2, spawn(160, 140, NORTH)),
+        pc(2, Command::HandOver { to: 0 }),
+    ]);
+    assert_eq!(stats.commands_rejected, 0);
+    let theirs = w.regiments.iter().find(|r| r.owner == 2).unwrap().handle;
+    // Player 0 now places it, inside player 2's zone and not its own;
+    // player 2 no longer can.
+    let stats = w.tick(&[
+        pc(0, place(theirs, 100, 140)),
+        pc(2, place(theirs, 165, 140)),
+        pc(0, place(theirs, 155, 140)),
+    ]);
+    assert_eq!(stats.commands_applied, 1);
+    assert_eq!(
+        w.regiments.get(theirs).unwrap().position,
+        FxVec2::from_ints(155, 140)
+    );
+}
+
+#[test]
 fn a_setup_spread_over_several_turns_still_deploys() {
     let mut w = world();
     // The host's setup arrives a few turns in, the second side's zone a

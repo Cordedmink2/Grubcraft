@@ -76,8 +76,9 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Rally { .. } => "Rally",
         Command::FallBack { .. } => "FallBack",
         Command::Brace { .. } => "Brace",
+        Command::HandOver { .. } => "HandOver",
     };
-    const KINDS: [&str; 21] = [
+    const KINDS: [&str; 22] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -99,6 +100,7 @@ fn the_goldens_cover_every_kind_of_command() {
         "Rally",
         "FallBack",
         "Brace",
+        "HandOver",
     ];
     let seen: BTreeSet<&str> = goldens()
         .iter()
@@ -133,6 +135,7 @@ const PINNED: (u32, &[(&str, u64)]) = (
         ("field-brace-1v1", 0x6060572968edfb25),
         ("field-champions-1v1", 0xe058a012871d6b90),
         ("field-deploy-1v1", 0x67e24a7eee01a733),
+        ("field-handover-2v2", 0x7e94faf3fc634762),
         ("field-woods-1v1", 0x5c2ff9651639d3c6),
         ("sandbox-tuning", 0x01ee429db15711ae),
     ],

@@ -12,6 +12,7 @@ use core::fmt;
 use bytemuck::{Pod, Zeroable};
 use gc_assets::{Kind, Pack, PackError, TableError, read_table};
 use gc_fixed::Fx;
+use serde::{Deserialize, Serialize};
 
 pub mod conquest;
 
@@ -38,7 +39,10 @@ pub const WEAPON_SHIELD: u8 = 4;
 /// Heaviest [`UnitRecord::mass`]: 0 light, 1 medium, 2 heavy.
 pub const MAX_MASS: u8 = 2;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The playable factions. This is the game's only faction type: the lobby,
+/// the computer players, replays and the unit table all use it, and their
+/// files and wire formats store [`Faction::index`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Faction {
     EmberClans = 0,
@@ -55,8 +59,14 @@ impl Faction {
         Faction::CarrionConcord,
     ];
 
+    /// The faction stored as `v`, or `None` for a number no faction has.
     pub fn from_u8(v: u8) -> Option<Faction> {
         Faction::ALL.get(v as usize).copied()
+    }
+
+    /// Its place in [`Faction::ALL`], which is also its stored number.
+    pub fn index(self) -> usize {
+        self as usize
     }
 
     pub fn name(self) -> &'static str {
@@ -367,5 +377,15 @@ mod tests {
         // Changing this means bumping UNIT_SCHEMA.
         assert_eq!(size_of::<UnitRecord>(), 76);
         assert_eq!(align_of::<UnitRecord>(), 4);
+    }
+
+    #[test]
+    fn faction_numbers_round_trip() {
+        // Files, replays and the wire store these numbers.
+        for (i, f) in Faction::ALL.into_iter().enumerate() {
+            assert_eq!(f.index(), i);
+            assert_eq!(Faction::from_u8(i as u8), Some(f));
+        }
+        assert_eq!(Faction::from_u8(Faction::ALL.len() as u8), None);
     }
 }

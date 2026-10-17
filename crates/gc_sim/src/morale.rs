@@ -39,11 +39,11 @@ pub const WAVER_BELOW: i16 = 25;
 pub const WAVERING_DAMAGE_PERCENT: u64 = 85;
 /// Tenths of a point lost per percent of full strength lost since the last
 /// check: losing a tenth of the regiment in one second costs 12 points.
-const CASUALTY_TENTHS_PER_PERCENT: i32 = 9;
+pub const CASUALTY_TENTHS_PER_PERCENT: i32 = 9;
 /// Points lost each second while below half strength and in melee.
-const HALF_STRENGTH_DRAIN: i16 = 2;
+pub const HALF_STRENGTH_DRAIN: i16 = 2;
 /// Points lost in a second with hits on the flank, or on the rear.
-const FLANK_SHOCK: i16 = 3;
+pub const FLANK_SHOCK: i16 = 3;
 const REAR_SHOCK: i16 = 6;
 /// Points lost in a second spent pinned: driven back against a friend, an
 /// enemy, a river bank or a cliff with nowhere to give ground.
@@ -56,8 +56,8 @@ pub(crate) const SHOCK_PINNED: u8 = 4;
 const LOCAL_TILES: i32 = 12;
 /// Points lost each second in melee when nearby enemies outnumber nearby
 /// friends two to one, or three to one.
-const OUTNUMBERED_2: i16 = 2;
-const OUTNUMBERED_3: i16 = 4;
+pub const OUTNUMBERED_2: i16 = 2;
+pub const OUTNUMBERED_3: i16 = 4;
 /// Points regained each second when out of the fight and losing nobody.
 const RECOVERY: i16 = 3;
 /// A rout costs friends within this many tiles some points, and gives the

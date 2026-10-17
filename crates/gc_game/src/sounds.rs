@@ -487,7 +487,7 @@ impl Sounds {
             Cry::Victory => 1.0,
         };
         self.play_at(
-            SoundId::cry(voice.faction.index(), kind),
+            SoundId::cry(voice.faction.index() as u8, kind),
             at,
             gain,
             CRY_REACH,

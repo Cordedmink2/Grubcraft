@@ -7,6 +7,8 @@
 //! big decisions in a scratch copy of the battle (see [`crate::rehearsal`]).
 
 use crate::captain::Doctrine;
+use gc_sim::TICKS_PER_SECOND;
+
 use crate::perception::TICKS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -60,7 +62,7 @@ impl Difficulty {
                 engage_tiles: 14.0,
                 hunt_leash: 120.0,
                 slip_percent: 35,
-                slip_gap_ticks: 10 * 20,
+                slip_gap_ticks: 10 * TICKS_PER_SECOND,
                 rehearse: false,
             },
             Difficulty::Veteran => Knobs {
@@ -79,7 +81,7 @@ impl Difficulty {
                 engage_tiles: 10.0,
                 hunt_leash: 55.0,
                 slip_percent: 10,
-                slip_gap_ticks: 30 * 20,
+                slip_gap_ticks: 30 * TICKS_PER_SECOND,
                 rehearse: false,
             },
             Difficulty::General => Knobs {
@@ -98,7 +100,7 @@ impl Difficulty {
                 engage_tiles: 12.0,
                 hunt_leash: 40.0,
                 slip_percent: 2,
-                slip_gap_ticks: 90 * 20,
+                slip_gap_ticks: 90 * TICKS_PER_SECOND,
                 rehearse: false,
             },
             Difficulty::Warlord => Knobs {
@@ -117,7 +119,7 @@ impl Difficulty {
                 engage_tiles: 12.0,
                 hunt_leash: 40.0,
                 slip_percent: 0,
-                slip_gap_ticks: 90 * 20,
+                slip_gap_ticks: 90 * TICKS_PER_SECOND,
                 rehearse: true,
             },
         }

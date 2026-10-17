@@ -62,7 +62,7 @@ grubcraft/
 │  ├─ gc_map/        maps: the seeded generator, the Field Battle and Conquest recipes, campaign battle maps, the RON map format and loader, the shared terrain rules (no floats outside the drawing views)
 │  ├─ gc_ai/         AI players and world-party minds; reads sim views, sends commands
 │  ├─ gc_campaign/   campaign mode: regions, seasons, hosts, the long-term ledger (C-1, see 19) (later)
-│  ├─ gc_data/       unit/faction/ability definitions, compiled tables
+│  ├─ gc_data/       unit/faction/ability definitions, compiled tables; the one Faction type
 │  ├─ gc_match/      a battle without a window: set-out from the lobby, judging, a headless driver (Match)
 │  ├─ gc_net/        transport, lockstep turns, lobby protocol, discovery
 │  ├─ gc_present/    interpolation, soldier puppets, effects triggers       (later)
