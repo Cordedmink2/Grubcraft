@@ -59,7 +59,7 @@ grubcraft/
 ├─ crates/
 │  ├─ gc_fixed/      fixed-point math, angles, trig tables, isqrt (no_std)
 │  ├─ gc_sim/        deterministic simulation (no_std + alloc, no floats)
-│  ├─ gc_map/        maps: the seeded generator, the Field Battle and Conquest recipes, the RON map format and loader, the shared terrain rules (no floats outside the drawing views)
+│  ├─ gc_map/        maps: the seeded generator, the Field Battle and Conquest recipes, campaign battle maps, the RON map format and loader, the shared terrain rules (no floats outside the drawing views)
 │  ├─ gc_ai/         AI players and world-party minds; reads sim views, sends commands
 │  ├─ gc_campaign/   campaign mode: regions, seasons, hosts, the long-term ledger (C-1, see 19) (later)
 │  ├─ gc_data/       unit/faction/ability definitions, compiled tables
@@ -362,7 +362,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 |---|---|
 | `gc_replay` | Run a replay headless at maximum speed and verify its state hashes: `cargo run --release -p gc_replay -- verify` (all of `replays/`), `bless FILE` (store the hashes the sim produces now), `info FILE` (with who played, which build recorded it, and a Conquest line for Conquest matches), `compare A B` (where two machines' recordings of one match, such as desync reports, first disagree, and for two desync reports which systems parted first). Dumping state at a tick is still to come |
 | `gc_bench` | Fixed benchmark scenarios; reports tick time, frame time, memory by tag; enforces budgets |
-| `gc_mapcheck` | `cargo run -p gc_mapcheck -- check [FILE\|DIR]` (default `data/maps`) builds each map and reports errors (exit code 1) and the numbers behind them; `png FILE OUT.png` draws a map with its objects. Runs in CI. See [07 · Map format and tooling](07-world-and-maps.md#map-format-and-tooling) |
+| `gc_mapcheck` | `cargo run -p gc_mapcheck -- check [FILE\|DIR]` (default `data/maps`) builds each map and reports errors (exit code 1) and the numbers behind them; `png FILE OUT.png` draws a map with its objects; `gen` writes a recipe map from a seed, and `battle AREA ROUTE FEATURE fort\|open SEED OUT.ron` a campaign battle map ([07](07-world-and-maps.md#campaign-battle-maps)). Runs in CI. See [07 · Map format and tooling](07-world-and-maps.md#map-format-and-tooling) |
 | `gc_bake` | Data baker |
 | `gc_artbake` | Model baker: `cargo run -p gc_artbake --release` re-bakes `assets/models.pak` from `assets-src/models.ron`; `--report` prints each model's colours to help pick team-colour parts; `--check` compares the committed pack with `assets/models.manifest` (CI) |
 | Dev overlay (`` ` `` or `F11`) | Frame and tick timings, memory by tag, draw calls, network stats |

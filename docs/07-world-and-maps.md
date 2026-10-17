@@ -146,6 +146,26 @@ Every recipe also scatters clumps of woods and tall grass over the north half, k
 
 **Tools and tests.** `cargo run -p gc_mapcheck -- gen RECIPE SIZE SEED OUT.ron` writes a Conquest map (Teeth, Bowl or Fen, at Duel, Skirmish or Warfield), and says so if it rerolled the seed. `tools/gc_mapcheck/tests/recipes.rs` checks 50 seeds of each recipe at Duel, 25 at Skirmish and 12 at Warfield, and needs 80% of them to pass at each size. The `gc_map` tests check that a seed always writes the same description.
 
+## Campaign battle maps
+
+*Built (random maps step 3, 2026-10-16).* `gc_map::battle::battle_map` writes the battlefield of a campaign battle from a region: its ground, the route the attacker came along, at most one feature and maybe a Fort. The campaign ([19](19-campaign.md#battles-on-the-campaign)) will call it; the lobby does not offer these maps, and the campaign itself is not built yet.
+
+**Making a campaign battle map.** A map is 192 to 320 tiles a side, near the size of a random Field Battle map (256 or 320), so a battle has room to manoeuvre: foot takes about one to two minutes to march across. Road and Burrow maps are 192 or 224, Pass and Ford maps 224 or 256 (the seed picks), and a Seat, a Fort or the Lungs add 64, up to 320. (The campaign doc first asked for 64 to 96; Mario chose Field Battle size on 2026-10-17.) The region's area, route, feature and Fort (yes or no) and a seed give the land, so the same region and seed always give the same map. Unlike a Conquest map, it is not rerolled: every kind of map passes the checker as made.
+
+The map is not fair and not turned on purpose. The defender (player 0) holds the north, with its feature on its hill: a settlement's village on the slope facing the middle, a Great Place on the top. The attacker (player 1) deploys in the south, on the side it came from. With a Fort, the defender's start is on a hill inside an eight-sided palisade with a gate facing south. For now the palisade is a steep earth bank; real walls come with M3 buildings. Every map has at least two named high-ground set pieces.
+
+Features become objects: a Seat is the defender's town, a Settlement a village, a CompanyCamp or a Lair a creep camp, a Site a frontier slot, and a GreatPlace a Shrine.
+
+**The routes.** The route shapes the middle of the map:
+- **Road:** a road four tiles wide through both starts, kept clear of woods.
+- **Pass:** a cliff wall across the middle, with one or two gaps.
+- **Ford:** a river across the middle, with one or two fords.
+- **Burrow:** no road, and the attacker starts closer, as it comes up from a Brood burrow.
+
+**The areas.** The area is the part of the Titan's body the region lies in, and it dresses the ground: **Crown** (higher ground and a crater lake), **Ribs** (rock ridges), **Lungs** (cavern walls down the east and west edges, and rock pillars), **Gut** (low boggy ground with wadeable pools and tall grass), **Spine** (high broken ground and steep rocks), **Hands** (deep forest), **Tail** (flat waste) and **Heart** (raised veins).
+
+**Tools and tests.** `cargo run -p gc_mapcheck -- battle AREA ROUTE FEATURE fort|open SEED OUT.ron` writes one map, and `check` and `png` work on it as on any other. The test `every_campaign_battle_map_passes_the_checker` in `tools/gc_mapcheck/tests/recipes.rs` builds one seed of each of the 448 combinations (eight areas, four routes, seven features, with or without a Fort) and requires all of them to pass. A sweep of 20 seeds of each combination (8,960 maps) also passed when the maps were made Field Battle size, with no road on blocked ground. `a_forts_palisade_is_shut_but_for_its_gate` checks that no one walks out of a Fort except through its gate.
+
 ## Water (later)
 
 Launch maps treat water as terrain: shallow fords are walkable and slow, deep water is impassable except to air. Naval play (ships, coastal raids, sea seeps) comes with the naval expansion. The map format reserves a water-depth layer from day one so old maps upgrade cleanly.

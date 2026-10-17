@@ -52,7 +52,7 @@ To measure memory on your machine: `cargo run --release -p gc_game -- --frames 6
 | `tools/gc_bake` | Baker: compiles `data/*.ron` (and later art and audio) into the asset pack |
 | `tools/gc_sfx` | Sound generator: synthesises the effects and music loops, and layers the battle cries from recorded voices, into `assets/audio/sounds.gcsnd` |
 | `tools/gc_bench` | Headless benchmarks with budget gates |
-| `tools/gc_mapcheck` | Map validator: `cargo run -p gc_mapcheck -- check` checks every map in `data/maps/` for validity and fairness; `png FILE OUT.png` draws one; `gen RECIPE SIZE SEED OUT.ron` writes a Field Battle or Conquest recipe map from a seed |
+| `tools/gc_mapcheck` | Map validator: `cargo run -p gc_mapcheck -- check` checks every map in `data/maps/` for validity and fairness; `png FILE OUT.png` draws one; `gen RECIPE SIZE SEED OUT.ron` writes a Field Battle or Conquest recipe map from a seed; `battle AREA ROUTE FEATURE fort\|open SEED OUT.ron` writes a campaign battle map |
 | `assets/audio/` | The sound bank and its catalogue |
 | `data/maps/` | The Conquest maps, as RON descriptions (Ribcage Pass, The Four Teeth) |
 | `data/` | Game data in RON: edit these to change units, and `data/ai/` the computer players' personalities (rebuilt automatically) |

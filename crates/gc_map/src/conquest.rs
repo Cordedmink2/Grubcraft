@@ -21,7 +21,7 @@ use crate::def::{
     SetPieceKind, Shape, SizeClass, Symmetry,
 };
 use crate::recipe::{DEEP, FORD, RISE_REACH, WATER, Writer};
-use crate::stamp::tile_copies;
+use crate::stamp::{dist2, tile_copies};
 
 /// The kinds of Conquest map a seed can make.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,11 +181,6 @@ struct Share<'a> {
     /// Ground already shaped (hills, pools, meres, spines): the centre and
     /// how far it reaches, kept clear of each other.
     features: Vec<(Pos, i32)>,
-}
-
-fn dist2(a: Pos, b: Pos) -> i32 {
-    let (dx, dy) = (a.0 - b.0, a.1 - b.1);
-    dx * dx + dy * dy
 }
 
 impl Share<'_> {
