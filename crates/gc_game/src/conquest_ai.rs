@@ -171,6 +171,12 @@ mod tests {
         /// clicks.
         pub orders: u32,
         pub clicks: u32,
+        /// The tick its scout first looked at a start an enemy might hold.
+        pub scout_looked: Option<u32>,
+        /// Raids its raiders set out on, and enemy worker regiments seen
+        /// to go while they were near.
+        pub raids: u32,
+        pub raid_kills: u32,
     }
 
     /// A headless Conquest match played to its end (or the time limit).
@@ -246,6 +252,11 @@ mod tests {
             regiments: world.regiments.iter().filter(|r| r.owner == p).count(),
             orders: mind.orders_sent(),
             clicks: mind.realm().map_or(0, |r| r.clicks().count),
+            scout_looked: mind
+                .realm()
+                .and_then(|r| r.marshal.scout.first_enemy_start_looked_at()),
+            raids: mind.realm().map_or(0, |r| r.marshal.raider.raids()),
+            raid_kills: mind.realm().map_or(0, |r| r.marshal.raider.kills()),
         }
     }
 
@@ -463,6 +474,12 @@ mod tests {
         let openings = openings_from_env("AI_OPENINGS");
         let played = play_with(choice, &factions, &levels, seed, minutes, temper, &openings);
         println!("{}", played.report());
+        for (p, side) in played.sides.iter().enumerate() {
+            println!(
+                "side {p}: {} raids set out, {} enemy worker regiments seen gone near the raiders",
+                side.raids, side.raid_kills
+            );
+        }
         println!(
             "{} game minutes in {:.1?}",
             played.ticks / 60 / TICKS_PER_SECOND,
@@ -554,6 +571,63 @@ mod tests {
         // By eight minutes the armies have met, and somebody weighed up
         // the other's.
         assert!(weighed, "{:#?}", played.sides[0].lens);
+    }
+
+    /// A General's scout comes to look at the enemy's start within the
+    /// first five minutes of a one-on-one on Ribcage Pass. Two scouts meeting
+    /// halfway can turn each other back, so one of the two finding it is
+    /// enough.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_a_generals_scout_finds_the_enemy_start() {
+        let factions = [Faction::EmberClans, Faction::EmberClans];
+        for seed in [7, 8] {
+            let played = play(0, &factions, &[Difficulty::General], seed, 5);
+            let looked: Vec<Option<u32>> = played.sides.iter().map(|s| s.scout_looked).collect();
+            assert!(
+                looked.iter().any(Option::is_some),
+                "seed {seed}: no scout looked at the enemy start: {:?}",
+                played.sides[0].lens
+            );
+            for (p, side) in played.sides.iter().enumerate() {
+                assert!(
+                    side.lens.iter().any(|l| l.starts_with("  scout   ")),
+                    "side {p} has no scout line: {:?}",
+                    side.lens
+                );
+            }
+        }
+    }
+
+    /// Warlords' raiders set out against enemy workers in a four-player
+    /// game on Four Teeth, and some party kills some of them within 40
+    /// minutes; a lens panel shows the `raid` line after the `scout` line,
+    /// and a General has none.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_a_warlords_raiders_kill_enemy_workers() {
+        let (mut killed, mut raids) = (0, 0);
+        {
+            let played = play(1, &Faction::ALL, &[Difficulty::Warlord], 3, 40);
+            for (p, side) in played.sides.iter().enumerate() {
+                let find = |label: &str| {
+                    let start = format!("  {label:<7} ");
+                    side.lens.iter().position(|l| l.starts_with(&start))
+                };
+                let scout = find("scout").expect("a Warlord scouts");
+                assert_eq!(find("raid"), Some(scout + 1), "side {p}: {:?}", side.lens);
+                killed += side.raid_kills;
+                raids += side.raids;
+            }
+        }
+        assert!(raids > 0, "no raid set out");
+        assert!(killed > 0, "the raiders saw no enemy worker go");
+        let factions = [Faction::EmberClans, Faction::EmberClans];
+        let played = play(0, &factions, &[Difficulty::General], 7, 8);
+        for side in &played.sides {
+            assert_eq!(side.raids, 0);
+            assert!(side.lens.iter().all(|l| !l.starts_with("  raid    ")));
+        }
     }
 
     // A game takes seconds in a release build and minutes in a debug one,

@@ -6,15 +6,21 @@
 //! Sandbox: Tab switches which side you command (all four can be ordered).
 //! B turns placing on and off: left-click puts down a regiment of the chosen
 //! type for that side, facing away from the camera, and [ and ] choose the
-//! type. K does the same for buildings (the sandbox only): click puts the
+//! type. The top bar's Place button (or B) opens a panel listing the types
+//! (the Field types, or any faction's roster troops, which starts the
+//! sandbox again on the Conquest table) and sides to click
+//! (docs/08-ui-ux.md#the-place-panel). K does the same for buildings (the sandbox only): click puts the
 //! chosen building down, centred on the cursor, and [ and ] choose which.
 //! Delete (or Backspace) takes the building under the cursor, else the
 //! selected regiments, off the field; Shift + Delete clears it. Right-click
 //! an enemy building to send the selected regiments against it. P pauses; - and = slow the game down to a tenth
 //! or speed it up to four times. T opens the stats panel for the chosen type:
 //! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
-//! and regiments on the field change at once. Shift+R reloads `data/units.ron`
-//! when the game runs from the repository and was built with `--features dev`.
+//! and regiments on the field change at once (on whichever table the sandbox
+//! runs on). Shift+R reloads `data/units.ron` when the game runs from the
+//! repository and was built with `--features dev`; on the roster table it
+//! says to choose a Field type first, as the roster is baked, not read
+//! from disk.
 //! H, F1 or the ? Help button in the top bar opens the Marshal's Scroll: the keys
 //! in groups, and what each computer player is doing and expects (F1 finds an
 //! idle worker instead while a Conquest match has one). C shows the credits for
@@ -140,6 +146,7 @@ mod online;
 mod profile;
 mod puppets;
 mod replays;
+mod roster;
 mod sandbox;
 mod scenery;
 mod showroom;
@@ -604,8 +611,15 @@ struct Running {
     /// or the sandbox, the Field Battle ones in Conquest. See
     /// [`Running::use_units`].
     other_units: UnitTable,
-    /// Whether the regiment types in play are the Conquest ones.
+    /// Whether the regiment types in play are the Conquest ones. That is a
+    /// Conquest match, or the sandbox on the roster table
+    /// ([`Running::sandbox_roster`]); [`Running::conquest_match`] tells
+    /// them apart, and the Conquest HUD, economy and build menu follow it.
     conquest_units: bool,
+    /// The sandbox runs on the Conquest roster table so troops of every
+    /// faction can be placed (docs/17-unit-rosters.md). It is still the
+    /// sandbox: no Conquest economy, workers, HUD or build menu.
+    sandbox_roster: bool,
     /// The building types, for Conquest worlds.
     buildings: buildings::Table,
     /// The game data as built, which Conquest matches are set up from.
@@ -953,10 +967,18 @@ fn color_of(parties: &[Party], owner: PlayerId) -> [u8; 3] {
 enum MatchKind {
     /// An empty field, nobody moving unless ordered.
     Sandbox,
+    /// The same, on the Conquest roster table: troops of every faction.
+    SandboxRoster,
     /// A Field Battle from the lobby.
     Battle(MatchStart),
     /// Watching a saved replay.
     Replay(Box<gc_replay::Replay>),
+}
+
+impl MatchKind {
+    fn is_sandbox(&self) -> bool {
+        matches!(self, MatchKind::Sandbox | MatchKind::SandboxRoster)
+    }
 }
 
 /// The battle being recorded, and where it is saved.
@@ -1220,6 +1242,8 @@ impl App {
 
         let mut hud_state = hud::HudState::default();
         hud_state.set_terrain(&heightmap);
+        // An empty-field sandbox starts with the Place panel open.
+        hud_state.placer = opts.sandbox;
         let settings_path = gc_ui::settings::settings_path();
         let settings = settings_path
             .as_deref()
@@ -1271,6 +1295,7 @@ impl App {
             units,
             other_units,
             conquest_units: false,
+            sandbox_roster: false,
             buildings: building_table,
             // The showroom hides the panel (H shows it).
             sandbox: Sandbox {
@@ -1517,7 +1542,7 @@ impl ApplicationHandler for App {
                             | KeyCode::Delete
                             | KeyCode::Backspace
                             | KeyCode::KeyT
-                    ) || (code == KeyCode::KeyB && !r.conquest_units)
+                    ) || (code == KeyCode::KeyB && !r.conquest_match())
                         || reload_key;
                     // P carries on without a player the match is paused for.
                     if code == KeyCode::KeyP
@@ -1533,7 +1558,7 @@ impl ApplicationHandler for App {
                         Some("That sandbox tool is off in a network battle.")
                     } else if r.watching.is_some() && (edit_tool || code == KeyCode::KeyF) {
                         Some("That is off while you watch a replay.")
-                    } else if r.conquest_units && edit_tool {
+                    } else if r.conquest_match() && edit_tool {
                         Some("That sandbox tool is off in Conquest.")
                     } else {
                         None
@@ -1587,11 +1612,13 @@ impl ApplicationHandler for App {
                         }
                         KeyCode::Tab if down && !event.repeat => r.switch_side(),
                         KeyCode::KeyI if down && !event.repeat => r.cycle_mind(),
-                        KeyCode::KeyB if down && !event.repeat && r.conquest_units => {
+                        KeyCode::KeyB if down && !event.repeat && r.conquest_match() => {
                             r.set_build_menu(!r.hud.build_menu);
                         }
                         KeyCode::KeyB if down && !event.repeat => {
                             r.sandbox.placing = !r.sandbox.placing;
+                            // The Place panel follows: open to pick a troop.
+                            r.hud.placer = r.sandbox.placing && r.can_place();
                             r.sandbox.building_tool = false;
                             r.hud.armed = None;
                             r.sandbox.dirty = true;
@@ -1672,11 +1699,13 @@ impl ApplicationHandler for App {
                         KeyCode::Escape
                             if down
                                 && (r.sandbox.placing
+                                    || r.hud.placer
                                     || r.sandbox.building_tool
                                     || r.sandbox.tuning
                                     || r.sandbox.credits) =>
                         {
                             r.sandbox.placing = false;
+                            r.hud.placer = false;
                             r.sandbox.building_tool = false;
                             r.sandbox.tuning = false;
                             r.sandbox.credits = false;
@@ -2716,6 +2745,10 @@ impl Running {
             // (they waver all the time) and they are not in the battle line.
             let banner = match r.morale {
                 _ if self.world.is_worker(r.handle) => None,
+                // Drawn as a standard model with the scenery instead.
+                m if !self.commander && banner_model(m).is_some_and(|b| self.scenery.draws(b)) => {
+                    None
+                }
                 MoraleState::Steady => None,
                 MoraleState::Wavering => blink.then_some([235, 170, 40, 200]),
                 MoraleState::Routing => Some([245, 245, 240, 200]),
@@ -3569,9 +3602,12 @@ impl Running {
         let conquest = match &kind {
             MatchKind::Battle(setup) => setup.settings.mode == GameMode::Conquest,
             MatchKind::Replay(r) => r.conquest.is_some(),
-            MatchKind::Sandbox => false,
+            MatchKind::Sandbox | MatchKind::SandboxRoster => false,
         };
-        self.use_units(conquest);
+        // The sandbox may run on the roster table, though it is no Conquest.
+        let roster = matches!(kind, MatchKind::SandboxRoster);
+        self.use_units(conquest || roster);
+        self.sandbox_roster = roster;
         let mut stats_before = Vec::new();
         // A network match plays on the host's map, with the game data as
         // built (whatever the sandbox tuned stays in the sandbox).
@@ -3610,7 +3646,7 @@ impl Running {
                 };
                 Some((key, r.seed))
             }
-            MatchKind::Sandbox => None,
+            MatchKind::Sandbox | MatchKind::SandboxRoster => None,
         };
         if let Some((key, seed)) = key {
             self.seed = seed;
@@ -3642,7 +3678,9 @@ impl Running {
                 setup.players.iter().map(|s| s.team).collect(),
                 battle::champions_allowed(setup),
             ),
-            MatchKind::Sandbox | MatchKind::Replay(_) => (Vec::new(), false),
+            MatchKind::Sandbox | MatchKind::SandboxRoster | MatchKind::Replay(_) => {
+                (Vec::new(), false)
+            }
         };
         let setup = MatchSetup {
             seed: self.seed,
@@ -3678,7 +3716,7 @@ impl Running {
         }
         // The sandbox has buildings to try. It is never recorded (only
         // `Battle` below makes a recorder).
-        if matches!(kind, MatchKind::Sandbox) {
+        if kind.is_sandbox() {
             self.buildings.conquer(&mut self.world);
         }
         // Every battle is recorded from its first tick.
@@ -3720,9 +3758,12 @@ impl Running {
         });
         self.matches += 1;
         self.drill = None;
-        self.sandbox = Sandbox::new(matches!(kind, MatchKind::Sandbox));
+        self.sandbox = Sandbox::new(kind.is_sandbox());
+        self.hud.placer = kind.is_sandbox();
+        self.hud.place_tab = u8::from(roster);
+        self.hud.place_faction = 0;
         // Seeing through the woods stays in the sandbox.
-        self.reveal_all &= matches!(kind, MatchKind::Sandbox);
+        self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
         self.parties = sandbox_parties();
         self.battle = None;
@@ -3753,7 +3794,7 @@ impl Running {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
             MatchKind::Replay(r) => self.watch(*r, stats_before),
-            MatchKind::Sandbox => {}
+            MatchKind::Sandbox | MatchKind::SandboxRoster => {}
         }
         if let Some(note) = map_note {
             self.say(note.into());
@@ -3780,11 +3821,18 @@ impl Running {
 
     /// What the panel calls a lobby match.
     fn mode_name(&self) -> &'static str {
-        if self.conquest_units {
+        if self.conquest_match() {
             "CONQUEST"
         } else {
             "FIELD BATTLE"
         }
+    }
+
+    /// Whether this is a Conquest match, with its economy, workers, HUD and
+    /// build menu. The sandbox on the roster table plays with the same
+    /// regiment types but none of that.
+    fn conquest_match(&self) -> bool {
+        self.conquest_units && !self.sandbox_roster
     }
 
     /// Play with the Conquest regiment types (`conquest`) or the Field
@@ -4574,7 +4622,15 @@ impl Running {
     /// so it is dropped; with the drill running, it leaves the new side alone.
     fn switch_side(&mut self) {
         let sides = self.parties.len().max(1) as PlayerId;
-        self.sandbox.side = (self.sandbox.side + 1) % sides;
+        self.set_side((self.sandbox.side + 1) % sides);
+    }
+
+    /// Command (and place for) `side`, if the sandbox has it.
+    fn set_side(&mut self, side: PlayerId) {
+        if usize::from(side) >= self.parties.len().max(1) {
+            return;
+        }
+        self.sandbox.side = side;
         // The ridden regiment may be one the new side can't see.
         self.leave_ride();
         self.selected.clear();
@@ -4715,7 +4771,7 @@ impl Running {
         let stats = *self.buildings.stats.get(usize::from(id))?;
         let tile = buildings::tile_for(at, stats.width, stats.depth);
         // Conquest asks what a worker may lay; the sandbox only the ground.
-        let why = if self.conquest_units {
+        let why = if self.conquest_match() {
             self.world.can_lay(self.sandbox.side, id, tile)
         } else {
             self.world.can_build(id, tile)
@@ -4798,7 +4854,10 @@ impl Running {
             let colour = color_of(parties, self.sandbox.side);
             buildings::push_rally(&self.world, h, colour, &mut self.instances);
         }
-        if !self.scenery.draws_nodes() {
+        if ![scenery::Model::GrubSeep, scenery::Model::MarrowVein]
+            .iter()
+            .all(|&m| self.scenery.draws(m))
+        {
             buildings::push_nodes(&self.world, &mut self.instances);
         }
         buildings::push_veins(
@@ -4858,8 +4917,37 @@ impl Running {
             .economy()
             .into_iter()
             .flat_map(gc_sim::Economy::nodes);
-        self.scenery
-            .set_nodes(nodes.map(|n| buildings::node_look(&n, |p| ground_of(map, p))));
+        let nodes = nodes.map(|n| buildings::node_look(&n, |p| ground_of(map, p)));
+        // Shaken regiments plant a morale standard at their centre (the
+        // Commander View has its own flags).
+        let viewer = self.sandbox.side;
+        let (prev, alpha, world, parties) =
+            (&self.prev_positions, self.alpha, &self.world, &self.parties);
+        let banners = world
+            .regiments
+            .iter()
+            .filter(|_| !self.commander)
+            .filter(|r| self.reveal_all || world.sees(viewer, r.handle))
+            .filter(|r| !world.is_worker(r.handle))
+            .filter_map(|r| {
+                let model = banner_model(r.morale)?;
+                let (pos, facing) = drawn_pose(prev, alpha, &r);
+                let team = color_of(parties, r.owner);
+                let tint = match r.morale {
+                    // The white rag of flight keeps its own colour.
+                    MoraleState::Routing => [128; 3],
+                    MoraleState::Shattered => team.map(|c| c / 3),
+                    _ => team.map(|c| c / 2),
+                };
+                Some(scenery::Extra {
+                    model,
+                    at: Vec3::new(pos.x, ground_of(map, pos), pos.y),
+                    turn: (facing.y.atan2(facing.x) / std::f32::consts::TAU * 256.0) as i32 as u8,
+                    scale: 1.0,
+                    tint,
+                })
+            });
+        self.scenery.set_extras(nodes.chain(banners));
         let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
         self.renderer.set_scenery_frame(instances, batches);
     }
@@ -5037,7 +5125,12 @@ impl Running {
     #[cfg(feature = "dev")]
     fn reload_data(&mut self) {
         if self.conquest_units {
-            self.say("Shift+R reloads the Field Battle units, so not in Conquest.".into());
+            let why = if self.sandbox_roster {
+                "Shift+R reloads the Field types in data/units.ron, not the roster table the sandbox runs on now. Choose a Field type in the Place panel first."
+            } else {
+                "Shift+R reloads the Field Battle units, so not in Conquest."
+            };
+            self.say(why.into());
             return;
         }
         let Some(dir) = sandbox::disk::data_dir() else {
@@ -5506,6 +5599,16 @@ fn digit(code: KeyCode) -> Option<usize> {
 /// the previous tick (just spawned, or the slot was reused) is drawn where
 /// it is. Picking, routes and the minimap use this too, so they agree with
 /// what the player sees.
+/// The standard a regiment in this morale state plants, if any.
+fn banner_model(m: MoraleState) -> Option<scenery::Model> {
+    match m {
+        MoraleState::Steady => None,
+        MoraleState::Wavering => Some(scenery::Model::BannerWavering),
+        MoraleState::Routing => Some(scenery::Model::BannerRouting),
+        MoraleState::Shattered => Some(scenery::Model::BannerShattered),
+    }
+}
+
 fn drawn_pose(
     prev_positions: &[Option<(RegimentHandle, Vec2, Vec2)>],
     alpha: f32,

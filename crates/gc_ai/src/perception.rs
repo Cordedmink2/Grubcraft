@@ -302,6 +302,20 @@ impl Perception {
         self.out_of_sight(u32::MAX)
     }
 
+    /// Those of [`Perception::last_seen`] seen within the last `ticks`.
+    pub fn last_seen_within(&self, ticks: u32) -> impl Iterator<Item = &Seen> {
+        self.out_of_sight(ticks)
+    }
+
+    /// The tick it last saw enemy `h`, if it has (the current tick for
+    /// one in sight; [`Perception::capture_for`] only).
+    pub fn seen_at(&self, h: RegimentHandle) -> Option<u32> {
+        self.memory
+            .iter()
+            .find(|(m, _)| m.handle == h)
+            .map(|&(_, t)| t)
+    }
+
     fn out_of_sight(&self, within: u32) -> impl Iterator<Item = &Seen> {
         let now = self.tick;
         self.memory

@@ -14,7 +14,7 @@ use gc_sim::{
 };
 
 use crate::Party;
-use crate::scenery::NodeLook;
+use crate::scenery::{Extra, Model};
 use gc_ui::conquest::node_color;
 use glam::{Vec2, Vec3};
 
@@ -512,17 +512,24 @@ fn node_fill(n: &gc_sim::NodeView) -> f32 {
 /// How a gathering spot looks as a scenery model ([`crate::scenery`]):
 /// shrunk from `NODE_MODEL_SCALE` to `NODE_LEAST` percent of it as it runs down, a touch
 /// bright while it holds (so it stands out on any land), dim when dry.
-pub fn node_look(n: &gc_sim::NodeView, ground: impl Fn(Vec2) -> f32) -> NodeLook {
+pub fn node_look(n: &gc_sim::NodeView, ground: impl Fn(Vec2) -> f32) -> Extra {
     let at = crate::from_fx_vec(n.at);
-    NodeLook {
-        marrow: n.resource == Resource::Marrow,
-        at: Vec3::new(at.x, ground(at), at.y),
-        scale: NODE_MODEL_SCALE * node_fill(n),
-        shade: if n.left == 0 {
-            NODE_DRY_SHADE
+    let shade = if n.left == 0 {
+        NODE_DRY_SHADE
+    } else {
+        NODE_SHADE
+    };
+    Extra {
+        model: if n.resource == Resource::Marrow {
+            Model::MarrowVein
         } else {
-            NODE_SHADE
+            Model::GrubSeep
         },
+        at: Vec3::new(at.x, ground(at), at.y),
+        // Turned by where it lies, so no two look the same way.
+        turn: (at.x * 37.0 + at.y * 91.0) as i64 as u8,
+        scale: NODE_MODEL_SCALE * node_fill(n),
+        tint: [shade; 3],
     }
 }
 

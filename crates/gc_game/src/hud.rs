@@ -1,6 +1,7 @@
 //! The battle HUD's glue: describe the match to `gc_ui::hud`, and carry out
 //! what it reports. Docs: docs/08-ui-ux.md#screen-layout-1080p-reference.
 
+use crate::{MatchKind, UnitTable, roster};
 use gc_sim::events::Event;
 use gc_sim::formation::GroupOrder;
 use gc_sim::{MoraleState, PlayerId, StructureHandle};
@@ -13,6 +14,7 @@ use gc_ui::hud::{
     Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, HelpScroll, Hud,
     HudData, HudEvent, HudInput, MinimapData, MinimapTerrain, Selection, SlotState, StatusStrip,
 };
+use gc_ui::placer::{PlaceLater, PlacePicker, PlaceRow, PlaceSide};
 use gc_ui::powers::{POWER_KEYS, PowerButton};
 use glam::{Vec2, Vec3};
 
@@ -183,6 +185,13 @@ pub struct HudState {
     hero_preview: bool,
     /// The Marshal's Scroll is open (H, F1 or the Help button).
     help: bool,
+    /// The Place panel is open (the Place button, or B in the sandbox).
+    pub placer: bool,
+    /// The Place panel's tab: 0 the Field types, 1 all factions (the roster).
+    pub place_tab: u8,
+    /// The faction chip chosen on the roster tab, an index into
+    /// `gc_ai::Faction::ALL`.
+    pub place_faction: u8,
 }
 
 impl HudState {
@@ -438,7 +447,7 @@ impl Running {
             "Replay"
         } else if self.battle.is_none() && self.online.is_none() {
             "Sandbox"
-        } else if self.conquest_units {
+        } else if self.conquest_match() {
             "Conquest"
         } else {
             "Field Battle"
@@ -456,7 +465,7 @@ impl Running {
     pub fn f1_key(&mut self) {
         // With the scroll open, F1 closes it like the scroll's own hint says.
         let idle = !self.hud.help
-            && self.conquest_units
+            && self.conquest_match()
             && self.watching.is_none()
             && self.idle_workers(self.sandbox.side).next().is_some();
         if idle {
@@ -479,13 +488,7 @@ impl Running {
                 continue;
             };
             let stats = &self.units.stats[r.unit as usize];
-            let this = if stats.range.raw() > 0 {
-                Icon::Bow
-            } else if stats.reach {
-                Icon::Spear
-            } else {
-                Icon::Sword
-            };
+            let this = troop_icon(stats);
             if n == 0 {
                 (unit, icon) = (Some(r.unit), this);
                 color = crate::color_of(&self.parties, r.owner);
@@ -586,7 +589,7 @@ impl Running {
             .is_none_or(|r| (r.tick, r.side) != (tick, side))
         {
             // Workers are Conquest's own, and a replay gives nobody orders.
-            let workers = self.conquest_units && self.watching.is_none();
+            let workers = self.conquest_match() && self.watching.is_none();
             self.hud.readout = self.top_bar().map(|top| Readout {
                 tick,
                 side,
@@ -642,6 +645,9 @@ impl Running {
         } else {
             Vec::new()
         };
+        let place = self.place_text();
+        let place_view = place.as_ref().map(PlaceText::view);
+        let placing = self.sandbox.placing && !self.sandbox.building_tool;
         let mode = self.mode_label();
         let side_name = party_name(&self.parties, side);
         let speed = format!("{}x", crate::SPEEDS[self.speed]);
@@ -897,6 +903,7 @@ impl Running {
             status,
             selection: selection.as_ref().map(|(name, s)| Selection { name, ..*s }),
             help: hud.help.then_some(HelpScroll { notes: &help_notes }),
+            picker: place_view.as_ref().map(|v| v.picker(hud.placer, placing)),
             hero,
             minimap: MinimapData {
                 map_tiles: map,
@@ -935,7 +942,10 @@ impl Running {
         self.hud.power_names = power_names;
         self.hud.power_details = power_details;
         // What to click for a power being aimed, else the ride's way out.
-        if let Some(text) = self.power_hint().or_else(|| self.ride_hint()) {
+        if let Some(text) = (self.power_hint())
+            .or_else(|| self.ride_hint())
+            .or_else(|| self.place_hint())
+        {
             draw_hint(&mut self.hud.draw, screen, &text);
         }
         upload_ui(
@@ -985,6 +995,11 @@ impl Running {
             HudEvent::IdleWorker => self.next_idle_worker(),
             HudEvent::ToggleHelp => self.toggle_help(),
             HudEvent::OpenGuide => self.open_guide(),
+            HudEvent::TogglePlacer => self.toggle_placer(),
+            HudEvent::PlaceUnit(i) => self.place_unit(i),
+            HudEvent::PlaceSide(i) => self.set_side(i as PlayerId),
+            HudEvent::PlaceTab(i) => self.place_tab_to(i),
+            HudEvent::PlaceFaction(i) => self.place_faction_to(i),
             // The queue gives back its last regiment, whichever is clicked.
             HudEvent::Unqueue(_) => self.untrain(),
             HudEvent::Ready => {
@@ -1096,7 +1111,7 @@ impl Running {
 
     /// F1: select the next idle worker and look at it.
     pub fn next_idle_worker(&mut self) {
-        if !self.conquest_units || self.watching.is_some() {
+        if !self.conquest_match() || self.watching.is_some() {
             return;
         }
         let idle: Vec<gc_sim::RegimentHandle> = self.idle_workers(self.sandbox.side).collect();
@@ -1133,12 +1148,356 @@ impl Running {
         Some(format!("Riding with {name} - Y or Esc to return"))
     }
 
+    /// Whether the Place panel and button are on offer: wherever B puts down
+    /// regiments (the sandbox and offline Field Battles).
+    pub fn can_place(&self) -> bool {
+        !self.conquest_match() && self.online.is_none() && self.watching.is_none()
+    }
+
+    /// The Place button, or B turning placing on: open or close the panel.
+    pub fn toggle_placer(&mut self) {
+        if !self.can_place() {
+            return;
+        }
+        self.hud.placer = !self.hud.placer;
+        self.sandbox.dirty = true;
+    }
+
+    /// Whether the Place panel offers its tabs: in the sandbox, which can run
+    /// on either unit table. (A Field Battle has the Field types only.)
+    fn place_tabs_on(&self) -> bool {
+        self.battle.is_none()
+    }
+
+    /// The tab showing: 0 the Field types, 1 all factions.
+    fn place_tab(&self) -> usize {
+        if self.place_tabs_on() {
+            usize::from(self.hud.place_tab.min(1))
+        } else {
+            0
+        }
+    }
+
+    /// The faction chosen on the roster tab.
+    fn place_faction(&self) -> gc_ai::Faction {
+        gc_ai::Faction::ALL[usize::from(self.hud.place_faction).min(gc_ai::Faction::ALL.len() - 1)]
+    }
+
+    /// The Place panel's rows as indices into the table they belong to:
+    /// every Field type, or the chosen faction's placeable roster troops.
+    fn place_ids(&self) -> Vec<usize> {
+        if self.place_tab() == 1 {
+            roster::placeable(self.data.conquest_units, self.place_faction())
+        } else {
+            (0..self.field_table().stats.len()).collect()
+        }
+    }
+
+    /// The Field types' table and the roster's, whichever is in play.
+    fn field_table(&self) -> &UnitTable {
+        if self.conquest_units {
+            &self.other_units
+        } else {
+            &self.units
+        }
+    }
+
+    fn roster_table(&self) -> &UnitTable {
+        if self.conquest_units {
+            &self.units
+        } else {
+            &self.other_units
+        }
+    }
+
+    /// A tab of the Place panel: show that table's troops.
+    fn place_tab_to(&mut self, tab: usize) {
+        if self.can_place() && self.place_tabs_on() {
+            self.hud.place_tab = tab.min(1) as u8;
+            self.sandbox.dirty = true;
+            self.ui_sound(sounds::UiSound::Select);
+        }
+    }
+
+    /// A faction chip of the roster tab.
+    fn place_faction_to(&mut self, i: usize) {
+        if self.can_place() && i < gc_ai::Faction::ALL.len() {
+            self.hud.place_faction = i as u8;
+            self.sandbox.dirty = true;
+            self.ui_sound(sounds::UiSound::Select);
+        }
+    }
+
+    /// Start the sandbox again on the roster table (`roster`) or the Field
+    /// types, with the same side to command. The field is cleared: the two
+    /// tables number their troops differently, so one world cannot hold both.
+    fn restart_sandbox(&mut self, roster: bool) {
+        let side = self.sandbox.side;
+        self.restart_match(if roster {
+            MatchKind::SandboxRoster
+        } else {
+            MatchKind::Sandbox
+        });
+        self.sandbox.side = side;
+        self.say(if roster {
+            "Sandbox started again on the roster table: troops of every faction. The field is clear."
+        } else {
+            "Sandbox started again on the Field types. The field is clear."
+        }
+        .into());
+    }
+
+    /// A row of the Place panel: choose that type and arm placing. A troop
+    /// of the table the sandbox is not running on restarts it on that one.
+    fn place_unit(&mut self, i: usize) {
+        if !self.can_place() {
+            return;
+        }
+        let want_roster = self.place_tab() == 1;
+        let Some(&unit) = self.place_ids().get(i) else {
+            return;
+        };
+        if want_roster != self.conquest_units {
+            if !self.place_tabs_on() {
+                return;
+            }
+            self.restart_sandbox(want_roster);
+        }
+        if unit >= self.units.stats.len() {
+            return;
+        }
+        self.sandbox.unit = unit as gc_sim::UnitId;
+        self.sandbox.placing = true;
+        self.sandbox.building_tool = false;
+        self.hud.armed = None;
+        self.sandbox.dirty = true;
+        self.ui_sound(sounds::UiSound::Select);
+    }
+
+    /// "Placing Yari Ashigaru for Red", under the cursor while placing.
+    fn place_hint(&self) -> Option<String> {
+        (self.can_place() && self.sandbox.placing && !self.sandbox.building_tool).then(|| {
+            format!(
+                "Placing {} for {} - click the field to place - B or Esc to stop",
+                self.units.names[self.sandbox.unit as usize],
+                party_name(&self.parties, self.sandbox.side)
+            )
+        })
+    }
+
+    /// The words of the Place panel, owned so the HUD can borrow them for a
+    /// frame; `None` where the panel is not on offer.
+    fn place_text(&self) -> Option<PlaceText> {
+        if !self.can_place() {
+            return None;
+        }
+        if !self.hud.placer {
+            return Some(PlaceText::default());
+        }
+        let tab = self.place_tab();
+        let ids = self.place_ids();
+        let faction = self.place_faction();
+        let table = if tab == 1 {
+            self.roster_table()
+        } else {
+            self.field_table()
+        };
+        let rows = ids
+            .iter()
+            .map(|&i| {
+                let s = &table.stats[i];
+                let speed = s.speed.raw() as f32 / 65536.0;
+                let cost = if tab == 1 {
+                    roster::cost_text(&self.data.conquest_units[i])
+                } else {
+                    format!("{} points", table.points[i])
+                };
+                let men = if s.models == 1 { "soldier" } else { "soldiers" };
+                let detail = format!("{} {men}  {speed:.1} tiles/s  {cost}", s.models);
+                (
+                    table.names[i].clone(),
+                    detail,
+                    table.factions[i].name(),
+                    troop_icon(s),
+                )
+            })
+            .collect();
+        let sides = (0..self.parties.len() as PlayerId)
+            .map(|side| {
+                (
+                    party_name(&self.parties, side),
+                    crate::color_of(&self.parties, side),
+                )
+            })
+            .collect();
+        // The troops of the roster that the sandbox leaves out, with why.
+        let later = if tab == 1 {
+            let (count, names) = roster::left_out_names(self.data.conquest_units, faction);
+            (count > 0)
+                .then(|| (faction.name(), faction_dye(faction), count, names))
+                .into_iter()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let chips = if tab == 1 {
+            gc_ai::Faction::ALL
+                .iter()
+                .map(|&f| (roster::short_name(f), faction_dye(f)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // Whether the table showing is the one the sandbox runs on.
+        let in_play = (tab == 1) == self.conquest_units;
+        let current = if in_play {
+            ids.iter()
+                .position(|&i| i == self.sandbox.unit as usize)
+                .unwrap_or(usize::MAX)
+        } else {
+            usize::MAX
+        };
+        Some(PlaceText {
+            rows,
+            sides,
+            later,
+            tabs: self.place_tabs_on(),
+            tab,
+            chips,
+            chip: usize::from(self.hud.place_faction),
+            reason: if tab == 1 { PLACE_REASON_ROSTER } else { "" },
+            current,
+            side: self.sandbox.side as usize,
+        })
+    }
+
     pub fn look_at(&mut self, p: Vec2) {
         let focus = p.clamp(Vec2::ZERO, Vec2::splat(self.camera.map_size));
         let height = self.heightmap.height_at(focus.x, focus.y);
         let camera = self.camera_mut();
         camera.focus = focus;
         camera.focus_height = height;
+    }
+}
+
+/// The Place panel's words, owned for the length of a frame.
+#[derive(Default)]
+struct PlaceText {
+    /// Name, second line, faction and picture of each placeable type.
+    rows: Vec<(String, String, &'static str, Icon)>,
+    sides: Vec<(String, [u8; 3])>,
+    /// Faction, its dye, how many troops and their names.
+    later: Vec<(&'static str, [u8; 3], usize, String)>,
+    /// Whether the tabs show, and which; the faction chips of the roster tab.
+    tabs: bool,
+    tab: usize,
+    chips: Vec<(&'static str, [u8; 3])>,
+    chip: usize,
+    /// Why the greyed troops are greyed.
+    reason: &'static str,
+    current: usize,
+    side: usize,
+}
+
+/// The Place panel's tabs.
+const PLACE_TABS: [&str; 2] = ["Field types", "All factions"];
+
+/// Why the roster's workers and caravan are greyed.
+const PLACE_REASON_ROSTER: &str = "Not regiments to fight with: workers gather and build, a caravan hauls Grub. Both need Conquest's economy.";
+
+/// [`PlaceText`] as the HUD borrows it.
+struct PlaceView<'a> {
+    rows: Vec<PlaceRow<'a>>,
+    sides: Vec<PlaceSide<'a>>,
+    later: Vec<PlaceLater<'a>>,
+    chips: Vec<PlaceSide<'a>>,
+    tabs: bool,
+    tab: usize,
+    chip: usize,
+    reason: &'a str,
+    current: usize,
+    side: usize,
+}
+
+impl PlaceText {
+    fn view(&self) -> PlaceView<'_> {
+        PlaceView {
+            rows: (self.rows.iter())
+                .map(|(name, detail, faction, icon)| PlaceRow {
+                    name,
+                    detail,
+                    faction,
+                    icon: *icon,
+                })
+                .collect(),
+            sides: (self.sides.iter())
+                .map(|(name, color)| PlaceSide {
+                    name,
+                    color: *color,
+                })
+                .collect(),
+            later: (self.later.iter())
+                .map(|(faction, color, count, names)| PlaceLater {
+                    faction,
+                    color: *color,
+                    count: *count,
+                    names,
+                })
+                .collect(),
+            chips: (self.chips.iter())
+                .map(|(name, color)| PlaceSide {
+                    name,
+                    color: *color,
+                })
+                .collect(),
+            tabs: self.tabs,
+            tab: self.tab,
+            chip: self.chip,
+            reason: self.reason,
+            current: self.current,
+            side: self.side,
+        }
+    }
+}
+
+impl PlaceView<'_> {
+    fn picker(&self, open: bool, placing: bool) -> PlacePicker<'_> {
+        PlacePicker {
+            open,
+            placing,
+            rows: &self.rows,
+            current: self.current,
+            sides: &self.sides,
+            side: self.side,
+            reason: self.reason,
+            later: &self.later,
+            tabs: if self.tabs { &PLACE_TABS } else { &[] },
+            tab: self.tab,
+            chips: &self.chips,
+            chip: self.chip,
+        }
+    }
+}
+
+/// A faction's colour on the Place panel: the tapestry dyes.
+fn faction_dye(f: gc_ai::Faction) -> [u8; 3] {
+    let [r, g, b, _] = match f {
+        gc_ai::Faction::EmberClans => gc_ui::ui::theme::MADDER,
+        gc_ai::Faction::Brood => gc_ui::ui::theme::WODE,
+        gc_ai::Faction::Choir => gc_ui::ui::theme::WOAD,
+        gc_ai::Faction::CarrionConcord => [112, 84, 120, 255],
+    };
+    [r, g, b]
+}
+
+/// The picture for a troop: a bow, a spear or a sword by how it fights.
+fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
+    if s.range.raw() > 0 {
+        Icon::Bow
+    } else if s.reach {
+        Icon::Spear
+    } else {
+        Icon::Sword
     }
 }
 

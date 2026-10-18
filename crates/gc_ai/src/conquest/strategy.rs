@@ -3,6 +3,7 @@
 //! battle side of a level is in [`crate::difficulty::Knobs`].
 
 use super::opening::Opening;
+use super::spymaster::Read;
 use crate::difficulty::Difficulty;
 use crate::perception::TICKS;
 
@@ -25,9 +26,44 @@ pub struct Strategy {
     /// How soon it takes its first expansion, percent of the time its
     /// greed sets; `None` never expands until its seeps run low.
     pub expand_percent: Option<u8>,
+    /// How it sends a scout to look at its enemies.
+    pub scouting: Scouting,
+    /// Changes its opening to answer what its scout has seen of an
+    /// enemy's build (docs/18-ai.md, "Difficulty": "counters what it
+    /// scouts").
+    pub adapts: bool,
+    /// In a game of several rival sides, goes for the leader first, or
+    /// one that attacked it, and leaves the others be.
+    pub gangs_up: bool,
+    /// Plans timing pushes: arms for a set time, then goes with
+    /// everything.
+    pub pushes: bool,
+    /// Sends a small fast raiding party at the enemy's workers once its
+    /// army is big enough to spare one.
+    pub raids: bool,
     /// What its opening changes while it lasts (docs/18-ai.md, "Steward"):
     /// the usual play outside one, see [`Strategy::opening`].
     pub early: Early,
+}
+
+/// The supply of the attack it sends at an enemy it has seen expand
+/// early.
+const PUNISH_WAVE: u8 = 10;
+
+/// How long it keeps answering an enemy's early build, ticks: past it, the
+/// usual rules.
+pub const ANSWER_UNTIL: u32 = (8.0 * 60.0 * TICKS) as u32;
+
+/// How a level scouts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Scouting {
+    /// Never sends a scout: it learns what its army runs into.
+    #[default]
+    Never,
+    /// Sends one early look at the enemy starts, then stops.
+    Early,
+    /// Keeps a scout out all game, looking where it knows least.
+    Always,
 }
 
 /// The early-game rules an opening sets, for its first minutes.
@@ -87,6 +123,34 @@ impl Strategy {
         }
     }
 
+    /// This plan answering `read`, an enemy's early build its scout saw
+    /// at tick `since`: towers and production against a coming attack, an
+    /// early attack against a fast expansion, an expansion of its own
+    /// against towers.
+    pub fn answer(self, read: Option<Read>, since: u32) -> Strategy {
+        let mut early = self.early;
+        match read {
+            None => return self,
+            Some(Read::Rush) => {
+                early.towers = early.towers.max(1);
+                early.producers = early.producers.max(2);
+                early.expand_at = None;
+                early.first_wave = None;
+            }
+            Some(Read::Greedy) => {
+                early.producers = early.producers.max(2);
+                early.expand_at = None;
+                early.first_wave =
+                    Some(early.first_wave.map_or(PUNISH_WAVE, |w| w.min(PUNISH_WAVE)));
+            }
+            Some(Read::Walls) => {
+                early.expand_at = Some(early.expand_at.map_or(since, |t| t.min(since)));
+                early.first_wave = None;
+            }
+        }
+        Strategy { early, ..self }
+    }
+
     pub fn of(level: Difficulty) -> Strategy {
         match level {
             Difficulty::Recruit => Strategy {
@@ -96,6 +160,11 @@ impl Strategy {
                 counters: false,
                 opportunist: false,
                 expand_percent: None,
+                scouting: Scouting::Never,
+                adapts: false,
+                gangs_up: false,
+                pushes: false,
+                raids: false,
                 early: Early::USUAL,
             },
             Difficulty::Veteran => Strategy {
@@ -105,6 +174,11 @@ impl Strategy {
                 counters: false,
                 opportunist: false,
                 expand_percent: Some(100),
+                scouting: Scouting::Early,
+                adapts: false,
+                gangs_up: false,
+                pushes: false,
+                raids: false,
                 early: Early::USUAL,
             },
             Difficulty::General => Strategy {
@@ -114,6 +188,11 @@ impl Strategy {
                 counters: true,
                 opportunist: false,
                 expand_percent: Some(100),
+                scouting: Scouting::Always,
+                adapts: true,
+                gangs_up: true,
+                pushes: false,
+                raids: false,
                 early: Early::USUAL,
             },
             Difficulty::Warlord => Strategy {
@@ -123,8 +202,37 @@ impl Strategy {
                 counters: true,
                 opportunist: true,
                 expand_percent: Some(70),
+                scouting: Scouting::Always,
+                adapts: true,
+                gangs_up: true,
+                pushes: true,
+                raids: true,
                 early: Early::USUAL,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_answers_a_rush_with_towers_and_a_fast_expansion_with_an_attack() {
+        let plan = Strategy::of(Difficulty::General);
+        assert_eq!(plan.answer(None, 100), plan);
+        let rush = plan.answer(Some(Read::Rush), 100).early;
+        assert!(rush.towers >= 1 && rush.producers >= 2 && rush.expand_at.is_none());
+        let greedy = plan.answer(Some(Read::Greedy), 100).early;
+        assert_eq!(greedy.first_wave, Some(PUNISH_WAVE));
+        let walls = plan.answer(Some(Read::Walls), 100).early;
+        assert_eq!(walls.expand_at, Some(100));
+        // An opening's own early expansion stays if it is sooner.
+        let mut early = plan;
+        early.early.expand_at = Some(50);
+        assert_eq!(
+            early.answer(Some(Read::Walls), 100).early.expand_at,
+            Some(50)
+        );
     }
 }

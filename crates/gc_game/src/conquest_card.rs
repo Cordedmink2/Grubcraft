@@ -55,7 +55,7 @@ pub struct Card {
 impl Running {
     /// The Conquest card for what is selected, if it has one.
     pub fn conquest_card(&self) -> Option<Card> {
-        if !self.conquest_units || self.watching.is_some() {
+        if !self.conquest_match() || self.watching.is_some() {
             return None;
         }
         let mut slots = [None; GRID_SLOTS];
@@ -287,7 +287,7 @@ impl Running {
     /// workers) sent to a seep, a vein or one of your buildings. Returns
     /// whether it was one.
     pub fn conquest_right_click(&mut self, at: Vec2) -> bool {
-        if !self.conquest_units || self.watching.is_some() {
+        if !self.conquest_match() || self.watching.is_some() {
             return false;
         }
         if let Some(structure) = self.picked_structure() {
