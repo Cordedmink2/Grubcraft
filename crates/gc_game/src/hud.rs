@@ -1195,15 +1195,17 @@ impl Running {
 
     /// The Field types' table and the roster's, whichever is in play.
     fn field_table(&self) -> &UnitTable {
-        if self.conquest_units {
-            &self.other_units
-        } else {
-            &self.units
-        }
+        self.table(false)
     }
 
     fn roster_table(&self) -> &UnitTable {
-        if self.conquest_units {
+        self.table(true)
+    }
+
+    /// The roster's table (`roster`) or the Field types', whichever slot
+    /// `use_units` left it in.
+    fn table(&self, roster: bool) -> &UnitTable {
+        if roster == self.conquest_units {
             &self.units
         } else {
             &self.other_units
@@ -1232,13 +1234,14 @@ impl Running {
     /// types, with the same side to command. The field is cleared: the two
     /// tables number their troops differently, so one world cannot hold both.
     fn restart_sandbox(&mut self, roster: bool) {
-        let side = self.sandbox.side;
+        let (side, faction) = (self.sandbox.side, self.hud.place_faction);
         self.restart_match(if roster {
             MatchKind::SandboxRoster
         } else {
             MatchKind::Sandbox
         });
         self.sandbox.side = side;
+        self.hud.place_faction = faction;
         self.say(if roster {
             "Sandbox started again on the roster table: troops of every faction. The field is clear."
         } else {

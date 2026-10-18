@@ -4714,8 +4714,22 @@ impl Running {
     /// [ and ]: the previous or next unit type, for placing and tuning.
     fn choose_unit(&mut self, step: i32) {
         let types = self.units.stats.len() as i32;
-        self.sandbox.unit =
-            (i32::from(self.sandbox.unit) + step).rem_euclid(types.max(1)) as UnitId;
+        let mut unit = i32::from(self.sandbox.unit);
+        // On the roster table, step past the troops the Place panel leaves
+        // out (workers, the caravan): they need Conquest's economy.
+        for _ in 0..types.max(1) {
+            unit = (unit + step).rem_euclid(types.max(1));
+            let left_out = self.sandbox_roster
+                && self
+                    .data
+                    .conquest_units
+                    .get(unit as usize)
+                    .is_some_and(|u| roster::left_out(u).is_some());
+            if !left_out {
+                break;
+            }
+        }
+        self.sandbox.unit = unit as UnitId;
         self.sandbox.dirty = true;
     }
 

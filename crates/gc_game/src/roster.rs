@@ -12,7 +12,7 @@
 //! The table holds no buildings (they have their own, and the sandbox's
 //! building tool places those) and no heroes yet.
 
-use gc_data::conquest::{Class, UNIT_BUILDS_ONLY};
+use gc_data::conquest::UNIT_BUILDS_ONLY;
 use gc_data::{ConquestUnitRecord, Faction};
 
 /// Troops the sandbox leaves out by name: not workers by class, yet not
@@ -21,7 +21,7 @@ const NOT_REGIMENTS: [&str; 1] = ["Caravan"];
 
 /// Why the sandbox does not place `unit`, or `None` when it can.
 pub fn left_out(unit: &ConquestUnitRecord) -> Option<&'static str> {
-    if unit.worker() || unit.class() == Class::Worker || unit.flags & UNIT_BUILDS_ONLY != 0 {
+    if unit.worker() || unit.flags & UNIT_BUILDS_ONLY != 0 {
         Some("a worker: it gathers and builds, which needs Conquest's economy")
     } else if NOT_REGIMENTS.contains(&unit.name()) {
         Some("a caravan: it hauls Grub, it is not a fighting regiment")
