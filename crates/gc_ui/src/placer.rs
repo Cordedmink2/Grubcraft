@@ -175,16 +175,19 @@ fn plan(field: Rect, p: &PlacePicker) -> Option<Plan> {
     // The troop names are indented under their faction's swatch.
     let name_chars = chars.saturating_sub(2).max(1);
     let room = field.h - 2 * MARGIN;
+    // Wrapped once; each tier only keeps fewer of the name lines.
+    let wrapped_reason = wrap(p.reason, chars);
+    let wrapped_names: Vec<Vec<String>> = (p.later.iter())
+        .map(|g| wrap(g.names, name_chars))
+        .collect();
     for tier in Tier::ALL {
-        let reason = if !tier.greyed() {
-            Vec::new()
+        let reason = if tier.greyed() {
+            wrapped_reason.clone()
         } else {
-            wrap(p.reason, chars)
+            Vec::new()
         };
-        let later: Vec<Vec<String>> = p
-            .later
-            .iter()
-            .map(|g| ellipsis(wrap(g.names, name_chars), tier.lines(), name_chars))
+        let later: Vec<Vec<String>> = (wrapped_names.iter())
+            .map(|names| ellipsis(names.clone(), tier.lines(), name_chars))
             .collect();
         let rows = p.rows.len() as i32 * (tier.row_h() + tier.gap());
         let mut h = p.rows_top() + PAD + rows;
@@ -243,13 +246,15 @@ fn row_rect(r: Rect, tier: Tier, p: &PlacePicker, i: usize) -> Rect {
     )
 }
 
+/// Button `i` of a line of them: `w` by `h`, `gap` apart, the first `indent`
+/// in from the panel's padding, at `y`.
+fn slot(r: Rect, indent: i32, y: i32, i: usize, (w, h): (i32, i32), gap: i32) -> Rect {
+    Rect::new(r.x + PAD + indent + i as i32 * (w + gap), y, w, h)
+}
+
+/// Side `i`'s swatch, after the "Side" label.
 fn side_rect(r: Rect, i: usize) -> Rect {
-    Rect::new(
-        r.x + PAD + 52 + i as i32 * (SIDE_SIZE + 6),
-        r.y + PAD + 26 + 2,
-        SIDE_SIZE,
-        SIDE_SIZE,
-    )
+    slot(r, 52, r.y + PAD + 26 + 2, i, (SIDE_SIZE, SIDE_SIZE), 6)
 }
 
 /// What the tabs say when the mouse rests on them.
@@ -258,15 +263,102 @@ const TAB_TIPS: [&str; 2] = [
     "Every fighting troop of the four rosters (workers and the Caravan are left out). Picking one starts the sandbox again on the roster table: the field is cleared.",
 ];
 
-/// Button `i` of `n` in a strip at `y`, each `w` wide.
-fn tab_rect(r: Rect, y: i32, n: usize, i: usize, w: i32) -> Rect {
+/// Button `i` of `n` in a strip (tabs or chips) at `y`, sharing the panel's
+/// width.
+fn strip_rect(r: Rect, y: i32, n: usize, i: usize) -> Rect {
     let gap = if n > 3 { 4 } else { 6 };
-    Rect::new(r.x + PAD + i as i32 * (w + gap), y, w, STRIP_H - 6)
+    let w = (r.w - 2 * PAD - gap * (n as i32 - 1)) / n as i32;
+    slot(r, 0, y, i, (w, STRIP_H - 6), gap)
 }
 
 /// The close box at the panel's top right.
 fn close_rect(r: Rect) -> Rect {
     Rect::new(r.right() - PAD - 18, r.y + PAD - 4, 18, 18)
+}
+
+/// One button of a strip: a tab (no dye) or a faction chip (its dye).
+struct StripItem<'a> {
+    name: &'a str,
+    dye: Option<[u8; 3]>,
+    tip: &'a str,
+}
+
+/// What distinguishes the tab strip from the chip strip.
+struct StripKind {
+    /// Added to [`WIDGET_PLACE_SIDE`] for the buttons' widget ids.
+    widget: u32,
+    /// The tooltip id of the first button.
+    tip_id: u32,
+    chosen: usize,
+    event: fn(usize) -> HudEvent,
+}
+
+/// Draw a strip of buttons at `at.1` in panel `at.0`, report clicks and note
+/// a tooltip for the one under the mouse.
+#[allow(clippy::too_many_arguments)]
+fn strip(
+    draw: &mut DrawList,
+    press: &mut Press,
+    input: HudInput,
+    at: (Rect, i32),
+    kind: &StripKind,
+    items: &[StripItem],
+    events: &mut Vec<HudEvent>,
+    tip: &mut Option<PlaceTip>,
+) {
+    let (r, y) = at;
+    let mouse = input.mouse;
+    for (i, item) in items.iter().enumerate() {
+        let b = strip_rect(r, y, items.len(), i);
+        let (clicked, down) = press.widget(
+            WIDGET_PLACE_SIDE + kind.widget + i as u32,
+            b,
+            mouse,
+            input.left_pressed,
+            input.left_released,
+        );
+        if clicked {
+            events.push((kind.event)(i));
+        }
+        let hot = b.contains(mouse.0, mouse.1);
+        let chosen = i == kind.chosen;
+        let (fill, ink, pad) = if let Some(dye) = item.dye {
+            if chosen {
+                draw.rect(b.inset(-3), theme::WELD);
+                draw.border(b.inset(-3), 2, theme::INK);
+            }
+            let dye = rgb(dye);
+            let fill = if down {
+                mix(dye, theme::INK, 0.3)
+            } else if hot {
+                mix(dye, [255, 250, 230, 255], 0.25)
+            } else {
+                dye
+            };
+            (fill, [255, 250, 235, 255], 6)
+        } else {
+            let fill = match (down, hot, chosen) {
+                (true, _, _) => mix(theme::WELD, theme::INK, 0.2),
+                (_, _, true) => theme::WELD,
+                (_, true, _) => mix(theme::LINEN_DK, theme::LINEN, 0.5),
+                _ => theme::LINEN_DK,
+            };
+            (fill, theme::INK, 8)
+        };
+        draw.boxed(b, fill, 2);
+        let label = fit(item.name, ((b.w - pad) / CELL_W).max(1) as usize);
+        let tw = text_width(&label, 1);
+        draw.text_bold(b.x + (b.w - tw) / 2, b.y + 5, 1, ink, &label);
+        if hot {
+            *tip = Some(PlaceTip {
+                id: kind.tip_id + i as u32,
+                anchor: b,
+                name: item.name.to_string(),
+                key: "click".into(),
+                text: item.tip.into(),
+            });
+        }
+    }
 }
 
 /// Draw the panel when it is open, report clicks, and note in `over` the
@@ -385,89 +477,55 @@ pub(crate) fn draw(
     // The tabs, and under them the roster's faction chips.
     let mut strip_y = r.y + PAD + 26 + 34;
     if !p.tabs.is_empty() {
-        let w = (r.w - 2 * PAD - 6 * (p.tabs.len() as i32 - 1)) / p.tabs.len() as i32;
-        for (i, name) in p.tabs.iter().enumerate() {
-            let b = tab_rect(r, strip_y, p.tabs.len(), i, w);
-            let (clicked, down) = press.widget(
-                WIDGET_PLACE_SIDE + 2000 + i as u32,
-                b,
-                mouse,
-                input.left_pressed,
-                input.left_released,
-            );
-            if clicked {
-                events.push(HudEvent::PlaceTab(i));
-            }
-            let hot = b.contains(mouse.0, mouse.1);
-            let fill = match (down, hot, i == p.tab) {
-                (true, _, _) => mix(theme::WELD, theme::INK, 0.2),
-                (_, _, true) => theme::WELD,
-                (_, true, _) => mix(theme::LINEN_DK, theme::LINEN, 0.5),
-                _ => theme::LINEN_DK,
-            };
-            draw.boxed(b, fill, 2);
-            let label = fit(name, ((b.w - 8) / CELL_W).max(1) as usize);
-            let tw = text_width(&label, 1);
-            draw.text_bold(b.x + (b.w - tw) / 2, b.y + 5, 1, theme::INK, &label);
-            if hot {
-                tip = Some(PlaceTip {
-                    id: 340 + i as u32,
-                    anchor: b,
-                    name: (*name).to_string(),
-                    key: "click".into(),
-                    text: TAB_TIPS.get(i).copied().unwrap_or("").into(),
-                });
-            }
-        }
+        let items: Vec<StripItem> = (p.tabs.iter().enumerate())
+            .map(|(i, &name)| StripItem {
+                name,
+                dye: None,
+                tip: TAB_TIPS.get(i).copied().unwrap_or(""),
+            })
+            .collect();
+        let kind = StripKind {
+            widget: 2000,
+            tip_id: 340,
+            chosen: p.tab,
+            event: HudEvent::PlaceTab,
+        };
+        strip(
+            draw,
+            press,
+            input,
+            (r, strip_y),
+            &kind,
+            &items,
+            events,
+            &mut tip,
+        );
         strip_y += STRIP_H;
     }
     if !p.chips.is_empty() {
-        let w = (r.w - 2 * PAD - 4 * (p.chips.len() as i32 - 1)) / p.chips.len() as i32;
-        for (i, c) in p.chips.iter().enumerate() {
-            let b = tab_rect(r, strip_y, p.chips.len(), i, w);
-            let (clicked, down) = press.widget(
-                WIDGET_PLACE_SIDE + 3000 + i as u32,
-                b,
-                mouse,
-                input.left_pressed,
-                input.left_released,
-            );
-            if clicked {
-                events.push(HudEvent::PlaceFaction(i));
-            }
-            let hot = b.contains(mouse.0, mouse.1);
-            if i == p.chip {
-                draw.rect(b.inset(-3), theme::WELD);
-                draw.border(b.inset(-3), 2, theme::INK);
-            }
-            let dye = rgb(c.color);
-            let fill = if down {
-                mix(dye, theme::INK, 0.3)
-            } else if hot {
-                mix(dye, [255, 250, 230, 255], 0.25)
-            } else {
-                dye
-            };
-            draw.boxed(b, fill, 2);
-            let label = fit(c.name, ((b.w - 6) / CELL_W).max(1) as usize);
-            let tw = text_width(&label, 1);
-            draw.text_bold(
-                b.x + (b.w - tw) / 2,
-                b.y + 5,
-                1,
-                [255, 250, 235, 255],
-                &label,
-            );
-            if hot {
-                tip = Some(PlaceTip {
-                    id: 350 + i as u32,
-                    anchor: b,
-                    name: c.name.to_string(),
-                    key: "click".into(),
-                    text: "Show this faction's troops.".into(),
-                });
-            }
-        }
+        let items: Vec<StripItem> = (p.chips.iter())
+            .map(|c| StripItem {
+                name: c.name,
+                dye: Some(c.color),
+                tip: "Show this faction's troops.",
+            })
+            .collect();
+        let kind = StripKind {
+            widget: 3000,
+            tip_id: 350,
+            chosen: p.chip,
+            event: HudEvent::PlaceFaction,
+        };
+        strip(
+            draw,
+            press,
+            input,
+            (r, strip_y),
+            &kind,
+            &items,
+            events,
+            &mut tip,
+        );
     }
 
     // The types.
@@ -866,14 +924,12 @@ mod tests {
         let panel = panel_rect(FIELD, &p).unwrap();
         let top = panel.y + PAD + 26 + 34;
         for i in 0..TABS.len() {
-            let w = (panel.w - 2 * PAD - 6) / 2;
-            let b = tab_rect(panel, top, 2, i, w);
+            let b = strip_rect(panel, top, 2, i);
             let (events, _, _) = frame(FIELD, &p, click_at(b));
             assert_eq!(events, vec![HudEvent::PlaceTab(i)]);
         }
         for i in 0..CHIPS.len() {
-            let w = (panel.w - 2 * PAD - 12) / 4;
-            let b = tab_rect(panel, top + STRIP_H, 4, i, w);
+            let b = strip_rect(panel, top + STRIP_H, 4, i);
             let (events, _, _) = frame(FIELD, &p, click_at(b));
             assert_eq!(events, vec![HudEvent::PlaceFaction(i)]);
         }
