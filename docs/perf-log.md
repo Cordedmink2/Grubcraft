@@ -2,6 +2,16 @@
 
 Before and after numbers from each milestone's performance pass ([12 · Performance](12-performance.md#the-loop)). Newest first.
 
+## Battle pace (2026-10-18)
+
+Slower fights ([05](05-combat.md#battle-pace)) keep more soldiers alive and locked in melee for longer, so each benchmark does more work over the same ticks. No code got slower; the baseline was re-blessed.
+
+| Scenario (bench gate, instructions) | Before | After |
+|---|---|---|
+| `drill` (150 a player, 1,200 ticks) | 6.20 G | 6.41 G (+3%) |
+| `pathing-storm` | 2.80 G | 2.93 G (+5%) |
+| `field-8000pt-2v2` | 8.04 G | 8.69 G (+8%) |
+
 ## Fewer looks for friends in the way (2026-10-17)
 
 CI's macOS runner failed the drill's 2 ms p99 budget a few times after the last pass (2.34 to 2.76 ms; the same code has also passed there at 1.2 ms). In the cloud container, the drill's slowest ticks fall in its busiest stretch (ticks 800 to 2,200, blocks crowding through the passes). There a tick paid for about 235 friend-in-the-way checks, each visiting about 50 regiments in the spatial hash, on top of a full route-search budget.
