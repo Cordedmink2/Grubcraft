@@ -51,7 +51,7 @@ fn place(v: SceneryIn) -> vec3<f32> {
     let local = vec3<f32>(v.pos.xyz) * (v.scale / POSITION_SCALE);
     let flat_xz = v.at + left * local.x + v.facing * local.z;
     // The whole model stands at the height under its base; it is not draped.
-    let ground = max(height_at(v.at), g.misc.x - 0.05);
+    let ground = max(surface_height(v.at), g.misc.x - 0.05);
     var sway = vec2<f32>(0.0);
     // Rocks and bases do not move: skip the wind for them.
     if v.color.a > 0.0 {

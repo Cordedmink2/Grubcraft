@@ -28,6 +28,7 @@ const _: () = assert!(
         && record::BUILDING_VEINS == gc_sim::structures::VEINS
         && record::BUILDING_NEEDS_POWER == gc_sim::structures::NEEDS_POWER
         && record::BUILDING_HONOR == gc_sim::structures::HONOR
+        && record::BUILDING_TRADE_POST == gc_sim::structures::TRADE_POST
         && record::MAX_REACH_TILES == gc_sim::structures::MAX_REACH
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );
@@ -55,6 +56,8 @@ const GHOST_GLOW: u8 = 110;
 /// (in tiles); it shrinks to `NODE_LEAST` percent as it runs down.
 const NODE_HEIGHT: f32 = 0.35;
 const NODE_WIDTH: f32 = 1.8;
+/// A temporary Grub pile's height, against a node's.
+const PILE_HEIGHT: f32 = 0.5;
 const NODE_LEAST: f32 = 40.0;
 /// Seeps and veins glow in their minimap colours; dry ones don't.
 const NODE_GLOW: u8 = 90;
@@ -492,10 +495,16 @@ pub fn push_nodes(world: &World, out: &mut Vec<BoxInstance>) {
         let [r, g, b] = node_color(n.resource == Resource::Marrow, n.left == 0);
         let width = NODE_WIDTH * node_fill(&n);
         let glow = if n.left == 0 { 0 } else { NODE_GLOW };
+        // A Grub pile (a strongbox spilled) is a low heap, not a mound.
+        let height = if n.temporary {
+            NODE_HEIGHT * PILE_HEIGHT
+        } else {
+            NODE_HEIGHT
+        };
         out.push(BoxInstance {
             pos: crate::from_fx_vec(n.at).to_array(),
             facing: [0.0, 1.0],
-            size: [width, NODE_HEIGHT, width],
+            size: [width, height, width],
             color: [r, g, b, glow],
             lift: 0.0,
         });

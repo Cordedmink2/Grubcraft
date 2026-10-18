@@ -14,7 +14,7 @@
 // build_time (seconds at Standard tempo), hp, armour (Fortified, Structure,
 // Living), footprint (tiles across and deep), supply (cap it adds), flags
 // (DropOffGrub, DropOffMarrow, PowersField, NeedsPower, AntiAir, Larvae,
-// Veins, Honor), field (tiles a PowersField's power or Veins' root-veins reach from
+// Veins, Honor, TradePost), field (tiles a PowersField's power or Veins' root-veins reach from
 // its edge), tunes (Choir: Some((node: Seeps or Veins, tiles))), links
 // (Choir: tiles apart, centre to centre, that two link into chords), attack
 // (towers: range in tiles, damage per shot, seconds between shots, shots per
@@ -26,7 +26,8 @@
 // Unit fields: tier (1 to 3; 0 for summoned units), class, cost (Grub and
 // Marrow), supply, train_time (seconds; for Brood evolutions the cocoon
 // time), from (Building("..."), Evolves("parent") or Summoned("by what")),
-// flags, abilities, stats.
+// flags, trade (Concord caravans: Some((base: Grub per delivery, per_tile_tenths:
+// tenths of a Grub more for each whole tile of route, 12 for 1.2))), abilities, stats.
 //
 // Ability fields: name, kind (Passive, Aura, Toggle, Active, Autocast,
 // Order, Ultimate), effect (plain words; hero ranks written 1/2/3), primitives (the
@@ -98,8 +99,8 @@
             armour: Fortified,
             footprint: (5, 5),
             supply: 12,
-            // Grub too until caravans are built; then Grub comes by trade only.
-            flags: [DropOffGrub, DropOffMarrow],
+            // Grub comes by trade (caravans), so no DropOffGrub: Clerks mine Marrow only.
+            flags: [DropOffMarrow],
             effect: "Main building. Trains Clerks and Caravans. Caravan routes start here, and Clerks bring Marrow here.",
         ),
         (
@@ -113,8 +114,8 @@
             armour: Fortified,
             footprint: (5, 5),
             supply: 22,
-            // Grub too until caravans are built; then Grub comes by trade only.
-            flags: [DropOffGrub, DropOffMarrow],
+            // Grub comes by trade (caravans), so no DropOffGrub: Clerks mine Marrow only.
+            flags: [DropOffMarrow],
             effect: "Tier 2: Gravewardens, Debt Collectors, Lantern Wraiths and a second hero.",
         ),
         (
@@ -128,8 +129,8 @@
             armour: Fortified,
             footprint: (5, 5),
             supply: 32,
-            // Grub too until caravans are built; then Grub comes by trade only.
-            flags: [DropOffGrub, DropOffMarrow],
+            // Grub comes by trade (caravans), so no DropOffGrub: Clerks mine Marrow only.
+            flags: [DropOffMarrow],
             effect: "Tier 3: monsters, top upgrades and a third hero.",
         ),
         (
@@ -141,8 +142,9 @@
             hp: 1200,
             armour: Structure,
             footprint: (4, 4),
-            // Grub too until caravans are built, like the Counting House.
-            flags: [DropOffGrub, DropOffMarrow],
+            // Grub comes by trade: no DropOffGrub. TradePost: its owner's caravans
+            // run to it at half rate.
+            flags: [DropOffMarrow, TradePost],
             effect: "Your own trade post for caravan routes (half rate), and a Marrow drop-off for expansions.",
         ),
         (
@@ -238,7 +240,7 @@
                 (
                     name: "Mine",
                     kind: Passive,
-                    effect: "Carries 5 Marrow per trip to a Counting House.",
+                    effect: "Carries 5 Marrow per trip to a Counting House. Clerks mine Marrow only; Grub comes by trade.",
                     primitives: [Gather],
                 ),
                 (
@@ -272,11 +274,12 @@
             supply: 2,
             train_time: 20.0,
             from: Building("Counting House"),
+            trade: Some((base: 40, per_tile_tenths: 12)),
             abilities: [
                 (
                     name: "Trade Run",
                     kind: Autocast,
-                    effect: "Shuttles between the Counting House and a trade post; each delivery pays 40 Grub plus 1.2 per tile of route (full rate at a hamlet or an ally, half at a Waystation).",
+                    effect: "Shuttles between the Counting House and a trade post; each delivery pays 40 Grub plus 1.2 per tile of route (full rate at a hamlet or an ally, half at a Waystation; an ally also gains 20% of it). Another order stops the run.",
                     primitives: [Economy],
                 ),
                 (

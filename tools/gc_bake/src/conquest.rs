@@ -297,6 +297,7 @@ fn building_record(
         },
         tune_tiles: b.tunes.as_ref().map_or(0, |t| t.tiles),
         link_tiles: b.links,
+        pad: [0; 3],
     })
 }
 
@@ -356,6 +357,8 @@ impl UnitContext<'_> {
             trained_at,
             evolves_from,
             flags: u.flags.iter().fold(0, |bits, &f| bits | unit_flag(f)),
+            trade_base: u.trade.as_ref().map_or(0, |t| t.base),
+            trade_tenths: u.trade.as_ref().map_or(0, |t| t.per_tile_tenths),
             tier: u.tier,
             class: unit_class(u.class) as u8,
             supply: u.supply,
@@ -391,7 +394,7 @@ fn building_armour(a: rosters::Armour) -> cq::Armour {
     }
 }
 
-fn building_flag(f: rosters::BuildingFlag) -> u8 {
+fn building_flag(f: rosters::BuildingFlag) -> u16 {
     match f {
         rosters::BuildingFlag::DropOffGrub => cq::BUILDING_DROP_OFF_GRUB,
         rosters::BuildingFlag::DropOffMarrow => cq::BUILDING_DROP_OFF_MARROW,
@@ -401,6 +404,7 @@ fn building_flag(f: rosters::BuildingFlag) -> u8 {
         rosters::BuildingFlag::Larvae => cq::BUILDING_LARVAE,
         rosters::BuildingFlag::Veins => cq::BUILDING_VEINS,
         rosters::BuildingFlag::Honor => cq::BUILDING_HONOR,
+        rosters::BuildingFlag::TradePost => cq::BUILDING_TRADE_POST,
     }
 }
 

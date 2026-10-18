@@ -13,7 +13,7 @@ pub const MAX_HEIGHT: i64 = 14;
 /// Ground steeper than this many hundredths of a tile of rise per tile is
 /// a cliff no regiment climbs; over half of it is slow going that routes
 /// avoid.
-const CLIFF_RISE_PER_TILE: i64 = 120;
+pub const CLIFF_RISE_PER_TILE: i64 = 120;
 /// Water deeper than this (hundredths of a tile) can't be waded;
 /// shallower water is a ford.
 const FORD_DEPTH: i64 = 35;
@@ -204,6 +204,36 @@ impl Map {
         cells
     }
 
+    /// The half-tile cells of [`Map::nav_costs`] that are blocked for being a
+    /// cliff (a rise over `CLIFF_RISE_PER_TILE`), as 1, and the rest 0; the
+    /// same rule and grid, but without the cells blocked for deep water or
+    /// thicket. For drawing cliffs (renderer relief, cliff rocks): they are
+    /// ground no regiment can climb, and everything else stays the true
+    /// height. Not read by the simulation.
+    pub fn cliff_cells(&self) -> Vec<u8> {
+        let cells_per_tile = gc_sim::nav::CELLS_PER_TILE as u32;
+        let step = SAMPLES_PER_TILE / cells_per_tile;
+        let size = self.side();
+        let side = self.tiles * cells_per_tile;
+        let hundredths = |n: i64| (n * i64::from(u16::MAX) / (MAX_HEIGHT * 100)) as u32;
+        let cliff = hundredths(CLIFF_RISE_PER_TILE) / cells_per_tile;
+        let mut cells = Vec::with_capacity((side * side) as usize);
+        for cy in 0..side {
+            for cx in 0..side {
+                let (mut lo, mut hi) = (u32::MAX, 0);
+                for sz in cy * step..=(cy + 1) * step {
+                    for sx in cx * step..=(cx + 1) * step {
+                        let h = u32::from(self.samples[(sz * size + sx) as usize]);
+                        lo = lo.min(h);
+                        hi = hi.max(h);
+                    }
+                }
+                cells.push(u8::from(hi - lo > cliff));
+            }
+        }
+        cells
+    }
+
     /// Each tile's ground, row by row, from the walkable-ground grid
     /// (`nav`, from [`Map::nav_costs`]): the worst of its cells, blocked
     /// over ford over steep over open, and the outermost ring of tiles
@@ -341,6 +371,19 @@ pub fn fnv1a(bytes: impl IntoIterator<Item = u8>) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every cliff cell is blocked on the nav grid: the renderer and the
+    /// cliff rocks draw what units really can't climb.
+    #[test]
+    fn cliff_cells_are_blocked_nav_cells() {
+        let map = Map::from_def(&crate::shipped("ribcage_pass").unwrap());
+        let (cliffs, nav) = (map.cliff_cells(), map.nav_costs());
+        assert_eq!(cliffs.len(), nav.len());
+        assert!(cliffs.contains(&1), "the map has cliffs");
+        for (c, n) in cliffs.iter().zip(&nav) {
+            assert!(*c == 0 || *n == gc_sim::nav::BLOCKED);
+        }
+    }
 
     #[test]
     fn heights_survive_the_trip_through_samples() {

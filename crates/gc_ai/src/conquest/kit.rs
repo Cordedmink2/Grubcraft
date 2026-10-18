@@ -4,7 +4,7 @@
 //! [`Kit`] from the baked data and the map; the simulation itself knows
 //! nothing of factions.
 
-use gc_sim::structures::{BuildingStats, DROP_OFF_GRUB, LARVAE, Role, VEINS};
+use gc_sim::structures::{BuildingStats, DROP_OFF_GRUB, LARVAE, Role, TRADE_POST, VEINS};
 use gc_sim::{BuildingId, ConquestUnit, Resource, UnitId, World};
 use glam::Vec2;
 
@@ -50,15 +50,21 @@ pub enum EconomyStyle {
     /// Buildings work the nodes near them with no workers, and workers
     /// only build (the Choir's Resonators and Siphons).
     Tuned,
+    /// Grub comes by trade: caravans shuttle between the main building and
+    /// a trade post, and workers mine Marrow only (the Carrion Concord).
+    Caravans,
 }
 
 impl EconomyStyle {
-    /// The style of a faction whose workers are of type `worker`.
-    pub fn of(worker: &ConquestUnit) -> EconomyStyle {
+    /// The style of a faction whose workers are of type `worker`, and that
+    /// has a unit that trades, `caravan`, or none.
+    pub fn of(worker: &ConquestUnit, caravan: Option<&ConquestUnit>) -> EconomyStyle {
         if worker.burrows {
             EconomyStyle::Veins
         } else if worker.builds_only {
             EconomyStyle::Tuned
+        } else if caravan.is_some() {
+            EconomyStyle::Caravans
         } else {
             EconomyStyle::Shared
         }
@@ -107,6 +113,24 @@ impl Kit {
     /// Whether `id` is one of this faction's fighting regiment types.
     pub fn is_fighter(&self, id: UnitId) -> bool {
         self.unit(id).is_some_and(|u| u.fighter)
+    }
+
+    /// The unit type that trades: the Concord's Caravan.
+    pub fn caravan(&self) -> Option<&KitUnit> {
+        self.units.iter().find(|u| u.unit.trades())
+    }
+
+    /// Whether `id` is one of this faction's trading unit types.
+    pub fn is_caravan(&self, id: UnitId) -> bool {
+        self.unit(id).is_some_and(|u| u.unit.trades())
+    }
+
+    /// The building that is a trade post of its owner's own: the Concord's
+    /// Waystation.
+    pub fn waystation(&self) -> Option<&KitBuilding> {
+        self.buildings
+            .iter()
+            .find(|b| b.stats.flags & TRADE_POST != 0)
     }
 
     /// The tier-1 main building (the one the match starts with).

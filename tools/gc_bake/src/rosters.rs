@@ -114,6 +114,9 @@ pub enum BuildingFlag {
     NeedsPower,
     /// Clans: earns its owner Honor while it stands (docs/03, "Honor").
     Honor,
+    /// Concord: a trade post its owner's caravans run to, at half rate
+    /// (docs/03, "Economy: trade routes and tithes").
+    TradePost,
 }
 
 #[derive(Deserialize)]
@@ -138,8 +141,23 @@ pub struct Unit {
     pub from: From,
     #[serde(default)]
     pub flags: Vec<Flag>,
+    /// Concord: what a caravan's delivery pays (docs/03, "Economy: trade
+    /// routes and tithes").
+    #[serde(default)]
+    pub trade: Option<Trade>,
     pub abilities: Vec<Ability>,
     pub stats: Stats,
+}
+
+/// What a trading unit's delivery pays at a full-rate trade post.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Trade {
+    /// Grub for every delivery.
+    pub base: u16,
+    /// Grub more for each whole tile of route, in tenths of a Grub: 1.2 is
+    /// written 12.
+    pub per_tile_tenths: u16,
 }
 
 #[derive(Deserialize)]

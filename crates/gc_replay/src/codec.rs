@@ -10,7 +10,8 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::structures::{Armour, Breaker, Role, TowerAttack, VEINS};
 use gc_sim::{
     BuildingStats, Command, ConquestUnit, Formation, Mass, Meter, NodeSetup, PlayerCommand,
-    PowerEffect, PowerStats, PowerTarget, RegimentHandle, Resource, StructureHandle, UnitStats,
+    PowerEffect, PowerStats, PowerTarget, RegimentHandle, Resource, StructureHandle, TradePost,
+    UnitStats,
 };
 
 #[derive(Default)]
@@ -103,7 +104,7 @@ impl Writer {
         self.u8(b.width);
         self.u8(b.depth);
         self.u8(b.supply);
-        self.u8(b.flags);
+        self.var(u64::from(b.flags));
         match b.attack {
             Some(a) => {
                 self.bool(true);
@@ -178,6 +179,23 @@ impl Writer {
         self.bool(u.consumed);
         self.bool(u.burrows);
         self.bool(u.builds_only);
+        self.var(u64::from(u.trade_base));
+        self.var(u64::from(u.trade_tenths));
+        self.var(u64::from(u.cannot_bank));
+    }
+
+    /// A caravan's trade post (format 24 on).
+    pub fn trade_post(&mut self, post: TradePost) {
+        match post {
+            TradePost::Hamlet(i) => {
+                self.u8(0);
+                self.var(u64::from(i));
+            }
+            TradePost::Structure(h) => {
+                self.u8(1);
+                self.structure(h);
+            }
+        }
     }
 
     pub fn node(&mut self, n: &NodeSetup) {
@@ -264,6 +282,11 @@ impl Writer {
                 self.u8(11);
                 self.handle(regiment);
                 self.var(u64::from(node));
+            }
+            Command::Trade { regiment, post } => {
+                self.u8(23);
+                self.handle(regiment);
+                self.trade_post(post);
             }
             Command::Build {
                 regiment,
@@ -483,7 +506,11 @@ impl<'a> Reader<'a> {
             width: self.u8()?,
             depth: self.u8()?,
             supply: self.u8()?,
-            flags: self.u8()?,
+            flags: if format >= 24 {
+                self.var_as()?
+            } else {
+                u16::from(self.u8()?)
+            },
             attack: if self.bool()? {
                 Some(TowerAttack {
                     range: self.fx()?,
@@ -579,7 +606,21 @@ impl<'a> Reader<'a> {
         if format >= 19 {
             u.builds_only = self.bool()?;
         }
+        if format >= 24 {
+            u.trade_base = self.var_as()?;
+            u.trade_tenths = self.var_as()?;
+            u.cannot_bank = self.var_as()?;
+        }
         Some(u)
+    }
+
+    /// A caravan's trade post (format 24 on).
+    pub fn trade_post(&mut self) -> Option<TradePost> {
+        Some(match self.u8()? {
+            0 => TradePost::Hamlet(self.var_as()?),
+            1 => TradePost::Structure(self.structure()?),
+            _ => return None,
+        })
     }
 
     pub fn node(&mut self) -> Option<NodeSetup> {
@@ -648,6 +689,10 @@ impl<'a> Reader<'a> {
                 building: self.var_as()?,
                 tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
             },
+            23 => Command::Trade {
+                regiment: self.handle()?,
+                post: self.trade_post()?,
+            },
             13 => Command::Construct {
                 regiment: self.handle()?,
                 structure: self.structure()?,
@@ -701,6 +746,53 @@ impl<'a> Reader<'a> {
 mod tests {
     use super::*;
 
+    /// A building's flags were a byte before format 24 and are a
+    /// variable-length number after it (the Waystation's trade post flag is
+    /// bit 256); a number under 128 takes one byte either way, so a file of
+    /// format 23 reads as it did.
+    #[test]
+    fn a_buildings_flags_read_as_older_formats_wrote_them() {
+        let building = |flags| BuildingStats {
+            role: Role::Outpost,
+            tier: 1,
+            upgrades_from: None,
+            cost_grub: 200,
+            cost_marrow: 0,
+            build_ticks: 1200,
+            hp: 1200,
+            armour: Armour::Structure,
+            width: 4,
+            depth: 4,
+            supply: 0,
+            flags,
+            attack: None,
+            field: 0,
+            tunes: None,
+            links: 0,
+        };
+        let drop_off_marrow = 2;
+        let trade_post = gc_sim::structures::TRADE_POST;
+        for (flags, formats) in [
+            (drop_off_marrow, 23..=24),
+            (drop_off_marrow | trade_post, 24..=24),
+        ] {
+            let mut w = Writer::default();
+            w.building(&building(flags));
+            for format in formats {
+                let mut r = Reader::new(&w.buf);
+                let read = r.building(format).expect("it reads");
+                assert_eq!(read.flags, flags, "format {format}");
+                assert_eq!(r.remaining(), 0, "format {format}");
+            }
+        }
+        // A flag past a byte takes two.
+        let mut one = Writer::default();
+        one.building(&building(drop_off_marrow));
+        let mut two = Writer::default();
+        two.building(&building(trade_post));
+        assert_eq!(two.buf.len(), one.buf.len() + 1);
+    }
+
     #[test]
     fn deployment_and_building_commands_round_trip() {
         let commands = [
@@ -735,6 +827,23 @@ mod tests {
                     generation: 3,
                 },
                 node: 65_535,
+            },
+            Command::Trade {
+                regiment: RegimentHandle {
+                    index: 7,
+                    generation: 3,
+                },
+                post: TradePost::Hamlet(300),
+            },
+            Command::Trade {
+                regiment: RegimentHandle {
+                    index: 8,
+                    generation: 0,
+                },
+                post: TradePost::Structure(StructureHandle {
+                    index: 12,
+                    generation: 5,
+                }),
             },
             Command::Build {
                 regiment: RegimentHandle {

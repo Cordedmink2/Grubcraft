@@ -160,6 +160,13 @@ fn rosters_follow_the_design_rules() {
                     "{at}: only workers build"
                 );
             }
+            // Only the Concord's Caravan trades, for 40 Grub and 1.2 a tile.
+            let caravan = faction == FactionDef::CarrionConcord && u.stats.name == "Caravan";
+            assert_eq!(
+                u.trade.as_ref().map(|t| (t.base, t.per_tile_tenths)),
+                caravan.then_some((40, 12)),
+                "{at}: trade"
+            );
             assert!(!u.abilities.is_empty(), "{at}: no abilities");
             for a in &u.abilities {
                 check_ability(file, name, a);
@@ -424,6 +431,19 @@ fn buildings_follow_the_design_rules() {
                 brood && (b.role == Role::Main || b.name == "Pustule"),
                 "{at}: root-veins"
             );
+            // Only the Concord's Waystation is a trade post, and its Grub
+            // comes by caravan, so none of its buildings takes Grub.
+            assert_eq!(
+                b.flags.contains(&BuildingFlag::TradePost),
+                faction == FactionDef::CarrionConcord && b.name == "Waystation",
+                "{at}: trade post"
+            );
+            if faction == FactionDef::CarrionConcord {
+                assert!(
+                    !b.flags.contains(&BuildingFlag::DropOffGrub),
+                    "{at}: the Concord's Grub comes by caravan"
+                );
+            }
             let choir = faction == FactionDef::Choir;
             if brood || choir {
                 assert!(
@@ -503,10 +523,15 @@ fn buildings_follow_the_design_rules() {
             );
             prev = next;
         }
-        // An expansion takes the same drop-offs as the main building.
+        // An expansion takes the same drop-offs as the main building (the
+        // Concord's Waystation is a trade post besides).
         for b in r.buildings.iter().filter(|b| b.role == Role::Outpost) {
+            let flags: Vec<_> = (b.flags.iter())
+                .filter(|&&f| f != BuildingFlag::TradePost)
+                .collect();
             assert_eq!(
-                b.flags, base.flags,
+                flags,
+                base.flags.iter().collect::<Vec<_>>(),
                 "{file}: {}: drop-offs differ from the main building",
                 b.name
             );

@@ -12,7 +12,7 @@ Generated 2026-10-12 right after download. SHA-256 of every file, so a later re-
 | Ant, author mujtaba-io | "CC0" | opengameart.org/content/ant-3d-model-rigging-animated-low-poly-ish |
 | Alien Bug, author CDmir | "CC0" | opengameart.org/content/alien-bug-animated |
 | Quaternius Ultimate Monsters, Ultimate Modular Men, Easy Enemy Pack, LowPoly RPG Characters | Pack pages say "License: CC0". The packs contain no licence file. quaternius.com/license.html describes a Quaternius Asset License that forbids redistributing raw assets, so they stay out of the repo | quaternius.com/packs/<pack>.html |
-| ambientCG Ground054, Grass001, Rock035 | ambientCG API reports CC0 for all assets | ambientcg.com |
+| ambientCG Ground054, Grass001, Rock035 (Rock035 also baked to 512px PNGs for the terrain shader, see the last section) | ambientCG API reports CC0 for all assets | ambientcg.com |
 | Battle-cry voices, read 2026-10-16: Voice Clip Pack - Male Adventurer RPG (author field wolfwoot, uploaded by 2DPIXX; the page asks for credit as "Brandon Song", optional) | "License(s): CC0" and "Feel free to use for whatever type of project." on the OpenGameArt page | opengameart.org/content/voice-clip-pack-male-adventurer-rpg |
 | Battlecry, author spookymodem | "License(s): CC-BY 3.0" on the OpenGameArt page ("A deep warcry before charging into battle."). **Credit required**: it is in CREDITS.md and on the credits screen | opengameart.org/content/battlecry |
 | Zombie / Skeleton / Monster Voice Effects (author field ArcadeParty, uploaded by Snabisch) | "License(s): CC0" on the OpenGameArt page | opengameart.org/content/zombie-skeleton-monster-voice-effects |
@@ -1011,4 +1011,14 @@ af92e332e0dca7315bb677e4ae508f7692ccac6ce47056292466557efb9b37f9  grubcraft/yari
 2162cc4df9a8e8345af173edcf72e074ded3818576c96217934b552ea2130f5b  grubcraft/yari-ashigaru/normal.png
 33eaa7f76427af9534cedb2187d1d3d83d9a21179786c78b88bbeddbbf116f56  grubcraft/yari-ashigaru/orm.png
 14379d257d7141a56e46c55cbf9631805d6300d7763269c8c2d3efbafaf5279f  grubcraft/yari-ashigaru/team.png
+```
+
+## Baked for the terrain shader (in the repo, `assets/textures/terrain/`)
+
+`rock035_albedo.png`, `rock035_normal.png` and `rock035_rough.png` are baked at 512x512 from `ambientcg/Rock035.zip` (CC0, ambientCG): the `_Color.jpg`, `_NormalGL.jpg` (OpenGL convention) and `_Roughness.jpg` maps from the 1K JPG set, resized with Pillow LANCZOS. Albedo and normal are 8-bit RGB, roughness is 8-bit L, all saved with `optimize=True`.
+
+```
+b8f571527019ec203a4cabe83c765a719bedf65f19ab49dd3960d6d7be4a835e  rock035_albedo.png
+f8a349e092a2f6079e8ad554ce41cdc512f6d42d8cfd072921d19f2d8cb36a4b  rock035_normal.png
+e75ae4879124912d3b82b1c4df5628344678ad35e6f4d41c289bd889a234def2  rock035_rough.png
 ```

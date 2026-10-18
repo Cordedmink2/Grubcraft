@@ -5,7 +5,8 @@
 //! start.
 
 use gc_data::conquest::{
-    Class, ConquestUnitRecord, NONE, UNIT_BUILDS_ONLY, UNIT_BURROWS, UNIT_CONSUMED, UNIT_HATCHES,
+    BUILDING_DROP_OFF_GRUB, BUILDING_DROP_OFF_MARROW, Class, ConquestUnitRecord, NONE,
+    UNIT_BUILDS_ONLY, UNIT_BURROWS, UNIT_CONSUMED, UNIT_HATCHES,
 };
 use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
@@ -140,7 +141,28 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
         consumed: u.flags & UNIT_CONSUMED != 0,
         burrows: u.worker() && u.flags & UNIT_BURROWS != 0,
         builds_only: u.worker() && u.flags & UNIT_BUILDS_ONLY != 0,
+        trade_base: u.trade_base,
+        trade_tenths: u.trade_tenths,
+        cannot_bank: 0,
     }
+}
+
+/// The Conquest unit table of `data`: each record as [`unit_of`] has it,
+/// and which drop-offs its faction's buildings lack.
+pub fn units_of(data: &GameData) -> Vec<ConquestUnit> {
+    let drop_offs = BUILDING_DROP_OFF_GRUB | BUILDING_DROP_OFF_MARROW;
+    data.conquest_units
+        .iter()
+        .map(|u| {
+            let has = (data.buildings.iter())
+                .filter(|b| b.faction() == u.faction())
+                .fold(0, |flags, b| flags | b.flags);
+            ConquestUnit {
+                cannot_bank: !has & drop_offs,
+                ..unit_of(u)
+            }
+        })
+        .collect()
 }
 
 /// The battle stats of every Conquest unit type, by unit type: the unit
@@ -226,9 +248,10 @@ pub fn plan(
     }
     ConquestRecord {
         buildings: table.stats.clone(),
-        units: data.conquest_units.iter().map(unit_of).collect(),
+        units: units_of(data),
         structures: ConquestSetup::default().structures,
         nodes: nodes_of(map),
+        posts: posts_of(map),
         start,
         gather_percent: tempo.gather_percent(),
         build_percent: tempo.build_percent(),
@@ -272,6 +295,17 @@ pub fn nodes_of(map: &Map) -> Vec<NodeSetup> {
                 amount,
             })
         })
+        .collect()
+}
+
+/// The map's neutral trade posts, in the map's order, each at its tile's
+/// centre: its Villages, Towns and Bazaar, where Concord caravans trade at
+/// full rate (`gc_sim::economy`).
+pub fn posts_of(map: &Map) -> Vec<FxVec2> {
+    map.objects
+        .iter()
+        .filter(|o| matches!(o.kind, Kind::Village | Kind::Town | Kind::Bazaar))
+        .map(|o| tile_centre(o.at))
         .collect()
 }
 
@@ -494,7 +528,7 @@ pub(crate) fn ring(f: Foot, gap: i32) -> impl Iterator<Item = (i32, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gc_sim::{Capacities, MatchSetup};
+    use gc_sim::{Capacities, MatchSetup, TICKS_PER_SECOND, TradePost};
     use gc_ui::lobby::SHIPPED_CONQUEST_MAPS as SHIPPED_CONQUEST;
 
     fn data() -> GameData<'static> {
@@ -752,6 +786,85 @@ mod tests {
         let now: Vec<_> = world.idle_workers(0).collect();
         assert_eq!(now.len(), workers - 1);
         assert!(!now.contains(&idle[0]));
+    }
+
+    /// The map's Villages, Towns and Bazaar are the trade posts, at their
+    /// tile centres in the map's order; the simulation gets them whole,
+    /// and every start has a hamlet within a caravan's reach (docs/03).
+    #[test]
+    fn the_maps_villages_are_the_trade_posts() {
+        for choice in [0, 1, SHIPPED_CONQUEST + 1] {
+            let map = make_map(choice, 3);
+            let posts = posts_of(&map);
+            let want: Vec<_> = map
+                .objects
+                .iter()
+                .filter(|o| matches!(o.kind, Kind::Village | Kind::Town | Kind::Bazaar))
+                .map(|o| tile_centre(o.at))
+                .collect();
+            assert_eq!(posts, want, "map {choice}");
+            let (world, plan, _) = world_on(&map, &[Faction::CarrionConcord], Tempo::Standard);
+            assert_eq!(plan.posts, posts);
+            assert_eq!(world.trade_posts(), &posts[..]);
+            for (sx, sy) in map.starts() {
+                let near = posts.iter().any(|p| {
+                    let (x, y) = (
+                        crate::fx_to_f32(p.x) - sx as f32,
+                        crate::fx_to_f32(p.y) - sy as f32,
+                    );
+                    x.hypot(y) <= 110.0
+                });
+                assert!(near, "map {choice}: a hamlet within reach of ({sx}, {sy})");
+            }
+        }
+    }
+
+    /// A Concord caravan sent to a hamlet from the opening brings Grub
+    /// home; a Clans worker can't trade, and a post that isn't one is
+    /// refused.
+    #[test]
+    fn a_concord_caravan_sent_to_a_hamlet_brings_grub_home() {
+        let data = data();
+        let map = make_map(0, 0);
+        let factions = [Faction::EmberClans, Faction::CarrionConcord];
+        let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
+        let opening = opening(&data, &table, &map, &world, &factions);
+        world.tick(&opening);
+        let caravan = world.idle_traders(1).next().expect("a Concord caravan");
+        assert!(world.trades(caravan));
+        let hand = world.idle_workers(0).next().unwrap();
+        assert!(!world.trades(hand));
+        let (sx, sy) = player_starts(&map, 2)[1];
+        let nearest = (0..world.trade_posts().len())
+            .min_by_key(|&i| {
+                let p = world.trade_posts()[i];
+                let (dx, dy) = (p.x.floor_int() - sx, p.y.floor_int() - sy);
+                dx * dx + dy * dy
+            })
+            .unwrap();
+        let post = TradePost::Hamlet(nearest as u16);
+        assert!(world.is_trade_post(1, post));
+        let trade = |player, regiment, post| PlayerCommand {
+            player,
+            command: Command::Trade { regiment, post },
+        };
+        let stats = world.tick(&[
+            trade(0, hand, post),
+            trade(1, caravan, TradePost::Hamlet(999)),
+        ]);
+        assert_eq!(stats.commands_rejected, 2);
+        let stats = world.tick(&[trade(1, caravan, post)]);
+        assert_eq!(stats.commands_rejected, 0);
+        assert_eq!(world.trades_at(caravan), Some(post));
+        let before = world.bank(1).unwrap().grub;
+        for _ in 0..(150 * TICKS_PER_SECOND) {
+            world.tick(&[]);
+        }
+        assert!(
+            world.bank(1).unwrap().grub > before,
+            "its caravan brought Grub home: {before} then {}",
+            world.bank(1).unwrap().grub
+        );
     }
 
     /// `--conquest four_teeth` seats four sides, one of each faction, as

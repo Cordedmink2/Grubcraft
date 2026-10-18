@@ -178,20 +178,23 @@ pub enum Refusal {
 }
 
 /// Bits of [`BuildingStats::flags`].
-pub const DROP_OFF_GRUB: u8 = 1;
-pub const DROP_OFF_MARROW: u8 = 2;
+pub const DROP_OFF_GRUB: u16 = 1;
+pub const DROP_OFF_MARROW: u16 = 2;
 /// Choir: powers buildings around it.
-pub const POWERS_FIELD: u8 = 4;
+pub const POWERS_FIELD: u16 = 4;
 /// Its attack can hit flying units.
-pub const ANTI_AIR: u8 = 8;
+pub const ANTI_AIR: u16 = 8;
 /// Brood: holds larvae and grows them (see [`crate::larvae`]).
-pub const LARVAE: u8 = 16;
+pub const LARVAE: u16 = 16;
 /// Brood: spreads root-veins (see [`crate::veins`]).
-pub const VEINS: u8 = 32;
+pub const VEINS: u16 = 32;
 /// Choir: works only inside a field of power (see [`crate::power`]).
-pub const NEEDS_POWER: u8 = 64;
+pub const NEEDS_POWER: u16 = 64;
 /// Clans: earns its owner Honor while it stands (see [`crate::honor`]).
-pub const HONOR: u8 = 128;
+pub const HONOR: u16 = 128;
+/// Concord: its owner's caravans can trade at it, at half rate (see
+/// [`crate::economy`]).
+pub const TRADE_POST: u16 = 256;
 /// The furthest a field or tuning reaches, in tiles.
 pub const MAX_REACH: u8 = 30;
 
@@ -227,9 +230,9 @@ pub struct BuildingStats {
     pub depth: u8,
     /// What it adds to its owner's supply cap.
     pub supply: u8,
-    /// `DROP_OFF_*`, [`POWERS_FIELD`], [`ANTI_AIR`], [`LARVAE`], [`VEINS`]
-    /// and [`NEEDS_POWER`] bits.
-    pub flags: u8,
+    /// `DROP_OFF_*`, [`POWERS_FIELD`], [`ANTI_AIR`], [`LARVAE`], [`VEINS`],
+    /// [`NEEDS_POWER`], [`HONOR`] and [`TRADE_POST`] bits.
+    pub flags: u16,
     pub attack: Option<TowerAttack>,
     /// How far its field of power ([`POWERS_FIELD`]) or its root-veins
     /// ([`VEINS`]) reach from its edge, in tiles.
@@ -279,7 +282,7 @@ impl BuildingStats {
         h.u8(self.width);
         h.u8(self.depth);
         h.u8(self.supply);
-        h.u8(self.flags);
+        h.u16(self.flags);
         if let Some(a) = self.attack {
             h.i32(a.range.raw());
             h.u16(a.damage);
@@ -348,7 +351,7 @@ impl StructureView {
 }
 
 /// Centre of the footprint `[x, y, width, depth]` (tiles).
-fn footprint_centre([x, y, w, d]: [i32; 4]) -> FxVec2 {
+pub(crate) fn footprint_centre([x, y, w, d]: [i32; 4]) -> FxVec2 {
     FxVec2::new(
         Fx::from_int(x) + Fx::from_ratio(w, 2),
         Fx::from_int(y) + Fx::from_ratio(d, 2),
@@ -704,7 +707,7 @@ impl Structures {
     pub(crate) fn finished_with(
         &self,
         owner: PlayerId,
-        flag: u8,
+        flag: u16,
     ) -> impl Iterator<Item = usize> + '_ {
         self.finished_of(owner)
             .filter(move |&i| self.stats_of(i).flags & flag != 0)
@@ -756,7 +759,7 @@ impl Structures {
     }
 
     /// The flags of building slot `i`'s type.
-    pub(crate) fn flags_of(&self, i: usize) -> u8 {
+    pub(crate) fn flags_of(&self, i: usize) -> u16 {
         self.stats_of(i).flags
     }
 
@@ -883,17 +886,35 @@ impl Structures {
         [x, y, i32::from(b.width), i32::from(b.depth)]
     }
 
+    /// The footprint of the finished building of `owner`'s nearest `here`
+    /// that `keep` takes (by slot).
+    fn nearest_finished(
+        &self,
+        owner: PlayerId,
+        here: FxVec2,
+        mut keep: impl FnMut(usize) -> bool,
+    ) -> Option<[i32; 4]> {
+        self.finished_of(owner)
+            .filter(|&i| keep(i))
+            .map(|i| self.footprint(i))
+            .min_by_key(|&foot| (nearest_point(foot, here) - here).length_sq_raw())
+    }
+
     /// The footprint of the standing building of `owner`'s nearest `here`
     /// whose flags have `flag` (a drop-off for what a worker carries).
     pub(crate) fn nearest_drop_off(
         &self,
         owner: PlayerId,
-        flag: u8,
+        flag: u16,
         here: FxVec2,
     ) -> Option<[i32; 4]> {
-        self.finished_with(owner, flag)
-            .map(|i| self.footprint(i))
-            .min_by_key(|&foot| (nearest_point(foot, here) - here).length_sq_raw())
+        self.nearest_finished(owner, here, |i| self.stats_of(i).flags & flag != 0)
+    }
+
+    /// The footprint of the finished main building of `owner`'s nearest
+    /// `here`: where a caravan's cargo comes home to.
+    pub(crate) fn nearest_main(&self, owner: PlayerId, here: FxVec2) -> Option<[i32; 4]> {
+        self.nearest_finished(owner, here, |i| self.stats_of(i).role == Role::Main)
     }
 
     /// `owner`'s supply cap: what their finished buildings add, up to

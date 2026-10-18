@@ -18,10 +18,10 @@ pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Pack path of the faction powers table (the faction meters' abilities).
 pub const POWERS_PATH: &str = "data/powers";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 6;
+pub const BUILDING_SCHEMA: u32 = 7;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
-pub const CONQUEST_UNIT_SCHEMA: u32 = 4;
+pub const CONQUEST_UNIT_SCHEMA: u32 = 5;
 /// Bump whenever [`PowerRecord`]'s layout or meaning changes.
 pub const POWER_SCHEMA: u32 = 3;
 /// An index field that names nothing.
@@ -85,33 +85,25 @@ impl Armour {
 }
 
 /// Bits of [`BuildingRecord::flags`].
-pub const BUILDING_DROP_OFF_GRUB: u8 = 1;
-pub const BUILDING_DROP_OFF_MARROW: u8 = 2;
+pub const BUILDING_DROP_OFF_GRUB: u16 = 1;
+pub const BUILDING_DROP_OFF_MARROW: u16 = 2;
 /// Choir: powers buildings around it.
-pub const BUILDING_POWERS_FIELD: u8 = 4;
+pub const BUILDING_POWERS_FIELD: u16 = 4;
 /// Its attack can hit flying units.
-pub const BUILDING_ANTI_AIR: u8 = 8;
+pub const BUILDING_ANTI_AIR: u16 = 8;
 /// Brood: holds larvae and grows them (schema 2).
-pub const BUILDING_LARVAE: u8 = 16;
+pub const BUILDING_LARVAE: u16 = 16;
 /// Brood: spreads root-veins (schema 3).
-pub const BUILDING_VEINS: u8 = 32;
+pub const BUILDING_VEINS: u16 = 32;
 /// Choir: works only inside a field of power (schema 4).
-pub const BUILDING_NEEDS_POWER: u8 = 64;
+pub const BUILDING_NEEDS_POWER: u16 = 64;
 /// Clans: earns its owner Honor while it stands (schema 6).
-pub const BUILDING_HONOR: u8 = 128;
-// Every bit of `flags` is a flag now, so any byte is valid; a ninth flag
-// needs a wider field (and a schema bump).
-const _: () = assert!(
-    BUILDING_DROP_OFF_GRUB
-        | BUILDING_DROP_OFF_MARROW
-        | BUILDING_POWERS_FIELD
-        | BUILDING_ANTI_AIR
-        | BUILDING_LARVAE
-        | BUILDING_VEINS
-        | BUILDING_NEEDS_POWER
-        | BUILDING_HONOR
-        == u8::MAX
-);
+pub const BUILDING_HONOR: u16 = 128;
+/// Concord: a trade post its owner's caravans can run to, at half rate
+/// (schema 7; the field is 16 bits wide from then on).
+pub const BUILDING_TRADE_POST: u16 = 256;
+/// Every flag there is; a record with any other bit set is refused.
+const BUILDING_FLAGS: u16 = (BUILDING_TRADE_POST << 1) - 1;
 
 /// [`BuildingRecord::tunes`]: the nodes a building tunes (schema 4).
 pub const TUNES_NOTHING: u8 = 0;
@@ -141,6 +133,8 @@ pub struct BuildingRecord {
     pub attack_damage: u16,
     /// Ticks between a tower's volleys.
     pub attack_reload_ticks: u16,
+    /// `BUILDING_*` bits (16 bits wide from schema 7).
+    pub flags: u16,
     /// A [`Faction`] as `u8`.
     pub faction: u8,
     /// A [`Role`] as `u8`.
@@ -156,8 +150,6 @@ pub struct BuildingRecord {
     /// What it adds to the supply cap (for a main building's upgrade, the
     /// total for that tier).
     pub supply: u8,
-    /// `BUILDING_*` bits.
-    pub flags: u8,
     /// Shots in a tower's volley.
     pub attack_shots: u8,
     /// How many of these the faction starts Conquest with.
@@ -173,6 +165,8 @@ pub struct BuildingRecord {
     /// one owner link (and three mutually linked form a chord); 0 for a
     /// building that doesn't link (schema 5).
     pub link_tiles: u8,
+    /// Always 0 (the record is padded to a multiple of 4 bytes).
+    pub pad: [u8; 3],
 }
 
 impl BuildingRecord {
@@ -274,6 +268,12 @@ pub struct ConquestUnitRecord {
     pub evolves_from: u16,
     /// `UNIT_*` bits.
     pub flags: u16,
+    /// Concord caravans (schema 5): what a delivery pays at a full-rate
+    /// trade post, in Grub, and what it adds for each whole tile of route,
+    /// in tenths of a Grub (1.2 is 12); both 0 for a unit that doesn't
+    /// trade.
+    pub trade_base: u16,
+    pub trade_tenths: u16,
     /// 1 to 3; 0 for summoned units.
     pub tier: u8,
     /// A [`Class`] as `u8`.
@@ -298,6 +298,12 @@ impl ConquestUnitRecord {
 
     pub fn worker(&self) -> bool {
         self.class() == Class::Worker
+    }
+
+    /// Whether it shuttles cargo between a main building and a trade post
+    /// (a Concord Caravan).
+    pub fn trades(&self) -> bool {
+        self.trade_base > 0
     }
 }
 
@@ -467,6 +473,9 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     if b.width == 0 || b.depth == 0 || b.width > MAX_FOOTPRINT || b.depth > MAX_FOOTPRINT {
         return Err("footprint sides are 1 to 5 tiles");
     }
+    if b.flags & !BUILDING_FLAGS != 0 || b.pad != [0; 3] {
+        return Err("unknown building flags");
+    }
     let fields = b.flags & (BUILDING_POWERS_FIELD | BUILDING_VEINS) != 0;
     if fields != (b.field_tiles > 0) || b.field_tiles > MAX_REACH_TILES {
         return Err(
@@ -537,6 +546,9 @@ pub fn validate_conquest_unit(
     if u.flags & !UNIT_FLAGS != 0 {
         return Err("unknown unit flags");
     }
+    if (u.trade_base > 0) != (u.trade_tenths > 0) {
+        return Err("a trader has a base pay and a pay per tile, and nothing else has either");
+    }
     if u.trained_at != NONE && usize::from(u.trained_at) >= buildings {
         return Err("trained_at is past the end of the building table");
     }
@@ -556,9 +568,9 @@ mod tests {
     #[test]
     fn record_layouts_are_stable() {
         // Changing these means bumping the schemas.
-        assert_eq!(size_of::<BuildingRecord>(), 64);
+        assert_eq!(size_of::<BuildingRecord>(), 68);
         assert_eq!(align_of::<BuildingRecord>(), 4);
-        assert_eq!(size_of::<ConquestUnitRecord>(), 92);
+        assert_eq!(size_of::<ConquestUnitRecord>(), 96);
         assert_eq!(align_of::<ConquestUnitRecord>(), 4);
         assert_eq!(size_of::<PowerRecord>(), 48);
         assert_eq!(align_of::<PowerRecord>(), 4);

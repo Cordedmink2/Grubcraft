@@ -108,19 +108,20 @@ fn buildings() -> [BuildingStats; 4] {
         tunes: None,
         links: 0,
     };
-    let small = |role: Role, cost_grub: u16, build_ticks: u16, side: u8, flags: u8| BuildingStats {
-        role,
-        tier: 1,
-        cost_grub,
-        build_ticks,
-        hp: 1500,
-        armour: Armour::Structure,
-        width: side,
-        depth: side,
-        supply: 0,
-        flags,
-        ..hive
-    };
+    let small =
+        |role: Role, cost_grub: u16, build_ticks: u16, side: u8, flags: u16| BuildingStats {
+            role,
+            tier: 1,
+            cost_grub,
+            build_ticks,
+            hp: 1500,
+            armour: Armour::Structure,
+            width: side,
+            depth: side,
+            supply: 0,
+            flags,
+            ..hive
+        };
     [
         hive,
         small(Role::Production, 150, 600, 3, 0),

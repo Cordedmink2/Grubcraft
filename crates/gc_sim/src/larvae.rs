@@ -28,7 +28,7 @@ pub const LARVA_TICKS: u32 = 12 * TICKS_PER_SECOND;
 impl Structures {
     /// Larvae a building of type flags `flags` starts with when put up
     /// whole.
-    pub(crate) fn whole_larvae(flags: u8) -> u8 {
+    pub(crate) fn whole_larvae(flags: u16) -> u8 {
         if flags & LARVAE != 0 { LARVA_CAP } else { 0 }
     }
 

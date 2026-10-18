@@ -43,7 +43,9 @@ pub mod wilds;
 
 pub use def::{Kind, MapDef, Pos, SizeClass, Symmetry};
 pub use generate::{START_PLATEAUS, plateaus};
-pub use map::{Ground, MAX_HEIGHT, Map, Placed, SAMPLES_PER_TILE, fnv1a, map_hash};
+pub use map::{
+    CLIFF_RISE_PER_TILE, Ground, MAX_HEIGHT, Map, Placed, SAMPLES_PER_TILE, fnv1a, map_hash,
+};
 
 /// The maps a Field Battle can be played on, in the lobby's order: the
 /// seeded map, a random map from each recipe, a random recipe, then the

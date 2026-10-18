@@ -51,7 +51,7 @@ pub struct SceneryBatch {
 pub(crate) fn shader_source() -> String {
     format!(
         "{}\nconst SWAY_MAX: f32 = {:?};\nconst POSITION_SCALE: f32 = {:?};\n{}",
-        include_str!("shaders/world.wgsl"),
+        crate::rock::world_source(),
         SWAY_MAX,
         POSITION_SCALE,
         include_str!("shaders/scenery.wgsl")

@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 
 use gc_assets::Pack;
 use gc_data::conquest::{
-    BUILDING_DROP_OFF_GRUB, BUILDING_HONOR, Class, METER_HONOR, METER_RESONANCE, NONE, POWER_GRANT,
-    POWER_HASTE, POWER_MARCH, POWER_NOT_BUILT, POWER_SHIFT, POWER_STEADFAST, POWER_SUMMON,
+    BUILDING_DROP_OFF_GRUB, BUILDING_DROP_OFF_MARROW, BUILDING_HONOR, BUILDING_TRADE_POST, Class,
+    METER_HONOR, METER_RESONANCE, NONE, POWER_GRANT, POWER_HASTE, POWER_MARCH, POWER_NOT_BUILT,
+    POWER_SHIFT, POWER_STEADFAST, POWER_SUMMON,
 };
 use gc_data::{Faction, GameData, WEAPON_DISCIPLINE};
 
@@ -317,5 +318,40 @@ fn every_other_faction_meter_ability_is_not_built_yet() {
             .expect("no Silence the Chord");
         assert_eq!(silence.faction(), Faction::Choir);
         assert_eq!(silence.effect, POWER_NOT_BUILT);
+    });
+}
+
+/// Grub comes to the Concord by caravan (docs/03, docs/04): its buildings
+/// take Marrow only, the Waystation alone is a trade post, and the Caravan
+/// alone trades, at 40 Grub and 1.2 for each tile of route.
+#[test]
+fn the_concord_trades_for_its_grub() {
+    with_real_data(|data| {
+        for b in data.buildings {
+            let concord = b.faction() == Faction::CarrionConcord;
+            assert_eq!(
+                b.flags & BUILDING_TRADE_POST != 0,
+                b.name() == "Waystation",
+                "{}",
+                b.name()
+            );
+            if concord {
+                assert_eq!(b.flags & BUILDING_DROP_OFF_GRUB, 0, "{}", b.name());
+            }
+        }
+        for name in ["Counting House", "Exchange", "Grand Bourse", "Waystation"] {
+            let b = data.buildings.iter().find(|b| b.name() == name).unwrap();
+            assert_ne!(b.flags & BUILDING_DROP_OFF_MARROW, 0, "{name} takes Marrow");
+        }
+        for u in data.conquest_units {
+            assert_eq!(u.trades(), u.name() == "Caravan", "{}", u.name());
+        }
+        let caravan = data
+            .conquest_units
+            .iter()
+            .find(|u| u.name() == "Caravan")
+            .unwrap();
+        assert_eq!((caravan.trade_base, caravan.trade_tenths), (40, 12));
+        assert_eq!(caravan.faction(), Faction::CarrionConcord);
     });
 }
