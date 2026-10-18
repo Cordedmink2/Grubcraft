@@ -36,7 +36,7 @@ use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formati
 /// long fights last. Below 100, locked lines bleed (and so lose heart, see
 /// [`crate::morale`]) more slowly and battles draw out without retuning any
 /// unit.
-pub const BATTLE_PACE_PERCENT: u64 = 50;
+pub const BATTLE_PACE_PERCENT: u64 = 70;
 /// Percent of its full weight a volley lands with. Arrows are slowed half as
 /// much as blows: the march into contact, when most of them are loosed,
 /// takes as long as ever, and slowing them as much would rob archers of
