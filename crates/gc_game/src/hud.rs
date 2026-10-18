@@ -13,6 +13,7 @@ use gc_ui::hud::{
     Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, HelpScroll, Hud,
     HudData, HudEvent, HudInput, MinimapData, MinimapTerrain, Selection, SlotState, StatusStrip,
 };
+use gc_ui::placer::{PlaceLater, PlacePicker, PlaceRow, PlaceSide};
 use gc_ui::powers::{POWER_KEYS, PowerButton};
 use glam::{Vec2, Vec3};
 
@@ -183,6 +184,8 @@ pub struct HudState {
     hero_preview: bool,
     /// The Marshal's Scroll is open (H, F1 or the Help button).
     help: bool,
+    /// The Place panel is open (the Place button, or B in the sandbox).
+    pub placer: bool,
 }
 
 impl HudState {
@@ -479,13 +482,7 @@ impl Running {
                 continue;
             };
             let stats = &self.units.stats[r.unit as usize];
-            let this = if stats.range.raw() > 0 {
-                Icon::Bow
-            } else if stats.reach {
-                Icon::Spear
-            } else {
-                Icon::Sword
-            };
+            let this = troop_icon(stats);
             if n == 0 {
                 (unit, icon) = (Some(r.unit), this);
                 color = crate::color_of(&self.parties, r.owner);
@@ -642,6 +639,9 @@ impl Running {
         } else {
             Vec::new()
         };
+        let place = self.place_text();
+        let place_view = place.as_ref().map(PlaceText::view);
+        let placing = self.sandbox.placing && !self.sandbox.building_tool;
         let mode = self.mode_label();
         let side_name = party_name(&self.parties, side);
         let speed = format!("{}x", crate::SPEEDS[self.speed]);
@@ -897,6 +897,7 @@ impl Running {
             status,
             selection: selection.as_ref().map(|(name, s)| Selection { name, ..*s }),
             help: hud.help.then_some(HelpScroll { notes: &help_notes }),
+            picker: place_view.as_ref().map(|v| v.picker(hud.placer, placing)),
             hero,
             minimap: MinimapData {
                 map_tiles: map,
@@ -935,7 +936,10 @@ impl Running {
         self.hud.power_names = power_names;
         self.hud.power_details = power_details;
         // What to click for a power being aimed, else the ride's way out.
-        if let Some(text) = self.power_hint().or_else(|| self.ride_hint()) {
+        if let Some(text) = (self.power_hint())
+            .or_else(|| self.ride_hint())
+            .or_else(|| self.place_hint())
+        {
             draw_hint(&mut self.hud.draw, screen, &text);
         }
         upload_ui(
@@ -985,6 +989,9 @@ impl Running {
             HudEvent::IdleWorker => self.next_idle_worker(),
             HudEvent::ToggleHelp => self.toggle_help(),
             HudEvent::OpenGuide => self.open_guide(),
+            HudEvent::TogglePlacer => self.toggle_placer(),
+            HudEvent::PlaceUnit(i) => self.place_unit(i),
+            HudEvent::PlaceSide(i) => self.set_side(i as PlayerId),
             // The queue gives back its last regiment, whichever is clicked.
             HudEvent::Unqueue(_) => self.untrain(),
             HudEvent::Ready => {
@@ -1133,12 +1140,196 @@ impl Running {
         Some(format!("Riding with {name} - Y or Esc to return"))
     }
 
+    /// Whether the Place panel and button are on offer: wherever B puts down
+    /// regiments (the sandbox and offline Field Battles).
+    pub fn can_place(&self) -> bool {
+        !self.conquest_units && self.online.is_none() && self.watching.is_none()
+    }
+
+    /// The Place button, or B turning placing on: open or close the panel.
+    pub fn toggle_placer(&mut self) {
+        if !self.can_place() {
+            return;
+        }
+        self.hud.placer = !self.hud.placer;
+        self.sandbox.dirty = true;
+    }
+
+    /// A row of the Place panel: choose that type and arm placing.
+    fn place_unit(&mut self, i: usize) {
+        if !self.can_place() || i >= self.units.stats.len() {
+            return;
+        }
+        self.sandbox.unit = i as gc_sim::UnitId;
+        self.sandbox.placing = true;
+        self.sandbox.building_tool = false;
+        self.hud.armed = None;
+        self.sandbox.dirty = true;
+        self.ui_sound(sounds::UiSound::Select);
+    }
+
+    /// "Placing Yari Ashigaru for Red", under the cursor while placing.
+    fn place_hint(&self) -> Option<String> {
+        (self.can_place() && self.sandbox.placing && !self.sandbox.building_tool).then(|| {
+            format!(
+                "Placing {} for {} - click the field to place - B or Esc to stop",
+                self.units.names[self.sandbox.unit as usize],
+                party_name(&self.parties, self.sandbox.side)
+            )
+        })
+    }
+
+    /// The words of the Place panel, owned so the HUD can borrow them for a
+    /// frame; `None` where the panel is not on offer.
+    fn place_text(&self) -> Option<PlaceText> {
+        if !self.can_place() {
+            return None;
+        }
+        if !self.hud.placer {
+            return Some(PlaceText::default());
+        }
+        let u = &self.units;
+        let rows = (0..u.stats.len())
+            .map(|i| {
+                let s = &u.stats[i];
+                let icon = troop_icon(s);
+                let speed = s.speed.raw() as f32 / 65536.0;
+                let detail = format!(
+                    "{} soldiers   {speed:.1} tiles/s   {} points",
+                    s.models, u.points[i]
+                );
+                (u.names[i].clone(), detail, u.factions[i].name(), icon)
+            })
+            .collect();
+        let sides = (0..self.parties.len() as PlayerId)
+            .map(|side| {
+                (
+                    party_name(&self.parties, side),
+                    crate::color_of(&self.parties, side),
+                )
+            })
+            .collect();
+        // The roster troops that Conquest trains but the sandbox's table
+        // (the Field Battle units) has no regiment type for.
+        let later = gc_ai::Faction::ALL
+            .iter()
+            .filter_map(|&f| {
+                let names: Vec<&str> = (self.other_units.names.iter())
+                    .zip(&self.other_units.factions)
+                    .filter(|(n, uf)| **uf == f && !u.names.contains(n))
+                    .map(|(n, _)| n.as_str())
+                    .collect();
+                (!names.is_empty())
+                    .then(|| (f.name(), faction_dye(f), names.len(), names.join(", ")))
+            })
+            .collect();
+        Some(PlaceText {
+            rows,
+            sides,
+            later,
+            current: self.sandbox.unit as usize,
+            side: self.sandbox.side as usize,
+        })
+    }
+
     pub fn look_at(&mut self, p: Vec2) {
         let focus = p.clamp(Vec2::ZERO, Vec2::splat(self.camera.map_size));
         let height = self.heightmap.height_at(focus.x, focus.y);
         let camera = self.camera_mut();
         camera.focus = focus;
         camera.focus_height = height;
+    }
+}
+
+/// The Place panel's words, owned for the length of a frame.
+#[derive(Default)]
+struct PlaceText {
+    /// Name, second line, faction and picture of each placeable type.
+    rows: Vec<(String, String, &'static str, Icon)>,
+    sides: Vec<(String, [u8; 3])>,
+    /// Faction, its dye, how many troops and their names.
+    later: Vec<(&'static str, [u8; 3], usize, String)>,
+    current: usize,
+    side: usize,
+}
+
+/// Why the greyed troops are greyed.
+const PLACE_REASON: &str = "Conquest troops, trained at buildings there. The sandbox only fields the Field Battle types above.";
+
+/// [`PlaceText`] as the HUD borrows it.
+struct PlaceView<'a> {
+    rows: Vec<PlaceRow<'a>>,
+    sides: Vec<PlaceSide<'a>>,
+    later: Vec<PlaceLater<'a>>,
+    current: usize,
+    side: usize,
+}
+
+impl PlaceText {
+    fn view(&self) -> PlaceView<'_> {
+        PlaceView {
+            rows: (self.rows.iter())
+                .map(|(name, detail, faction, icon)| PlaceRow {
+                    name,
+                    detail,
+                    faction,
+                    icon: *icon,
+                })
+                .collect(),
+            sides: (self.sides.iter())
+                .map(|(name, color)| PlaceSide {
+                    name,
+                    color: *color,
+                })
+                .collect(),
+            later: (self.later.iter())
+                .map(|(faction, color, count, names)| PlaceLater {
+                    faction,
+                    color: *color,
+                    count: *count,
+                    names,
+                })
+                .collect(),
+            current: self.current,
+            side: self.side,
+        }
+    }
+}
+
+impl PlaceView<'_> {
+    fn picker(&self, open: bool, placing: bool) -> PlacePicker<'_> {
+        PlacePicker {
+            open,
+            placing,
+            rows: &self.rows,
+            current: self.current,
+            sides: &self.sides,
+            side: self.side,
+            reason: PLACE_REASON,
+            later: &self.later,
+        }
+    }
+}
+
+/// A faction's colour on the Place panel: the tapestry dyes.
+fn faction_dye(f: gc_ai::Faction) -> [u8; 3] {
+    let [r, g, b, _] = match f {
+        gc_ai::Faction::EmberClans => gc_ui::ui::theme::MADDER,
+        gc_ai::Faction::Brood => gc_ui::ui::theme::WODE,
+        gc_ai::Faction::Choir => gc_ui::ui::theme::WOAD,
+        gc_ai::Faction::CarrionConcord => [112, 84, 120, 255],
+    };
+    [r, g, b]
+}
+
+/// The picture for a troop: a bow, a spear or a sword by how it fights.
+fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
+    if s.range.raw() > 0 {
+        Icon::Bow
+    } else if s.reach {
+        Icon::Spear
+    } else {
+        Icon::Sword
     }
 }
 

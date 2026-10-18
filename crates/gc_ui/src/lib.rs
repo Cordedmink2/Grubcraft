@@ -19,6 +19,7 @@ pub mod hud;
 pub mod icons;
 pub mod lobby;
 pub mod menu;
+pub mod placer;
 pub mod powers;
 pub mod settings;
 pub mod ui;

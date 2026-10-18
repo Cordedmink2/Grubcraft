@@ -67,6 +67,17 @@ The in-game UI is stitched like the Bayeux tapestry: linen cloth, ink outlines, 
 - **Pictures.** There are no textures in the UI pass, so icons are 12 by 12 pixel-art bit patterns drawn as runs of solid rectangles and scaled in whole pixels (`gc_ui::icons::icon`): Move, Attack, Hold, Formation, Skill, Ultimate, Brace, Charge, Run, Fall back for the command grid; Sword, Spear and Bow on a regiment's banner; Grub, Marrow and Supply in the top bar; and Help, Pause, Play, Hammer, Heart, Flag.
 - **Side colour** shows only on banners, swatches, the portrait squares and the minimap, so the cloth stays one colour.
 
+## The Place panel
+
+Sandbox only (and offline Field Battles, wherever `B` places regiments; off in Conquest, network matches and replays). The top bar's **Place** button, or `B`, opens a linen cloth with a stitched border at the left of the battlefield (`gc_ui::placer`):
+
+- **Types:** one row for each regiment type the sandbox can place, with a picture by kind (spear, sword or bow), the name, soldiers, speed and points. The chosen type is weld yellow and says "chosen", or "placing" while placing is on. Clicking a row chooses the type **and** turns placing on; the field then takes left-clicks as before. `[` and `]` still step through the types.
+- **Side:** four colour swatches (the sandbox's sides); click one to place for, and command, that side (the same as `Tab`).
+- **Not placeable yet:** the roster troops of all four factions that Conquest trains but the sandbox's table has no regiment type for, greyed under their faction with a count and one line of why. The sandbox plays the Field Battle table (`data/units.ron`); the roster units are baked into a separate Conquest table with its own ids, which the simulation and the replay format number separately, so mixing them into one field is a simulation change, not a UI one.
+- **Closing:** the close box, or `B` while placing (which stops placing too); `Esc` closes it and stops placing. The panel takes the mouse from the battlefield; with it closed, placing carries on.
+- **Small screens:** the panel sheds detail rather than leave the screen: first the troop names go from two lines a faction to one, then to counts only, then the greyed section goes and the rows shrink to one line. Under about 240 pixels of field it is not drawn (the keys still work).
+- **Hint:** while placing, a line over the bar says "Placing Yari Ashigaru for red".
+
 ## Marshal's Scroll and tooltips
 
 - **Status strip (top bar):** always shown in a battle or the sandbox. From the right: the **`? Help`** button, the match clock, the game speed (a pause mark and "paused" while paused), and a chip with a swatch of the side you command and the mode ("Sandbox: red", "Field Battle", "Conquest", "Replay"). In Conquest the economy runs from the left (Grub, Marrow and Supply as pictures with numbers, then Larvae, Resonance, Honor, Upkeep); an item that would collide with the chips is left out.

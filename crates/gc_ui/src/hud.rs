@@ -18,6 +18,7 @@ use crate::conquest::{self, Block, NodeDot, StructurePanel, TopBar};
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, mix, text_width, wrap};
 use crate::hero::{self, HeroPanel};
 use crate::icons::{self, Icon};
+use crate::placer::{self, PlacePicker};
 use crate::powers::{self, PowerButton};
 use crate::ui::{Press, theme};
 
@@ -281,7 +282,7 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("I", "Computer plays side"),
             ("P", "Pause"),
             ("- =", "Slower, faster"),
-            ("B", "Place regiments"),
+            ("B", "Place panel: pick a troop"),
             ("[ ]", "Choose the type"),
             ("K", "Place buildings"),
             ("Del", "Remove under mouse"),
@@ -326,6 +327,8 @@ pub struct HudData<'a> {
     /// The faction powers you can use (Conquest), as a row of buttons over
     /// the battlefield; none draws nothing.
     pub powers: &'a [PowerButton<'a>],
+    /// The Place panel and its top-bar button (Sandbox); `None` hides both.
+    pub picker: Option<PlacePicker<'a>>,
 }
 
 /// The deployment phase, as this player sees it.
@@ -347,6 +350,9 @@ pub(crate) const WIDGET_QUEUE: u32 = 6 << 24;
 pub(crate) const WIDGET_POWER: u32 = 7 << 24;
 pub(crate) const WIDGET_HELP: u32 = 8 << 24;
 pub(crate) const WIDGET_GUIDE: u32 = 9 << 24;
+pub(crate) const WIDGET_PLACE: u32 = 10 << 24;
+pub(crate) const WIDGET_PLACE_ROW: u32 = 11 << 24;
+pub(crate) const WIDGET_PLACE_SIDE: u32 = 12 << 24;
 
 /// What the mouse did since the last frame, in UI pixels.
 #[derive(Clone, Copy, Debug, Default)]
@@ -389,6 +395,15 @@ pub enum HudEvent {
     ToggleHelp,
     /// The Guide button was clicked: open the Guide.
     OpenGuide,
+    /// The Place button (or the panel's close box) was clicked: open or close
+    /// the Place panel.
+    TogglePlacer,
+    /// A troop row of the Place panel was clicked (its place in
+    /// [`PlacePicker::rows`]): choose the type and arm placing.
+    PlaceUnit(usize),
+    /// A side of the Place panel was clicked (its place in
+    /// [`PlacePicker::sides`]): place for, and command, that side.
+    PlaceSide(usize),
 }
 
 #[derive(Default)]
@@ -412,6 +427,7 @@ pub struct Hud {
 /// Widget id of the Help button's tooltip; grid slots use their index.
 const TIP_HELP: u32 = 100;
 const TIP_GUIDE: u32 = 101;
+const TIP_PLACE: u32 = 102;
 
 /// What a tooltip says, about the button `id` at `anchor`.
 #[derive(Clone, Debug)]
@@ -526,6 +542,27 @@ impl Hud {
             &mut self.over,
             events,
         );
+        let place_tip = (data.picker.as_ref()).and_then(|picker| {
+            placer::draw(
+                draw,
+                layout.field,
+                input,
+                &mut self.press,
+                picker,
+                &mut self.over,
+                events,
+            )
+        });
+        if let Some(t) = place_tip {
+            self.tip = Some(Tip {
+                id: t.id,
+                anchor: t.anchor,
+                name: t.name,
+                key: t.key,
+                text: t.text,
+                note: String::new(),
+            });
+        }
         if let Some(scroll) = &data.help {
             let top = if data.powers.is_empty() { 8 } else { 54 };
             if let Some(r) = draw_scroll(draw, layout.field, top, scroll) {
@@ -702,6 +739,48 @@ impl Hud {
                 text: "Every building and troop: its role, stats and upgrades.".into(),
                 note: String::new(),
             });
+        }
+
+        // Place (Sandbox): just left of Guide.
+        if let Some(picker) = &data.picker {
+            let place = Rect::new(right - 80, chip_y, 80, chip_h);
+            right = place.x - gap;
+            let hot = place.contains(input.mouse.0, input.mouse.1);
+            let (clicked, down) = self.press.widget(
+                WIDGET_PLACE,
+                place,
+                input.mouse,
+                input.left_pressed,
+                input.left_released,
+            );
+            if clicked {
+                events.push(HudEvent::TogglePlacer);
+            }
+            let lit = picker.open || picker.placing;
+            let fill = match (down, hot || lit) {
+                (true, _) => mix(theme::WELD, theme::INK, 0.2),
+                (_, true) => mix(theme::WELD, [255, 240, 190, 255], 0.4),
+                _ => theme::WELD,
+            };
+            draw.boxed(place, fill, 2);
+            icons::icon(
+                draw,
+                Rect::new(place.x + 7, place.y + 6, 12, 12),
+                Icon::Flag,
+                theme::INK,
+            );
+            draw.text_bold(place.x + 24, text_y, 1, theme::INK, "Place");
+            if hot && !picker.open {
+                self.tip = Some(Tip {
+                    id: TIP_PLACE,
+                    anchor: place,
+                    name: "Place".into(),
+                    key: "B".into(),
+                    text: "Choose a troop type and a side, then click the field to put down regiments."
+                        .into(),
+                    note: String::new(),
+                });
+            }
         }
 
         // Status chips, from the right.
@@ -1473,6 +1552,7 @@ mod tests {
         nodes: &'a [NodeDot],
         blocks: &'a [Block],
         powers: &'a [PowerButton<'a>],
+        picker: Option<PlacePicker<'a>>,
     }
 
     fn run(
@@ -1523,11 +1603,67 @@ mod tests {
             top: extras.top,
             structure: extras.structure,
             powers: extras.powers,
+            picker: extras.picker,
         };
         let mut draw = DrawList::default();
         let mut events = Vec::new();
         hud.frame(&mut draw, SCREEN, input, &data, &mut events);
         (events, draw)
+    }
+
+    #[test]
+    fn the_place_button_shows_only_in_the_sandbox_and_opens_the_panel() {
+        let place = (SCREEN.0 - 260 + 10, 12);
+        let click = HudInput {
+            mouse: place,
+            left_pressed: true,
+            left_released: true,
+            ..HudInput::default()
+        };
+        let sandbox = Extras {
+            picker: Some(PlacePicker::default()),
+            ..Extras::default()
+        };
+        let (events, _) = run_with(&mut Hud::default(), click, &[], &[], sandbox);
+        assert_eq!(events, vec![HudEvent::TogglePlacer]);
+        let (events, _) = run(&mut Hud::default(), click, &[], &[]);
+        assert!(events.is_empty(), "no picker, no button");
+    }
+
+    #[test]
+    fn an_open_place_panel_keeps_the_mouse_and_a_row_click_reaches_the_game() {
+        use crate::placer::{PlaceRow, panel_rect};
+        let rows = [PlaceRow {
+            name: "Yari Ashigaru",
+            ..PlaceRow::default()
+        }; 2];
+        let picker = PlacePicker {
+            open: true,
+            rows: &rows,
+            ..PlacePicker::default()
+        };
+        let field = HudLayout::new(SCREEN).field;
+        let panel = panel_rect(field, &picker).unwrap();
+        let mut hud = Hud::default();
+        let extras = || Extras {
+            picker: Some(picker),
+            ..Extras::default()
+        };
+        let at = |x, y| HudInput {
+            mouse: (x, y),
+            ..HudInput::default()
+        };
+        run_with(&mut hud, at(panel.x + 20, panel.y + 20), &[], &[], extras());
+        assert!(hud.wants(SCREEN, (panel.x + 20, panel.y + 20)));
+        let row = (panel.x + 60, panel.y + 14 + 26 + 34 + 20);
+        let click = HudInput {
+            mouse: row,
+            left_pressed: true,
+            left_released: true,
+            ..HudInput::default()
+        };
+        let (events, _) = run_with(&mut Hud::default(), click, &[], &[], extras());
+        assert_eq!(events, vec![HudEvent::PlaceUnit(0)]);
     }
 
     #[test]
@@ -1561,6 +1697,7 @@ mod tests {
                 top: None,
                 structure: None,
                 powers: &[],
+                picker: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             Hud::default().frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -1609,6 +1746,7 @@ mod tests {
                 top: None,
                 structure: None,
                 powers: &[],
+                picker: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             hud.frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -1687,6 +1825,7 @@ mod tests {
             top: None,
             structure: None,
             powers: &[],
+            picker: None,
         };
         let l = HudLayout::new(SCREEN);
         let over_panel = (30, l.bar.y - 40);
@@ -2127,6 +2266,7 @@ mod tests {
                     top: None,
                     structure: None,
                     powers: &[],
+                    picker: None,
                 };
                 let input = HudInput {
                     // The last button, in the bar's bottom-right corner.
@@ -2185,6 +2325,7 @@ mod tests {
                 top: None,
                 structure: None,
                 powers: &[],
+                picker: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             hud.frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);
@@ -2252,6 +2393,7 @@ mod tests {
             top: None,
             structure: None,
             powers: &[],
+            picker: None,
         };
         let screen = (1280, 720);
         let (mut draw, mut events) = (DrawList::default(), Vec::new());
@@ -2305,6 +2447,7 @@ mod tests {
             top: None,
             structure: None,
             powers: &[],
+            picker: None,
         };
         let (mut draw, mut events) = (DrawList::default(), Vec::new());
         Hud::default().frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);

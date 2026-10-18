@@ -6,7 +6,8 @@
 //! Sandbox: Tab switches which side you command (all four can be ordered).
 //! B turns placing on and off: left-click puts down a regiment of the chosen
 //! type for that side, facing away from the camera, and [ and ] choose the
-//! type. K does the same for buildings (the sandbox only): click puts the
+//! type. The top bar's Place button (or B) opens a panel listing the types
+//! and sides to click (docs/08-ui-ux.md#the-place-panel). K does the same for buildings (the sandbox only): click puts the
 //! chosen building down, centred on the cursor, and [ and ] choose which.
 //! Delete (or Backspace) takes the building under the cursor, else the
 //! selected regiments, off the field; Shift + Delete clears it. Right-click
@@ -1220,6 +1221,8 @@ impl App {
 
         let mut hud_state = hud::HudState::default();
         hud_state.set_terrain(&heightmap);
+        // An empty-field sandbox starts with the Place panel open.
+        hud_state.placer = opts.sandbox;
         let settings_path = gc_ui::settings::settings_path();
         let settings = settings_path
             .as_deref()
@@ -1592,6 +1595,8 @@ impl ApplicationHandler for App {
                         }
                         KeyCode::KeyB if down && !event.repeat => {
                             r.sandbox.placing = !r.sandbox.placing;
+                            // The Place panel follows: open to pick a troop.
+                            r.hud.placer = r.sandbox.placing && r.can_place();
                             r.sandbox.building_tool = false;
                             r.hud.armed = None;
                             r.sandbox.dirty = true;
@@ -1672,11 +1677,13 @@ impl ApplicationHandler for App {
                         KeyCode::Escape
                             if down
                                 && (r.sandbox.placing
+                                    || r.hud.placer
                                     || r.sandbox.building_tool
                                     || r.sandbox.tuning
                                     || r.sandbox.credits) =>
                         {
                             r.sandbox.placing = false;
+                            r.hud.placer = false;
                             r.sandbox.building_tool = false;
                             r.sandbox.tuning = false;
                             r.sandbox.credits = false;
@@ -3725,6 +3732,7 @@ impl Running {
         self.matches += 1;
         self.drill = None;
         self.sandbox = Sandbox::new(matches!(kind, MatchKind::Sandbox));
+        self.hud.placer = matches!(kind, MatchKind::Sandbox);
         // Seeing through the woods stays in the sandbox.
         self.reveal_all &= matches!(kind, MatchKind::Sandbox);
         self.fog.reset();
@@ -4578,7 +4586,15 @@ impl Running {
     /// so it is dropped; with the drill running, it leaves the new side alone.
     fn switch_side(&mut self) {
         let sides = self.parties.len().max(1) as PlayerId;
-        self.sandbox.side = (self.sandbox.side + 1) % sides;
+        self.set_side((self.sandbox.side + 1) % sides);
+    }
+
+    /// Command (and place for) `side`, if the sandbox has it.
+    fn set_side(&mut self, side: PlayerId) {
+        if usize::from(side) >= self.parties.len().max(1) {
+            return;
+        }
+        self.sandbox.side = side;
         // The ridden regiment may be one the new side can't see.
         self.leave_ride();
         self.selected.clear();
