@@ -519,19 +519,19 @@ Seeds 1 to 96 gave every pair between 48% and 57% except the Brood against the C
 
 | | Brood | Choir | Carrion Concord |
 |---|---|---|---|
-| **Ember Clans** | 56 / 42 (54 / 36) | 41 / 44 (53 / 48) | 59 / 53 (50 / 44) |
-| **Brood** | | 43 / 50 (43 / 44) | 53 / 33 (46 / 42) |
-| **Choir** | | | 50 / 54 (50 / 49) |
+| **Ember Clans** | 54 / 43 (54 / 36) | 44 / 42 (53 / 48) | 61 / 52 (50 / 44) |
+| **Brood** | | 44 / 51 (43 / 44) | 51 / 43 (46 / 42) |
+| **Choir** | | | 52 / 52 (50 / 49) |
 
 Average fight length (first contact to the end), seeds 1 / seeds 2001, baseline in brackets, in seconds:
 
 | | Brood | Choir | Carrion Concord |
 |---|---|---|---|
-| **Ember Clans** | 135 / 131 (118 / 119) | 139 / 134 (117 / 122) | 128 / 130 (115 / 121) |
-| **Brood** | | 123 / 123 (113 / 118) | 108 / 108 (99 / 94) |
-| **Choir** | | | 106 / 106 (95 / 94) |
+| **Ember Clans** | 138 / 129 (118 / 119) | 138 / 136 (117 / 122) | 129 / 131 (115 / 121) |
+| **Brood** | | 122 / 121 (113 / 118) | 106 / 105 (99 / 94) |
+| **Choir** | | | 104 / 106 (95 / 94) |
 
-Fights went from about 95-120 s to 105-140 s, whole battles from about 175 s to 175-200 s. The `faction_table` test in `gc_match` prints the average battle and fight length with each pair. Why 70 and not 50: at 50 the faction balance was fine but holding a ford stopped paying off, because defenders killed foes trickling out of a ford too slowly (the `holding_the_ford_pays_off` drill failed); 70 passes every drill. Volleys are slowed half as much because the approach, where most arrows fly, does not get longer; slowing them as much as melee dropped the Clans to about 28%, and not slowing them pushed the Clans to 60-75%. No unit stats changed.
+Fights went from about 95-120 s to 105-140 s, whole battles from about 175 s to 170-200 s. The `faction_table` test in `gc_match` prints the average battle and fight length with each pair. Why 70 and not 50: at 50 the faction balance was fine but holding a ford stopped paying off, because defenders killed foes trickling out of a ford too slowly (the `holding_the_ford_pays_off` drill failed); 70 passes every drill. Volleys are slowed half as much because the approach, where most arrows fly, does not get longer; slowing them as much as melee dropped the Clans to about 28%, and not slowing them pushed the Clans to 60-75%. No unit stats changed.
 
 ### Weapon flags and mass
 
