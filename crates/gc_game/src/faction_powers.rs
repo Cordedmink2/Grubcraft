@@ -243,7 +243,7 @@ impl Running {
     /// The powers of the side you command that get a button: while you
     /// command a Conquest side with the HUD up (a replay gives no orders).
     pub fn offered_powers(&self) -> impl Iterator<Item = u8> + '_ {
-        let on = self.conquest_units
+        let on = self.conquest_match()
             && self.watching.is_none()
             && self.match_started
             && self.showroom.is_none();

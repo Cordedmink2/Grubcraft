@@ -15,7 +15,7 @@ use crate::icons::{self, Icon};
 use crate::ui::{Press, theme};
 
 /// Panel width when there is room, and the least worth drawing.
-const WIDTH: i32 = 392;
+const WIDTH: i32 = 440;
 const MIN_WIDTH: i32 = 220;
 const PAD: i32 = 14;
 const MARGIN: i32 = 8;
@@ -25,7 +25,9 @@ const INDENT: i32 = 40;
 const ROW_GAP: i32 = 3;
 const SIDE_SIZE: i32 = 24;
 /// How many lines of troop names one faction may take, per [`Tier`].
-const NAME_LINES: [usize; 4] = [2, 1, 0, 0];
+const NAME_LINES: [usize; 6] = [2, 1, 0, 0, 0, 0];
+/// Height of the tab strip and of the faction chips under it.
+const STRIP_H: i32 = 28;
 
 /// One regiment type the sandbox can place.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -72,6 +74,22 @@ pub struct PlacePicker<'a> {
     /// Why `later` cannot be placed, in a line or two.
     pub reason: &'a str,
     pub later: &'a [PlaceLater<'a>],
+    /// The tabs over the rows ("Field types", "All factions"); none, no strip.
+    pub tabs: &'a [&'a str],
+    /// The tab that is showing.
+    pub tab: usize,
+    /// The factions of the roster tab, as chips under the tabs (the name is
+    /// short, the colour its dye); none on the other tab.
+    pub chips: &'a [PlaceSide<'a>],
+    pub chip: usize,
+}
+
+impl PlacePicker<'_> {
+    /// How far below the panel's top the first row starts.
+    fn rows_top(&self) -> i32 {
+        let strips = i32::from(!self.tabs.is_empty()) + i32::from(!self.chips.is_empty());
+        PAD + 26 + 34 + strips * STRIP_H
+    }
 }
 
 /// How much of the panel is drawn, from everything to the least.
@@ -83,15 +101,46 @@ enum Tier {
     Names = 1,
     /// Counts only.
     Counts = 2,
+    /// Tighter two-line rows; nothing greyed.
+    Tight = 3,
     /// One-line rows and nothing greyed.
-    Bare = 3,
+    Bare = 4,
+    /// One-line rows packed close, for the smallest screens.
+    Tiny = 5,
 }
 
 impl Tier {
-    const ALL: [Tier; 4] = [Tier::Full, Tier::Names, Tier::Counts, Tier::Bare];
+    const ALL: [Tier; 6] = [
+        Tier::Full,
+        Tier::Names,
+        Tier::Counts,
+        Tier::Tight,
+        Tier::Bare,
+        Tier::Tiny,
+    ];
 
     fn row_h(self) -> i32 {
-        if self == Tier::Bare { 24 } else { 40 }
+        match self {
+            Tier::Tiny => 20,
+            Tier::Bare => 24,
+            Tier::Tight => 32,
+            _ => 40,
+        }
+    }
+
+    /// Rows of a name alone, with nothing greyed under them.
+    fn one_line(self) -> bool {
+        matches!(self, Tier::Bare | Tier::Tiny)
+    }
+
+    /// Whether the greyed section (the reason and each faction's troops) is
+    /// drawn: the three fullest tiers.
+    fn greyed(self) -> bool {
+        (self as usize) <= Tier::Counts as usize
+    }
+
+    fn gap(self) -> i32 {
+        if self == Tier::Tiny { 1 } else { ROW_GAP }
     }
 
     fn lines(self) -> usize {
@@ -127,7 +176,7 @@ fn plan(field: Rect, p: &PlacePicker) -> Option<Plan> {
     let name_chars = chars.saturating_sub(2).max(1);
     let room = field.h - 2 * MARGIN;
     for tier in Tier::ALL {
-        let reason = if tier == Tier::Bare {
+        let reason = if !tier.greyed() {
             Vec::new()
         } else {
             wrap(p.reason, chars)
@@ -137,9 +186,9 @@ fn plan(field: Rect, p: &PlacePicker) -> Option<Plan> {
             .iter()
             .map(|g| ellipsis(wrap(g.names, name_chars), tier.lines(), name_chars))
             .collect();
-        let rows = p.rows.len() as i32 * (tier.row_h() + ROW_GAP);
-        let mut h = 2 * PAD + 26 + 34 + rows;
-        if tier != Tier::Bare && !p.later.is_empty() {
+        let rows = p.rows.len() as i32 * (tier.row_h() + tier.gap());
+        let mut h = p.rows_top() + PAD + rows;
+        if tier.greyed() && !p.later.is_empty() {
             h += 28 + reason.len() as i32 * 16;
             for l in &later {
                 h += 20 + l.len() as i32 * 16;
@@ -185,10 +234,10 @@ pub fn panel_rect(field: Rect, p: &PlacePicker) -> Option<Rect> {
 }
 
 /// Where row `i` sits inside the panel `r` at the tier that fits.
-fn row_rect(r: Rect, tier: Tier, i: usize) -> Rect {
+fn row_rect(r: Rect, tier: Tier, p: &PlacePicker, i: usize) -> Rect {
     Rect::new(
         r.x + PAD,
-        r.y + PAD + 26 + 34 + i as i32 * (tier.row_h() + ROW_GAP),
+        r.y + p.rows_top() + i as i32 * (tier.row_h() + tier.gap()),
         r.w - 2 * PAD,
         tier.row_h(),
     )
@@ -201,6 +250,18 @@ fn side_rect(r: Rect, i: usize) -> Rect {
         SIDE_SIZE,
         SIDE_SIZE,
     )
+}
+
+/// What the tabs say when the mouse rests on them.
+const TAB_TIPS: [&str; 2] = [
+    "The five Field Battle types, as in a Field Battle army.",
+    "Every fighting troop of the four rosters (workers and the Caravan are left out). Picking one starts the sandbox again on the roster table: the field is cleared.",
+];
+
+/// Button `i` of `n` in a strip at `y`, each `w` wide.
+fn tab_rect(r: Rect, y: i32, n: usize, i: usize, w: i32) -> Rect {
+    let gap = if n > 3 { 4 } else { 6 };
+    Rect::new(r.x + PAD + i as i32 * (w + gap), y, w, STRIP_H - 6)
 }
 
 /// The close box at the panel's top right.
@@ -321,10 +382,98 @@ pub(crate) fn draw(
         }
     }
 
+    // The tabs, and under them the roster's faction chips.
+    let mut strip_y = r.y + PAD + 26 + 34;
+    if !p.tabs.is_empty() {
+        let w = (r.w - 2 * PAD - 6 * (p.tabs.len() as i32 - 1)) / p.tabs.len() as i32;
+        for (i, name) in p.tabs.iter().enumerate() {
+            let b = tab_rect(r, strip_y, p.tabs.len(), i, w);
+            let (clicked, down) = press.widget(
+                WIDGET_PLACE_SIDE + 2000 + i as u32,
+                b,
+                mouse,
+                input.left_pressed,
+                input.left_released,
+            );
+            if clicked {
+                events.push(HudEvent::PlaceTab(i));
+            }
+            let hot = b.contains(mouse.0, mouse.1);
+            let fill = match (down, hot, i == p.tab) {
+                (true, _, _) => mix(theme::WELD, theme::INK, 0.2),
+                (_, _, true) => theme::WELD,
+                (_, true, _) => mix(theme::LINEN_DK, theme::LINEN, 0.5),
+                _ => theme::LINEN_DK,
+            };
+            draw.boxed(b, fill, 2);
+            let label = fit(name, ((b.w - 8) / CELL_W).max(1) as usize);
+            let tw = text_width(&label, 1);
+            draw.text_bold(b.x + (b.w - tw) / 2, b.y + 5, 1, theme::INK, &label);
+            if hot {
+                tip = Some(PlaceTip {
+                    id: 340 + i as u32,
+                    anchor: b,
+                    name: (*name).to_string(),
+                    key: "click".into(),
+                    text: TAB_TIPS.get(i).copied().unwrap_or("").into(),
+                });
+            }
+        }
+        strip_y += STRIP_H;
+    }
+    if !p.chips.is_empty() {
+        let w = (r.w - 2 * PAD - 4 * (p.chips.len() as i32 - 1)) / p.chips.len() as i32;
+        for (i, c) in p.chips.iter().enumerate() {
+            let b = tab_rect(r, strip_y, p.chips.len(), i, w);
+            let (clicked, down) = press.widget(
+                WIDGET_PLACE_SIDE + 3000 + i as u32,
+                b,
+                mouse,
+                input.left_pressed,
+                input.left_released,
+            );
+            if clicked {
+                events.push(HudEvent::PlaceFaction(i));
+            }
+            let hot = b.contains(mouse.0, mouse.1);
+            if i == p.chip {
+                draw.rect(b.inset(-3), theme::WELD);
+                draw.border(b.inset(-3), 2, theme::INK);
+            }
+            let dye = rgb(c.color);
+            let fill = if down {
+                mix(dye, theme::INK, 0.3)
+            } else if hot {
+                mix(dye, [255, 250, 230, 255], 0.25)
+            } else {
+                dye
+            };
+            draw.boxed(b, fill, 2);
+            let label = fit(c.name, ((b.w - 6) / CELL_W).max(1) as usize);
+            let tw = text_width(&label, 1);
+            draw.text_bold(
+                b.x + (b.w - tw) / 2,
+                b.y + 5,
+                1,
+                [255, 250, 235, 255],
+                &label,
+            );
+            if hot {
+                tip = Some(PlaceTip {
+                    id: 350 + i as u32,
+                    anchor: b,
+                    name: c.name.to_string(),
+                    key: "click".into(),
+                    text: "Show this faction's troops.".into(),
+                });
+            }
+        }
+    }
+
     // The types.
     let chars_row = ((r.w - 2 * PAD - 16 - 24) / CELL_W).max(1) as usize;
     for (i, row) in p.rows.iter().enumerate() {
-        let b = row_rect(r, tier, i);
+        let b = row_rect(r, tier, p, i);
         if b.bottom() > r.bottom() - 4 {
             break;
         }
@@ -347,18 +496,29 @@ pub(crate) fn draw(
             _ => theme::LINEN_DK,
         };
         draw.boxed(b, fill, 2);
-        let ib = Rect::new(b.x + 8, b.y + (b.h - 24) / 2, 24, 24);
+        let isz = if tier == Tier::Tiny { 16 } else { 24 };
+        let ib = Rect::new(b.x + 8, b.y + (b.h - isz) / 2, isz, isz);
         icons::icon(draw, ib, row.icon, theme::INK);
         let tx = ib.right() + 8;
-        let name_y = if tier == Tier::Bare { b.y + 4 } else { b.y + 5 };
+        let name_y = match tier {
+            Tier::Bare => b.y + 4,
+            Tier::Tiny => b.y + 2,
+            Tier::Tight => b.y + 3,
+            _ => b.y + 5,
+        };
         draw.text_bold(tx, name_y, 1, theme::INK, &fit(row.name, chars_row));
         if chosen {
             let tag = if p.placing { "placing" } else { "chosen" };
             let tw = text_width(tag, 1);
             draw.text(b.right() - 8 - tw, name_y, 1, theme::MADDER, tag);
         }
-        if tier != Tier::Bare {
-            draw.text(tx, b.y + 22, 1, muted_ink(), &fit(row.detail, chars_row));
+        if !tier.one_line() {
+            let detail_y = if tier == Tier::Tight {
+                b.y + 17
+            } else {
+                b.y + 22
+            };
+            draw.text(tx, detail_y, 1, muted_ink(), &fit(row.detail, chars_row));
         }
         if hot {
             tip = Some(PlaceTip {
@@ -375,8 +535,8 @@ pub(crate) fn draw(
     }
 
     // What exists but cannot be placed yet.
-    if tier != Tier::Bare && !p.later.is_empty() {
-        let mut y = row_rect(r, tier, p.rows.len()).y + 2;
+    if tier.greyed() && !p.later.is_empty() {
+        let mut y = row_rect(r, tier, p, p.rows.len()).y + 2;
         draw.text_bold(r.x + PAD, y, 1, theme::WOAD, "Not placeable yet");
         draw.rect(Rect::new(r.x + PAD, y + 17, r.w - 2 * PAD, 1), theme::INK);
         y += 24;
@@ -492,6 +652,10 @@ mod tests {
             side: 1,
             reason: "These are Conquest troops: you train them at buildings there. The sandbox fields only the Field Battle types.",
             later: &LATER,
+            tabs: &[],
+            tab: 0,
+            chips: &[],
+            chip: 0,
         }
     }
 
@@ -523,11 +687,11 @@ mod tests {
         let panel = panel_rect(FIELD, &p).unwrap();
         let t = tier(FIELD, &p);
         for i in 0..ROWS.len() {
-            let (events, _, _) = frame(FIELD, &p, click_at(row_rect(panel, t, i)));
+            let (events, _, _) = frame(FIELD, &p, click_at(row_rect(panel, t, &p, i)));
             assert_eq!(events, vec![HudEvent::PlaceUnit(i)], "row {i}");
         }
         // The press alone does nothing; the click fires on release.
-        let mut press_only = click_at(row_rect(panel, t, 2));
+        let mut press_only = click_at(row_rect(panel, t, &p, 2));
         press_only.left_released = false;
         assert!(frame(FIELD, &p, press_only).0.is_empty());
     }
@@ -546,7 +710,7 @@ mod tests {
 
     /// Whether a weld-coloured quad fills most of row `i`.
     fn lit(d: &DrawList, panel: Rect, t: Tier, i: usize) -> bool {
-        let r = row_rect(panel, t, i);
+        let r = row_rect(panel, t, &PlacePicker::default(), i);
         d.quads.iter().any(|q| {
             let (x, y) = (i32::from(q.pos[0]), i32::from(q.pos[1]));
             q.color == theme::WELD
@@ -637,7 +801,7 @@ mod tests {
             let t = Tier::ALL[t as usize];
             for i in 0..ROWS.len() {
                 assert!(
-                    row_rect(panel, t, i).bottom() <= panel.bottom(),
+                    row_rect(panel, t, &p, i).bottom() <= panel.bottom(),
                     "{w}x{h}: row {i} clipped"
                 );
             }
@@ -652,5 +816,112 @@ mod tests {
         let with = frame(FIELD, &p, HudInput::default()).2;
         let without = frame(FIELD, &PlacePicker { later: &[], ..p }, HudInput::default()).2;
         assert!(with.quads.len() > without.quads.len() + 40);
+    }
+
+    const TABS: [&str; 2] = ["Field types", "All factions"];
+    const CHIPS: [PlaceSide<'static>; 4] = [
+        PlaceSide {
+            name: "Ember",
+            color: [180, 60, 50],
+        },
+        PlaceSide {
+            name: "Brood",
+            color: [90, 130, 60],
+        },
+        PlaceSide {
+            name: "Choir",
+            color: [50, 90, 170],
+        },
+        PlaceSide {
+            name: "Carrion",
+            color: [112, 84, 120],
+        },
+    ];
+
+    /// Eleven roster rows under the tabs and chips, as the Ember Clans fill.
+    fn roster_rows() -> Vec<PlaceRow<'static>> {
+        (0..11)
+            .map(|_| PlaceRow {
+                name: "Yumi Ashigaru",
+                detail: "16 soldiers   3.0 tiles/s   120 Grub 40 Marrow",
+                faction: "Ember Clans",
+                icon: Icon::Bow,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_tabs_and_faction_chips_report_their_clicks_and_move_the_rows_down() {
+        let rows = roster_rows();
+        let p = PlacePicker {
+            rows: &rows,
+            tabs: &TABS,
+            tab: 1,
+            chips: &CHIPS,
+            chip: 2,
+            later: &[],
+            reason: "",
+            ..picker(0)
+        };
+        let panel = panel_rect(FIELD, &p).unwrap();
+        let top = panel.y + PAD + 26 + 34;
+        for i in 0..TABS.len() {
+            let w = (panel.w - 2 * PAD - 6) / 2;
+            let b = tab_rect(panel, top, 2, i, w);
+            let (events, _, _) = frame(FIELD, &p, click_at(b));
+            assert_eq!(events, vec![HudEvent::PlaceTab(i)]);
+        }
+        for i in 0..CHIPS.len() {
+            let w = (panel.w - 2 * PAD - 12) / 4;
+            let b = tab_rect(panel, top + STRIP_H, 4, i, w);
+            let (events, _, _) = frame(FIELD, &p, click_at(b));
+            assert_eq!(events, vec![HudEvent::PlaceFaction(i)]);
+        }
+        // The rows start below both strips, and still click.
+        let t = tier(FIELD, &p);
+        assert!(row_rect(panel, t, &p, 0).y >= top + 2 * STRIP_H);
+        for i in 0..rows.len() {
+            let b = row_rect(panel, t, &p, i);
+            assert!(b.bottom() <= panel.bottom(), "row {i} clipped");
+            let (events, _, _) = frame(FIELD, &p, click_at(b));
+            assert_eq!(events, vec![HudEvent::PlaceUnit(i)], "row {i}");
+        }
+    }
+
+    #[test]
+    fn a_faction_of_troops_fits_every_screen_by_shedding_detail() {
+        let rows = roster_rows();
+        let later = [PlaceLater {
+            faction: "Ember Clans",
+            color: [200, 60, 50],
+            count: 1,
+            names: "Hands",
+        }];
+        let p = PlacePicker {
+            rows: &rows,
+            tabs: &TABS,
+            tab: 1,
+            chips: &CHIPS,
+            later: &later,
+            reason: "Not regiments to fight with.",
+            ..picker(0)
+        };
+        for (w, h) in [(1920, 1080), (1280, 720), (1024, 600), (800, 480)] {
+            let field = Rect::new(0, 36, w, h - 36 - 168);
+            let Some(panel) = panel_rect(field, &p) else {
+                assert!(field.h < 300 || field.w < 270, "{w}x{h}");
+                continue;
+            };
+            assert!(panel.bottom() <= field.bottom(), "{w}x{h}");
+            let t = tier(field, &p);
+            for i in 0..rows.len() {
+                assert!(
+                    row_rect(panel, t, &p, i).bottom() <= panel.bottom(),
+                    "{w}x{h}: row {i}"
+                );
+            }
+        }
+        // A tall screen keeps the two-line rows.
+        assert_eq!(tier_of(Rect::new(0, 36, 1920, 1000), &p), Some(0));
     }
 }

@@ -282,13 +282,13 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("I", "Computer plays side"),
             ("P", "Pause"),
             ("- =", "Slower, faster"),
-            ("B", "Place panel: pick a troop"),
+            ("B", "Place panel: Field types or any faction"),
             ("[ ]", "Choose the type"),
             ("K", "Place buildings"),
             ("Del", "Remove under mouse"),
             ("Shift+Del", "Clear the field"),
             ("T", "Tune stats"),
-            ("Shift+R", "Reload data"),
+            ("Shift+R", "Reload Field types"),
             ("Shift+V", "Show hidden"),
             ("Shift+H", "Hero preview"),
         ],
@@ -404,6 +404,12 @@ pub enum HudEvent {
     /// A side of the Place panel was clicked (its place in
     /// [`PlacePicker::sides`]): place for, and command, that side.
     PlaceSide(usize),
+    /// A tab of the Place panel was clicked (its place in
+    /// [`PlacePicker::tabs`]): show that table's troops.
+    PlaceTab(usize),
+    /// A faction chip of the Place panel's roster tab was clicked (its place
+    /// in [`PlacePicker::chips`]).
+    PlaceFaction(usize),
 }
 
 #[derive(Default)]
