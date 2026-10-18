@@ -18,7 +18,8 @@ use glam::Vec2;
 
 use super::Sense;
 use super::kit::{EconomyStyle, KitBuilding, KitUnit};
-use super::{placing, spymaster};
+use super::strategy::Early;
+use super::{placing, sovereign, spymaster};
 use crate::orders::Hands as Clicks;
 use crate::perception::{Class, Seen, to_fx_vec, v2};
 
@@ -30,6 +31,8 @@ const SERVE: f32 = 22.0;
 const LAY_TICKS: u32 = 3 * TICKS_PER_SECOND;
 /// Ticks a worker sent somewhere is left alone before it counts as idle.
 const SENT_TICKS: u32 = 2 * TICKS_PER_SECOND;
+/// The longest an opening's building still to go up comes before arming.
+const OPENING_HOLD: u32 = 120 * TICKS_PER_SECOND;
 /// Regiments queued per production building.
 const QUEUE: usize = 2;
 /// Most workers it keeps.
@@ -97,6 +100,8 @@ pub struct Steward {
     pub ledger: Ledger,
     /// The middle of its first main building: home.
     pub home: Option<Vec2>,
+    /// Since when an opening's building has come before arming.
+    opening_since: Option<u32>,
     /// When a Marrow gatherer may next move to Grub.
     next_rebalance: u32,
     /// When it may next look for a spot, after finding none.
@@ -217,14 +222,22 @@ impl Steward {
         self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);
         // Short of an army, soldiers come before more workers, and the
-        // money it has goes on them first.
-        if self.arming {
+        // money it has goes on them first; but an opening's building still
+        // due comes first, or arming would spend what it saves for it.
+        // One it can't get up stops holding up the army after a while.
+        let due = self.arming && self.opening_due(s, &look);
+        let since = *self.opening_since.get_or_insert(s.now);
+        if !due {
+            self.opening_since = None;
+        }
+        let soldiers_first = self.arming && !(due && s.now < since + OPENING_HOLD);
+        if soldiers_first {
             self.train_army(s, clicks, &look);
         }
         self.train_workers(s, clicks, &look);
         self.build(s, clicks, &look);
         self.tier_up(s, clicks, &look);
-        if !self.arming {
+        if !soldiers_first {
             self.train_army(s, clicks, &look);
         }
         if let Some(rally) = rally {
@@ -834,6 +847,33 @@ impl Steward {
             .or_else(|| options.max_by_key(|b| (fighters(b), std::cmp::Reverse(b.stats.cost_grub))))
     }
 
+    /// Whether a building the opening asks for is still to go up: its
+    /// towers, its production after the first, or its early expansion.
+    fn opening_due(&self, s: &Sense, look: &Look) -> bool {
+        let early = s.plan.early;
+        if early == Early::USUAL {
+            return false;
+        }
+        let count = |f: &dyn Fn(&Mine) -> bool| look.mine.iter().filter(|m| f(m)).count();
+        let towers = count(&|m| m.stats.role == Role::Defence);
+        let production =
+            count(&|m| m.stats.role != Role::Main && trains_fighters(s, m.view.building));
+        let expanding = early.expand_at.is_some_and(|t| s.now >= t) && self.hubs_at_home(s, look);
+        towers < usize::from(early.towers)
+            || (production > 0 && production < usize::from(early.producers))
+            || expanding
+    }
+
+    /// Whether every hub it has is at home: it hasn't expanded yet.
+    fn hubs_at_home(&self, s: &Sense, look: &Look) -> bool {
+        self.home.is_some_and(|home| {
+            look.mine
+                .iter()
+                .filter(|m| m.hub(s.kit.economy))
+                .all(|m| m.at().distance(home) <= SERVE)
+        })
+    }
+
     /// Whether it is time to expand: its seeps are running out, or the
     /// time has come and they are full.
     fn time_to_expand(&self, s: &Sense, look: &Look) -> bool {
@@ -852,13 +892,8 @@ impl Steward {
         let time = s.now >= s.expand_after;
         // An opening that expands early does, seeps full or not, once: while
         // every hub it has is at home.
-        let early = s.plan.early.expand_at.is_some_and(|t| s.now >= t)
-            && self.home.is_some_and(|home| {
-                look.mine
-                    .iter()
-                    .filter(|m| m.hub(s.kit.economy))
-                    .all(|m| m.at().distance(home) <= SERVE)
-            });
+        let early =
+            s.plan.early.expand_at.is_some_and(|t| s.now >= t) && self.hubs_at_home(s, look);
         let rising = look
             .mine
             .iter()
@@ -1069,12 +1104,17 @@ impl Steward {
         if !s.plan.weighs_odds {
             return false;
         }
+        // Before a timing push it arms for it.
+        let pushing_soon = s.push_phase() == sovereign::PushPhase::Arming;
         // At the supply limit there is nothing more to arm with.
         if s.world
             .bank(s.party)
             .is_some_and(|b| b.supply_used + ARMED_SLACK >= SUPPLY_LIMIT)
         {
             return false;
+        }
+        if pushing_soon {
+            return true;
         }
         let minutes = s.now as f32 / (60 * TICKS_PER_SECOND) as f32;
         let supply = s.kit.supply_of(look.army.iter().copied());
