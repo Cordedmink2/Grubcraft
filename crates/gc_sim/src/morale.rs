@@ -40,6 +40,8 @@ pub const WAVERING_DAMAGE_PERCENT: u64 = 85;
 /// Tenths of a point lost per percent of full strength lost since the last
 /// check: losing a tenth of the regiment in one second costs 12 points.
 pub const CASUALTY_TENTHS_PER_PERCENT: i32 = 9;
+/// The steady drains below are at full pace; a fight scales them by
+/// [`crate::combat::BATTLE_PACE_PERCENT`].
 /// Points lost each second while below half strength and in melee.
 pub const HALF_STRENGTH_DRAIN: i16 = 2;
 /// Points lost in a second with hits on the flank, or on the rear.

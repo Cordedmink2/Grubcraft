@@ -1087,7 +1087,7 @@ pub(crate) mod tests {
                                 None => continue,
                             }
                             battle += played.ticks;
-                            fight += played.ticks - played.first_contact.unwrap_or(0);
+                            fight += played.ticks - played.first_contact.unwrap_or(played.ticks);
                         }
                         let decided = f64::from(((won + lost) as u32).max(1))
                             * f64::from(gc_sim::TICKS_PER_SECOND);
