@@ -31,7 +31,9 @@ use gc_ui::lobby::{SHIPPED_CONQUEST_MAPS, Tempo};
 
 use crate::buildings::Table;
 use crate::conquest;
-use crate::conquest_golden::{Kit, affords, main_of, nodes_near, own, regiments_of, site};
+use crate::conquest_golden::{
+    Kit, affords, main_of, nodes_near, own, regiments_of, site, trade_orders,
+};
 
 const SEED: u64 = 0x50AC_0006;
 /// "Land: Mixed": some of every kind of ground.
@@ -55,6 +57,8 @@ const SIM_HEAP_BUDGET: usize = 48 << 20;
 /// What each side builds up to.
 const WORKERS: usize = 14;
 const BARRACKS: usize = 3;
+/// Caravans a trading side runs.
+const CARAVANS: usize = 4;
 const FIGHTERS: usize = 60;
 /// Waves go out this often, from the first one on.
 const FIRST_WAVE: u32 = 8 * 60 * TICKS_PER_SECOND;
@@ -230,8 +234,9 @@ impl Soak {
             if !idle.contains(&w) || self.world.builds_only(w) {
                 continue;
             }
-            let node = if i % 5 == 4 {
-                marrow.first()
+            // A trading faction's Clerks mine Marrow only.
+            let node = if i % 5 == 4 || k.caravan.is_some() {
+                marrow.get(i % 2)
             } else {
                 grub.get(i % 3)
             };
@@ -242,12 +247,23 @@ impl Soak {
 
         // Workers from the main building, its upgrade from minute ten;
         // each order's cost comes off what the later ones can spend.
-        if queue_of(&main) == 0 && workers.len() < WORKERS && affords(&bank, k.worker_cost) {
+        // A trading faction hires its caravans first, whose Grub it lives on.
+        let (unit, cost) = match k.caravan {
+            Some(c) if regiments_of(&self.world, p, c).len() < CARAVANS => (c, k.caravan_cost),
+            _ => (k.worker, k.worker_cost),
+        };
+        if queue_of(&main) == 0
+            && (unit != k.worker || workers.len() < WORKERS)
+            && affords(&bank, cost)
+        {
             out.push(order(Command::Train {
                 structure: main.handle,
-                unit: k.worker,
+                unit,
             }));
-            spend(&mut bank, k.worker_cost);
+            spend(&mut bank, cost);
+        }
+        if k.caravan.is_some() {
+            out.extend(trade_orders(&self.world, p, self.starts[usize::from(p)]));
         }
         let upgraded = main.upgrading.is_some() || Some(main.building) == k.keep;
         if t >= 10 * 60 * TICKS_PER_SECOND && !upgraded && affords(&bank, k.keep_cost) {

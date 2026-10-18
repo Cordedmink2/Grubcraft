@@ -57,7 +57,7 @@ fn conquest_units() -> [ConquestUnit; 3] {
     ]
 }
 
-fn building(role: Role, armour: Armour, side: u8, hp: u16, flags: u8) -> BuildingStats {
+fn building(role: Role, armour: Armour, side: u8, hp: u16, flags: u16) -> BuildingStats {
     BuildingStats {
         role,
         tier: 1,

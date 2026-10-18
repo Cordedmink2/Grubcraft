@@ -9,7 +9,7 @@
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::{
     Command, Formation, Mass, PlayerCommand, PowerTarget, RegimentHandle, StructureHandle,
-    UnitStats,
+    TradePost, UnitStats,
 };
 
 #[derive(Default)]
@@ -308,6 +308,20 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.handle(regiment);
             w.var(u64::from(node));
         }
+        Command::Trade { regiment, post } => {
+            w.u8(23);
+            w.handle(regiment);
+            match post {
+                TradePost::Hamlet(i) => {
+                    w.u8(0);
+                    w.var(u64::from(i));
+                }
+                TradePost::Structure(h) => {
+                    w.u8(1);
+                    w.structure(h);
+                }
+            }
+        }
         Command::Build {
             regiment,
             building,
@@ -440,6 +454,14 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         11 => Command::Gather {
             regiment: r.handle()?,
             node: r.var_as()?,
+        },
+        23 => Command::Trade {
+            regiment: r.handle()?,
+            post: match r.u8()? {
+                0 => TradePost::Hamlet(r.var_as()?),
+                1 => TradePost::Structure(r.structure()?),
+                _ => return None,
+            },
         },
         12 => Command::Build {
             regiment: r.handle()?,
@@ -628,6 +650,17 @@ mod tests {
             Command::Gather {
                 regiment: h(2, 9),
                 node: 300,
+            },
+            Command::Trade {
+                regiment: h(2, 9),
+                post: TradePost::Hamlet(300),
+            },
+            Command::Trade {
+                regiment: h(2, 10),
+                post: TradePost::Structure(StructureHandle {
+                    index: 77,
+                    generation: 3,
+                }),
             },
             Command::Build {
                 regiment: h(4, 2),

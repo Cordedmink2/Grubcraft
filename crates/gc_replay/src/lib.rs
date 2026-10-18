@@ -45,6 +45,9 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 24: the buildings' 16-bit flags (read as the 8 bits they had), the
+///   Conquest units' trade pay, the map's neutral trade posts (read as
+///   none) and the trade command;
 /// - 23: the summon power (22's powers have none) and the Clans' formation
 ///   discipline bit among a unit's weapon flags (read as off);
 /// - 22: each power's meter, each player's meter, and the Edicts' powers
@@ -75,7 +78,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 23;
+pub const FORMAT: u16 = 24;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -171,6 +174,8 @@ pub struct ConquestRecord {
     pub units: Vec<ConquestUnit>,
     pub structures: u32,
     pub nodes: Vec<NodeSetup>,
+    /// The map's neutral trade posts (format 24 on).
+    pub posts: Vec<FxVec2>,
     pub start: [(u32, u32); MAX_PARTIES],
     pub gather_percent: u32,
     pub build_percent: u32,
@@ -187,6 +192,7 @@ impl ConquestRecord {
             units: setup.units.to_vec(),
             structures: setup.structures,
             nodes: setup.nodes.to_vec(),
+            posts: setup.posts.to_vec(),
             start: setup.start,
             gather_percent: setup.gather_percent,
             build_percent: setup.build_percent,
@@ -205,6 +211,7 @@ impl ConquestRecord {
             units: &self.units,
             structures: self.structures,
             nodes: &self.nodes,
+            posts: &self.posts,
             start: self.start,
             gather_percent: self.gather_percent,
             build_percent: self.build_percent,
@@ -228,6 +235,10 @@ impl ConquestRecord {
         w.var(self.nodes.len() as u64);
         for n in &self.nodes {
             w.node(n);
+        }
+        w.var(self.posts.len() as u64);
+        for &at in &self.posts {
+            w.vec(at);
         }
         for &(grub, marrow) in &self.start {
             w.var(u64::from(grub));
@@ -268,6 +279,15 @@ impl ConquestRecord {
             .map(|_| r.node())
             .collect::<Option<Vec<_>>>()
             .filter(|v| v.len() == n)?;
+        let posts = if format >= 24 {
+            let n: usize = r.var_as().filter(|&n| n <= MAX_NODES)?;
+            (0..n.min(r.remaining()))
+                .map(|_| r.vec())
+                .collect::<Option<Vec<_>>>()
+                .filter(|v| v.len() == n)?
+        } else {
+            Vec::new()
+        };
         let mut start = [(0, 0); MAX_PARTIES];
         for s in &mut start {
             *s = (r.var_as()?, r.var_as()?);
@@ -302,6 +322,7 @@ impl ConquestRecord {
             units,
             structures,
             nodes,
+            posts,
             start,
             gather_percent,
             build_percent,
@@ -1361,6 +1382,8 @@ mod tests {
                 train_ticks: 200,
                 trained_at: Some(0),
                 tier: 1,
+                // A Clerk: no Grub drop-off.
+                cannot_bank: gc_sim::structures::DROP_OFF_GRUB,
                 ..ConquestUnit::default()
             },
             ConquestUnit {
@@ -1371,7 +1394,15 @@ mod tests {
                 tier: 1,
                 ..ConquestUnit::default()
             },
+            // A caravan.
+            ConquestUnit {
+                supply: 2,
+                trade_base: 40,
+                trade_tenths: 12,
+                ..ConquestUnit::default()
+            },
         ];
+        let posts = [FxVec2::from_ints(5, 60), FxVec2::from_ints(58, 62)];
         let nodes = [
             NodeSetup {
                 resource: Resource::Grub,
@@ -1446,6 +1477,7 @@ mod tests {
             units: &units,
             structures: 64,
             nodes: &nodes,
+            posts: &posts,
             start,
             gather_percent: 150,
             build_percent: 75,
@@ -1500,6 +1532,26 @@ mod tests {
                         Command::Gather {
                             regiment: worker(&world, p).unwrap(),
                             node: u16::from(p),
+                        },
+                    )),
+                    3 => commands.push(say(
+                        p,
+                        Command::SpawnRegiment {
+                            unit: 2,
+                            position: FxVec2::from_ints(i32::from(hx) + 6, i32::from(wy)),
+                            facing: gc_fixed::Angle(0),
+                        },
+                    )),
+                    4 => commands.push(say(
+                        p,
+                        Command::Trade {
+                            regiment: world
+                                .regiments
+                                .iter()
+                                .find(|r| r.owner == p && r.unit == 2)
+                                .map(|r| r.handle)
+                                .unwrap(),
+                            post: gc_sim::TradePost::Hamlet(u16::from(p)),
                         },
                     )),
                     400 => commands.push(say(
@@ -1574,7 +1626,7 @@ mod tests {
         let s = world.structures().unwrap();
         assert_eq!(s.len(), 4, "a hall and a house each");
         assert!(s.iter().all(|v| v.finished()));
-        assert_eq!(world.regiments.iter().count(), 4);
+        assert_eq!(world.regiments.iter().count(), 6, "and a caravan each");
         let bytes = replay.encode();
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, replay);

@@ -11,7 +11,9 @@
 //! soldier (the script gives this Concord side the Choir's meter). The
 //! first side, the Clans, puts up Ancestor Shrines and spends the Honor
 //! they earn on its Edicts: Rice Tax, Forced March for its soldiers, and
-//! the Banner of the Ancestors over them.
+//! the Banner of the Ancestors over them. The Concord side's Grub comes by
+//! trade: its caravan runs to the nearest trade post (a Trade order) and
+//! its Clerks mine only Marrow.
 //!
 //! The test below plays it through a recorder and checks it plays back
 //! alike after a trip through the file format. To record the golden again
@@ -28,7 +30,7 @@ use gc_replay::{Recorder, Replay};
 use gc_sim::structures::{Role, StructureView};
 use gc_sim::{
     BuildingId, Capacities, Command, MatchSetup, Meter, PlayerCommand, PlayerId, PowerTarget,
-    RegimentHandle, Resource, TICKS_PER_SECOND, UnitId, Victories, World,
+    RegimentHandle, Resource, TICKS_PER_SECOND, TradePost, UnitId, Victories, World,
 };
 use gc_ui::lobby::Tempo;
 
@@ -57,6 +59,8 @@ const SHRINES: u8 = 12;
 /// Soldiers and workers each side trains up to.
 const FIGHTERS: usize = 6;
 const WORKERS: usize = 8;
+/// Caravans a trading side trains up to.
+const CARAVANS: usize = 3;
 
 /// What a faction's script plays with: its main building and what it
 /// upgrades to, its worker, a building that trains soldiers and the
@@ -67,6 +71,8 @@ pub(crate) struct Kit {
     pub main: BuildingId,
     pub keep: Option<BuildingId>,
     pub worker: UnitId,
+    /// A unit that trades, for a faction whose Grub comes by caravan.
+    pub caravan: Option<UnitId>,
     pub barracks: BuildingId,
     pub fighter: UnitId,
     pub house: BuildingId,
@@ -74,6 +80,11 @@ pub(crate) struct Kit {
     /// What a worker, a soldier and the upgrade cost: Grub, Marrow and
     /// supply.
     pub worker_cost: [u32; 3],
+    pub caravan_cost: [u32; 3],
+    /// What the barracks, the house and the spare building cost.
+    pub barracks_cost: [u32; 3],
+    pub house_cost: [u32; 3],
+    pub spare_cost: [u32; 3],
     pub fighter_cost: [u32; 3],
     pub keep_cost: [u32; 3],
 }
@@ -95,6 +106,11 @@ impl Kit {
                 .map(|u| u as UnitId)
         };
         let worker = trains(main, true).expect("the main building trains a worker");
+        let caravan = data
+            .conquest_units
+            .iter()
+            .position(|u| u.trades() && u.faction() == faction)
+            .map(|u| u as UnitId);
         let plain = ids(&|i| {
             let s = table.stats[i];
             s.role != Role::Main && s.upgrades_from.is_none() && s.tier <= 1
@@ -119,6 +135,13 @@ impl Kit {
             .first()
             .copied();
         let fighter = trains(barracks, false).unwrap_or(worker);
+        let building_cost = |b: u16| {
+            [
+                u32::from(stats(b).cost_grub),
+                u32::from(stats(b).cost_marrow),
+                0,
+            ]
+        };
         let unit_cost = |u: UnitId| {
             let u = &data.conquest_units[usize::from(u)];
             [
@@ -131,11 +154,16 @@ impl Kit {
             main,
             keep,
             worker,
+            caravan,
             barracks,
             fighter,
             house,
             spare,
             worker_cost: unit_cost(worker),
+            caravan_cost: caravan.map_or([u32::MAX; 3], unit_cost),
+            barracks_cost: building_cost(barracks),
+            house_cost: building_cost(house),
+            spare_cost: building_cost(spare),
             fighter_cost: unit_cost(fighter),
             keep_cost: keep.map_or([u32::MAX; 3], |b| {
                 let s = stats(b);
@@ -255,6 +283,9 @@ impl Match {
         );
         // The Concord side plays the Choir's powers.
         plan.meters[1] = Meter::Resonance;
+        // Its Grub comes by caravan, slowly at first: a bigger purse to open
+        // with, so the script's sides arm alike.
+        plan.start[1] = (900, 100);
         let mut world = World::new(&setup);
         assert!(world.conquest(&plan.setup()));
         let rec = Recorder::new(&setup, &world, String::new()).conquest(plan);
@@ -337,8 +368,13 @@ impl Match {
         let grub = self.nodes_near(p, Resource::Grub);
         let marrow = self.nodes_near(p, Resource::Marrow);
         let builders = 2.min(workers.len().saturating_sub(1));
-        let bank = self.world.bank(p).unwrap_or_default();
-        let affords = |cost| affords(&bank, cost);
+        // Its caravans trade at the post nearest its start.
+        let trading = k.caravan.is_some();
+        if trading && (t == GATHER_AT || t.is_multiple_of(10 * TICKS_PER_SECOND)) {
+            out.extend(trade_orders(&self.world, p, self.starts[usize::from(p)]));
+        }
+        // Each order's cost comes off what the later ones can spend.
+        let mut bank = self.world.bank(p).unwrap_or_default();
         if t == GATHER_AT || t.is_multiple_of(10 * TICKS_PER_SECOND) {
             for (i, &w) in workers.iter().enumerate() {
                 let building =
@@ -347,7 +383,9 @@ impl Match {
                 if building || self.world.gathers_at(w).is_some() {
                     continue;
                 }
-                let node = if i == 3 || i == 4 {
+                let node = if trading {
+                    marrow.get(i % 2)
+                } else if i == 3 || i == 4 {
                     marrow.first()
                 } else {
                     grub.get(i % 2)
@@ -376,38 +414,46 @@ impl Match {
                 .world
                 .production()
                 .map_or(0, |q| q.queue_of(structure).len());
+            // A trading faction's first hires are its caravans.
+            let (unit, cost) = match k.caravan {
+                Some(c) if self.count(p, c) < CARAVANS => (c, k.caravan_cost),
+                _ => (k.worker, k.worker_cost),
+            };
             if t > UNTRAIN_AT
                 && t < UPGRADE_FROM
                 && queue == 0
-                && workers.len() < WORKERS
-                && affords(k.worker_cost)
+                && (unit != k.worker || workers.len() < WORKERS)
+                && affords(&bank, cost)
                 && t.is_multiple_of(TICKS_PER_SECOND)
             {
-                out.push(order(Command::Train {
-                    structure,
-                    unit: k.worker,
-                }));
+                out.push(order(Command::Train { structure, unit }));
+                spend(&mut bank, cost);
             }
             let upgrading = main.upgrading.is_some() || Some(main.building) == k.keep;
             if t >= UPGRADE_FROM
                 && !upgrading
-                && affords(k.keep_cost)
+                && affords(&bank, k.keep_cost)
                 && t.is_multiple_of(TICKS_PER_SECOND)
             {
                 out.push(order(Command::Upgrade { structure }));
+                spend(&mut bank, k.keep_cost);
             }
         }
         // The barracks: laid by the first worker, helped by the second,
         // then training soldiers who rally ahead (and not laid again once
         // the host takes it away).
         match barracks {
-            None if (LAY_FROM..REMOVE_AT).contains(&t) && t.is_multiple_of(TICKS_PER_SECOND) => {
+            None if (LAY_FROM..REMOVE_AT).contains(&t)
+                && t.is_multiple_of(TICKS_PER_SECOND)
+                && affords(&bank, k.barracks_cost) =>
+            {
                 if let (Some(&w), Some(tile)) = (workers.first(), self.site(p, k.barracks)) {
                     out.push(order(Command::Build {
                         regiment: w,
                         building: k.barracks,
                         tile,
                     }));
+                    spend(&mut bank, k.barracks_cost);
                 }
             }
             Some(b) if !b.finished() && !self.sides[usize::from(p)].helped => {
@@ -439,13 +485,14 @@ impl Match {
                 if self.count(p, k.fighter) + queue < FIGHTERS
                     && queue == 0
                     && !saving
-                    && affords(k.fighter_cost)
+                    && affords(&bank, k.fighter_cost)
                     && t.is_multiple_of(TICKS_PER_SECOND)
                 {
                     out.push(order(Command::Train {
                         structure: b.handle,
                         unit: k.fighter,
                     }));
+                    spend(&mut bank, k.fighter_cost);
                 }
                 // A house whenever supply runs short, laid by the first
                 // worker.
@@ -453,6 +500,7 @@ impl Match {
                 if bank.supply_cap < bank.supply_used + 6
                     && !one_going_up
                     && t.is_multiple_of(TICKS_PER_SECOND)
+                    && affords(&bank, k.house_cost)
                     && let (Some(&w), Some(tile)) = (workers.first(), self.site(p, k.house))
                 {
                     out.push(order(Command::Build {
@@ -460,6 +508,7 @@ impl Match {
                         building: k.house,
                         tile,
                     }));
+                    spend(&mut bank, k.house_cost);
                 }
             }
             _ => {}
@@ -468,7 +517,8 @@ impl Match {
         match spare {
             None if t >= SPARE_FROM
                 && !self.sides[usize::from(p)].called_off
-                && t.is_multiple_of(TICKS_PER_SECOND) =>
+                && t.is_multiple_of(TICKS_PER_SECOND)
+                && affords(&bank, k.spare_cost) =>
             {
                 if let (Some(&w), Some(tile)) = (workers.get(builders), self.site(p, k.spare)) {
                     out.push(order(Command::Build {
@@ -476,6 +526,7 @@ impl Match {
                         building: k.spare,
                         tile,
                     }));
+                    spend(&mut bank, k.spare_cost);
                 }
             }
             Some(s) if !self.sides[usize::from(p)].called_off => {
@@ -769,6 +820,40 @@ pub(crate) fn nodes_near(world: &World, (sx, sy): (i32, i32), resource: Resource
     nodes.into_iter().map(|(_, i)| i).collect()
 }
 
+/// Orders for side `p`'s idle caravans to trade at the post nearest
+/// `start` (in tiles) that they can: none if there is none.
+pub(crate) fn trade_orders(
+    world: &World,
+    p: PlayerId,
+    (sx, sy): (i32, i32),
+) -> impl Iterator<Item = PlayerCommand> + '_ {
+    let posts = world.trade_posts();
+    let post = (0..posts.len())
+        .map(|i| TradePost::Hamlet(i as u16))
+        .filter(|&post| world.is_trade_post(p, post))
+        .min_by_key(|&post| {
+            let TradePost::Hamlet(i) = post else {
+                return i32::MAX;
+            };
+            let at = posts[usize::from(i)];
+            let (dx, dy) = (at.x.floor_int() - sx, at.y.floor_int() - sy);
+            dx * dx + dy * dy
+        });
+    post.into_iter().flat_map(move |post| {
+        world.idle_traders(p).map(move |regiment| PlayerCommand {
+            player: p,
+            command: Command::Trade { regiment, post },
+        })
+    })
+}
+
+/// Take `cost` (Grub, Marrow, supply) out of `bank`, which affords it.
+fn spend(bank: &mut gc_sim::Bank, [grub, marrow, supply]: [u32; 3]) {
+    bank.grub -= grub;
+    bank.marrow -= marrow;
+    bank.supply_used += supply;
+}
+
 /// Whether `bank` holds `cost`'s Grub and Marrow and has room for its
 /// supply.
 pub(crate) fn affords(bank: &gc_sim::Bank, [grub, marrow, supply]: [u32; 3]) -> bool {
@@ -798,7 +883,7 @@ mod tests {
                 m.count(p, k.fighter) >= 3,
                 "side {p} trained soldiers: {k:?}"
             );
-            assert!(m.count(p, k.worker) > 4, "side {p} trained workers: {k:?}");
+            assert!(m.count(p, k.worker) >= 4, "side {p} trained workers: {k:?}");
             assert!(bank.grub + bank.marrow > 0 || start.0 > 0, "side {p}");
             let main = m.main_of(p).expect("its main building stands");
             if let Some(keep) = k.keep {

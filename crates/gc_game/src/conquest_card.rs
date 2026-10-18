@@ -2,7 +2,7 @@
 //! grid offers for a selected building, for workers and in their build
 //! menu, and carrying it out. The orders themselves are the simulation's
 //! (`Command::Build`, `Train`, `Upgrade`, `CallOff`, `Untrain`, `Rally`,
-//! `Gather` and `Construct`).
+//! `Gather`, `Construct` and `Trade`).
 
 use std::fmt::Write;
 
@@ -11,7 +11,7 @@ use gc_data::conquest::UNIT_CONSUMED;
 use gc_sim::structures::CANCEL_REFUND_PERCENT;
 use gc_sim::{
     BuildingId, Command, PlayerCommand, RegimentHandle, Regiments, StructureHandle, StructureView,
-    UnitId,
+    TradePost, UnitId,
 };
 use gc_ui::hud::{GRID_SLOTS, SlotState};
 use glam::Vec2;
@@ -27,6 +27,9 @@ const SLOT_EXPAND: usize = 6;
 const SLOT_LAST: usize = GRID_SLOTS - 1;
 /// A right-click this close to a seep or vein (in tiles) sends workers there.
 const NODE_REACH: f32 = 1.5;
+/// A right-click this close to a neutral trade post (in tiles) sends
+/// caravans there.
+const POST_REACH: f32 = 3.0;
 
 /// What one slot of the card does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -300,6 +303,9 @@ impl Running {
             }
             return true;
         }
+        if self.send_trading(at) {
+            return true;
+        }
         // A mixed selection moves together, and an enemy there is attacked.
         let (regiments, units) = (&self.world.regiments, &self.data.conquest_units);
         if self.selected.is_empty()
@@ -328,10 +334,11 @@ impl Running {
             Mend(StructureHandle),
             Gather(u16),
         }
-        // Workers that only build (the Choir's) don't gather: sent to a
-        // node, they just walk there (with any others, who gather).
-        let gathers = !(self.selected.iter()).all(|&h| self.world.builds_only(h));
-        let job = match (mend, self.node_near(at).filter(|_| gathers)) {
+        // Workers that can't gather there (the Choir's only build; the
+        // Concord's have nowhere to take Grub) just walk to the node, with
+        // any others, who gather.
+        let gathers = |node| (self.selected.iter()).any(|&h| self.world.can_gather(h, node));
+        let job = match (mend, self.node_near(at).filter(|&n| gathers(n))) {
             (Some(structure), _) => Job::Mend(structure),
             (None, Some(node)) => Job::Gather(node),
             (None, None) => return false,
@@ -341,7 +348,7 @@ impl Running {
                 regiment,
                 structure,
             },
-            Job::Gather(_) if self.world.builds_only(regiment) => Command::MoveTo {
+            Job::Gather(node) if !self.world.can_gather(regiment, node) => Command::MoveTo {
                 regiment,
                 target: crate::fx_vec(at),
                 facing: None,
@@ -364,6 +371,46 @@ impl Running {
                 }),
         );
         self.ui_sound(sounds::UiSound::Move);
+        true
+    }
+
+    /// Caravans among the selection go to trade at the post at `at`: a
+    /// building under the mouse that is one for them (their own Waystation,
+    /// an ally's main building) or a neutral post by it. Whether it did.
+    fn send_trading(&mut self, at: Vec2) -> bool {
+        let traders: Vec<RegimentHandle> = (self.selected.iter().copied())
+            .filter(|&h| self.world.trades(h))
+            .collect();
+        if traders.is_empty() || self.enemy_at(at).is_some() {
+            return false;
+        }
+        let side = self.sandbox.side;
+        let world = &self.world;
+        let building = self
+            .building_under_cursor(|_| true)
+            .map(TradePost::Structure);
+        let hamlet = || {
+            world
+                .trade_posts()
+                .iter()
+                .enumerate()
+                .map(|(i, p)| (i as u16, from_fx_vec(*p).distance(at)))
+                .filter(|&(_, d)| d <= POST_REACH)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(i, _)| TradePost::Hamlet(i))
+        };
+        let Some(post) = building
+            .filter(|&p| world.is_trade_post(side, p))
+            .or_else(hamlet)
+            .filter(|&p| world.is_trade_post(side, p))
+        else {
+            return false;
+        };
+        self.orders(
+            traders
+                .into_iter()
+                .map(|regiment| Command::Trade { regiment, post }),
+        );
         true
     }
 

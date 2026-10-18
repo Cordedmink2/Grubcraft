@@ -67,6 +67,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::AttackStructure { .. } => "AttackStructure",
         Command::RemoveStructure { .. } => "RemoveStructure",
         Command::Gather { .. } => "Gather",
+        Command::Trade { .. } => "Trade",
         Command::Build { .. } => "Build",
         Command::Construct { .. } => "Construct",
         Command::CallOff { .. } => "CallOff",
@@ -79,7 +80,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::HandOver { .. } => "HandOver",
         Command::UsePower { .. } => "UsePower",
     };
-    const KINDS: [&str; 23] = [
+    const KINDS: [&str; 24] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -92,6 +93,7 @@ fn the_goldens_cover_every_kind_of_command() {
         "AttackStructure",
         "RemoveStructure",
         "Gather",
+        "Trade",
         "Build",
         "Construct",
         "CallOff",
@@ -128,9 +130,9 @@ fn fingerprint(replay: &Replay) -> u64 {
 /// that other builds and old replays know: this table then fails, and is
 /// updated from the test's output.
 const PINNED: (u32, &[(&str, u64)]) = (
-    20,
+    21,
     &[
-        ("conquest-ribcage-1v1", 0xed327d9e13b369b8),
+        ("conquest-ribcage-1v1", 0x425ea94960291757),
         ("field-1v1", 0xdc899e16b2a1820b),
         ("field-2v2", 0x83a2aab65261e05a),
         ("field-8000pt-2v2", 0x2fdbfe270f91c84d),

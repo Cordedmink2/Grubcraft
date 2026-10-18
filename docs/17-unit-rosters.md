@@ -418,6 +418,8 @@ Grubfolk Militia are neutral hirelings; until the data has a neutral faction the
 - **Grubfolk Militia**
   - **Hireling** · passive — Leaves after 120 s, or at once if the hamlet that supplied it is razed. [Summon]
 
+*Built (2026-10-17, faction depth stage 6):* caravans. In `data/rosters/carrion_concord.ron` the Caravan has `trade: Some((base: 40, per_tile_tenths: 12))` (a unit's pay for a delivery: the base in Grub and tenths of a Grub for each whole tile of straight line between its post and its main building), which the baker writes as `trade_base` and `trade_tenths` in the Conquest unit table (CONQUEST_UNIT_SCHEMA is 5; the two are both zero or both nonzero, and `trades()` is true when they aren't); the simulation reads only that, never the faction. The Waystation has the `TradePost` flag (building flag 256; a building's flags are now 16 bits, BUILDING_SCHEMA 7, and loading refuses unknown flags and a non-zero pad), which makes it a trade post for its owner's caravans at half rate. The Counting House, Exchange, Grand Bourse and Waystation have `DropOffMarrow` and no `DropOffGrub`, so the Concord's Clerks mine Marrow only, and Grub comes by caravan: 40 + 1.2 a tile, half at a Waystation, full at a neutral hamlet or an ally's main building (which gains 20% of it). The Strongbox is the simulation's own rule for any unit that trades. Tests: `tools/gc_bake/tests/` (the Caravan and Waystation bake as above, and only they), `crates/gc_sim/tests/caravans.rs`. See [03 · Factions](03-factions.md#economy-trade-routes-and-tithes).
+
 ### Tithe contracts (meter 0 to 250)
 
 | Contract | Tithe | T | Cooldown | Effect |

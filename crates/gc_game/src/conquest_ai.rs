@@ -62,14 +62,20 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
         economy: units
             .iter()
             .find(|u| u.unit.worker)
-            .map_or(EconomyStyle::Shared, |w| EconomyStyle::of(&w.unit)),
+            .map_or(EconomyStyle::Shared, |w| {
+                EconomyStyle::of(
+                    &w.unit,
+                    units.iter().find(|u| u.unit.trades()).map(|u| &u.unit),
+                )
+            }),
         buildings,
         units,
         all_workers: data
             .conquest_units
             .iter()
             .enumerate()
-            .filter(|(_, rec)| rec.worker())
+            // Caravans count: they are raided like workers.
+            .filter(|(_, rec)| rec.worker() || rec.trades())
             .map(|(u, _)| u as u16)
             .collect(),
         all_units: data
@@ -543,7 +549,7 @@ mod tests {
     #[test]
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_lens_panel_shows_its_economy_belief_and_plan() {
-        let factions = [Faction::EmberClans, Faction::CarrionConcord];
+        let factions = [Faction::EmberClans, Faction::Choir];
         let played = play(0, &factions, &[Difficulty::Veteran], 7, 8);
         let mut weighed = false;
         for (p, side) in played.sides.iter().enumerate() {

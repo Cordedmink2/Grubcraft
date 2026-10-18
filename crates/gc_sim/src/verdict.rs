@@ -188,6 +188,11 @@ impl Throne {
         self.out & (1 << party) != 0
     }
 
+    /// The parties that are out, as a bitmask.
+    pub(crate) fn out_mask(&self) -> u8 {
+        self.out
+    }
+
     /// One look, at tick `now` (`battle` ticks into the battle), given the
     /// parties with a main building (`mains`). Returns the parties put out
     /// now, and the verdict if this decides the match.

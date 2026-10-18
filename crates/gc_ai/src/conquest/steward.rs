@@ -12,8 +12,8 @@
 //! build.
 
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
-use gc_sim::structures::{BuildingStats, Role, StructureHandle, StructureView, VEINS};
-use gc_sim::{BuildingId, Command, RegimentHandle, Resource, TICKS_PER_SECOND, UnitId};
+use gc_sim::structures::{BuildingStats, Role, StructureHandle, StructureView, TRADE_POST, VEINS};
+use gc_sim::{BuildingId, Command, RegimentHandle, Resource, TICKS_PER_SECOND, TradePost, UnitId};
 use glam::Vec2;
 
 use super::Sense;
@@ -21,7 +21,7 @@ use super::kit::{EconomyStyle, KitBuilding, KitUnit};
 use super::strategy::Early;
 use super::{placing, sovereign, spymaster};
 use crate::orders::Hands as Clicks;
-use crate::perception::{Class, Seen, to_fx_vec, v2};
+use crate::perception::{Class, Seen, to_fx, to_fx_vec, v2};
 
 /// Ticks between looks.
 const THINK_TICKS: u32 = TICKS_PER_SECOND / 2;
@@ -69,6 +69,27 @@ const BUILDERS: usize = 3;
 /// How far from the main building's middle a Pustule may go to carry the
 /// veins on towards a seep: inside the Hive's own veins, so it links.
 const RELAY_REACH: f32 = 16.0;
+/// Caravans on each trade route the Concord runs.
+const PER_ROUTE: usize = 3;
+/// Routes it runs from the start, before any tier.
+const START_ROUTES: usize = 2;
+/// Routes it runs at once at most, one more for each tier after the first.
+const MAX_ROUTES: usize = 3;
+/// How many workers a caravan counts for in the size of its economy: what
+/// its Grub is worth against a Clerk's Marrow.
+const CARAVAN_WORKERS: usize = 3;
+/// How far from home a neutral trade post is worth running to, in tiles.
+const POST_REACH: f32 = 110.0;
+/// How far from home it puts a Waystation up when no hamlet is in reach.
+const WAYSTATION_RANGE: f32 = 36.0;
+/// A caravan sent to a post that is idle again before this is up never set
+/// out (the way is shut): the post is given up.
+const ROUTE_TICKS: u32 = 15 * TICKS_PER_SECOND;
+/// A caravan on the road that hasn't moved this far in this long is stuck
+/// (blocked in a ford, or at the end of a path that goes nowhere): it is
+/// sent home, and sent out again from there.
+const STUCK_TICKS: u32 = 40 * TICKS_PER_SECOND;
+const STUCK_TILES: f32 = 4.0;
 
 /// A building it ordered laid that hasn't shown on the field yet.
 #[derive(Clone, Copy, Debug)]
@@ -115,6 +136,13 @@ pub struct Steward {
     /// It is short of an army: it trains soldiers first, and puts off
     /// timed expansion and new production meanwhile.
     arming: bool,
+    /// Caravans sent to a trade post lately, and when.
+    trips: Vec<(RegimentHandle, TradePost, u32)>,
+    /// Trade posts a caravan never reached.
+    shunned: Vec<TradePost>,
+    /// Where each caravan on the road last was seen to be, and since when:
+    /// one that doesn't move for a long while is stuck.
+    drift: Vec<(RegimentHandle, Vec2, u32)>,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -141,6 +169,7 @@ impl Mine {
             EconomyStyle::Shared => self.takes(Resource::Grub),
             EconomyStyle::Veins => self.stats.flags & VEINS != 0 && self.stats.role == Role::Main,
             EconomyStyle::Tuned => self.tunes(Resource::Grub),
+            EconomyStyle::Caravans => self.takes(Resource::Marrow) && self.stats.role == Role::Main,
         }
     }
     /// Whether it tunes nodes of `r`.
@@ -169,6 +198,8 @@ struct Look<'a> {
     mine: Vec<Mine>,
     workers: Vec<&'a Seen>,
     army: Vec<&'a Seen>,
+    /// Its caravans, broken ones aside.
+    caravans: Vec<&'a Seen>,
     /// Workers at each node, by node index.
     at_node: Vec<u16>,
     /// Nodes its finished drop-offs serve: (index, resource, at, left).
@@ -264,9 +295,13 @@ impl Steward {
             .clone()
             .filter(|r| s.kit.is_worker(r.unit) && !r.broken())
             .collect();
+        let caravans: Vec<&Seen> = ours
+            .clone()
+            .filter(|r| s.kit.is_caravan(r.unit) && !r.broken())
+            .collect();
         let army: Vec<&Seen> = ours.filter(|r| s.kit.is_fighter(r.unit)).collect();
         let nodes: Vec<_> = economy.nodes().collect();
-        let mut at_node = vec![0u16; nodes.len()];
+        let mut at_node = vec![0u16; economy.node_slots()];
         for w in &workers {
             if let Some(n) = s.world.gathers_at(w.handle)
                 && let Some(c) = at_node.get_mut(usize::from(n))
@@ -278,7 +313,7 @@ impl Steward {
             .iter()
             .filter(|n| n.left > 0)
             .filter(|n| match s.kit.economy {
-                EconomyStyle::Shared => {
+                EconomyStyle::Shared | EconomyStyle::Caravans => {
                     let at = v2(n.at);
                     mine.iter().any(|m| {
                         m.finished() && m.takes(n.resource) && m.at().distance(at) <= SERVE
@@ -296,6 +331,7 @@ impl Steward {
             mine,
             workers,
             army,
+            caravans,
             at_node,
             served,
         })
@@ -309,6 +345,9 @@ impl Steward {
     /// has tiered up, while it has less than it can soon spend.
     fn wants_marrow(&self, s: &Sense, look: &Look) -> bool {
         let banked = s.world.bank(s.party).map_or(0, |b| b.marrow);
+        if s.kit.economy == EconomyStyle::Caravans {
+            return banked < 3 * MARROW_ENOUGH;
+        }
         let started = look.tier >= 2
             || working(s, look) >= 10
             || look
@@ -323,6 +362,9 @@ impl Steward {
     fn put_to_work(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
         if s.kit.economy == EconomyStyle::Tuned {
             return;
+        }
+        if s.kit.economy == EconomyStyle::Caravans {
+            self.run_caravans(s, clicks, look);
         }
         let mut at_node = look.at_node.clone();
         let marrow = self.wants_marrow(s, look);
@@ -387,6 +429,226 @@ impl Steward {
         }
     }
 
+    /// The trade posts its caravans run to, nearest home first: the map's
+    /// hamlets in reach that no caravan failed to reach, else its own
+    /// finished Waystations.
+    fn routes(&self, s: &Sense, look: &Look) -> Vec<TradePost> {
+        let home = self.home.unwrap_or(Vec2::ZERO);
+        let mut routes: Vec<(f32, TradePost)> = s
+            .world
+            .trade_posts()
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (home.distance(v2(*p)), TradePost::Hamlet(i as u16)))
+            .filter(|(d, post)| *d <= POST_REACH && !self.shunned.contains(post))
+            .filter(|(_, post)| s.world.is_trade_post(s.party, *post))
+            .collect();
+        if routes.is_empty() {
+            routes = look
+                .mine
+                .iter()
+                .filter(|m| m.finished() && m.stats.flags & TRADE_POST != 0)
+                .map(|m| (home.distance(m.at()), TradePost::Structure(m.view.handle)))
+                .filter(|(_, post)| !self.shunned.contains(post))
+                .collect();
+        }
+        routes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        routes.into_iter().map(|(_, post)| post).collect()
+    }
+
+    /// Whether a hamlet is in reach of home and no caravan gave it up.
+    fn hamlets(&self, s: &Sense) -> bool {
+        let home = self.home.unwrap_or(Vec2::ZERO);
+        s.world.trade_posts().iter().enumerate().any(|(i, p)| {
+            home.distance(v2(*p)) <= POST_REACH
+                && !self.shunned.contains(&TradePost::Hamlet(i as u16))
+        })
+    }
+
+    /// The Concord's economy: Grub comes by caravan. Idle caravans go to
+    /// the nearest trade post with room on its route, and a post a caravan
+    /// sent there is idle again from, at once, is given up as shut.
+    fn run_caravans(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
+        let idle: Vec<RegimentHandle> = s.world.idle_traders(s.party).collect();
+        let trips = std::mem::take(&mut self.trips);
+        for &(h, post, since) in &trips {
+            let set_off = s.now > since + s.reaction + SENT_TICKS;
+            if idle.contains(&h) && set_off && !self.shunned.contains(&post) {
+                self.shunned.push(post);
+            }
+        }
+        self.trips = trips
+            .into_iter()
+            .filter(|&(h, _, since)| {
+                s.now < since + s.reaction + ROUTE_TICKS
+                    && look.caravans.iter().any(|c| c.handle == h)
+            })
+            .collect();
+        self.unstick_caravans(s, clicks, look);
+        self.send_caravans(s, clicks, look, &idle);
+        self.train_caravans(s, clicks, look);
+    }
+
+    /// A caravan on the road that has stood still for [`STUCK_TICKS`] (one
+    /// locked in a fight it can't win, or chasing a routed enemy into a
+    /// corner, is as stuck as one blocked in a ford) breaks off the fight
+    /// and is sent home with a plain move, which ends its run; it is idle
+    /// there, and sent out again.
+    fn unstick_caravans(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
+        let Some(home) = self.home else { return };
+        self.drift
+            .retain(|d| look.caravans.iter().any(|c| c.handle == d.0));
+        for c in &look.caravans {
+            let trading = s.world.trades_at(c.handle).is_some();
+            let k = self.drift.iter().position(|d| d.0 == c.handle);
+            let Some(k) = k else {
+                self.drift.push((c.handle, c.pos, s.now));
+                continue;
+            };
+            // Loading at a post or standing idle isn't being stuck.
+            let moved = c.pos.distance(self.drift[k].1) >= STUCK_TILES;
+            let stuck = !moved && trading && c.moving && s.now >= self.drift[k].2 + STUCK_TICKS;
+            // Locked in a fight, it breaks off first.
+            let order = if c.engaged {
+                Command::FallBack { regiment: c.handle }
+            } else {
+                Command::MoveTo {
+                    regiment: c.handle,
+                    target: to_fx_vec(home),
+                    facing: None,
+                    files: 0,
+                    pace: to_fx(0.0),
+                }
+            };
+            if !stuck || clicks.give(s.now, order) {
+                // Moving on, or told to: the clock starts again here.
+                if moved || stuck || !trading || !c.moving {
+                    self.drift[k] = (c.handle, c.pos, s.now);
+                }
+            }
+        }
+    }
+
+    /// Idle caravans take the first route with fewer than [`PER_ROUTE`]
+    /// on it, else the one with the fewest.
+    fn send_caravans(
+        &mut self,
+        s: &Sense,
+        clicks: &mut Clicks,
+        look: &Look,
+        idle: &[RegimentHandle],
+    ) {
+        let routes = self.routes(s, look);
+        if routes.is_empty() {
+            return;
+        }
+        let mut on: Vec<usize> = routes
+            .iter()
+            .map(|&post| {
+                look.caravans
+                    .iter()
+                    .filter(|c| s.world.trades_at(c.handle) == Some(post))
+                    .count()
+            })
+            .collect();
+        for &h in idle {
+            if self.recently_sent(h) || !clicks.free() {
+                continue;
+            }
+            let pick = on
+                .iter()
+                .position(|&n| n < PER_ROUTE)
+                .or_else(|| (0..on.len()).min_by_key(|&i| on[i]));
+            let Some(i) = pick else { return };
+            let post = routes[i];
+            if clicks.give(s.now, Command::Trade { regiment: h, post }) {
+                on[i] += 1;
+                self.sent.push((h, s.now));
+                self.trips.push((h, post, s.now));
+            }
+        }
+    }
+
+    /// Caravans to train: [`PER_ROUTE`] for each route it runs, up to one
+    /// route for each tier, at its main buildings.
+    fn train_caravans(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
+        let Some(caravan) = s.kit.caravan() else {
+            return;
+        };
+        if self.routes(s, look).is_empty() {
+            return;
+        }
+        let routes = (START_ROUTES + usize::from(look.tier.max(1)) - 1).min(MAX_ROUTES);
+        let want = (PER_ROUTE * routes * usize::from(s.plan.workers_percent))
+            .div_ceil(100)
+            .max(2);
+        let queued = |this: &Steward, p: &gc_sim::production::Production| {
+            look.mine
+                .iter()
+                .flat_map(|m| p.queue_of(m.view.handle))
+                .filter(|&&u| s.kit.is_caravan(u))
+                .count()
+                + this
+                    .busy
+                    .iter()
+                    .filter(|b| b.1.is_some_and(|u| s.kit.is_caravan(u)))
+                    .count()
+        };
+        let Some(p) = s.world.production() else {
+            return;
+        };
+        let Some(mut bank) = s.world.bank(s.party) else {
+            return;
+        };
+        let mut have = look.caravans.len() + queued(self, p);
+        for m in look.mine.iter().filter(|m| m.finished()) {
+            if have >= want {
+                return;
+            }
+            let trains = caravan
+                .unit
+                .trained_at
+                .is_some_and(|at| grew_from(s, m.view.building, at));
+            if !trains || self.queued(p, m.view.handle) >= QUEUE {
+                continue;
+            }
+            if bank.supply_used + u32::from(caravan.unit.supply) > bank.supply_cap {
+                return;
+            }
+            if s.world
+                .can_train(s.party, m.view.handle, caravan.id)
+                .is_ok()
+                && clicks.give(
+                    s.now,
+                    Command::Train {
+                        structure: m.view.handle,
+                        unit: caravan.id,
+                    },
+                )
+            {
+                have += 1;
+                bank.supply_used += u32::from(caravan.unit.supply);
+                self.busy.push((m.view.handle, Some(caravan.id), s.now));
+            }
+        }
+    }
+
+    /// A Waystation of its own, when no hamlet is in reach to run to: put
+    /// up a stretch from home towards the middle of the map, once.
+    fn waystation<'k>(&self, s: &Sense<'k>, look: &Look) -> Option<(&'k KitBuilding, Vec2)> {
+        if s.kit.economy != EconomyStyle::Caravans || self.hamlets(s) {
+            return None;
+        }
+        let b = s.kit.waystation()?;
+        if look.mine.iter().any(|m| m.view.building == b.id) {
+            return None;
+        }
+        let home = self.home?;
+        let middle = s.kit.starts.iter().copied().sum::<Vec2>() / s.kit.starts.len().max(1) as f32;
+        let spot = home + (middle - home).normalize_or_zero() * WAYSTATION_RANGE;
+        Some((b, spot))
+    }
+
     /// With Marrow piling up, one Marrow gatherer every few seconds moves to the
     /// nearest Grub seep with room: a bank of Marrow buys nothing without
     /// the Grub to go with it.
@@ -395,7 +657,7 @@ impl Steward {
         if banked < 2 * MARROW_ENOUGH
             || s.now < self.next_rebalance
             || !clicks.free()
-            || s.kit.economy == EconomyStyle::Tuned
+            || matches!(s.kit.economy, EconomyStyle::Tuned | EconomyStyle::Caravans)
         {
             return;
         }
@@ -695,6 +957,7 @@ impl Steward {
         };
         let wanted: Option<(&KitBuilding, Vec2)> = housing()
             .or_else(tune)
+            .or_else(|| self.waystation(s, look))
             .or_else(first)
             .or_else(tower)
             .or_else(hatch)
@@ -1191,6 +1454,7 @@ fn working(s: &Sense, look: &Look) -> usize {
                 Resource::Marrow => usize::from(MARROW_SLOTS),
             })
             .sum(),
+        EconomyStyle::Caravans => look.workers.len() + CARAVAN_WORKERS * look.caravans.len(),
         _ => look.workers.len(),
     }
 }

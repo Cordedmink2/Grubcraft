@@ -47,7 +47,7 @@ pub mod vision;
 pub use champions::Challenge;
 use conquest::Conquest;
 pub use conquest::{ConquestSetup, ConquestUnit};
-pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource};
+pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource, TradePost};
 pub use fork::Standing;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
@@ -99,7 +99,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 20;
+pub const SIM_VERSION: u32 = 21;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -583,6 +583,16 @@ pub enum Command {
     /// Marrow vein, see [`economy`]) and carries each load home, until
     /// given another order.
     Gather { regiment: RegimentHandle, node: u16 },
+    /// Conquest: a caravan (a unit that trades) shuttles between its
+    /// owner's nearest main building and a trade post, banking each
+    /// delivery as Grub, until given another order (see [`economy`]).
+    /// Refused for any other unit, and for a post that is none for its
+    /// owner: not a Waystation of theirs or an ally's main building, or
+    /// not there.
+    Trade {
+        regiment: RegimentHandle,
+        post: TradePost,
+    },
     /// Conquest: a worker lays the foundation of a building of type
     /// `building` with its north-west tile at `tile`, pays for it, and
     /// builds it (see [`structures`]). Refused where it doesn't fit, before
@@ -645,6 +655,7 @@ impl Command {
             | Command::Brace { .. }
             | Command::AttackStructure { .. }
             | Command::Gather { .. }
+            | Command::Trade { .. }
             | Command::Build { .. }
             | Command::Construct { .. }
             | Command::CallOff { .. }
@@ -1012,6 +1023,71 @@ impl World {
         })
     }
 
+    /// The map's neutral trade posts, in tiles, by the index
+    /// [`TradePost::Hamlet`] names them with (Conquest only).
+    pub fn trade_posts(&self) -> &[FxVec2] {
+        self.economy().map_or(&[], Economy::posts)
+    }
+
+    /// Whether regiment `h` trades (see [`ConquestUnit::trades`]).
+    pub fn trades(&self, h: RegimentHandle) -> bool {
+        let Some(c) = &self.conquest else {
+            return false;
+        };
+        self.regiments
+            .get(h)
+            .is_some_and(|r| c.unit(r.unit).trades())
+    }
+
+    /// The trade post caravan `h` is working, if it is trading (Conquest
+    /// only).
+    pub fn trades_at(&self, h: RegimentHandle) -> Option<TradePost> {
+        let i = self.regiments.resolve(h)?;
+        self.economy()?.trade_of(&self.regiments, i)
+    }
+
+    /// What caravan `h` carries, in whole Grub, if it carries any
+    /// (Conquest only).
+    pub fn cargo(&self, h: RegimentHandle) -> Option<u32> {
+        let i = self.regiments.resolve(h)?;
+        Some(self.economy()?.cargo_of(&self.regiments, i)).filter(|&g| g > 0)
+    }
+
+    /// Whether `post` is a trade post for `player`'s caravans now: the
+    /// check [`Command::Trade`] makes of it (Conquest only).
+    pub fn is_trade_post(&self, player: PlayerId, post: TradePost) -> bool {
+        (self.conquest.as_ref()).is_some_and(|c| c.is_trade_post(player, &self.stances, post))
+    }
+
+    /// Whether regiment `h` could be sent to gather at `node`: the check
+    /// [`Command::Gather`] makes. A worker whose owner has nowhere to
+    /// take what the node yields (the Concord's Clerks, at Grub) is
+    /// refused (Conquest only).
+    pub fn can_gather(&self, h: RegimentHandle, node: u16) -> bool {
+        let Some(r) = self.regiments.resolve(h) else {
+            return false;
+        };
+        (self.conquest.as_ref()).is_some_and(|c| c.can_gather(&self.regiments, r, node))
+    }
+
+    /// `player`'s caravans with nothing to do (Conquest only): standing
+    /// still, unbroken and out of melee, and trading nowhere.
+    pub fn idle_traders(&self, player: PlayerId) -> impl Iterator<Item = RegimentHandle> + '_ {
+        self.conquest.iter().flat_map(move |c| {
+            self.regiments
+                .iter()
+                .filter(move |r| {
+                    r.owner == player
+                        && !r.moving
+                        && !r.engaged
+                        && !r.morale.broken()
+                        && c.unit(r.unit).trades()
+                        && self.trades_at(r.handle).is_none()
+                })
+                .map(|r| r.handle)
+        })
+    }
+
     /// What regiment `h` carries, if anything (Conquest only).
     pub fn carries(&self, h: RegimentHandle) -> Option<(Resource, u32)> {
         let i = self.regiments.resolve(h)?;
@@ -1113,7 +1189,13 @@ impl World {
             &mut self.combat_rng,
         );
         if let Some(conquest) = &mut self.conquest {
-            conquest.update(&mut self.regiments, &self.units, &mut self.nav);
+            conquest.update(
+                &mut self.regiments,
+                &self.units,
+                &mut self.nav,
+                &self.stances,
+                self.judge.throne().map_or(0, verdict::Throne::out_mask),
+            );
             self.raise_trained();
         }
         // What powers left on regiments wears off in any world, a copy of
@@ -1380,15 +1462,23 @@ impl World {
                 match self.regiments.resolve(regiment) {
                     Some(r)
                         if self.regiments.owner[r] == pc.player
-                            && !self.regiments.morale_state[r].broken()
-                            && conquest.can_gather(&self.regiments, r, node) =>
+                            && !self.regiments.morale_state[r].broken() =>
                     {
-                        // Sent again to the node it works: it keeps on.
-                        if conquest.economy.work_of(&self.regiments, r) != Some(node) {
-                            conquest.stop_work(r);
-                            conquest.economy.gather(&mut self.regiments, r, node);
-                        }
-                        true
+                        conquest.order_gather(&mut self.regiments, r, node)
+                    }
+                    _ => false,
+                }
+            }
+            Command::Trade { regiment, post } => {
+                let Some(conquest) = &mut self.conquest else {
+                    return false;
+                };
+                match self.regiments.resolve(regiment) {
+                    Some(r)
+                        if self.regiments.owner[r] == pc.player
+                            && !self.regiments.morale_state[r].broken() =>
+                    {
+                        conquest.order_trade(&mut self.regiments, &self.stances, r, post)
                     }
                     _ => false,
                 }

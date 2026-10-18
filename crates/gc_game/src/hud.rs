@@ -335,9 +335,10 @@ impl HudState {
 }
 
 /// The colour a site stands out in on a Field Battle's minimap: villages
-/// amber, outposts and lairs dark red, standing stones pale blue. (Not on
-/// a Conquest map, whose minimap marks come from the Conquest mode: so
-/// far its gathering spots, not its sites.)
+/// amber, outposts and lairs dark red, standing stones pale blue. (On a
+/// Conquest map only its trade posts, the villages, towns and bazaar,
+/// are marked, in the same amber; the rest of its marks come from the
+/// Conquest mode.)
 fn site_colour(kind: Kind) -> Option<[u8; 4]> {
     match kind {
         Kind::Village | Kind::Town | Kind::Bazaar => Some([222, 168, 64, 255]),
@@ -384,12 +385,12 @@ pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
             }
         }
     });
-    if !hm.is_conquest() {
-        for o in &hm.objects {
-            if let Some(c) = site_colour(o.kind) {
-                let k = picture.cell_at(tile_uv(o.at.0, n), tile_uv(o.at.1, n));
-                picture.colors[k] = c;
-            }
+    let conquest = hm.is_conquest();
+    for o in &hm.objects {
+        let post = matches!(o.kind, Kind::Village | Kind::Town | Kind::Bazaar);
+        if let Some(c) = site_colour(o.kind).filter(|_| !conquest || post) {
+            let k = picture.cell_at(tile_uv(o.at.0, n), tile_uv(o.at.1, n));
+            picture.colors[k] = c;
         }
     }
     picture
@@ -1672,7 +1673,7 @@ mod tests {
     use crate::camera::RtsCamera;
 
     /// A Field Battle's villages, outposts and stones show on the minimap
-    /// in their own colours; a Conquest map's don't.
+    /// in their own colours; a Conquest map's only mark its trade posts.
     #[test]
     fn the_minimap_marks_a_field_maps_sites() {
         let field = gc_map::FieldMap {
@@ -1701,7 +1702,16 @@ mod tests {
                 .filter(|&&c| c == amber)
                 .count()
         };
-        assert_eq!(marked(&conquest), 0);
+        // Only its trade posts are marked, not its lairs or stones.
+        let posts = conquest
+            .objects
+            .iter()
+            .filter(|o| matches!(o.kind, Kind::Village | Kind::Town | Kind::Bazaar))
+            .count();
+        assert!(posts > 0, "a Conquest map has trade posts");
+        assert!((1..=posts).contains(&marked(&conquest)));
+        let lair = site_colour(Kind::CreepCamp).unwrap();
+        assert!(!minimap_terrain(&conquest).colors.contains(&lair));
     }
 
     #[test]

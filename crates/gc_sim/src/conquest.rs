@@ -11,12 +11,13 @@ use alloc::vec::Vec;
 
 use gc_fixed::FxVec2;
 
-use crate::economy::{Bank, Economy, NodeSetup};
+use crate::economy::{Bank, Economy, NodeSetup, TradePost};
 use crate::honor::Honor;
 use crate::nav::Nav;
 use crate::powers::{Meter, PowerStats, Powers};
 use crate::production::Production;
 use crate::regiments::Regiments;
+use crate::stances::Stances;
 use crate::structures::{
     Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, NEEDS_POWER, Refusal, Role,
     StructureHandle, Structures, Work,
@@ -64,9 +65,27 @@ pub struct ConquestUnit {
     /// A worker that builds and mends but does not gather (the Choir's
     /// Tuners: their nodes are tuned, see [`crate::power`]).
     pub builds_only: bool,
+    /// A trader (the Concord's Caravan): ordered to a trade post
+    /// ([`crate::Command::Trade`]) it shuttles cargo between its owner's
+    /// nearest main building and the post (see [`crate::economy`]). What a
+    /// delivery pays at a full-rate post: this many Grub and
+    /// [`ConquestUnit::trade_tenths`] tenths of a Grub more for each whole
+    /// tile of route. Both 0 for a unit that doesn't trade.
+    pub trade_base: u16,
+    pub trade_tenths: u16,
+    /// `DROP_OFF_*` flags that no building of its owner's faction has (the
+    /// Concord's buildings take no Grub): a worker that doesn't burrow is
+    /// refused a node whose yield it could never bring home. 0 where
+    /// every drop-off exists.
+    pub cannot_bank: u16,
 }
 
 impl ConquestUnit {
+    /// Whether it trades.
+    pub fn trades(&self) -> bool {
+        self.trade_base > 0 || self.trade_tenths > 0
+    }
+
     fn hash_into(&self, h: &mut StateHasher) {
         h.u8(self.breaker as u8);
         h.u8(u8::from(self.worker));
@@ -80,6 +99,9 @@ impl ConquestUnit {
             | u8::from(self.consumed) << 1
             | u8::from(self.burrows) << 2
             | u8::from(self.builds_only) << 3);
+        h.u16(self.trade_base);
+        h.u16(self.trade_tenths);
+        h.u16(self.cannot_bank);
     }
 }
 
@@ -96,6 +118,10 @@ pub struct ConquestSetup<'a> {
     pub structures: u32,
     /// The map's Grub seeps and Marrow veins.
     pub nodes: &'a [NodeSetup],
+    /// The map's neutral trade posts (its Villages, Towns and Bazaar), by
+    /// where they stand, in tiles: where caravans trade at full rate (see
+    /// [`crate::economy`]). Orders name one by its index here.
+    pub posts: &'a [FxVec2],
     /// Each player's Grub and Marrow at the start.
     pub start: [(u32, u32); MAX_PARTIES],
     /// Tempo: gathering at this percent of the Standard rate (Swift 150,
@@ -132,6 +158,7 @@ impl Default for ConquestSetup<'_> {
             units: &[],
             structures: Self::STRUCTURES,
             nodes: &[],
+            posts: &[],
             start: [(0, 0); MAX_PARTIES],
             gather_percent: Self::STANDARD,
             build_percent: Self::STANDARD,
@@ -185,7 +212,14 @@ impl Conquest {
 
     /// One tick: sieges and builders, then root-veins, power, chords,
     /// Resonance and larvae, then gathering and tuning, then training.
-    pub(crate) fn update(&mut self, regs: &mut Regiments, stats: &[UnitStats], nav: &mut Nav) {
+    pub(crate) fn update(
+        &mut self,
+        regs: &mut Regiments,
+        stats: &[UnitStats],
+        nav: &mut Nav,
+        stances: &Stances,
+        out: u8,
+    ) {
         self.structures.update(regs, stats, &self.units, nav);
         self.structures.link_veins();
         self.structures.regrow();
@@ -193,7 +227,7 @@ impl Conquest {
         self.structures.charge_resonance();
         self.structures.grow_larvae();
         self.economy
-            .update(regs, stats, &self.units, &self.structures);
+            .update(regs, stats, &self.units, &self.structures, stances, out);
         let (units, economy) = (&self.units, &self.economy);
         self.production.update(&self.structures, nav, units, || {
             economy.supply_in_use(units, regs)
@@ -223,10 +257,64 @@ impl Conquest {
         }
     }
 
-    /// Whether regiment slot `r` could be sent to gather at `node`.
+    /// Whether regiment slot `r` could be sent to gather at `node`: a
+    /// worker that gathers, a node that is there, and (unless it burrows)
+    /// a faction with a drop-off for what the node yields: else it would
+    /// fill its load and wait for ever.
     pub(crate) fn can_gather(&self, regs: &Regiments, r: usize, node: u16) -> bool {
         let unit = self.unit(regs.unit[r]);
-        unit.worker && !unit.builds_only && self.economy.can_gather(node)
+        let Some(resource) = self.economy.resource_at(node) else {
+            return false;
+        };
+        unit.worker
+            && !unit.builds_only
+            && (unit.burrows || unit.cannot_bank & resource.drop_off() == 0)
+    }
+
+    /// Worker slot `r` is sent to gather at `node`, if it can: one sent
+    /// again to the node it works keeps on.
+    pub(crate) fn order_gather(&mut self, regs: &mut Regiments, r: usize, node: u16) -> bool {
+        if !self.can_gather(regs, r, node) {
+            return false;
+        }
+        if self.economy.work_of(regs, r) != Some(node) {
+            self.stop_work(r);
+            self.economy.gather(regs, r, node);
+        }
+        true
+    }
+
+    /// Whether `post` is a trade post for `player`'s caravans now.
+    pub(crate) fn is_trade_post(
+        &self,
+        player: PlayerId,
+        stances: &Stances,
+        post: TradePost,
+    ) -> bool {
+        (self.economy)
+            .rate_of(&self.structures, stances, player, post)
+            .is_some()
+    }
+
+    /// Caravan slot `r` is sent to trade at `post`, if it can be: a unit
+    /// that trades, and a post that pays its owner. One sent again to the
+    /// post it works keeps on.
+    pub(crate) fn order_trade(
+        &mut self,
+        regs: &mut Regiments,
+        stances: &Stances,
+        r: usize,
+        post: TradePost,
+    ) -> bool {
+        let player = regs.owner[r];
+        if !self.unit(regs.unit[r]).trades() || !self.is_trade_post(player, stances, post) {
+            return false;
+        }
+        if self.economy.trade_of(regs, r) != Some(post) {
+            self.stop_work(r);
+            self.economy.trade(regs, r, post);
+        }
+        true
     }
 
     /// Whether a building of type `building` may go up with its north-west
@@ -486,7 +574,7 @@ impl Conquest {
     }
 
     /// Regiment slot `r` was given another order: it stops attacking or
-    /// building, and stops gathering. Every order that sets a regiment to
+    /// building, and stops gathering or trading. Every order that sets a regiment to
     /// work calls this first.
     pub(crate) fn stop_work(&mut self, r: usize) {
         self.structures.stop(r);
@@ -499,6 +587,7 @@ impl Conquest {
         for i in 0..regs.alive.len() {
             if regs.alive[i] && out & (1 << regs.owner[i]) != 0 {
                 self.stop_work(i);
+                self.economy.forget(i);
                 regs.despawn(regs.handle(i));
             }
         }

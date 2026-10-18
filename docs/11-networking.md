@@ -6,6 +6,8 @@ Up to six players on the same Wi-Fi network, any mix of Macs and Windows PCs, on
 
 *Built (faction depth stage 5a, 2026-10-17):* protocol 17. `UsePower` has two new targets: `Caster` (the caster itself, for Rice Tax) and `Point` (a ground point, for Banner of the Ancestors). Machines on another protocol are refused as before.
 
+*Built (faction depth stage 6, 2026-10-17):* protocol 19. A new order, `Trade { regiment, post }` (opcode 23), sends a caravan to a trade post; the post is either a neutral hamlet by its index in the map's list of posts (tag 0, then the index) or a building by its handle (tag 1), so a Concord player's right-click on a hamlet or an allied main building reaches every machine as one small message. The posts themselves are made from the map by every machine, like the resource nodes, so nothing about them goes over the wire. A machine on protocol 18 would refuse the order.
+
 *Built (faction depth stage 5b, 2026-10-17):* protocol 18. A unit's weapon byte (on the wire in a `TuneUnit` order) gains the discipline bit (8), which a machine on protocol 17 would refuse; Ancestral Return needs no new message (it is a `UsePower` on a `Structure` target, as Overclock on a building already is), and the summoned regiment appears on every machine by the simulation's own rules.
 
 ## Model: host-sequenced deterministic lockstep
