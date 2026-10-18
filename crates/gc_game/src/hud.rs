@@ -1320,7 +1320,13 @@ impl Running {
             return;
         };
         if want_roster != self.play.roster_table() {
+            if !self.place_tabs_on() {
+                return;
+            }
             self.restart_sandbox(want_roster);
+        }
+        if unit >= self.units.stats.len() {
+            return;
         }
         self.sandbox.unit = unit as gc_sim::UnitId;
         self.sandbox.placing = true;
