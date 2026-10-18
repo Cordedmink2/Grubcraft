@@ -75,6 +75,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Tutorial "First Harvest" and faction primers for Clans and Brood; contextual hints; codex.
 - Audio: unit voices, faction themes, battle-ambience layers (the mixer, a first sound set and adaptive calm/battle music are already built; see [09](09-art-and-audio.md#built-so-far)).
 - Remaining launch maps (Hollow Lung, Marrowfen), map validator.
+- Natural mountains, stage 2 (asked for by Mario, 2026-10-18): make the walkable shape of mountains irregular in the map generator itself: winding ridges, crests and peaks of varied height, uneven cliff lines and varied passes, instead of the straight line stamps in `gc_map/src/wilds.rs`. This changes map heights and pathfinding, so it re-records the golden replays and rechecks passes and fords with `gc_mapcheck`. Stage 1 (2026-10-18) was visual only: crags, varied peak heights, irregular cliff edges, Rock035 rock texturing in the terrain shader and boulders along cliffs, with no change to the simulation.
 - Post-game screen with graphs and "Restage this battle".
 - AI track: the relations ledger (stance, liking, trust, memories) that hamlet reputation runs on; mercenary companies; the parley panel (AI-4).
 - Campaign track: exploring inside a match, with frontier sites and first contact (C-0 in [19](19-campaign.md#build-plan)).

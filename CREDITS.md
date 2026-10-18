@@ -54,7 +54,7 @@ If we change either model, say so in the credit ("adapted from ..."). The battle
 | Ant (rigged, animated) | mujtaba-io | https://opengameart.org/content/ant-3d-model-rigging-animated-low-poly-ish |
 | Alien Bug (animated) | CDmir | https://opengameart.org/content/alien-bug-animated |
 | Ultimate Monsters, Easy Enemy Pack, LowPoly RPG Characters, Ultimate Modular Men | Quaternius (quaternius.com) | https://quaternius.com/packs |
-| Ground 054, Grass 001, Rock 035 textures | ambientCG (ambientcg.com) | https://ambientcg.com |
+| Ground 054, Grass 001, Rock 035 textures (Rock 035 used for the in-game terrain rock) | ambientCG (ambientcg.com) | https://ambientcg.com |
 | Voice Clip Pack - Male Adventurer RPG (Ember Clans battle cries) | wolfwoot / 2DPIXX | https://opengameart.org/content/voice-clip-pack-male-adventurer-rpg |
 | Zombie / Skeleton / Monster Voice Effects (Carrion Concord and Ember Clans battle cries) | ArcadeParty / Snabisch | https://opengameart.org/content/zombie-skeleton-monster-voice-effects |
 | Ghost Monster Voice Moaning & Growling, Insect or alien scream (Carrion Concord and Brood battle cries) | qubodup | https://opengameart.org/content/ghost-monster-voice-moaning-growling |

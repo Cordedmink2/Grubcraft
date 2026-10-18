@@ -46,6 +46,24 @@ const CHUNK_RADIUS: f32 = CHUNK as f32 * 0.71;
 const TREE_PERCENT: u32 = 55;
 /// Chunk-local positions are in this many steps a tile.
 const STEPS: f32 = 2048.0;
+/// How a tile's ground is classed by gc_map's nav rules (`Terrain::ground`):
+/// walkable, steep (walkable, slow: a flank), a cliff no regiment climbs
+/// (some half-tile cell of it is one), or, only here, a cliff's foot: a
+/// walkable tile beside a cliff that rises out of it.
+const OPEN: u8 = 0;
+const STEEP: u8 = 1;
+const CLIFF: u8 = 2;
+const FOOT: u8 = 3;
+/// A foot is a tile this much lower than its cliff neighbour, in tiles.
+const FOOT_RISE: f32 = 0.3;
+/// Extra rocks per tile on cliffs: a steep flank, a cliff face, and a
+/// cliff's foot (the tile the cliff rises out of).
+const FLANK_ROCKS: f32 = 0.3;
+const FACE_ROCKS: f32 = 1.2;
+const FOOT_ROCKS: f32 = 2.0;
+/// Most extra cliff rocks in one 16 by 16 tile chunk, so a big map holds at
+/// most about 0.09 of them per tile however much of it is cliff.
+const CLIFF_ROCKS_PER_CHUNK: u32 = 24;
 
 /// Trees are drawn this far from the camera's ground point (tiles), and
 /// further as it pulls back; bushes and big rocks a bit less; grass and
@@ -228,6 +246,8 @@ use Model::*;
 const FIR: &[(Model, u8)] = &[(ThicketFir, 1)];
 const TALL: &[(Model, u8)] = &[(TallGrass, 1)];
 const REEDS: &[(Model, u8)] = &[(Reeds, 1)];
+/// The rocks that dress cliffs and steep flanks (see `Placer::cliff_rocks`).
+const CLIFF_ROCKS: &[(Model, u8)] = &[(Crag, 2), (Slab, 2), (Boulder, 1)];
 
 static MEADOW: Set = Set {
     thicket: FIR,
@@ -356,12 +376,35 @@ pub struct Terrain<'a> {
     /// dry).
     pub heights: &'a [u16],
     pub water: u16,
+    /// Each tile's ground by the nav rules: 0 walkable, 1 steep, 2 cliff
+    /// (empty: all walkable).
+    pub ground: Vec<u8>,
     pub sites: Vec<(Site, (i32, i32))>,
 }
 
 impl<'a> Terrain<'a> {
     pub fn of(map: &'a Map) -> Terrain<'a> {
+        // The cliffs are the half-tile cells the nav grid blocks for rise
+        // (the ones the renderer builds its crags on), the steep tiles those
+        // it routes round.
+        let cliffs = map.cliff_cells();
+        let steep = map.tile_ground(&map.nav_costs());
+        let n = map.tiles as usize;
+        let ground = (0..n * n)
+            .map(|i| {
+                let (x, y) = (i % n, i / n);
+                let at = |dx: usize, dy: usize| cliffs[(2 * y + dy) * 2 * n + 2 * x + dx];
+                if at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1) > 0 {
+                    CLIFF
+                } else if steep[i] == gc_map::Ground::Steep {
+                    STEEP
+                } else {
+                    OPEN
+                }
+            })
+            .collect();
         Terrain {
+            ground,
             tiles: map.tiles,
             cover: &map.cover,
             thicket: &map.thicket,
@@ -808,6 +851,8 @@ struct Tile {
     set: &'static Set,
     /// Steepness: biggest height step to a neighbour, in tiles.
     slope: f32,
+    /// `OPEN`, `STEEP`, `CLIFF` or `FOOT`.
+    ground: u8,
     shore: bool,
 }
 
@@ -815,6 +860,8 @@ struct Placer<'a> {
     models: &'a SceneryModels,
     out: Out,
     origin: (u32, u32),
+    /// Extra cliff rocks this chunk may still place.
+    cliff_left: u32,
 }
 
 impl Placer<'_> {
@@ -888,8 +935,32 @@ impl Placer<'_> {
         }
     }
 
+    /// Extra rocks on a cliff or steep flank, visual only: a few on a steep
+    /// flank, more on a cliff face and most at a cliff's foot. Never on flat
+    /// ground, by the shore, or near a site (`clear`), and at most the
+    /// chunk's `cliff_left`. The rng is drawn only on steep tiles, so flat
+    /// ground places exactly what it did before.
+    fn cliff_rocks(&mut self, t: &Tile, clear: bool, rng: &mut Rng) {
+        if clear || t.shore || t.ground == OPEN || self.cliff_left == 0 {
+            return;
+        }
+        let per_tile = match t.ground {
+            STEEP => FLANK_ROCKS,
+            FOOT => FOOT_ROCKS,
+            _ => FACE_ROCKS,
+        };
+        let count = rng.count(per_tile).min(self.cliff_left);
+        for _ in 0..count {
+            if let Some(m) = self.pick(CLIFF_ROCKS, rng) {
+                self.put(m, t, rng, 0.9, 1.6, 0.1);
+                self.cliff_left -= 1;
+            }
+        }
+    }
+
     /// One tile's scenery.
     fn tile(&mut self, t: &Tile, cover: u8, thicket: bool, clear: bool, rng: &mut Rng) {
+        self.cliff_rocks(t, clear, rng);
         let set = t.set;
         match cover {
             2 if thicket => {
@@ -968,6 +1039,7 @@ fn build_chunk(
             radius: 0.0,
         },
         origin: (ox, oy),
+        cliff_left: CLIFF_ROCKS_PER_CHUNK,
     };
     let flat = t.heights.len() != (n * n) as usize;
     let tile_height = |x: u32, y: u32| f32::from(t.heights[(y * n + x) as usize]);
@@ -977,6 +1049,7 @@ fn build_chunk(
         for x in ox..(ox + CHUNK).min(n) {
             let i = (y * n + x) as usize;
             let mut slope = 0.0f32;
+            let mut ground = t.ground.get(i).copied().unwrap_or(OPEN);
             let mut shore = false;
             if !flat {
                 let h = tile_height(x, y);
@@ -992,6 +1065,10 @@ fn build_chunk(
                     }
                     let nh = tile_height(nx as u32, ny as u32);
                     slope = slope.max((nh - h).abs() / units);
+                    let nground = t.ground.get((ny as u32 * n + nx as u32) as usize);
+                    if ground == OPEN && nground == Some(&CLIFF) && (nh - h) / units > FOOT_RISE {
+                        ground = FOOT;
+                    }
                     shore |= nh < f32::from(t.water);
                 }
             }
@@ -1001,6 +1078,7 @@ fn build_chunk(
                 y,
                 set: set_of(land),
                 slope,
+                ground,
                 shore,
             };
             let cover = t.cover.get(i).copied().unwrap_or(0);
@@ -1017,7 +1095,12 @@ fn build_chunk(
         height,
         radius,
     } = placer.out;
-    let top = hi + height;
+    // Scenery on cliffs stands on the renderer's relief, up to this much
+    // higher than the heights here.
+    let cliffs = (oy..(oy + CHUNK).min(n)).any(|y| {
+        (ox..(ox + CHUNK).min(n)).any(|x| t.ground.get((y * n + x) as usize) == Some(&CLIFF))
+    });
+    let top = hi + height + if cliffs { gc_render::RELIEF_MAX } else { 0.0 };
     let (mid, half) = ((lo + top) * 0.5, (top - lo) * 0.5);
     Chunk {
         classes: classes.map(Vec::into_boxed_slice),
@@ -1055,6 +1138,33 @@ mod tests {
     }
 
     const N: u32 = 64;
+
+    /// The tiles' nav ground, as gc_map would class it, from tile heights:
+    /// a tile with a neighbour 1.2 tiles a tile different is a cliff, over
+    /// 0.6 steep.
+    fn ground_of(heights: &[u16]) -> Vec<u8> {
+        let units = gc_sim::terrain::HEIGHT_UNITS as f32;
+        let at = |x: i32, y: i32| f32::from(heights[(y as u32 * N + x as u32) as usize]) / units;
+        (0..N as i32 * N as i32)
+            .map(|i| {
+                let (x, y) = (i % N as i32, i / N as i32);
+                let mut slope = 0.0f32;
+                for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if (0..N as i32).contains(&nx) && (0..N as i32).contains(&ny) {
+                        slope = slope.max((at(nx, ny) - at(x, y)).abs());
+                    }
+                }
+                if slope >= 1.2 {
+                    CLIFF
+                } else if slope >= 0.6 {
+                    STEEP
+                } else {
+                    OPEN
+                }
+            })
+            .collect()
+    }
 
     struct World {
         cover: Vec<u8>,
@@ -1095,6 +1205,7 @@ mod tests {
                     land: &self.land,
                     heights: &self.heights,
                     water: 500,
+                    ground: ground_of(&self.heights),
                     sites: self.sites.clone(),
                 },
                 seed,
@@ -1210,6 +1321,52 @@ mod tests {
         let items = all(&w.build(7, &models()));
         assert!(!items.is_empty());
         assert!(items.iter().all(|([x, _], _)| *x >= 20.0));
+    }
+
+    /// The tiles with a crag or slab, by position (cliff rocks only: meadow
+    /// grows boulders and nothing else of these two).
+    fn crags_and_slabs(items: &[([f32; 2], &str)]) -> Vec<[f32; 2]> {
+        items
+            .iter()
+            .filter(|(_, n)| *n == "crag" || *n == "slab")
+            .map(|(p, _)| *p)
+            .collect()
+    }
+
+    /// The flat world with the ground stepping up `rise` tiles a tile at
+    /// column 32.
+    fn ridge(rise: f32) -> World {
+        let mut w = World::new();
+        let step = (rise * gc_sim::terrain::HEIGHT_UNITS as f32) as u16;
+        for y in 0..N {
+            for x in 32..N {
+                w.heights[(y * N + x) as usize] = 1000 + step;
+            }
+        }
+        w
+    }
+
+    #[test]
+    fn cliff_rocks_only_where_the_ground_is_steep() {
+        let flat = all(&World::new().build(7, &models()));
+        assert!(crags_and_slabs(&flat).is_empty());
+        // A gentle slope (0.4 a tile) is not steep enough.
+        let gentle = all(&ridge(0.4).build(7, &models()));
+        assert!(crags_and_slabs(&gentle).is_empty());
+        // A cliff (2 tiles a tile) gets rocks at its foot and face only.
+        let cliff = all(&ridge(2.0).build(7, &models()));
+        let placed = crags_and_slabs(&cliff);
+        assert!(placed.len() > 20, "{} cliff rocks", placed.len());
+        assert!(placed.iter().all(|[x, _]| (31.0..33.0).contains(x)));
+        // No chunk gets more than its budget.
+        let mut per_chunk = [0u32; 16];
+        for [x, y] in &placed {
+            per_chunk[(*y as usize / 16) * 4 + *x as usize / 16] += 1;
+        }
+        // Boulders are a fifth of the cliff rocks and not counted here, so
+        // a full chunk shows as its crags and slabs, a good few of them.
+        assert!(per_chunk.iter().all(|&c| c <= CLIFF_ROCKS_PER_CHUNK));
+        assert!(per_chunk.iter().any(|&c| c >= 12), "{per_chunk:?}");
     }
 
     #[test]
@@ -1416,12 +1573,16 @@ mod tests {
         let s = Scenery::new(&map, 3, &models());
         let (count, bytes) = s.stored();
         let big = bytes as f64 * (896.0f64 / 512.0).powi(2);
+        let cliffs = crags_and_slabs(&all(&s)).len();
         eprintln!(
-            "512 tiles: {count} instances, {:.1} MB; 896 tiles about {:.1} MB",
+            "512 tiles: {count} instances ({cliffs} cliff rocks), {:.1} MB; 896 tiles about {:.1} MB",
             bytes as f64 / 1e6,
             big / 1e6
         );
         assert!(count > 100_000);
         assert!(big < 40e6, "{:.1} MB", big / 1e6);
+        // The cliff rocks stay within their budget: a chunk each at most.
+        let chunks = (512 / CHUNK) as usize * (512 / CHUNK) as usize;
+        assert!(cliffs <= chunks * CLIFF_ROCKS_PER_CHUNK as usize);
     }
 }

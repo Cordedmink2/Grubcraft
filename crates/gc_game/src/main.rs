@@ -5547,6 +5547,7 @@ fn set_terrain(renderer: &mut gc_render::Renderer, map: &Map) {
         max_height: map.max_height(),
         water_level: map.water_level(),
         heights: &map.samples,
+        cliff: &map.cliff_cells(),
         tint: &tint,
         tint_side,
     });
