@@ -624,6 +624,8 @@ pub(crate) mod tests {
         /// Who holds the field, once someone does.
         pub(crate) holder: Option<PlayerId>,
         pub(crate) ticks: u32,
+        /// The first tick a regiment met an enemy in melee or a volley landed.
+        first_contact: Option<u32>,
         /// Regiments each party fielded.
         fielded: Vec<usize>,
         /// Time all the minds spent thinking, and the longest single tick.
@@ -886,7 +888,19 @@ pub(crate) mod tests {
             })
             .collect();
         let limit = minutes * 60 * gc_sim::TICKS_PER_SECOND;
+        let mut first_contact = None;
         while m.world.tick_count() < limit && !m.step(&[]).decided {
+            if first_contact.is_none()
+                && (m.world.events().iter()).any(|e| {
+                    matches!(
+                        e,
+                        gc_sim::events::Event::Contact { .. }
+                            | gc_sim::events::Event::Landed { .. }
+                    )
+                })
+            {
+                first_contact = Some(m.world.tick_count());
+            }
             if std::env::var_os("AI_TRACE").is_some() && m.world.tick_count().is_multiple_of(400) {
                 println!("t={}s", m.world.tick_count() / gc_sim::TICKS_PER_SECOND);
                 for mind in m.minds.iter() {
@@ -922,6 +936,7 @@ pub(crate) mod tests {
         Played {
             holder: m.world.verdict().map(|v| v.holder),
             ticks: m.world.tick_count(),
+            first_contact,
             fielded,
             ai_time: m.minds_time,
             ai_worst: m.minds_worst,
@@ -1053,6 +1068,8 @@ pub(crate) mod tests {
                 .map(|&(a, b)| {
                     s.spawn(move || {
                         let (mut won, mut lost) = (0, 0);
+                        // Ticks of the decided battles, and of their fights.
+                        let (mut battle, mut fight) = (0, 0);
                         for seed in from..from + n {
                             let mut setup =
                                 lobby(&[Some(Difficulty::Veteran), Some(Difficulty::Veteran)], &[0, 1]);
@@ -1063,18 +1080,25 @@ pub(crate) mod tests {
                             // `AI_CHAMPIONS=off` plays them without champions.
                             setup.settings.champions =
                                 std::env::var("AI_CHAMPIONS").as_deref() != Ok("off");
-                            match play(&setup, seed, 10).battle.won {
+                            let played = play(&setup, seed, 10);
+                            match played.battle.won {
                                 Some(w) if w == a_first => won += 1,
                                 Some(_) => lost += 1,
-                                None => {}
+                                None => continue,
                             }
+                            battle += played.ticks;
+                            fight += played.ticks - played.first_contact.unwrap_or(0);
                         }
+                        let decided = f64::from(((won + lost) as u32).max(1))
+                            * f64::from(gc_sim::TICKS_PER_SECOND);
                         format!(
-                            "{:>15} v {:<15} won {won:>3}, lost {lost:>3}, undecided {:>3}  ({:.0}%)",
+                            "{:>15} v {:<15} won {won:>3}, lost {lost:>3}, undecided {:>3}  ({:.0}%)  battle {:.0} s, fight {:.0} s",
                             a.name(),
                             b.name(),
                             n - won - lost,
-                            100.0 * won as f64 / n as f64
+                            100.0 * won as f64 / n as f64,
+                            f64::from(battle) / decided,
+                            f64::from(fight) / decided
                         )
                     })
                 })

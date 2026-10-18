@@ -146,8 +146,8 @@ fn check(
 ) {
     let full = i32::from(regs.full_models[i].max(1));
     // Casualties already come at the battle's pace (see
-    // `combat::BATTLE_PACE_PERCENT`); the steady drains are scaled to match,
-    // so regiments still break from losses as much as from pressure.
+    // `combat::BATTLE_PACE_PERCENT`); the steady drains in a fight are scaled
+    // to match, so regiments break from pressure as much as from losses.
     let mut drain = 0;
     if regs.shock[i] & SHOCK_REAR != 0 {
         drain += i32::from(REAR_SHOCK * SCALE);
