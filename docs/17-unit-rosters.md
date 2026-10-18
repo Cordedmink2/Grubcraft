@@ -515,15 +515,23 @@ Seeds 1 to 96 gave every pair between 48% and 57% except the Brood against the C
 
 <a id="third-retune"></a>**Third retune (2026-10-17).** Re-measured on main after the Brace and Fall back change (#108). Nothing had moved since the table of the second retune above (Clans 50 / 52 / 46, Brood 44 / 52, Choir against the Concord 54.5, averaging seeds 1 to 192 and 2001 to 2192, champions allowed). The Choir was ahead of the Brood (56%) and the Concord (54.5%), the Clans were behind the Concord (46%), and the woods penalty found in #38 is long gone (the Choir is level in woods). Two moves were made: Yumi Ashigaru accuracy 31 to 32 and Shardlings file spacing 0.55 to 0.6. The result is Clans 50 / 52 / 50, Brood against the Choir 44, Brood against the Concord 52 and Choir against the Concord 49.5, each set of 192 within about 6 points of that. A third set (seeds 5001 to 5192) read 53 / 53 / 40 / 42 / 52 / 46, so the Brood against the Choir (about 43%) and the Clans against the Concord (about 46% over three sets) are the two to watch; per-set noise is 4 to 6 points. On bare maps (`AI_COVER=off`), before then after: Clans against the Brood 67 to 71, Clans against the Choir 32 to 36, Clans against the Concord 60 to 65, Brood against the Choir 32 to 37, Brood against the Concord 48 to 48, Choir against the Concord 66 to 57. The Choir still wins 57% to 64% on bare ground, and the Clans win 65% to 71% against the Brood and the Concord. That is cover-dependent (archers and the narrow Shardling block): woods are the balance point because every generated map has them, and hand-made maps with little cover need their own look. No stat can even out both kinds of map. Tried and dropped (woods, both seed sets): Shardlings morale 55 (Choir v Concord 49 but Brood v Choir stayed 44); Skitterlings defence 27 (Brood v Choir 47 but Clans v Brood 44.5 and Brood v Concord 55 to 57); Skitterlings charge bonus 44 and Bone Pikes charge bonus 15 (no change); Shardlings spacing 0.5 (the Choir won more: Brood v Choir 40, Choir v Concord 58); Shardlings charge bonus 24 (Choir v Concord 46.6, Brood v Choir the same); Shardlings defence 39 (Brood v Choir 47.7 but Choir v Concord 43, and with morale 57 Brood v Choir fell back to 44.8). Units are stored in replays, so the goldens did not move.
 
-<a id="battle-pace-balance"></a>**Battle pace (2026-10-18).** Melee blows now land at 50% damage and volleys at 75% ([05 · Battle pace](05-combat.md#battle-pace)), with the steady morale drains halved. Veteran AIs, woods maps, 96 battles a pair on seeds 1 and on seeds 2001; the first faction's wins (seeds 1 / seeds 2001, old baseline in brackets):
+<a id="battle-pace-balance"></a>**Battle pace (2026-10-18).** Melee blows now land at 70% damage and volleys at 85% ([05 · Battle pace](05-combat.md#battle-pace)), with the steady morale drains at 70%. Veteran AIs, woods maps, 96 battles a pair on seeds 1 and on seeds 2001; the first faction's wins (seeds 1 / seeds 2001, old baseline at pace 100 in brackets):
 
 | | Brood | Choir | Carrion Concord |
 |---|---|---|---|
-| **Ember Clans** | 57 / 45 (54 / 36) | 46 / 45 (53 / 48) | 57 / 57 (50 / 44) |
-| **Brood** | | 46 / 43 (43 / 44) | 53 / 34 (46 / 42) |
-| **Choir** | | | 53 / 53 (50 / 49) |
+| **Ember Clans** | 56 / 42 (54 / 36) | 41 / 44 (53 / 48) | 59 / 53 (50 / 44) |
+| **Brood** | | 43 / 50 (43 / 44) | 53 / 33 (46 / 42) |
+| **Choir** | | | 50 / 54 (50 / 49) |
 
-Fights went from about 95-120 s to 115-155 s (1.25 to 1.3 times), whole battles from about 175 s to 190-215 s. The `faction_table` test in `gc_match` now prints the average battle and fight length with each pair. Volleys slowed as much as melee dropped the Clans to about 28%; unslowed they sat at 60-75%. No unit stats changed.
+Average fight length (first contact to the end), seeds 1 / seeds 2001, baseline in brackets, in seconds:
+
+| | Brood | Choir | Carrion Concord |
+|---|---|---|---|
+| **Ember Clans** | 135 / 131 (118 / 119) | 139 / 134 (117 / 122) | 128 / 130 (115 / 121) |
+| **Brood** | | 123 / 123 (113 / 118) | 108 / 108 (99 / 94) |
+| **Choir** | | | 106 / 106 (95 / 94) |
+
+Fights went from about 95-120 s to 105-140 s, whole battles from about 175 s to 175-200 s. The `faction_table` test in `gc_match` prints the average battle and fight length with each pair. Why 70 and not 50: at 50 the faction balance was fine but holding a ford stopped paying off, because defenders killed foes trickling out of a ford too slowly (the `holding_the_ford_pays_off` drill failed); 70 passes every drill. Volleys are slowed half as much because the approach, where most arrows fly, does not get longer; slowing them as much as melee dropped the Clans to about 28%, and not slowing them pushed the Clans to 60-75%. No unit stats changed.
 
 ### Weapon flags and mass
 
