@@ -49,7 +49,10 @@ const UNTRAIN_AT: u32 = 41;
 const LAY_FROM: u32 = 20 * TICKS_PER_SECOND;
 const SPARE_FROM: u32 = 80 * TICKS_PER_SECOND;
 const UPGRADE_FROM: u32 = 120 * TICKS_PER_SECOND;
-const MARCH_AT: u32 = 150 * TICKS_PER_SECOND;
+/// Early enough that the soldiers fight through and see the other side's
+/// main building before the six minutes are up (moved from 150 s when
+/// battles were slowed, `gc_sim::combat::BATTLE_PACE_PERCENT`).
+const MARCH_AT: u32 = 145 * TICKS_PER_SECOND;
 const REMOVE_AT: u32 = (MINUTES * 60 - 5) * TICKS_PER_SECOND;
 /// When the second side's chord goes up.
 const CHORD_AT: u32 = 10 * TICKS_PER_SECOND;

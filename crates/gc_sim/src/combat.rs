@@ -32,6 +32,16 @@ use crate::terrain::Terrain;
 use crate::vision::{OFF_GUARD_DAMAGE_PERCENT, Vision};
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
 
+/// Percent of its full weight a melee blow lands with: the one knob for how
+/// long fights last. Below 100, locked lines bleed (and so lose heart, see
+/// [`crate::morale`]) more slowly and battles draw out without retuning any
+/// unit.
+pub const BATTLE_PACE_PERCENT: u64 = 70;
+/// Percent of its full weight a volley lands with. Arrows are slowed half as
+/// much as blows: the march into contact, when most of them are loosed,
+/// takes as long as ever, and slowing them as much would rob archers of
+/// their share of the fight.
+pub const VOLLEY_PACE_PERCENT: u64 = (100 + BATTLE_PACE_PERCENT) / 2;
 /// Ticks between a regiment's melee blows.
 pub const STRIKE_INTERVAL: u32 = TICKS_PER_SECOND;
 /// How far apart two blocks' edges can be and still fight, in tiles.
@@ -1406,6 +1416,7 @@ impl Combat {
             if vision.off_guard(i) {
                 expected = expected * OFF_GUARD_DAMAGE_PERCENT / 100;
             }
+            expected = expected * BATTLE_PACE_PERCENT / 100;
             // Even a blow that can't wound shoves.
             let shove = expected
                 .max(1)
@@ -1536,7 +1547,9 @@ impl Combat {
                 / (100 * 100 * 100)
                 * shields
                 * trees
-                / (100 * 100);
+                / (100 * 100)
+                * VOLLEY_PACE_PERCENT
+                / 100;
             let lost = deal(regs, units, j, expected, side, rng);
             if self.tell {
                 self.landed.push(landed(lost));

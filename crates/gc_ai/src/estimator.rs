@@ -18,12 +18,14 @@
 //!   drains for being outnumbered two or three to one, for being below half
 //!   strength, and for being flanked. A side whose morale is spent breaks;
 //!   regiments that never rout fight until they are dead.
+//! - **Pace:** blows, volleys and the drains are scaled by the sim's battle
+//!   pace (`combat::BATTLE_PACE_PERCENT`, `VOLLEY_PACE_PERCENT`).
 //!
 //! The result says who breaks first and how decisively. It is quick (a few
 //! microseconds) and approximate; the AI re-runs it every second. Its
 //! coefficients are checked against real sim battles in `tests/estimator.rs`.
 
-use gc_sim::combat::Side;
+use gc_sim::combat::{self, Side};
 use gc_sim::morale;
 
 use crate::perception::{Class, Perception, Seen};
@@ -39,11 +41,15 @@ const MORALE_PER_PERCENT: f32 = morale::CASUALTY_TENTHS_PER_PERCENT as f32 / mor
 const BREAK_AT: f32 = 6.0;
 /// Melee damage multiplier for regiments that reach a flank.
 const FLANK_DAMAGE: f32 = Side::Flank.damage_percent() as f32 / 100.0;
+/// The battle's pace: how hard blows and volleys land, and how fast the
+/// steady morale drains run, against their full values.
+const MELEE_PACE: f32 = combat::BATTLE_PACE_PERCENT as f32 / 100.0;
+const VOLLEY_PACE: f32 = combat::VOLLEY_PACE_PERCENT as f32 / 100.0;
 /// Morale drains in the sim, points per second.
-const OUTNUMBERED_2: f32 = morale::OUTNUMBERED_2 as f32;
-const OUTNUMBERED_3: f32 = morale::OUTNUMBERED_3 as f32;
-const HALF_STRENGTH: f32 = morale::HALF_STRENGTH_DRAIN as f32;
-const FLANK_SHOCK: f32 = morale::FLANK_SHOCK as f32;
+const OUTNUMBERED_2: f32 = morale::OUTNUMBERED_2 as f32 * MELEE_PACE;
+const OUTNUMBERED_3: f32 = morale::OUTNUMBERED_3 as f32 * MELEE_PACE;
+const HALF_STRENGTH: f32 = morale::HALF_STRENGTH_DRAIN as f32 * MELEE_PACE;
+const FLANK_SHOCK: f32 = morale::FLANK_SHOCK as f32 * MELEE_PACE;
 /// A charge adds its bonus to the first blows, fading over three seconds:
 /// on average worth this many seconds of blows at the full bonus.
 const CHARGE_SECONDS: f32 = 1.5;
@@ -116,14 +122,16 @@ impl Force {
                 // Archers fight in melee too, badly, if caught; the model
                 // keeps them shooting from behind the line.
                 f.ranged += n * f32::from(s.accuracy) / 100.0 * f32::from(s.missile_damage)
-                    / u.reload_seconds();
+                    / u.reload_seconds()
+                    * VOLLEY_PACE;
                 f.range = f.range.max(u.range);
             } else {
                 // The front rank (and a spear block's second); the formation
                 // can cramp the weapons.
                 let front = (s.front_fighters_percent(r.files, r.models)
                     * s.weapon_room_percent(r.formation)) as f32
-                    / 10_000.0;
+                    / 10_000.0
+                    * MELEE_PACE;
                 f.melee_regiments += 1.0;
                 f.front_damage += front * f32::from(s.melee_damage);
                 f.front_damage_attack +=

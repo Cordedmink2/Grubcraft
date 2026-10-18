@@ -296,8 +296,11 @@ fn a_pinned_regiment_loses_heart() {
     let free = morale(Behind::Open);
     let pinned = morale(Behind::Cliff(26));
     assert_eq!(free, 60);
-    // Pinned after about four seconds, then 3 points a second.
-    assert!(pinned < 20 && pinned > 0, "{pinned}");
+    // Pinned after about four seconds, then 3 points a second at the
+    // battle's pace (`gc_sim::combat::BATTLE_PACE_PERCENT`): at full pace,
+    // 12 to 18 seconds pinned, 36 to 54 points.
+    let lost = (60 - i64::from(pinned)) * 100 / gc_sim::combat::BATTLE_PACE_PERCENT as i64;
+    assert!((36..=54).contains(&lost), "{pinned}");
 }
 
 #[test]

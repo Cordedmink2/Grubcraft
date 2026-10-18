@@ -26,7 +26,7 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::combat::{Combat, Whose, placement};
+use crate::combat::{BATTLE_PACE_PERCENT, Combat, Whose, placement};
 use crate::regiments::Regiments;
 use crate::vision::Vision;
 use crate::{Formation, Stances, TICKS_PER_SECOND, UnitStats};
@@ -40,6 +40,8 @@ pub const WAVERING_DAMAGE_PERCENT: u64 = 85;
 /// Tenths of a point lost per percent of full strength lost since the last
 /// check: losing a tenth of the regiment in one second costs 12 points.
 pub const CASUALTY_TENTHS_PER_PERCENT: i32 = 9;
+/// The steady drains below are at full pace; a fight scales them by
+/// [`crate::combat::BATTLE_PACE_PERCENT`].
 /// Points lost each second while below half strength and in melee.
 pub const HALF_STRENGTH_DRAIN: i16 = 2;
 /// Points lost in a second with hits on the flank, or on the rear.
@@ -145,28 +147,33 @@ fn check(
     map_tiles: u32,
 ) {
     let full = i32::from(regs.full_models[i].max(1));
-    let mut tenths = -(i32::from(regs.losses[i]) * 100 * CASUALTY_TENTHS_PER_PERCENT / full);
+    // Casualties already come at the battle's pace (see
+    // `combat::BATTLE_PACE_PERCENT`); the steady drains in a fight are scaled
+    // to match, so regiments break from pressure as much as from losses.
+    let mut drain = 0;
     if regs.shock[i] & SHOCK_REAR != 0 {
-        tenths -= i32::from(REAR_SHOCK * SCALE);
+        drain += i32::from(REAR_SHOCK * SCALE);
     } else if regs.shock[i] & SHOCK_FLANK != 0 {
-        tenths -= i32::from(FLANK_SHOCK * SCALE);
+        drain += i32::from(FLANK_SHOCK * SCALE);
     }
     if regs.shock[i] & SHOCK_PINNED != 0 {
-        tenths -= i32::from(PINNED_SHOCK * SCALE);
+        drain += i32::from(PINNED_SHOCK * SCALE);
     }
+    let mut tenths = -(i32::from(regs.losses[i]) * 100 * CASUALTY_TENTHS_PER_PERCENT / full);
     if regs.engaged[i].is_some() {
         if i32::from(regs.models[i]) * 2 < full {
-            tenths -= i32::from(HALF_STRENGTH_DRAIN * SCALE);
+            drain += i32::from(HALF_STRENGTH_DRAIN * SCALE);
         }
         let (friends, enemies) = local_strength(regs, combat, stances, vision, i);
         if enemies >= friends.max(1) * 3 {
-            tenths -= i32::from(OUTNUMBERED_3 * SCALE);
+            drain += i32::from(OUTNUMBERED_3 * SCALE);
         } else if enemies >= friends.max(1) * 2 {
-            tenths -= i32::from(OUTNUMBERED_2 * SCALE);
+            drain += i32::from(OUTNUMBERED_2 * SCALE);
         }
     } else if regs.losses[i] == 0 {
         tenths += i32::from(RECOVERY * SCALE);
     }
+    tenths -= drain * BATTLE_PACE_PERCENT as i32 / 100;
     // A battered regiment never gets all its nerve back: the cap falls from
     // the unit's stat at full strength to half of it with nobody left. A
     // champion's win or loss raises or lowers it for the rest of the battle.
