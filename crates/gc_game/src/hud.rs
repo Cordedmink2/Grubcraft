@@ -192,6 +192,9 @@ pub struct HudState {
     /// The faction chip chosen on the roster tab, an index into
     /// `gc_ai::Faction::ALL`.
     pub place_faction: u8,
+    /// The Place panel's rows for the tab, faction and table showing, built
+    /// once ([`Running::place_body`]).
+    place_body: std::cell::RefCell<Option<std::rc::Rc<PlaceBody>>>,
 }
 
 impl HudState {
@@ -1183,32 +1186,92 @@ impl Running {
         gc_ai::Faction::ALL[usize::from(self.hud.place_faction).min(gc_ai::Faction::ALL.len() - 1)]
     }
 
-    /// The Place panel's rows as indices into the table they belong to:
-    /// every Field type, or the chosen faction's placeable roster troops.
-    fn place_ids(&self) -> Vec<usize> {
-        if self.place_tab() == 1 {
-            roster::placeable(self.data.conquest_units, self.place_faction())
-        } else {
-            (0..self.field_table().stats.len()).collect()
-        }
-    }
-
-    /// The Field types' table and the roster's, whichever is in play.
-    fn field_table(&self) -> &UnitTable {
-        self.table(false)
-    }
-
-    fn roster_table(&self) -> &UnitTable {
-        self.table(true)
-    }
-
     /// The roster's table (`roster`) or the Field types', whichever slot
-    /// `use_units` left it in.
+    /// `use_play` left it in.
     fn table(&self, roster: bool) -> &UnitTable {
-        if roster == self.conquest_units {
+        if roster == self.play.roster_table() {
             &self.units
         } else {
             &self.other_units
+        }
+    }
+
+    /// The Place panel's rows: every Field type, or the chosen faction's
+    /// placeable roster troops. Rebuilt only when the tab, faction or table
+    /// changes, or the sandbox tunes a troop shown.
+    fn place_body(&self) -> std::rc::Rc<PlaceBody> {
+        let roster = self.place_tab() == 1;
+        let faction = if roster {
+            self.place_faction()
+        } else {
+            gc_ai::Faction::ALL[0]
+        };
+        let key = (roster, faction, self.play);
+        let mut cache = self.hud.place_body.borrow_mut();
+        if let Some(body) = cache.as_ref() {
+            let table = self.table(roster);
+            let fresh = body.key == key
+                && body
+                    .ids
+                    .iter()
+                    .zip(&body.stats)
+                    .all(|(&i, s)| table.stats[i] == *s);
+            if fresh {
+                return body.clone();
+            }
+        }
+        let body = std::rc::Rc::new(if roster {
+            self.roster_body(key, faction)
+        } else {
+            self.field_body(key)
+        });
+        *cache = Some(body.clone());
+        body
+    }
+
+    /// The Field types, one row each.
+    fn field_body(&self, key: PlaceKey) -> PlaceBody {
+        let table = self.table(false);
+        let ids: Vec<usize> = (0..table.stats.len()).collect();
+        let rows = ids
+            .iter()
+            .map(|&i| place_row(table, i, format!("{} points", table.points[i])))
+            .collect();
+        PlaceBody {
+            key,
+            stats: ids.iter().map(|&i| table.stats[i]).collect(),
+            ids,
+            rows,
+            later: Vec::new(),
+            chips: Vec::new(),
+            reason: "",
+        }
+    }
+
+    /// `faction`'s placeable roster troops, what the sandbox leaves out, and
+    /// the chips to choose among the factions.
+    fn roster_body(&self, key: PlaceKey, faction: gc_ai::Faction) -> PlaceBody {
+        let table = self.table(true);
+        let units = self.data.conquest_units;
+        let ids = roster::placeable(units, faction);
+        let rows = ids
+            .iter()
+            .map(|&i| place_row(table, i, roster::cost_text(&units[i])))
+            .collect();
+        let (count, names) = roster::left_out_names(units, faction);
+        PlaceBody {
+            key,
+            stats: ids.iter().map(|&i| table.stats[i]).collect(),
+            ids,
+            rows,
+            later: (count > 0)
+                .then(|| (faction.name(), faction_dye(faction), count, names))
+                .into_iter()
+                .collect(),
+            chips: (gc_ai::Faction::ALL.iter())
+                .map(|&f| (roster::short_name(f), faction_dye(f)))
+                .collect(),
+            reason: PLACE_REASON_ROSTER,
         }
     }
 
@@ -1235,11 +1298,7 @@ impl Running {
     /// tables number their troops differently, so one world cannot hold both.
     fn restart_sandbox(&mut self, roster: bool) {
         let (side, faction) = (self.sandbox.side, self.hud.place_faction);
-        self.restart_match(if roster {
-            MatchKind::SandboxRoster
-        } else {
-            MatchKind::Sandbox
-        });
+        self.restart_match(MatchKind::Sandbox { roster });
         self.sandbox.side = side;
         self.hud.place_faction = faction;
         self.say(if roster {
@@ -1257,10 +1316,10 @@ impl Running {
             return;
         }
         let want_roster = self.place_tab() == 1;
-        let Some(&unit) = self.place_ids().get(i) else {
+        let Some(&unit) = self.place_body().ids.get(i) else {
             return;
         };
-        if want_roster != self.conquest_units {
+        if want_roster != self.play.roster_table() {
             if !self.place_tabs_on() {
                 return;
             }
@@ -1298,33 +1357,7 @@ impl Running {
             return Some(PlaceText::default());
         }
         let tab = self.place_tab();
-        let ids = self.place_ids();
-        let faction = self.place_faction();
-        let table = if tab == 1 {
-            self.roster_table()
-        } else {
-            self.field_table()
-        };
-        let rows = ids
-            .iter()
-            .map(|&i| {
-                let s = &table.stats[i];
-                let speed = s.speed.raw() as f32 / 65536.0;
-                let cost = if tab == 1 {
-                    roster::cost_text(&self.data.conquest_units[i])
-                } else {
-                    format!("{} points", table.points[i])
-                };
-                let men = if s.models == 1 { "soldier" } else { "soldiers" };
-                let detail = format!("{} {men}  {speed:.1} tiles/s  {cost}", s.models);
-                (
-                    table.names[i].clone(),
-                    detail,
-                    table.factions[i].name(),
-                    troop_icon(s),
-                )
-            })
-            .collect();
+        let body = self.place_body();
         let sides = (0..self.parties.len() as PlayerId)
             .map(|side| {
                 (
@@ -1333,42 +1366,25 @@ impl Running {
                 )
             })
             .collect();
-        // The troops of the roster that the sandbox leaves out, with why.
-        let later = if tab == 1 {
-            let (count, names) = roster::left_out_names(self.data.conquest_units, faction);
-            (count > 0)
-                .then(|| (faction.name(), faction_dye(faction), count, names))
-                .into_iter()
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let chips = if tab == 1 {
-            gc_ai::Faction::ALL
-                .iter()
-                .map(|&f| (roster::short_name(f), faction_dye(f)))
-                .collect()
-        } else {
-            Vec::new()
-        };
         // Whether the table showing is the one the sandbox runs on.
-        let in_play = (tab == 1) == self.conquest_units;
+        let in_play = (tab == 1) == self.play.roster_table();
         let current = if in_play {
-            ids.iter()
+            (body.ids.iter())
                 .position(|&i| i == self.sandbox.unit as usize)
                 .unwrap_or(usize::MAX)
         } else {
             usize::MAX
         };
         Some(PlaceText {
-            rows,
+            body: Some(body),
             sides,
-            later,
-            tabs: self.place_tabs_on(),
+            tabs: if self.place_tabs_on() {
+                &PLACE_TABS
+            } else {
+                &[]
+            },
             tab,
-            chips,
             chip: usize::from(self.hud.place_faction),
-            reason: if tab == 1 { PLACE_REASON_ROSTER } else { "" },
             current,
             side: self.sandbox.side as usize,
         })
@@ -1383,21 +1399,50 @@ impl Running {
     }
 }
 
-/// The Place panel's words, owned for the length of a frame.
-#[derive(Default)]
-struct PlaceText {
+/// What a Place panel body was built for: roster tab or not, the faction,
+/// and which regiment types are in play.
+type PlaceKey = (bool, gc_ai::Faction, crate::Play);
+
+/// The Place panel's tab-dependent words, built once and shared by frames.
+struct PlaceBody {
+    key: PlaceKey,
+    /// The stats of the troops in `ids` as the rows were built, to see a
+    /// tuned one.
+    stats: Vec<gc_sim::UnitStats>,
+    /// The rows as indices into the table they belong to.
+    ids: Vec<usize>,
     /// Name, second line, faction and picture of each placeable type.
     rows: Vec<(String, String, &'static str, Icon)>,
-    sides: Vec<(String, [u8; 3])>,
     /// Faction, its dye, how many troops and their names.
     later: Vec<(&'static str, [u8; 3], usize, String)>,
-    /// Whether the tabs show, and which; the faction chips of the roster tab.
-    tabs: bool,
-    tab: usize,
+    /// The roster tab's faction chips.
     chips: Vec<(&'static str, [u8; 3])>,
-    chip: usize,
     /// Why the greyed troops are greyed.
     reason: &'static str,
+}
+
+/// One row of the Place panel for type `i` of `table`, with its `cost` words.
+fn place_row(table: &UnitTable, i: usize, cost: String) -> (String, String, &'static str, Icon) {
+    let s = &table.stats[i];
+    let speed = s.speed.raw() as f32 / 65536.0;
+    let men = if s.models == 1 { "soldier" } else { "soldiers" };
+    (
+        table.names[i].clone(),
+        format!("{} {men}  {speed:.1} tiles/s  {cost}", s.models),
+        table.factions[i].name(),
+        troop_icon(s),
+    )
+}
+
+/// The Place panel's words for one frame; the default is a closed panel.
+#[derive(Default)]
+struct PlaceText {
+    body: Option<std::rc::Rc<PlaceBody>>,
+    sides: Vec<(String, [u8; 3])>,
+    /// The tabs on offer (none outside the sandbox), and which is showing.
+    tabs: &'static [&'static str],
+    tab: usize,
+    chip: usize,
     current: usize,
     side: usize,
 }
@@ -1414,7 +1459,7 @@ struct PlaceView<'a> {
     sides: Vec<PlaceSide<'a>>,
     later: Vec<PlaceLater<'a>>,
     chips: Vec<PlaceSide<'a>>,
-    tabs: bool,
+    tabs: &'a [&'a str],
     tab: usize,
     chip: usize,
     reason: &'a str,
@@ -1424,8 +1469,15 @@ struct PlaceView<'a> {
 
 impl PlaceText {
     fn view(&self) -> PlaceView<'_> {
+        let (rows, later, chips, reason) = self
+            .body
+            .as_deref()
+            .map_or((&[][..], &[][..], &[][..], ""), |b| {
+                (&b.rows[..], &b.later[..], &b.chips[..], b.reason)
+            });
         PlaceView {
-            rows: (self.rows.iter())
+            rows: rows
+                .iter()
                 .map(|(name, detail, faction, icon)| PlaceRow {
                     name,
                     detail,
@@ -1439,7 +1491,8 @@ impl PlaceText {
                     color: *color,
                 })
                 .collect(),
-            later: (self.later.iter())
+            later: later
+                .iter()
                 .map(|(faction, color, count, names)| PlaceLater {
                     faction,
                     color: *color,
@@ -1447,7 +1500,8 @@ impl PlaceText {
                     names,
                 })
                 .collect(),
-            chips: (self.chips.iter())
+            chips: chips
+                .iter()
                 .map(|(name, color)| PlaceSide {
                     name,
                     color: *color,
@@ -1456,7 +1510,7 @@ impl PlaceText {
             tabs: self.tabs,
             tab: self.tab,
             chip: self.chip,
-            reason: self.reason,
+            reason,
             current: self.current,
             side: self.side,
         }
@@ -1474,7 +1528,7 @@ impl PlaceView<'_> {
             side: self.side,
             reason: self.reason,
             later: &self.later,
-            tabs: if self.tabs { &PLACE_TABS } else { &[] },
+            tabs: self.tabs,
             tab: self.tab,
             chips: &self.chips,
             chip: self.chip,
