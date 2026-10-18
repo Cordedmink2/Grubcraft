@@ -885,6 +885,7 @@ dependencies = [
  "gc_assets",
  "glam",
  "naga",
+ "png",
  "wgpu",
 ]
 

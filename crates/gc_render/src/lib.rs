@@ -13,6 +13,7 @@
 mod debug_font;
 mod overlay;
 mod post;
+mod rock;
 mod scenery;
 mod shadows;
 mod soldiers;
@@ -37,6 +38,10 @@ const CHUNK_QUADS: u32 = 64;
 const TERRAIN_LEVELS: usize = 4;
 // A level takes two bits of the packed instance word (`chunk_instance`).
 const _: () = assert!(TERRAIN_LEVELS <= 4);
+/// The most tiles the terrain shader's rock relief raises the ground above
+/// the heightmap (`SMALL_RELIEF + CRAG_RELIEF + SPIRE_RELIEF` in world.wgsl,
+/// plus the warp's slide up a slope), for the boxes chunks are culled by.
+const RELIEF_MAX: f32 = 7.5;
 /// How far from the eye (in tiles, to the nearest point of the chunk's box)
 /// a chunk stays at level 0, 1 and 2; beyond the last it is level 3.
 /// Level 0 reaches four chunks out. At the play camera's default zoom (110
@@ -280,6 +285,10 @@ pub struct Renderer {
     /// Soft edges for the fog map, and the ground tint blended between
     /// its texels.
     soft_sampler: wgpu::Sampler,
+    /// The rock textures for mountains (see rock.rs), and a repeating
+    /// anisotropic sampler for them.
+    rock: rock::RockTextures,
+    rock_sampler: wgpu::Sampler,
     /// Bound where the shadow map would be while the shadow map is drawn.
     no_shadow_map: wgpu::TextureView,
     post: post::PostGpu,
@@ -571,6 +580,32 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -663,6 +698,17 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let rock = rock::load(&device, &queue);
+        let rock_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("rock"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 8,
+            ..Default::default()
+        });
         let post = post::make(&device, hdr_format, format, options.glow);
         let post_targets = post.targets(&device, config.width, config.height);
 
@@ -702,7 +748,8 @@ impl Renderer {
             &config,
             adapter_info.transient_saves_memory == Some(true),
         );
-        let static_gpu_bytes = 2 * size_of::<Globals>() as u64
+        let static_gpu_bytes = rock.bytes
+            + 2 * size_of::<Globals>() as u64
             + u64::from(shadow_side)
                 * u64::from(shadow_side)
                 * u64::from(SHADOW_FORMAT.block_copy_size(None).unwrap_or(4))
@@ -731,6 +778,8 @@ impl Renderer {
             shadow_map,
             shadow_sampler,
             soft_sampler,
+            rock,
+            rock_sampler,
             no_shadow_map,
             post,
             post_targets,
@@ -797,7 +846,7 @@ impl Renderer {
                 view_proj,
                 SUN.normalize(),
                 terrain.tiles as f32,
-                terrain.max_height,
+                terrain.max_height + RELIEF_MAX,
                 self.shadow_range,
             )
         })
@@ -1055,6 +1104,18 @@ impl Renderer {
                         binding: 6,
                         resource: wgpu::BindingResource::TextureView(&tint_view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::TextureView(&self.rock.color),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: wgpu::BindingResource::TextureView(&self.rock.normal),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: wgpu::BindingResource::Sampler(&self.rock_sampler),
+                    },
                 ],
             })
         };
@@ -1184,7 +1245,12 @@ impl Renderer {
                 CHUNK_QUADS as f32,
             ],
             fog: [fog_color[0], fog_color[1], fog_color[2], 0.0025],
-            misc: [terrain.water_level, frame.time_seconds, 0.0, 0.0],
+            misc: [
+                terrain.water_level,
+                frame.time_seconds,
+                f32::from(u8::from(self.rock.real)),
+                0.0,
+            ],
             sun_view_proj: sun_view_proj.to_cols_array_2d(),
             shadow: [
                 texel * 1.5,
@@ -1227,7 +1293,7 @@ impl Renderer {
         for cz in 0..n {
             for cx in 0..n {
                 let min = Vec3::new(cx as f32 * size, 0.0, cz as f32 * size);
-                let max = Vec3::new(min.x + size, terrain.max_height, min.z + size);
+                let max = Vec3::new(min.x + size, terrain.max_height + RELIEF_MAX, min.z + size);
                 let camera_sees = aabb_visible(&planes, min, max);
                 let sun_sees = shadows && aabb_visible(&sun_planes, min, max);
                 if camera_sees || sun_sees {
