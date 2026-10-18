@@ -46,8 +46,6 @@ const HIGHLIGHT: f32 = 1.6;
 @group(0) @binding(6) var ground_tint: texture_2d<f32>;
 // Rock035, mipmapped (rock_textures in lib.rs): rgb albedo (sRGB, decoded on
 // read) with the roughness in alpha, and the OpenGL tangent-space normal.
-// `g.misc.z` is 1 when they are real; 0 when they failed to decode, and
-// `fs_terrain` paints rock from noise alone.
 @group(0) @binding(7) var rock_color: texture_2d<f32>;
 @group(0) @binding(8) var rock_normal: texture_2d<f32>;
 // Repeating, anisotropic.
@@ -189,14 +187,19 @@ fn shade_material(
 // (a horizontal warp of the lookup). It is a pure function of the position
 // and the heightmap, so the vertex shader and the per-pixel normal agree.
 // It only ever raises the ground, and its weight is exactly 0 on ground
-// that rises less than WALK_SLOPE a tile, where units, buildings and
-// scenery stand on the true height. Keep `RELIEF_MAX` in lib.rs (culling
-// boxes) at or above the tallest the sum below can be.
+// that rises less than CLIFF_SLOPE a tile, where units, buildings and
+// scenery stand on the true height (`height_at`, also on the CPU). Keep
+// `RELIEF_MAX` in lib.rs (culling boxes, levels of detail) at or above the
+// tallest the sum below can be.
 
-// Rise per tile below which ground gets no relief (walkable), and above
-// which it gets all of it (cliff).
-const WALK_SLOPE: f32 = 0.6;
+// Rise per tile from which ground is a cliff no soldier climbs: keep in step
+// with gc_map's CLIFF_RISE_PER_TILE (hundredths of a tile; 120). Relief
+// weighs 0 below it and everything from CLIFF_FULL.
 const CLIFF_SLOPE: f32 = 1.2;
+const CLIFF_FULL: f32 = 1.7;
+// The rock colour starts earlier, on steep ground that is still walkable:
+// keep in step with half of gc_map's CLIFF_RISE_PER_TILE.
+const STEEP_SLOPE: f32 = 0.6;
 // Tiles of crag at most: small bumps everywhere on a cliff, then spires and
 // crags that only mountain mass (ground well above its surroundings) grows.
 const SMALL_RELIEF: f32 = 0.9;
@@ -236,31 +239,60 @@ fn ridged(p: vec2<f32>) -> f32 {
     return clamp(sum / 0.875, 0.0, 1.0);
 }
 
-// x: how cliff-like the ground is at `xz` (0 walkable, 1 steep), y: how much
-// it stands above the ground around it (0 hill foot, 1 mountain).
-fn rock_mask(xz: vec2<f32>) -> vec2<f32> {
-    let h0 = height_at(xz);
+// The steepest rise per tile from `xz` over half a tile, up or down along
+// either axis (so a sharp crest counts as steep too), given the height `h0`
+// there.
+fn steepest(xz: vec2<f32>, h0: f32) -> f32 {
     let e = 0.5;
-    // The steepest way down or up, so a sharp crest counts as steep too.
     let d = max(
         max(abs(height_at(xz + vec2<f32>(e, 0.0)) - h0), abs(height_at(xz - vec2<f32>(e, 0.0)) - h0)),
         max(abs(height_at(xz + vec2<f32>(0.0, e)) - h0), abs(height_at(xz - vec2<f32>(0.0, e)) - h0)),
     );
-    let c = smoothstep(WALK_SLOPE, CLIFF_SLOPE, d / e);
-    let cliff = c * c;
-    if cliff <= 0.0 {
-        return vec2<f32>(0.0);
-    }
-    let r = 8.0;
-    let ring = 0.25 * (
-        height_at(xz + vec2<f32>(r, 0.0)) + height_at(xz - vec2<f32>(r, 0.0))
-        + height_at(xz + vec2<f32>(0.0, r)) + height_at(xz - vec2<f32>(0.0, r))
-    );
-    return vec2<f32>(cliff, smoothstep(0.8, 3.0, h0 - ring));
+    return d / e;
 }
 
-// The raised parts of the relief in tiles before the mask: x small bumps,
-// y crags and spires (0..1 each).
+// A cheap guess at `steepest` from five single texels, with room for error
+// either way (it is far more often right than not): where it says nowhere
+// near a cliff, `rock_mask` stops there. Costs 5 reads, not 20.
+fn surely_walkable(xz: vec2<f32>) -> bool {
+    let i = vec2<i32>(round(xz * g.map.x));
+    let k = i32(round(g.map.x * 0.5));
+    let h = sample_height(i);
+    let d = max(
+        max(abs(sample_height(i + vec2<i32>(k, 0)) - h), abs(sample_height(i - vec2<i32>(k, 0)) - h)),
+        max(abs(sample_height(i + vec2<i32>(0, k)) - h), abs(sample_height(i - vec2<i32>(0, k)) - h)),
+    );
+    return d / 0.5 < 0.7 * STEEP_SLOPE;
+}
+
+// At `xz`, where the ground is `h0` (`height_at`), x: the weight of the
+// displacement (0 below CLIFF_SLOPE, 1 from CLIFF_FULL, squared), y: how
+// much the ground stands above what is around it (0 hill foot, 1 mountain),
+// z: how rocky the colour is (from STEEP_SLOPE, earlier than x).
+fn rock_mask(xz: vec2<f32>, h0: f32) -> vec3<f32> {
+    if surely_walkable(xz) {
+        return vec3<f32>(0.0);
+    }
+    let s = steepest(xz, h0);
+    let c = smoothstep(CLIFF_SLOPE, CLIFF_FULL, s);
+    let rock = smoothstep(STEEP_SLOPE, CLIFF_SLOPE, s);
+    if rock <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    var mass = 0.0;
+    if c > 0.0 {
+        let r = 8.0;
+        let ring = 0.25 * (
+            height_at(xz + vec2<f32>(r, 0.0)) + height_at(xz - vec2<f32>(r, 0.0))
+            + height_at(xz + vec2<f32>(0.0, r)) + height_at(xz - vec2<f32>(0.0, r))
+        );
+        mass = smoothstep(0.8, 3.0, h0 - ring);
+    }
+    return vec3<f32>(c * c, mass, rock * rock);
+}
+
+// The raised parts of the relief before the mask: x small bumps, y crags and
+// spires (0..1 each).
 fn relief_parts(xz: vec2<f32>) -> vec2<f32> {
     let small = ridged(xz * 0.45 + vec2<f32>(7.3, 1.9));
     let crag = pow(fbm(xz * 0.2 + vec2<f32>(11.0, 5.0)), 1.5);
@@ -268,44 +300,34 @@ fn relief_parts(xz: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(small, crag * (CRAG_RELIEF / (CRAG_RELIEF + SPIRE_RELIEF)) + spire * (SPIRE_RELIEF / (CRAG_RELIEF + SPIRE_RELIEF)));
 }
 
-fn detail_height(xz: vec2<f32>, m: vec2<f32>) -> f32 {
-    let p = relief_parts(xz);
-    return m.x * (SMALL_RELIEF * p.x + m.y * (CRAG_RELIEF + SPIRE_RELIEF) * p.y);
+fn relief_from(parts: vec2<f32>, m: vec3<f32>) -> f32 {
+    return m.x * (SMALL_RELIEF * parts.x + m.y * (CRAG_RELIEF + SPIRE_RELIEF) * parts.y);
 }
 
-// The drawn height given the mask at this point.
-fn relief_height(xz: vec2<f32>, m: vec2<f32>) -> f32 {
-    let w = (vec2<f32>(nz(xz * 0.3), nz(xz * 0.3 + vec2<f32>(17.0, 41.0))) - 0.5) * (2.0 * WARP * m.x);
-    return max(height_at(xz), height_at(xz + w)) + detail_height(xz, m);
+// How far the lookup slides, in tiles; 0 where the weight is.
+fn relief_warp(xz: vec2<f32>, m: vec3<f32>) -> vec2<f32> {
+    return (vec2<f32>(nz(xz * 0.3), nz(xz * 0.3 + vec2<f32>(17.0, 41.0))) - 0.5) * (2.0 * WARP * m.x);
 }
 
-// The height terrain is drawn at, and scenery stands on. The same as
-// `height_at` wherever the ground is walkable.
+// The drawn height at `p`, where the ground is `h0` (`height_at`), the
+// lookup slides by `warp` and the mask is `m`.
+fn relief_at(p: vec2<f32>, h0: f32, warp: vec2<f32>, m: vec3<f32>) -> f32 {
+    return max(h0, height_at(p + warp)) + relief_from(relief_parts(p), m);
+}
+
+// The height terrain is drawn at, and scenery stands on, given the mask
+// and the ground at `xz`. `h0` where the mask weighs nothing.
+fn surface_with(xz: vec2<f32>, h0: f32, m: vec3<f32>) -> f32 {
+    if m.x <= 0.0 {
+        return h0;
+    }
+    return relief_at(xz, h0, relief_warp(xz, m), m);
+}
+
+// The same as `height_at` wherever the ground is walkable.
 fn surface_height(xz: vec2<f32>) -> f32 {
-    let m = rock_mask(xz);
-    if m.x <= 0.0 {
-        return height_at(xz);
-    }
-    return relief_height(xz, m);
-}
-
-// The surface normal given the mask at the middle. Walkable ground keeps
-// the old smooth normal; rock is differenced finely so its crags show.
-fn terrain_normal(xz: vec2<f32>, m: vec2<f32>) -> vec3<f32> {
-    var e = 1.0 / g.map.x;
-    if m.x <= 0.0 {
-        let hl = height_at(xz - vec2<f32>(e, 0.0));
-        let hr = height_at(xz + vec2<f32>(e, 0.0));
-        let hu = height_at(xz - vec2<f32>(0.0, e));
-        let hd = height_at(xz + vec2<f32>(0.0, e));
-        return normalize(vec3<f32>(hl - hr, 2.0 * e, hu - hd));
-    }
-    e = 0.12;
-    let hl = relief_height(xz - vec2<f32>(e, 0.0), m);
-    let hr = relief_height(xz + vec2<f32>(e, 0.0), m);
-    let hu = relief_height(xz - vec2<f32>(0.0, e), m);
-    let hd = relief_height(xz + vec2<f32>(0.0, e), m);
-    return normalize(vec3<f32>(hl - hr, 2.0 * e, hu - hd));
+    let h0 = height_at(xz);
+    return surface_with(xz, h0, rock_mask(xz, h0));
 }
 
 // ---------------------------------------------------------------- terrain
@@ -315,7 +337,7 @@ struct TerrainOut {
     @location(0) world: vec3<f32>,
     // `rock_mask` at the vertex, interpolated: the mask varies smoothly, and
     // measuring it per pixel would cost twenty more heightmap reads each.
-    @location(1) mask: vec2<f32>,
+    @location(1) mask: vec3<f32>,
 };
 
 // Snap `i`, a position along a chunk edge counted in level 0 quads, down to
@@ -362,12 +384,9 @@ fn vs_terrain(
     }
     let chunk_tiles = g.map.z;
     let xz = vec2<f32>(chunk) * chunk_tiles + vec2<f32>(p) * (chunk_tiles / f32(full));
-    let m = rock_mask(xz);
-    var y = height_at(xz);
-    if m.x > 0.0 {
-        y = relief_height(xz, m);
-    }
-    let world = vec3<f32>(xz.x, y, xz.y);
+    let h0 = height_at(xz);
+    let m = rock_mask(xz, h0);
+    let world = vec3<f32>(xz.x, surface_with(xz, h0, m), xz.y);
     var out: TerrainOut;
     out.mask = m;
     out.clip = g.view_proj * vec4<f32>(world, 1.0);
@@ -384,67 +403,55 @@ struct Rock {
     n: vec3<f32>,
 };
 
+// One planar projection of Rock035: its colour and roughness, and its normal
+// in whiteout form for a surface whose normal has components `ng2` along the
+// two axes of the plane and `ngn` across it. `dx` and `dy` are the plane
+// coordinates' screen derivatives. Image rows run down and the normal map's
+// green runs up, so callers negate the second plane coordinate.
+struct Plane {
+    c: vec4<f32>,
+    tn: vec3<f32>,
+};
+
+fn rock_plane(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, ng2: vec2<f32>, ngn: f32) -> Plane {
+    var r: Plane;
+    r.c = textureSampleGrad(rock_color, rock_sampler, uv * ROCK_SCALE, dx * ROCK_SCALE, dy * ROCK_SCALE);
+    let t = textureSampleGrad(rock_normal, rock_sampler, uv * ROCK_SCALE, dx * ROCK_SCALE, dy * ROCK_SCALE).xyz * 2.0 - 1.0;
+    r.tn = vec3<f32>(t.xy + ng2, abs(t.z) * ngn);
+    return r;
+}
+
 // Triplanar Rock035 at `p` on a surface facing `ng`: the three projections
 // weighted by how squarely they face the surface, each normal map blended in
 // whiteout style. `dpx` and `dpy` are the screen derivatives of `p`, taken
 // by the caller in uniform control flow so that projections can be skipped.
 fn rock_surface(p: vec3<f32>, ng: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>) -> Rock {
-    var r: Rock;
-    if g.misc.z < 0.5 {
-        // No textures: stone from noise alone.
-        let q = vnoise(p.xz * 1.3 + p.y * 0.9) * 0.5 + vnoise(p.xz * 4.1 - p.y * 2.3) * 0.25;
-        r.albedo = mix(vec3<f32>(0.1, 0.09, 0.08), vec3<f32>(0.24, 0.21, 0.17), q + 0.2);
-        r.rough = 0.85;
-        r.n = ng;
-        return r;
-    }
     var w = pow(abs(ng), vec3<f32>(4.0));
     w = w / (w.x + w.y + w.z);
-    var col = vec3<f32>(0.0);
-    var rough = 0.0;
+    var col = vec4<f32>(0.0);
     var nn = vec3<f32>(0.0);
     var used = 0.0;
-    let k = ROCK_SCALE;
-    // Image rows run down and the normal map's green runs up, so the second
-    // coordinate is negated in every projection.
     if w.x > 0.04 {
-        let uv = vec2<f32>(p.z, -p.y) * k;
-        let gx = vec2<f32>(dpx.z, -dpx.y) * k;
-        let gy = vec2<f32>(dpy.z, -dpy.y) * k;
-        let c = textureSampleGrad(rock_color, rock_sampler, uv, gx, gy);
-        let t = textureSampleGrad(rock_normal, rock_sampler, uv, gx, gy).xyz * 2.0 - 1.0;
-        let tn = vec3<f32>(t.xy + ng.zy, abs(t.z) * ng.x);
-        nn += tn.zyx * w.x;
-        col += c.rgb * w.x;
-        rough += c.a * w.x;
+        let q = rock_plane(vec2<f32>(p.z, -p.y), vec2<f32>(dpx.z, -dpx.y), vec2<f32>(dpy.z, -dpy.y), ng.zy, ng.x);
+        nn += q.tn.zyx * w.x;
+        col += q.c * w.x;
         used += w.x;
     }
     if w.y > 0.04 {
-        let uv = vec2<f32>(p.x, -p.z) * k;
-        let gx = vec2<f32>(dpx.x, -dpx.z) * k;
-        let gy = vec2<f32>(dpy.x, -dpy.z) * k;
-        let c = textureSampleGrad(rock_color, rock_sampler, uv, gx, gy);
-        let t = textureSampleGrad(rock_normal, rock_sampler, uv, gx, gy).xyz * 2.0 - 1.0;
-        let tn = vec3<f32>(t.xy + ng.xz, abs(t.z) * ng.y);
-        nn += tn.xzy * w.y;
-        col += c.rgb * w.y;
-        rough += c.a * w.y;
+        let q = rock_plane(vec2<f32>(p.x, -p.z), vec2<f32>(dpx.x, -dpx.z), vec2<f32>(dpy.x, -dpy.z), ng.xz, ng.y);
+        nn += q.tn.xzy * w.y;
+        col += q.c * w.y;
         used += w.y;
     }
     if w.z > 0.04 {
-        let uv = vec2<f32>(p.x, -p.y) * k;
-        let gx = vec2<f32>(dpx.x, -dpx.y) * k;
-        let gy = vec2<f32>(dpy.x, -dpy.y) * k;
-        let c = textureSampleGrad(rock_color, rock_sampler, uv, gx, gy);
-        let t = textureSampleGrad(rock_normal, rock_sampler, uv, gx, gy).xyz * 2.0 - 1.0;
-        let tn = vec3<f32>(t.xy + ng.xy, abs(t.z) * ng.z);
-        nn += tn.xyz * w.z;
-        col += c.rgb * w.z;
-        rough += c.a * w.z;
+        let q = rock_plane(vec2<f32>(p.x, -p.y), vec2<f32>(dpx.x, -dpx.y), vec2<f32>(dpy.x, -dpy.y), ng.xy, ng.z);
+        nn += q.tn.xyz * w.z;
+        col += q.c * w.z;
         used += w.z;
     }
-    r.albedo = col / used;
-    r.rough = rough / used;
+    var r: Rock;
+    r.albedo = col.rgb / used;
+    r.rough = col.a / used;
     r.n = normalize(nn);
     return r;
 }
@@ -456,16 +463,34 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     let dpy = dpdy(in.world);
     let xz = in.world.xz;
     let m = in.mask;
-    let n = terrain_normal(xz, m);
     // The ground's true height, not the mesh's: a coarse chunk's triangles sit
     // a little off it, and colour and shoreline must not change when a chunk
-    // changes level.
-    var ground = height_at(xz);
+    // changes level. `ground` has the relief on it; `h0` is the simulation's,
+    // which colour follows.
+    let h0 = height_at(xz);
+    var ground = h0;
+    var n: vec3<f32>;
+    var parts = vec2<f32>(0.0);
     if m.x > 0.0 {
-        ground = relief_height(xz, m);
+        // Rock: forward differences every 0.12 tile, so the crags show; the
+        // warp is the middle's for all three.
+        let e = 0.12;
+        let warp = relief_warp(xz, m);
+        parts = relief_parts(xz);
+        ground = max(h0, height_at(xz + warp)) + relief_from(parts, m);
+        let hx = relief_at(xz + vec2<f32>(e, 0.0), height_at(xz + vec2<f32>(e, 0.0)), warp, m);
+        let hz = relief_at(xz + vec2<f32>(0.0, e), height_at(xz + vec2<f32>(0.0, e)), warp, m);
+        n = normalize(vec3<f32>(ground - hx, e, ground - hz));
+    } else {
+        // Smooth ground keeps its old normal.
+        let e = 1.0 / g.map.x;
+        let hl = height_at(xz - vec2<f32>(e, 0.0));
+        let hr = height_at(xz + vec2<f32>(e, 0.0));
+        let hu = height_at(xz - vec2<f32>(0.0, e));
+        let hd = height_at(xz + vec2<f32>(0.0, e));
+        n = normalize(vec3<f32>(hl - hr, 2.0 * e, hu - hd));
     }
-    // Colour follows the simulation's height, not the relief on top of it.
-    let h = height_at(xz) / g.map.y;
+    let h = h0 / g.map.y;
     let slope = 1.0 - n.y;
 
     // Painted palette: Grub-soaked soil low, grass mid, bone-white ridges high.
@@ -492,14 +517,14 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
 
     // Rock: where the surface is steeper than the walkable 0.6 a tile
     // (slope 0.14), its edge broken up by noise, with a dirt fringe around it
-    // where the grass gives out.
-    // (Ground that rises under 0.6 a tile has no rock, and skips the noise.)
+    // where the grass gives out. (Gentler ground has no rock, and skips the
+    // noise.)
     var jitter = 0.0;
     var rock = 0.0;
-    if m.x > 0.0 || slope > 0.1 {
+    if m.z > 0.0 || slope > 0.14 {
         jitter = (fbm(xz * 0.9) - 0.5) * 0.06;
         // Ledges and crests inside the cliff zone are rock too.
-        rock = max(smoothstep(0.19, 0.32, slope + jitter), smoothstep(0.02, 0.25, m.x));
+        rock = max(smoothstep(0.19, 0.32, slope + jitter), smoothstep(0.02, 0.25, m.z));
     }
     let fringe = smoothstep(0.1, 0.18, slope + jitter) * (1.0 - rock);
     albedo = mix(albedo, soil * (0.75 + 0.5 * vnoise(xz * 2.3)), fringe * 0.7);
@@ -520,17 +545,15 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         // Higher stone is paler and cooler.
         rc = rc * mix(vec3<f32>(0.95), vec3<f32>(1.12, 1.14, 1.2), smoothstep(0.4, 0.9, h));
         // Crevices: the low parts of the relief are dark and get less sky.
-        let parts = relief_parts(xz);
         let cavity = mix(0.4, 1.0, smoothstep(0.05, 0.55, parts.x));
         let tall = mix(0.7, 1.0, smoothstep(0.0, 0.6, parts.y));
         rc = rc * mix(1.0, cavity, 0.6);
         // Dust and soil settle on the ledges.
         rc = mix(rc, soil * 0.9, smoothstep(0.82, 0.95, n.y) * 0.3);
         let ns = normalize(mix(n, r.n, rock));
-        let rough = mix(0.95, max(r.rough, 0.75), rock);
+        let rough = mix(1.0, max(r.rough, 0.75), rock);
         let ao = mix(1.0, cavity * tall, rock);
-        let ra = mix(albedo, rc, rock);
-        c = mix(shade(ra, ns, in.world), shade_material(ra, ns, in.world, rough, 0.0, ao, vec3<f32>(0.0)), rock);
+        c = shade_material(mix(albedo, rc, rock), ns, in.world, rough, 0.0, ao, vec3<f32>(0.0));
     } else {
         c = shade(albedo, n, in.world);
     }

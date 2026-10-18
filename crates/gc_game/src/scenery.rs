@@ -47,10 +47,10 @@ const TREE_PERCENT: u32 = 55;
 /// Chunk-local positions are in this many steps a tile.
 const STEPS: f32 = 2048.0;
 /// Ground rising this many tiles per tile is a cliff, and this much a steep
-/// flank: the rules of gc_map's cliff and steep ground (private there, so
-/// kept in step by hand).
-const CLIFF_RISE: f32 = 1.2;
-const STEEP_RISE: f32 = 0.6;
+/// flank: gc_map's rules for cliff and steep ground (`CLIFF_RISE_PER_TILE`
+/// in hundredths of a tile, and half of it).
+const CLIFF_RISE: f32 = gc_map::CLIFF_RISE_PER_TILE as f32 / 100.0;
+const STEEP_RISE: f32 = CLIFF_RISE / 2.0;
 /// Extra rocks per tile on cliffs: a steep flank, a cliff face, and a
 /// cliff's foot (the tile the cliff rises out of).
 const FLANK_ROCKS: f32 = 0.3;

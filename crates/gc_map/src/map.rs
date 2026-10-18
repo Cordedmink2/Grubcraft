@@ -13,7 +13,7 @@ pub const MAX_HEIGHT: i64 = 14;
 /// Ground steeper than this many hundredths of a tile of rise per tile is
 /// a cliff no regiment climbs; over half of it is slow going that routes
 /// avoid.
-const CLIFF_RISE_PER_TILE: i64 = 120;
+pub const CLIFF_RISE_PER_TILE: i64 = 120;
 /// Water deeper than this (hundredths of a tile) can't be waded;
 /// shallower water is a ford.
 const FORD_DEPTH: i64 = 35;

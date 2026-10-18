@@ -3,20 +3,26 @@
 //! so no packaging step has to find them), decoded at start-up, given a
 //! mip chain on the CPU and uploaded as two textures: albedo with roughness
 //! in alpha, and the normal map. Together they are about 2.8 MB of GPU
-//! memory with mips. If decoding fails the terrain falls back to noise-only
-//! rock (`Globals::misc.z` is 0).
+//! memory with mips. A test decodes all three, so `load` may expect them.
 
 const ALBEDO: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_albedo.png");
 const NORMAL: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_normal.png");
 const ROUGH: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_rough.png");
 
-/// The rock textures, or neutral 1 x 1 stand-ins.
+/// The rock textures.
 pub struct RockTextures {
     pub color: wgpu::TextureView,
     pub normal: wgpu::TextureView,
-    /// Whether the views hold real rock.
-    pub real: bool,
     pub bytes: u64,
+}
+
+/// How a mip level is made from the one above.
+#[derive(Clone, Copy)]
+enum Mip {
+    /// sRGB colour (averaged as light) with linear data in alpha.
+    Color,
+    /// A tangent-space normal map: averaged as vectors, then renormalised.
+    Normal,
 }
 
 struct Image {
@@ -63,18 +69,61 @@ fn pack(rgb: &Image, alpha: Option<&Image>) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// The next mip down: each texel the plain average of four.
-fn halve(texels: &[u8], side: u32) -> Vec<u8> {
+fn to_linear(v: u8) -> f32 {
+    let c = f32::from(v) / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn to_srgb(l: f32) -> u8 {
+    let c = if l <= 0.003_130_8 {
+        l * 12.92
+    } else {
+        1.055 * l.powf(1.0 / 2.4) - 0.055
+    };
+    (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+
+/// The next mip down: each texel the average of four, by `mip`'s rule.
+fn halve(texels: &[u8], side: u32, mip: Mip) -> Vec<u8> {
     let half = (side / 2) as usize;
     let side = side as usize;
     let mut out = Vec::with_capacity(half * half * 4);
     for y in 0..half {
         for x in 0..half {
-            for c in 0..4 {
-                let at = |dx: usize, dy: usize| {
-                    u32::from(texels[((2 * y + dy) * side + 2 * x + dx) * 4 + c])
-                };
-                out.push(((at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1) + 2) / 4) as u8);
+            let at =
+                |dx: usize, dy: usize, c: usize| texels[((2 * y + dy) * side + 2 * x + dx) * 4 + c];
+            let cells = [(0, 0), (1, 0), (0, 1), (1, 1)];
+            let plain = |c: usize| {
+                let sum: u32 = cells.iter().map(|&(dx, dy)| u32::from(at(dx, dy, c))).sum();
+                ((sum + 2) / 4) as u8
+            };
+            match mip {
+                Mip::Color => {
+                    for c in 0..3 {
+                        let sum: f32 = cells.iter().map(|&(dx, dy)| to_linear(at(dx, dy, c))).sum();
+                        out.push(to_srgb(sum / 4.0));
+                    }
+                    out.push(plain(3));
+                }
+                Mip::Normal => {
+                    let mut v = [0.0f32; 3];
+                    for (c, v) in v.iter_mut().enumerate() {
+                        let sum: f32 = cells
+                            .iter()
+                            .map(|&(dx, dy)| f32::from(at(dx, dy, c)) / 127.5 - 1.0)
+                            .sum();
+                        *v = sum / 4.0;
+                    }
+                    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-4);
+                    for v in v {
+                        out.push(((v / len * 0.5 + 0.5) * 255.0 + 0.5) as u8);
+                    }
+                    out.push(255);
+                }
             }
         }
     }
@@ -88,6 +137,7 @@ fn upload(
     format: wgpu::TextureFormat,
     side: u32,
     texels: Vec<u8>,
+    mip: Mip,
 ) -> (wgpu::TextureView, u64) {
     let levels = side.ilog2() + 1;
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -129,7 +179,7 @@ fn upload(
         );
         bytes += texels.len() as u64;
         if s > 1 {
-            texels = halve(&texels, s);
+            texels = halve(&texels, s, mip);
             s /= 2;
         }
     }
@@ -140,18 +190,13 @@ fn upload(
 }
 
 pub fn load(device: &wgpu::Device, queue: &wgpu::Queue) -> RockTextures {
-    let real = (|| {
-        let albedo = decode(ALBEDO)?;
-        let normal = decode(NORMAL)?;
-        let rough = decode(ROUGH)?;
-        let color = pack(&albedo, Some(&rough))?;
-        let normals = pack(&normal, None)?;
-        (normal.side == albedo.side).then_some((albedo.side, color, normals))
-    })();
-    let (side, color, normals, real) = match real {
-        Some((side, color, normals)) => (side, color, normals, true),
-        None => (1, vec![128, 128, 128, 255], vec![128, 128, 255, 255], false),
-    };
+    let albedo = decode(ALBEDO).expect("rock035_albedo.png decodes");
+    let normal = decode(NORMAL).expect("rock035_normal.png decodes");
+    let rough = decode(ROUGH).expect("rock035_rough.png decodes");
+    let color = pack(&albedo, Some(&rough)).expect("rock035 albedo and roughness match");
+    let normals = pack(&normal, None).expect("rock035 normal map is RGB");
+    let side = albedo.side;
+    assert_eq!(side, normal.side, "rock035 maps are the same size");
     let (color, a) = upload(
         device,
         queue,
@@ -159,6 +204,7 @@ pub fn load(device: &wgpu::Device, queue: &wgpu::Queue) -> RockTextures {
         wgpu::TextureFormat::Rgba8UnormSrgb,
         side,
         color,
+        Mip::Color,
     );
     let (normal, b) = upload(
         device,
@@ -167,11 +213,11 @@ pub fn load(device: &wgpu::Device, queue: &wgpu::Queue) -> RockTextures {
         wgpu::TextureFormat::Rgba8Unorm,
         side,
         normals,
+        Mip::Normal,
     );
     RockTextures {
         color,
         normal,
-        real,
         bytes: a + b,
     }
 }
@@ -195,7 +241,18 @@ mod tests {
 
     #[test]
     fn halving_averages() {
-        let two = [10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255, 40, 0, 0, 255];
-        assert_eq!(halve(&two, 2), vec![25, 0, 0, 255]);
+        // Colour is averaged as light: black and white make sRGB 188, not 128.
+        let bw = [
+            0, 0, 0, 10, 255, 255, 255, 20, 0, 0, 0, 30, 255, 255, 255, 40,
+        ];
+        let c = halve(&bw, 2, Mip::Color);
+        assert!((186..=190).contains(&c[0]), "{c:?}");
+        assert_eq!(c[3], 25);
+        // Normals are renormalised: two tilted ones average to a unit vector.
+        let tilt = [
+            255, 128, 255, 255, 0, 128, 255, 255, 255, 128, 255, 255, 0, 128, 255, 255,
+        ];
+        let n = halve(&tilt, 2, Mip::Normal);
+        assert!(n[0].abs_diff(128) <= 1 && n[2] >= 254, "{n:?}");
     }
 }

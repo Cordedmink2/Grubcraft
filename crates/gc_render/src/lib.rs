@@ -40,7 +40,10 @@ const TERRAIN_LEVELS: usize = 4;
 const _: () = assert!(TERRAIN_LEVELS <= 4);
 /// The most tiles the terrain shader's rock relief raises the ground above
 /// the heightmap (`SMALL_RELIEF + CRAG_RELIEF + SPIRE_RELIEF` in world.wgsl,
-/// plus the warp's slide up a slope), for the boxes chunks are culled by.
+/// plus the warp's slide up a slope), for the boxes chunks are culled by and
+/// the levels of detail they are drawn at. It must cover `SMALL_RELIEF +
+/// CRAG_RELIEF + SPIRE_RELIEF` and `WARP` times the steepest slope in
+/// world.wgsl: change them together.
 const RELIEF_MAX: f32 = 7.5;
 /// How far from the eye (in tiles, to the nearest point of the chunk's box)
 /// a chunk stays at level 0, 1 and 2; beyond the last it is level 3.
@@ -1245,12 +1248,7 @@ impl Renderer {
                 CHUNK_QUADS as f32,
             ],
             fog: [fog_color[0], fog_color[1], fog_color[2], 0.0025],
-            misc: [
-                terrain.water_level,
-                frame.time_seconds,
-                f32::from(u8::from(self.rock.real)),
-                0.0,
-            ],
+            misc: [terrain.water_level, frame.time_seconds, 0.0, 0.0],
             sun_view_proj: sun_view_proj.to_cols_array_2d(),
             shadow: [
                 texel * 1.5,
@@ -1283,7 +1281,7 @@ impl Renderer {
         for cz in 0..n {
             for cx in 0..n {
                 self.chunk_levels[(cz * n + cx) as usize] =
-                    chunk_level(frame.camera_pos, [cx, cz], terrain.max_height) as u8;
+                    chunk_level(frame.camera_pos, [cx, cz], terrain.max_height + RELIEF_MAX) as u8;
             }
         }
         // The camera's chunks fill the instance buffer's first half, the
