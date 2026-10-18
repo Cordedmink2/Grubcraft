@@ -5,6 +5,112 @@
 //! in alpha, and the normal map. Together they are about 2.8 MB of GPU
 //! memory with mips. A test decodes all three, so `load` may expect them.
 
+/// Tiles of relief the terrain shader adds on cliffs at most (world.wgsl,
+/// `relief_at`): small bumps on every cliff, then the crags and spires only
+/// mountain mass grows. They are injected into the shader as constants.
+pub const SMALL_RELIEF: f32 = 0.9;
+pub const CRAG_RELIEF: f32 = 3.6;
+pub const SPIRE_RELIEF: f32 = 2.2;
+/// How far the lookup may slide sideways, in tiles.
+pub const WARP: f32 = 0.5;
+/// The most tiles the relief raises the ground above the heightmap's own
+/// highest point, for the boxes chunks are culled by (terrain, scenery) and
+/// the levels of detail they are drawn at. The warp only moves the lookup,
+/// which never reads higher than the heightmap's top, so it adds nothing.
+pub const RELIEF_MAX: f32 = SMALL_RELIEF + CRAG_RELIEF + SPIRE_RELIEF;
+
+/// The world shader with the relief's constants in front of it.
+pub(crate) fn world_source() -> String {
+    format!(
+        "const SMALL_RELIEF: f32 = {SMALL_RELIEF:?};\nconst CRAG_RELIEF: f32 = {CRAG_RELIEF:?};\nconst SPIRE_RELIEF: f32 = {SPIRE_RELIEF:?};\nconst WARP: f32 = {WARP:?};\n{}",
+        include_str!("shaders/world.wgsl")
+    )
+}
+
+/// The cliff mask texture's contents: for each half-tile cell, 0 unless
+/// `cliffs` has it as 1, and then rising with the cell's distance (in
+/// cells, diagonals counting one) from the nearest cell that is not, from 0
+/// beside open ground to 255 three cells in. So every cell that touches a
+/// non-cliff cell reads 0, and a bilinear sample anywhere in a non-cliff
+/// cell, or on its border, reads exactly 0.
+pub fn cliff_mask(cliffs: &[u8], side: usize) -> Vec<u8> {
+    assert_eq!(cliffs.len(), side * side);
+    let far = u16::MAX / 2;
+    let mut d: Vec<u16> = cliffs
+        .iter()
+        .map(|&c| if c == 0 { 0 } else { far })
+        .collect();
+    let at = |x: usize, y: usize| y * side + x;
+    // Two sweeps give the exact Chebyshev distance.
+    for y in 0..side {
+        for x in 0..side {
+            let mut best = d[at(x, y)];
+            for (dx, dy) in [(-1i32, -1i32), (0, -1), (1, -1), (-1, 0)] {
+                let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+                if nx >= 0 && ny >= 0 && (nx as usize) < side {
+                    best = best.min(d[at(nx as usize, ny as usize)] + 1);
+                }
+            }
+            d[at(x, y)] = best;
+        }
+    }
+    for y in (0..side).rev() {
+        for x in (0..side).rev() {
+            let mut best = d[at(x, y)];
+            for (dx, dy) in [(1i32, 1i32), (0, 1), (-1, 1), (1, 0)] {
+                let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+                if nx >= 0 && (nx as usize) < side && (ny as usize) < side {
+                    best = best.min(d[at(nx as usize, ny as usize)] + 1);
+                }
+            }
+            d[at(x, y)] = best;
+        }
+    }
+    d.iter()
+        .map(|&d| (d.saturating_sub(1).min(3) * 85) as u8)
+        .collect()
+}
+
+/// A texture of `side` texels a side with `texels` in it, one byte each.
+pub fn upload_mask(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    side: u32,
+    texels: &[u8],
+) -> wgpu::TextureView {
+    let size = wgpu::Extent3d {
+        width: side,
+        height: side,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("cliff mask"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        texels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(side),
+            rows_per_image: Some(side),
+        },
+        size,
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 const ALBEDO: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_albedo.png");
 const NORMAL: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_normal.png");
 const ROUGH: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_rough.png");
@@ -237,6 +343,29 @@ mod tests {
             pack(&albedo, Some(&rough)).unwrap().len(),
             (albedo.side * albedo.side * 4) as usize
         );
+    }
+
+    #[test]
+    fn the_cliff_mask_is_zero_around_open_cells_and_rises_inside_cliffs() {
+        // A 9 x 9 grid with a cliff block in the middle (cells 2..=6).
+        let side = 9;
+        let cliffs: Vec<u8> = (0..side * side)
+            .map(|i| u8::from((2..=6).contains(&(i % side)) && (2..=6).contains(&(i / side))))
+            .collect();
+        let mask = cliff_mask(&cliffs, side);
+        // Every cell touching an open one, diagonally too, reads 0.
+        for y in 0..side {
+            for x in 0..side {
+                let touches_open = (0..9).any(|k| {
+                    let (nx, ny) = ((x + k % 3).wrapping_sub(1), (y + k / 3).wrapping_sub(1));
+                    nx < side && ny < side && cliffs[ny * side + nx] == 0
+                });
+                if cliffs[y * side + x] == 0 || touches_open {
+                    assert_eq!(mask[y * side + x], 0, "({x}, {y})");
+                }
+            }
+        }
+        assert_eq!(mask[4 * side + 4], 170, "two cells in");
     }
 
     #[test]

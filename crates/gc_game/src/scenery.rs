@@ -46,11 +46,16 @@ const CHUNK_RADIUS: f32 = CHUNK as f32 * 0.71;
 const TREE_PERCENT: u32 = 55;
 /// Chunk-local positions are in this many steps a tile.
 const STEPS: f32 = 2048.0;
-/// Ground rising this many tiles per tile is a cliff, and this much a steep
-/// flank: gc_map's rules for cliff and steep ground (`CLIFF_RISE_PER_TILE`
-/// in hundredths of a tile, and half of it).
-const CLIFF_RISE: f32 = gc_map::CLIFF_RISE_PER_TILE as f32 / 100.0;
-const STEEP_RISE: f32 = CLIFF_RISE / 2.0;
+/// How a tile's ground is classed by gc_map's nav rules (`Terrain::ground`):
+/// walkable, steep (walkable, slow: a flank), a cliff no regiment climbs
+/// (some half-tile cell of it is one), or, only here, a cliff's foot: a
+/// walkable tile beside a cliff that rises out of it.
+const OPEN: u8 = 0;
+const STEEP: u8 = 1;
+const CLIFF: u8 = 2;
+const FOOT: u8 = 3;
+/// A foot is a tile this much lower than its cliff neighbour, in tiles.
+const FOOT_RISE: f32 = 0.3;
 /// Extra rocks per tile on cliffs: a steep flank, a cliff face, and a
 /// cliff's foot (the tile the cliff rises out of).
 const FLANK_ROCKS: f32 = 0.3;
@@ -371,12 +376,35 @@ pub struct Terrain<'a> {
     /// dry).
     pub heights: &'a [u16],
     pub water: u16,
+    /// Each tile's ground by the nav rules: 0 walkable, 1 steep, 2 cliff
+    /// (empty: all walkable).
+    pub ground: Vec<u8>,
     pub sites: Vec<(Site, (i32, i32))>,
 }
 
 impl<'a> Terrain<'a> {
     pub fn of(map: &'a Map) -> Terrain<'a> {
+        // The cliffs are the half-tile cells the nav grid blocks for rise
+        // (the ones the renderer builds its crags on), the steep tiles those
+        // it routes round.
+        let cliffs = map.cliff_cells();
+        let steep = map.tile_ground(&map.nav_costs());
+        let n = map.tiles as usize;
+        let ground = (0..n * n)
+            .map(|i| {
+                let (x, y) = (i % n, i / n);
+                let at = |dx: usize, dy: usize| cliffs[(2 * y + dy) * 2 * n + 2 * x + dx];
+                if at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1) > 0 {
+                    CLIFF
+                } else if steep[i] == gc_map::Ground::Steep {
+                    STEEP
+                } else {
+                    OPEN
+                }
+            })
+            .collect();
         Terrain {
+            ground,
             tiles: map.tiles,
             cover: &map.cover,
             thicket: &map.thicket,
@@ -823,9 +851,8 @@ struct Tile {
     set: &'static Set,
     /// Steepness: biggest height step to a neighbour, in tiles.
     slope: f32,
-    /// How much higher the ground is at the highest neighbour, in tiles
-    /// (0 if no neighbour is higher).
-    up: f32,
+    /// `OPEN`, `STEEP`, `CLIFF` or `FOOT`.
+    ground: u8,
     shore: bool,
 }
 
@@ -914,15 +941,13 @@ impl Placer<'_> {
     /// chunk's `cliff_left`. The rng is drawn only on steep tiles, so flat
     /// ground places exactly what it did before.
     fn cliff_rocks(&mut self, t: &Tile, clear: bool, rng: &mut Rng) {
-        if clear || t.shore || t.slope < STEEP_RISE || self.cliff_left == 0 {
+        if clear || t.shore || t.ground == OPEN || self.cliff_left == 0 {
             return;
         }
-        let per_tile = if t.slope < CLIFF_RISE {
-            FLANK_ROCKS
-        } else if t.up >= CLIFF_RISE {
-            FOOT_ROCKS
-        } else {
-            FACE_ROCKS
+        let per_tile = match t.ground {
+            STEEP => FLANK_ROCKS,
+            FOOT => FOOT_ROCKS,
+            _ => FACE_ROCKS,
         };
         let count = rng.count(per_tile).min(self.cliff_left);
         for _ in 0..count {
@@ -1024,7 +1049,7 @@ fn build_chunk(
         for x in ox..(ox + CHUNK).min(n) {
             let i = (y * n + x) as usize;
             let mut slope = 0.0f32;
-            let mut up = 0.0f32;
+            let mut ground = t.ground.get(i).copied().unwrap_or(OPEN);
             let mut shore = false;
             if !flat {
                 let h = tile_height(x, y);
@@ -1040,7 +1065,10 @@ fn build_chunk(
                     }
                     let nh = tile_height(nx as u32, ny as u32);
                     slope = slope.max((nh - h).abs() / units);
-                    up = up.max((nh - h) / units);
+                    let nground = t.ground.get((ny as u32 * n + nx as u32) as usize);
+                    if ground == OPEN && nground == Some(&CLIFF) && (nh - h) / units > FOOT_RISE {
+                        ground = FOOT;
+                    }
                     shore |= nh < f32::from(t.water);
                 }
             }
@@ -1050,7 +1078,7 @@ fn build_chunk(
                 y,
                 set: set_of(land),
                 slope,
-                up,
+                ground,
                 shore,
             };
             let cover = t.cover.get(i).copied().unwrap_or(0);
@@ -1067,7 +1095,12 @@ fn build_chunk(
         height,
         radius,
     } = placer.out;
-    let top = hi + height;
+    // Scenery on cliffs stands on the renderer's relief, up to this much
+    // higher than the heights here.
+    let cliffs = (oy..(oy + CHUNK).min(n)).any(|y| {
+        (ox..(ox + CHUNK).min(n)).any(|x| t.ground.get((y * n + x) as usize) == Some(&CLIFF))
+    });
+    let top = hi + height + if cliffs { gc_render::RELIEF_MAX } else { 0.0 };
     let (mid, half) = ((lo + top) * 0.5, (top - lo) * 0.5);
     Chunk {
         classes: classes.map(Vec::into_boxed_slice),
@@ -1105,6 +1138,33 @@ mod tests {
     }
 
     const N: u32 = 64;
+
+    /// The tiles' nav ground, as gc_map would class it, from tile heights:
+    /// a tile with a neighbour 1.2 tiles a tile different is a cliff, over
+    /// 0.6 steep.
+    fn ground_of(heights: &[u16]) -> Vec<u8> {
+        let units = gc_sim::terrain::HEIGHT_UNITS as f32;
+        let at = |x: i32, y: i32| f32::from(heights[(y as u32 * N + x as u32) as usize]) / units;
+        (0..N as i32 * N as i32)
+            .map(|i| {
+                let (x, y) = (i % N as i32, i / N as i32);
+                let mut slope = 0.0f32;
+                for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if (0..N as i32).contains(&nx) && (0..N as i32).contains(&ny) {
+                        slope = slope.max((at(nx, ny) - at(x, y)).abs());
+                    }
+                }
+                if slope >= 1.2 {
+                    CLIFF
+                } else if slope >= 0.6 {
+                    STEEP
+                } else {
+                    OPEN
+                }
+            })
+            .collect()
+    }
 
     struct World {
         cover: Vec<u8>,
@@ -1145,6 +1205,7 @@ mod tests {
                     land: &self.land,
                     heights: &self.heights,
                     water: 500,
+                    ground: ground_of(&self.heights),
                     sites: self.sites.clone(),
                 },
                 seed,
