@@ -32,6 +32,11 @@ use crate::terrain::Terrain;
 use crate::vision::{OFF_GUARD_DAMAGE_PERCENT, Vision};
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
 
+/// Percent of its full weight every wound lands with, melee and missile
+/// alike: the one knob for how long fights last. Below 100, regiments bleed
+/// (and so lose heart, see [`crate::morale`]) more slowly and battles draw
+/// out without retuning any unit.
+pub const BATTLE_PACE_PERCENT: u64 = 60;
 /// Ticks between a regiment's melee blows.
 pub const STRIKE_INTERVAL: u32 = TICKS_PER_SECOND;
 /// How far apart two blocks' edges can be and still fight, in tiles.
@@ -1661,7 +1666,7 @@ fn deal(
         Side::Flank => SHOCK_FLANK,
         Side::Rear => SHOCK_REAR,
     };
-    let rolled = expected * (192 + u64::from(rng.below(129))) / 256;
+    let rolled = expected * BATTLE_PACE_PERCENT / 100 * (192 + u64::from(rng.below(129))) / 256;
     let total = rolled + u64::from(regs.damage_carry[j]);
     regs.damage_carry[j] = (total % 256) as u16;
     let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
