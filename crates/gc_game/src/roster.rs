@@ -19,21 +19,17 @@ use gc_data::{ConquestUnitRecord, Faction};
 /// regiments to fight with either.
 const NOT_REGIMENTS: [&str; 1] = ["Caravan"];
 
-/// Why the sandbox does not place `unit`, or `None` when it can.
-pub fn left_out(unit: &ConquestUnitRecord) -> Option<&'static str> {
-    if unit.worker() || unit.flags & UNIT_BUILDS_ONLY != 0 {
-        Some("a worker: it gathers and builds, which needs Conquest's economy")
-    } else if NOT_REGIMENTS.contains(&unit.name()) {
-        Some("a caravan: it hauls Grub, it is not a fighting regiment")
-    } else {
-        None
-    }
+/// Whether the sandbox leaves `unit` out: a worker (it gathers and builds,
+/// which needs Conquest's economy) or a caravan (it hauls Grub, it is not a
+/// fighting regiment).
+pub fn left_out(unit: &ConquestUnitRecord) -> bool {
+    unit.worker() || unit.flags & UNIT_BUILDS_ONLY != 0 || NOT_REGIMENTS.contains(&unit.name())
 }
 
 /// The table indices of `faction`'s placeable troops, in roster order.
 pub fn placeable(units: &[ConquestUnitRecord], faction: Faction) -> Vec<usize> {
     (0..units.len())
-        .filter(|&i| units[i].faction() == faction && left_out(&units[i]).is_none())
+        .filter(|&i| units[i].faction() == faction && !left_out(&units[i]))
         .collect()
 }
 
@@ -41,7 +37,7 @@ pub fn placeable(units: &[ConquestUnitRecord], faction: Faction) -> Vec<usize> {
 pub fn left_out_names(units: &[ConquestUnitRecord], faction: Faction) -> (usize, String) {
     let names: Vec<&str> = units
         .iter()
-        .filter(|u| u.faction() == faction && left_out(u).is_some())
+        .filter(|u| u.faction() == faction && left_out(u))
         .map(ConquestUnitRecord::name)
         .collect();
     (names.len(), names.join(", "))
@@ -85,7 +81,7 @@ mod tests {
         let left: Vec<&str> = data
             .conquest_units
             .iter()
-            .filter(|u| left_out(u).is_some())
+            .filter(|u| left_out(u))
             .map(ConquestUnitRecord::name)
             .collect();
         assert_eq!(

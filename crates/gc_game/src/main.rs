@@ -609,17 +609,10 @@ struct Running {
     units: UnitTable,
     /// The regiment types not in play: the Conquest ones in a Field Battle
     /// or the sandbox, the Field Battle ones in Conquest. See
-    /// [`Running::use_units`].
+    /// [`Running::use_play`].
     other_units: UnitTable,
-    /// Whether the regiment types in play are the Conquest ones. That is a
-    /// Conquest match, or the sandbox on the roster table
-    /// ([`Running::sandbox_roster`]); [`Running::conquest_match`] tells
-    /// them apart, and the Conquest HUD, economy and build menu follow it.
-    conquest_units: bool,
-    /// The sandbox runs on the Conquest roster table so troops of every
-    /// faction can be placed (docs/17-unit-rosters.md). It is still the
-    /// sandbox: no Conquest economy, workers, HUD or build menu.
-    sandbox_roster: bool,
+    /// Which regiment types are in play, and whether it is Conquest.
+    play: Play,
     /// The building types, for Conquest worlds.
     buildings: buildings::Table,
     /// The game data as built, which Conquest matches are set up from.
@@ -962,13 +955,32 @@ fn color_of(parties: &[Party], owner: PlayerId) -> [u8; 3] {
         .map_or(TEAM_COLORS[owner as usize % TEAM_COLORS.len()], |p| p.color)
 }
 
+/// Which regiment types the match plays with, and so which game it is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Play {
+    /// The Field Battle types: a Field Battle, or the sandbox's default.
+    Field,
+    /// The Conquest types, with its economy, workers, HUD and build menu.
+    Conquest,
+    /// The sandbox on the Conquest roster table, so troops of every faction
+    /// can be placed (docs/17-unit-rosters.md). It is still the sandbox: no
+    /// Conquest economy, workers, HUD or build menu.
+    SandboxRoster,
+}
+
+impl Play {
+    /// Whether the Conquest roster table is the one in play.
+    fn roster_table(self) -> bool {
+        self != Play::Field
+    }
+}
+
 /// What kind of match to start from the menu. (The scripted four-army
 /// drill runs only when the game starts straight into a match.)
 enum MatchKind {
-    /// An empty field, nobody moving unless ordered.
-    Sandbox,
-    /// The same, on the Conquest roster table: troops of every faction.
-    SandboxRoster,
+    /// An empty field, nobody moving unless ordered; on the Conquest roster
+    /// table (troops of every faction) when `roster`.
+    Sandbox { roster: bool },
     /// A Field Battle from the lobby.
     Battle(MatchStart),
     /// Watching a saved replay.
@@ -977,7 +989,7 @@ enum MatchKind {
 
 impl MatchKind {
     fn is_sandbox(&self) -> bool {
-        matches!(self, MatchKind::Sandbox | MatchKind::SandboxRoster)
+        matches!(self, MatchKind::Sandbox { .. })
     }
 }
 
@@ -1294,8 +1306,7 @@ impl App {
             shooting: vec![false; capacities.regiments as usize],
             units,
             other_units,
-            conquest_units: false,
-            sandbox_roster: false,
+            play: Play::Field,
             buildings: building_table,
             // The showroom hides the panel (H shows it).
             sandbox: Sandbox {
@@ -3330,7 +3341,7 @@ impl Running {
             }
             MenuAction::Resume => self.close_menu(),
             MenuAction::Quit => self.quit = true,
-            MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox),
+            MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox { roster: false }),
             MenuAction::OpenViewer => self.open_viewer("start"),
             MenuAction::OpenGuide => self.open_guide(),
             MenuAction::ListReplays => {
@@ -3602,12 +3613,17 @@ impl Running {
         let conquest = match &kind {
             MatchKind::Battle(setup) => setup.settings.mode == GameMode::Conquest,
             MatchKind::Replay(r) => r.conquest.is_some(),
-            MatchKind::Sandbox | MatchKind::SandboxRoster => false,
+            MatchKind::Sandbox { .. } => false,
         };
         // The sandbox may run on the roster table, though it is no Conquest.
-        let roster = matches!(kind, MatchKind::SandboxRoster);
-        self.use_units(conquest || roster);
-        self.sandbox_roster = roster;
+        let roster = matches!(kind, MatchKind::Sandbox { roster: true });
+        self.use_play(if conquest {
+            Play::Conquest
+        } else if roster {
+            Play::SandboxRoster
+        } else {
+            Play::Field
+        });
         let mut stats_before = Vec::new();
         // A network match plays on the host's map, with the game data as
         // built (whatever the sandbox tuned stays in the sandbox).
@@ -3646,7 +3662,7 @@ impl Running {
                 };
                 Some((key, r.seed))
             }
-            MatchKind::Sandbox | MatchKind::SandboxRoster => None,
+            MatchKind::Sandbox { .. } => None,
         };
         if let Some((key, seed)) = key {
             self.seed = seed;
@@ -3678,9 +3694,7 @@ impl Running {
                 setup.players.iter().map(|s| s.team).collect(),
                 battle::champions_allowed(setup),
             ),
-            MatchKind::Sandbox | MatchKind::SandboxRoster | MatchKind::Replay(_) => {
-                (Vec::new(), false)
-            }
+            MatchKind::Sandbox { .. } | MatchKind::Replay(_) => (Vec::new(), false),
         };
         let setup = MatchSetup {
             seed: self.seed,
@@ -3794,7 +3808,7 @@ impl Running {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
             MatchKind::Replay(r) => self.watch(*r, stats_before),
-            MatchKind::Sandbox | MatchKind::SandboxRoster => {}
+            MatchKind::Sandbox { .. } => {}
         }
         if let Some(note) = map_note {
             self.say(note.into());
@@ -3832,17 +3846,16 @@ impl Running {
     /// build menu. The sandbox on the roster table plays with the same
     /// regiment types but none of that.
     fn conquest_match(&self) -> bool {
-        self.conquest_units && !self.sandbox_roster
+        self.play == Play::Conquest
     }
 
-    /// Play with the Conquest regiment types (`conquest`) or the Field
-    /// Battle ones. The table put away keeps what the sandbox tuned.
-    fn use_units(&mut self, conquest: bool) {
-        if self.conquest_units == conquest {
-            return;
+    /// Play with the regiment types of `play`. The table put away keeps what
+    /// the sandbox tuned.
+    fn use_play(&mut self, play: Play) {
+        if self.play.roster_table() != play.roster_table() {
+            std::mem::swap(&mut self.units, &mut self.other_units);
         }
-        self.conquest_units = conquest;
-        std::mem::swap(&mut self.units, &mut self.other_units);
+        self.play = play;
     }
 
     /// Each table's regiment types by name, which a replay must match.
@@ -3856,7 +3869,7 @@ impl Running {
     /// The names of the regiment types of Conquest's table, or the Field
     /// Battle one's.
     fn unit_names(&self, conquest: bool) -> &[String] {
-        if conquest == self.conquest_units {
+        if conquest == self.play.roster_table() {
             &self.units.names
         } else {
             &self.other_units.names
@@ -4719,12 +4732,12 @@ impl Running {
         // out (workers, the caravan): they need Conquest's economy.
         for _ in 0..types.max(1) {
             unit = (unit + step).rem_euclid(types.max(1));
-            let left_out = self.sandbox_roster
+            let left_out = self.play == Play::SandboxRoster
                 && self
                     .data
                     .conquest_units
                     .get(unit as usize)
-                    .is_some_and(|u| roster::left_out(u).is_some());
+                    .is_some_and(roster::left_out);
             if !left_out {
                 break;
             }
@@ -5138,8 +5151,8 @@ impl Running {
     /// Shift+R: read `data/units.ron` again and tune every type that changed.
     #[cfg(feature = "dev")]
     fn reload_data(&mut self) {
-        if self.conquest_units {
-            let why = if self.sandbox_roster {
+        if self.play.roster_table() {
+            let why = if self.play == Play::SandboxRoster {
                 "Shift+R reloads the Field types in data/units.ron, not the roster table the sandbox runs on now. Choose a Field type in the Place panel first."
             } else {
                 "Shift+R reloads the Field Battle units, so not in Conquest."
