@@ -15,7 +15,7 @@
 
 use crate::alerts::{self, AlertData};
 use crate::conquest::{self, Block, NodeDot, StructurePanel, TipsCard, TopBar};
-use crate::draw::{CELL_W, Color, DrawList, Rect, fit, mix, text_width, wrap};
+use crate::draw::{CELL_W, Color, DrawList, Rect, fit, mix, text_height, text_width, wrap};
 use crate::hero::{self, HeroPanel};
 use crate::icons::{self, Icon};
 use crate::placer::{self, PlacePicker};
@@ -216,6 +216,21 @@ pub struct Selection<'a> {
     pub state: CardState,
     /// The formation they stand in; empty when it varies or is not known.
     pub formation: &'a str,
+    /// The army shapes to choose from, as a row of chips along the tray's top
+    /// edge. Empty for none, and the row only shows for two or more
+    /// regiments.
+    pub shapes: &'a [ShapeChip<'a>],
+}
+
+/// One army shape to choose from: a preset, or a shape you saved.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ShapeChip<'a> {
+    /// "Line", "Mine 2" ...
+    pub label: &'a str,
+    /// One line on what it does, for the tooltip.
+    pub tip: &'a str,
+    /// This is the shape group orders use now.
+    pub on: bool,
 }
 
 /// The top bar's status strip: what you are playing and how fast.
@@ -248,6 +263,8 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("Q", "Move, then click"),
             ("W", "Attack, then click"),
             ("R or F", "Next formation"),
+            ("O", "Next army shape"),
+            ("Shift+O", "Save this army's shape"),
             ("Z", "Brace spears"),
             ("V", "Fall back"),
             ("Ctrl+1-9", "Save a group"),
@@ -356,7 +373,8 @@ pub(crate) const WIDGET_GUIDE: u32 = 9 << 24;
 pub(crate) const WIDGET_PLACE: u32 = 10 << 24;
 pub(crate) const WIDGET_PLACE_ROW: u32 = 11 << 24;
 pub(crate) const WIDGET_PLACE_SIDE: u32 = 12 << 24;
-pub(crate) const WIDGET_TIPS: u32 = 13 << 24;
+const WIDGET_SHAPE: u32 = 13 << 24;
+pub(crate) const WIDGET_TIPS: u32 = 14 << 24;
 
 /// What the mouse did since the last frame, in UI pixels.
 #[derive(Clone, Copy, Debug, Default)]
@@ -417,6 +435,9 @@ pub enum HudEvent {
     /// The info button of a selected building (or its tips card's close
     /// box) was clicked: show or hide the building's tips.
     ToggleTips,
+    /// An army shape chip of the selection panel was clicked (its place in
+    /// [`Selection::shapes`]).
+    ArmyShape(usize),
 }
 
 #[derive(Default)]
@@ -441,6 +462,8 @@ pub struct Hud {
 const TIP_HELP: u32 = 100;
 const TIP_GUIDE: u32 = 101;
 const TIP_PLACE: u32 = 102;
+/// Army shape chips' tooltips use this and their place.
+const TIP_SHAPE: u32 = 110;
 
 /// What a tooltip says, about the button `id` at `anchor`.
 #[derive(Clone, Debug)]
@@ -1032,6 +1055,72 @@ impl Hud {
         draw.border(r, 2, theme::INK);
     }
 
+    /// The army shape chips along `strip`: one button each, the chosen one lit.
+    fn shape_chips(
+        &mut self,
+        draw: &mut DrawList,
+        strip: Rect,
+        input: HudInput,
+        chips: &[ShapeChip],
+        events: &mut Vec<HudEvent>,
+    ) {
+        let (label_x, rects) = shape_chip_rects(strip, chips);
+        if let Some(x) = label_x {
+            draw.text_bold(
+                x,
+                strip.y + (strip.h - text_height(1)) / 2,
+                1,
+                theme::MADDER,
+                SHAPE_LABEL,
+            );
+        }
+        for (i, (chip, &rect)) in chips.iter().zip(&rects).enumerate() {
+            let over = rect.contains(input.mouse.0, input.mouse.1);
+            let (clicked, down) = self.press.widget(
+                WIDGET_SHAPE + i as u32,
+                rect,
+                input.mouse,
+                input.left_pressed,
+                input.left_released,
+            );
+            if clicked {
+                events.push(HudEvent::ArmyShape(i));
+            }
+            if over {
+                self.tip = Some(Tip {
+                    id: TIP_SHAPE + i as u32,
+                    anchor: rect,
+                    name: format!("Army shape: {}", chip.label),
+                    key: "O".to_string(),
+                    text: chip.tip.to_string(),
+                    note: String::new(),
+                });
+            }
+            let state = if chip.on {
+                SlotState::Armed
+            } else {
+                SlotState::Ready
+            };
+            let (mut back, _, text) = slot_colors(state, over);
+            if down {
+                back = mix(back, theme::INK, 0.18);
+            }
+            draw.boxed(rect, back, 2);
+            if chip.on {
+                let x = rect.x + (rect.w - text_width(chip.label, 1)) / 2;
+                draw.text_bold(
+                    x,
+                    rect.y + (rect.h - text_height(1)) / 2,
+                    1,
+                    text,
+                    chip.label,
+                );
+            } else {
+                draw.text_centered(rect, 1, text, chip.label);
+            }
+        }
+    }
+
     fn tray(
         &mut self,
         draw: &mut DrawList,
@@ -1041,11 +1130,21 @@ impl Hud {
         events: &mut Vec<HudEvent>,
     ) {
         let r = layout.tray;
-        let inner = r.inset(8);
+        let mut inner = r.inset(8);
         if inner.w < CARD_MIN_W {
             return;
         }
         draw.boxed(r, linen_light(), 2);
+        if data.structure.is_none()
+            && let Some(sel) = data
+                .selection
+                .filter(|s| s.regiments > 1 && !s.shapes.is_empty())
+        {
+            let strip = Rect::new(inner.x, inner.y, inner.w, SHAPE_CHIP_H);
+            self.shape_chips(draw, strip, input, sel.shapes, events);
+            let used = SHAPE_CHIP_H + 4;
+            inner = Rect::new(inner.x, inner.y + used, inner.w, inner.h - used);
+        }
         if let Some(s) = &data.structure {
             draw.text_bold(inner.x, inner.y - 2, 1, theme::MADDER, data.tray_title);
             let row = Rect::new(inner.x, inner.y + 20, inner.w, inner.h - 20);
@@ -1112,6 +1211,43 @@ impl Hud {
             draw.text_bold(x.max(cards_x), inner.y - 2, 1, theme::WOAD, &more);
         }
     }
+}
+
+/// Height of the army shape chips' row.
+const SHAPE_CHIP_H: i32 = 20;
+const SHAPE_LABEL: &str = "Army shape";
+
+/// Where the army shape chips sit along `strip`, and where the "Army shape"
+/// label goes, if there is room for it. Tries the roomy way first, then
+/// drops the label, then squeezes the chips; chips that still do not fit
+/// are left off the end.
+fn shape_chip_rects(strip: Rect, chips: &[ShapeChip]) -> (Option<i32>, Vec<Rect>) {
+    const GAP: i32 = 4;
+    let mut out = (None, Vec::new());
+    for (label, pad) in [(true, 6), (false, 6), (false, 3)] {
+        let mut x = strip.x;
+        let label_x = label.then_some(x);
+        if label {
+            x += text_width(SHAPE_LABEL, 1) + 10;
+        }
+        let mut rects = Vec::with_capacity(chips.len());
+        for chip in chips {
+            let w = text_width(chip.label, 1) + 2 * pad;
+            if x + w > strip.right() {
+                break;
+            }
+            rects.push(Rect::new(x, strip.y, w, strip.h));
+            x += w + GAP;
+        }
+        let all = rects.len() == chips.len();
+        if all || pad == 3 {
+            out = (label_x, rects);
+        }
+        if all {
+            break;
+        }
+    }
+    out
 }
 
 /// A pennant: `fill` cloth with a swallowtail point, outlined in ink.
@@ -1579,6 +1715,7 @@ mod tests {
         powers: &'a [PowerButton<'a>],
         picker: Option<PlacePicker<'a>>,
         tips: Option<TipsCard<'a>>,
+        selection: Option<Selection<'a>>,
     }
 
     fn run(
@@ -1611,7 +1748,7 @@ mod tests {
         let data = HudData {
             grid: &grid,
             status: StatusStrip::default(),
-            selection: None,
+            selection: extras.selection,
             help: None,
             minimap: MinimapData {
                 map_tiles: 256.0,
@@ -2452,6 +2589,7 @@ mod tests {
             morale: 80,
             state: CardState::Steady,
             formation: "Line",
+            shapes: &[],
         }
     }
 
@@ -2539,6 +2677,99 @@ mod tests {
             ..selection()
         };
         assert!(has(&with_selection(Some(broken), &[card(1)]), "Routing"));
+    }
+
+    const NAMES: [&str; 8] = [
+        "Line", "Deep", "Hammer", "Square", "Plain", "Mine 1", "Mine 2", "Mine 3",
+    ];
+
+    fn chips(count: usize, on: usize) -> Vec<ShapeChip<'static>> {
+        NAMES[..count]
+            .iter()
+            .enumerate()
+            .map(|(i, &label)| ShapeChip {
+                label,
+                tip: "A tip.",
+                on: i == on,
+            })
+            .collect()
+    }
+
+    fn army<'a>(shapes: &'a [ShapeChip<'a>]) -> Selection<'a> {
+        Selection {
+            regiments: 3,
+            name: "3 regiments",
+            shapes,
+            ..selection()
+        }
+    }
+
+    #[test]
+    fn the_army_shape_chips_fit_the_tray_without_covering_the_cards() {
+        let all = chips(8, 0);
+        for screen in [(1280, 720), (1920, 1080)] {
+            let l = HudLayout::new(screen);
+            let strip = Rect::new(l.tray.x + 8, l.tray.y + 8, l.tray.w - 16, SHAPE_CHIP_H);
+            let (label, rects) = shape_chip_rects(strip, &all);
+            assert_eq!(rects.len(), 8, "every chip fits at {screen:?}");
+            assert!(label.is_some(), "and the label too");
+            for (i, r) in rects.iter().enumerate() {
+                assert!(r.x >= strip.x && r.right() <= strip.right());
+                assert!(r.y == strip.y && r.bottom() <= l.tray.bottom());
+                assert!(rects[i + 1..].iter().all(|o| o.x >= r.right()));
+            }
+        }
+        // A cramped tray (UI scale 150% at 1280 wide) keeps what fits.
+        let strip = Rect::new(0, 0, 300, SHAPE_CHIP_H);
+        let (_, rects) = shape_chip_rects(strip, &all);
+        assert!(rects.len() >= 5 && rects.iter().all(|r| r.right() <= 300));
+    }
+
+    #[test]
+    fn clicking_an_army_shape_chip_sends_its_place_and_the_row_needs_two_regiments() {
+        let shapes = chips(6, 1);
+        let l = HudLayout::new(SCREEN);
+        let strip = Rect::new(l.tray.x + 8, l.tray.y + 8, l.tray.w - 16, SHAPE_CHIP_H);
+        let (_, rects) = shape_chip_rects(strip, &shapes);
+        let at = rects[2];
+        let click = HudInput {
+            mouse: (at.x + 3, at.y + 3),
+            left_pressed: true,
+            left_released: true,
+            ..HudInput::default()
+        };
+        let extras = |selection| Extras {
+            selection: Some(selection),
+            ..Extras::default()
+        };
+        let cards = [card(1), card(2), card(3)];
+        let (ev, _) = run_with(
+            &mut Hud::default(),
+            click,
+            &cards,
+            &[],
+            extras(army(&shapes)),
+        );
+        assert_eq!(ev, vec![HudEvent::ArmyShape(2)]);
+        // One regiment has no row: the same spot is not a chip.
+        let one = Selection {
+            regiments: 1,
+            ..army(&shapes)
+        };
+        let (ev, _) = run_with(&mut Hud::default(), click, &cards[..1], &[], extras(one));
+        assert!(ev.is_empty());
+        // The chosen chip is weld yellow.
+        let (_, d) = run_with(
+            &mut Hud::default(),
+            HudInput::default(),
+            &cards,
+            &[],
+            extras(army(&shapes)),
+        );
+        let lit = rects[1];
+        assert!(d.quads.iter().any(|q| q.glyph == SOLID
+            && q.color == theme::WELD
+            && lit.contains(i32::from(q.pos[0]), i32::from(q.pos[1]))));
     }
 
     #[test]
