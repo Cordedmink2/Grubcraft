@@ -51,13 +51,25 @@ pub fn pick_army(
     preset: Preset,
     size: usize,
 ) -> Vec<UnitId> {
+    pick_army_of(units, factions, faction, preset, size, |_| true)
+}
+
+/// [`pick_army`] from the types `usable` lets in.
+fn pick_army_of(
+    units: &[UnitStats],
+    factions: &[Faction],
+    faction: Faction,
+    preset: Preset,
+    size: usize,
+    usable: impl Fn(usize) -> bool,
+) -> Vec<UnitId> {
     let mut mine: Vec<UnitId> = (0..units.len())
-        .filter(|&i| factions.get(i) == Some(&faction))
+        .filter(|&i| factions.get(i) == Some(&faction) && usable(i))
         .map(|i| i as UnitId)
         .collect();
     if mine.is_empty() {
         // A faction with no regiments of its own yet borrows everyone's.
-        mine = (0..units.len() as UnitId).collect();
+        mine = (0..units.len()).filter(|&i| usable(i)).map(|i| i as UnitId).collect();
     }
     let of_class = |c: Class| -> Vec<UnitId> {
         mine.iter()
@@ -102,7 +114,8 @@ pub fn pick_army(
 
 /// The largest army in `preset`'s mix (see [`pick_army`]) whose regiments
 /// cost at most `budget` points, `points[u]` being unit `u`'s cost, and no
-/// more than `most` regiments.
+/// more than `most` regiments. A type that costs 0 points is not for
+/// Field Battles (a worker, a summoned troop) and is never picked.
 pub fn pick_army_within(
     units: &[UnitStats],
     points: &[u32],
@@ -118,14 +131,18 @@ pub fn pick_army_within(
             .fold(0, u32::saturating_add)
     };
     (1..=most)
-        .map(|n| pick_army(units, factions, faction, preset, n))
+        .map(|n| {
+            pick_army_of(units, factions, faction, preset, n, |u| {
+                points.get(u).is_some_and(|&p| p > 0)
+            })
+        })
         .take_while(|army| cost(army) <= budget)
         .last()
         .unwrap_or_default()
 }
 
 /// The part of a player's own `army` that can take the field: their
-/// faction's regiments, in list order, up to `budget`
+/// faction's regiments (none that cost 0 points), in list order, up to `budget`
 /// points and `most` regiments. Anything else is left at home, so a
 /// changed budget or a tampered list can't field more than it should.
 pub fn within_budget(
@@ -142,7 +159,7 @@ pub fn within_budget(
         let (Some(&p), Some(&f)) = (points.get(u as usize), factions.get(u as usize)) else {
             continue;
         };
-        if f != faction || out.len() == most || spent + p > budget {
+        if f != faction || p == 0 || out.len() == most || spent + p > budget {
             continue;
         }
         spent += p;

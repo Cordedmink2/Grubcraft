@@ -170,10 +170,12 @@ pub fn unplayable(replay: &Info, unit_types: &UnitTypes, capacity: Capacities) -
         &unit_types.field
     };
     let names = &replay.header.unit_names;
+    // A Field Battle plays on the roster table too (since the Army picker
+    // offered every faction's full roster), so either table will do.
     let same = if names.is_empty() {
         replay.units == types.len()
     } else {
-        names == types
+        names == types || (!replay.conquest && *names == unit_types.conquest)
     };
     if !same {
         Some("Made with other unit data: this build can't show it".into())

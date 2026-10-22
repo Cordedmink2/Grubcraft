@@ -958,8 +958,11 @@ fn color_of(parties: &[Party], owner: PlayerId) -> [u8; 3] {
 /// Which regiment types the match plays with, and so which game it is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Play {
-    /// The Field Battle types: a Field Battle, or the sandbox's default.
+    /// The Field Battle types of `data/units.ron`: the sandbox's default.
     Field,
+    /// A lobby Field Battle, on the Conquest roster table so every
+    /// faction's full roster can take the field.
+    FieldBattle,
     /// The Conquest types, with its economy, workers, HUD and build menu.
     Conquest,
     /// The sandbox on the Conquest roster table, so troops of every faction
@@ -1127,10 +1130,16 @@ impl App {
             }
         };
         let units = UnitTable::of(game_data.units.iter(), models.as_ref());
-        let other_units = UnitTable::of(
+        let mut other_units = UnitTable::of(
             game_data.conquest_units.iter().map(|u| &u.stats),
             models.as_ref(),
         );
+        // A Field Battle army buys roster troops at points from their cost.
+        other_units.points = game_data
+            .conquest_units
+            .iter()
+            .map(roster::field_points)
+            .collect();
         let art = models.map(|models| Art {
             clips: models::Clips::new(&models),
             looks: buildings::Looks::new(&buildings::Table::new(&game_data), &models),
@@ -1147,15 +1156,18 @@ impl App {
             batches: Vec::with_capacity(models.models.len() * LODS),
         });
         self.memory_timeline.mark("models uploaded");
-        // gc_data and the lobby list the factions in the same order.
+        // gc_data and the lobby list the factions in the same order. A
+        // Field Battle plays on the roster table, every faction's full
+        // roster; the Army screen hides the types that cost 0 points.
         let roster: Vec<gc_ui::lobby::RosterUnit> = game_data
-            .units
+            .conquest_units
             .iter()
-            .zip(&units.names)
-            .map(|(u, name)| gc_ui::lobby::RosterUnit {
+            .zip(&other_units.names)
+            .zip(&other_units.points)
+            .map(|((u, name), &points)| gc_ui::lobby::RosterUnit {
                 name: name.clone(),
                 faction: u.faction(),
-                points: u32::from(u.points),
+                points,
             })
             .collect();
         let capacities = Capacities::default();
@@ -3615,12 +3627,24 @@ impl Running {
             MatchKind::Replay(r) => r.conquest.is_some(),
             MatchKind::Sandbox { .. } => false,
         };
-        // The sandbox may run on the roster table, though it is no Conquest.
-        let roster = matches!(kind, MatchKind::Sandbox { roster: true });
+        // The sandbox may run on the roster table, though it is no Conquest;
+        // a Field Battle always does, and so does a replay of one recorded
+        // since.
+        let roster = match &kind {
+            MatchKind::Sandbox { roster } => *roster,
+            MatchKind::Battle(_) => true,
+            MatchKind::Replay(r) => r.header.unit_names == self.unit_names(true),
+        };
         self.use_play(if conquest {
             Play::Conquest
+        } else if matches!(kind, MatchKind::Sandbox { .. }) {
+            if roster {
+                Play::SandboxRoster
+            } else {
+                Play::Field
+            }
         } else if roster {
-            Play::SandboxRoster
+            Play::FieldBattle
         } else {
             Play::Field
         });
@@ -3947,9 +3971,7 @@ impl Running {
         self.parties = parties;
         self.sandbox.side = me;
         self.battle = Some(Battle::new(Some(me)));
-        let unit_names = self
-            .unit_names(setup.settings.mode == gc_ui::lobby::GameMode::Conquest)
-            .to_vec();
+        let unit_names = self.units.names.clone();
         if let Some(rec) = &mut self.recording {
             let header = rec.recorder.header_mut();
             header.build = online::version();
