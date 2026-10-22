@@ -15,9 +15,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::formation::{
-    self, GROUP_GAP, GROUP_LINE_GAP, GROUP_LINE_MAX, GroupMember, GroupOrder,
-};
+use crate::formation::{self, GROUP_GAP, GROUP_LINE_GAP, GROUP_LINE_MAX, GroupMember, GroupOrder};
 use crate::{Command, UnitStats};
 
 /// Space between the infantry and the cavalry on its flanks, in tiles.
@@ -262,8 +260,15 @@ pub fn arranged_move(
     let frame = Frame::new(centre, facing);
     let mut spots = Vec::with_capacity(members.len());
     match how {
-        Arrangement::Preset(Preset::Line) => battle_line(members, &frame, order.width, false, &mut spots),
-        Arrangement::Preset(Preset::Hammer) => battle_line(members, &frame, order.width, true, &mut spots),
+        Arrangement::Preset(p @ (Preset::Line | Preset::Hammer)) => {
+            battle_line(
+                members,
+                &frame,
+                order.width,
+                p == Preset::Hammer,
+                &mut spots,
+            );
+        }
         Arrangement::Preset(Preset::Deep) => deep(members, &frame, order.width, &mut spots),
         Arrangement::Preset(Preset::Square) => square(members, &frame, &mut spots),
         Arrangement::Saved(shape) => saved(members, &frame, shape, &mut spots),
@@ -478,14 +483,34 @@ fn battle_line(
     let total = lw + core + rw;
     let core_left = -total / 2 + lw;
     let mid = core_left + core / 2;
-    lay(members, &left, core_left - lw + (lw - FLANK_GAP).max(Fx::ZERO) / 2, Fx::ZERO, GROUP_GAP, spots);
-    lay(members, &right, core_left + core + FLANK_GAP + (rw - FLANK_GAP).max(Fx::ZERO) / 2, Fx::ZERO, GROUP_GAP, spots);
+    lay(
+        members,
+        &left,
+        core_left - lw + (lw - FLANK_GAP).max(Fx::ZERO) / 2,
+        Fx::ZERO,
+        GROUP_GAP,
+        spots,
+    );
+    lay(
+        members,
+        &right,
+        core_left + core + FLANK_GAP + (rw - FLANK_GAP).max(Fx::ZERO) / 2,
+        Fx::ZERO,
+        GROUP_GAP,
+        spots,
+    );
 
     let mut rear = stack(members, &first_rows, mid, Fx::ZERO, spots);
     for band in &bands[1..] {
         let band_rows = rows(members, frame, band, max);
         let depth = row_depth(members, &band_rows[0]);
-        rear = stack(members, &band_rows, mid, rear + GROUP_LINE_GAP + depth / 2, spots);
+        rear = stack(
+            members,
+            &band_rows,
+            mid,
+            rear + GROUP_LINE_GAP + depth / 2,
+            spots,
+        );
     }
     if width.is_some() {
         for s in spots.iter_mut() {
@@ -553,7 +578,14 @@ fn square(members: &[GroupMember], frame: &Frame, spots: &mut Vec<Spot>) {
     }
     // The inside, centred on the target.
     let first_inner = spots.len();
-    let rear = stack_bands(members, frame, &inner_bands, SQUARE_INNER_MAX, Fx::ZERO, spots);
+    let rear = stack_bands(
+        members,
+        frame,
+        &inner_bands,
+        SQUARE_INNER_MAX,
+        Fx::ZERO,
+        spots,
+    );
     let (mut a, mut b) = (SQUARE_GAP, SQUARE_GAP);
     if spots.len() > first_inner {
         let shift = rear / 2;
@@ -598,18 +630,29 @@ fn square(members: &[GroupMember], frame: &Frame, spots: &mut Vec<Spot>) {
         .max(row_width(members, &right, GROUP_GAP) / 2);
 
     let at = spots.len();
-    lay(members, &front, Fx::ZERO, -(b + SQUARE_GAP + row_depth(members, &front) / 2), GROUP_GAP, spots);
-    lay(members, &back_wall, Fx::ZERO, b + SQUARE_GAP + row_depth(members, &back_wall) / 2, GROUP_GAP, spots);
+    lay(
+        members,
+        &front,
+        Fx::ZERO,
+        -(b + SQUARE_GAP + row_depth(members, &front) / 2),
+        GROUP_GAP,
+        spots,
+    );
+    lay(
+        members,
+        &back_wall,
+        Fx::ZERO,
+        b + SQUARE_GAP + row_depth(members, &back_wall) / 2,
+        GROUP_GAP,
+        spots,
+    );
     let back_at = at + front.len();
     for s in &mut spots[back_at..] {
         s.turn = Angle::HALF;
     }
     // The side walls are laid like rows and then turned on their side: a
     // row's left-to-right runs front to back along the wall.
-    for (wall, sign, turn) in [
-        (&left, -1, Angle(0xC000)),
-        (&right, 1, Angle::QUARTER),
-    ] {
+    for (wall, sign, turn) in [(&left, -1, Angle(0xC000)), (&right, 1, Angle::QUARTER)] {
         let from = spots.len();
         let off = a + SQUARE_GAP + row_depth(members, wall) / 2;
         lay(members, wall, Fx::ZERO, Fx::ZERO, GROUP_GAP, spots);
@@ -662,7 +705,14 @@ fn saved(members: &[GroupMember], frame: &Frame, shape: &Shape, spots: &mut Vec<
             .max()
             .unwrap_or(Fx::ZERO);
         let depth = row_depth(members, &left);
-        lay(members, &left, Fx::ZERO, rear + GROUP_LINE_GAP + depth / 2, GROUP_GAP, spots);
+        lay(
+            members,
+            &left,
+            Fx::ZERO,
+            rear + GROUP_LINE_GAP + depth / 2,
+            GROUP_GAP,
+            spots,
+        );
     }
 }
 
@@ -683,4 +733,394 @@ fn spread(who: &[usize], slots: &[usize]) -> Vec<(usize, usize)> {
         .enumerate()
         .map(|(j, &i)| (i, slots[(j * (s - 1) + (m - 1) / 2) / (m - 1)]))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RegimentHandle;
+
+    const NORTH: Angle = Angle(0xC000);
+    const TARGET: FxVec2 = FxVec2::from_ints(100, 20);
+
+    /// A regiment of `role` standing at (x, 60) facing north: 24 soldiers
+    /// in 6 files, a tile apart (6 wide, 4 deep); cavalry 8 in 4 files, 2
+    /// tiles apart (8 wide, 4 deep).
+    fn member(index: u32, role: Role, x: i32) -> GroupMember {
+        let horse = role == Role::Flanker;
+        GroupMember {
+            handle: RegimentHandle {
+                index,
+                generation: 0,
+            },
+            position: FxVec2::from_ints(x, 60),
+            facing: NORTH,
+            files: if horse { 4 } else { 6 },
+            models: if horse { 8 } else { 24 },
+            file_spacing: Fx::from_int(if horse { 2 } else { 1 }),
+            rank_spacing: Fx::ONE,
+            speed: Fx::from_int(if horse { 6 } else { 3 }),
+            role,
+        }
+    }
+
+    fn army(roles: &[Role]) -> Vec<GroupMember> {
+        roles
+            .iter()
+            .enumerate()
+            .map(|(i, &r)| member(i as u32, r, 20 + i as i32 * 9))
+            .collect()
+    }
+
+    /// One placed regiment, in the order's frame (facing north at TARGET).
+    #[derive(Clone, Copy, Debug)]
+    struct Placed {
+        index: u32,
+        role: Role,
+        lateral: f64,
+        back: f64,
+        turn: u16,
+        /// Extent across and along the order's frame.
+        across: f64,
+        along: f64,
+    }
+
+    fn f(x: Fx) -> f64 {
+        f64::from(x.raw()) / f64::from(Fx::ONE.raw())
+    }
+
+    fn arrange(members: &[GroupMember], order: GroupOrder, how: Arrangement) -> Vec<Placed> {
+        let mut ms = members.to_vec();
+        let mut out = Vec::new();
+        arranged_move(&mut ms, order, how, &mut out);
+        assert_eq!(out.len(), members.len());
+        out.iter()
+            .map(|c| {
+                let Command::MoveTo {
+                    regiment,
+                    target,
+                    facing,
+                    files,
+                    ..
+                } = *c
+                else {
+                    unreachable!()
+                };
+                let m = members.iter().find(|m| m.handle == regiment).unwrap();
+                let files = if files == 0 { m.files } else { files };
+                let (w, d) = formation::block_size(files, m.models, m.file_spacing, m.rank_spacing);
+                let turn = facing.unwrap().0.wrapping_sub(NORTH.0);
+                let sideways = turn == Angle::QUARTER.0 || turn == 0xC000;
+                let (across, along) = if sideways { (d, w) } else { (w, d) };
+                Placed {
+                    index: regiment.index,
+                    role: m.role,
+                    lateral: f(target.x - TARGET.x),
+                    back: f(target.y - TARGET.y),
+                    turn,
+                    across: f(across),
+                    along: f(along),
+                }
+            })
+            .collect()
+    }
+
+    fn order(width: Option<i32>) -> GroupOrder {
+        GroupOrder {
+            target: TARGET,
+            facing: Some(NORTH),
+            width: width.map(Fx::from_int),
+        }
+    }
+
+    fn no_overlaps(placed: &[Placed]) {
+        for (k, a) in placed.iter().enumerate() {
+            for b in &placed[k + 1..] {
+                let apart_x = (a.lateral - b.lateral).abs() >= (a.across + b.across) / 2.0 - 1e-3;
+                let apart_y = (a.back - b.back).abs() >= (a.along + b.along) / 2.0 - 1e-3;
+                assert!(apart_x || apart_y, "{a:?} overlaps {b:?}");
+            }
+        }
+    }
+
+    fn of(placed: &[Placed], role: Role) -> Vec<Placed> {
+        placed.iter().copied().filter(|p| p.role == role).collect()
+    }
+
+    use Role::{Flanker as Horse, Melee, Ranged, Rear, Support};
+
+    const MIXED: [Role; 9] = [
+        Ranged, Horse, Melee, Rear, Melee, Support, Ranged, Horse, Melee,
+    ];
+
+    #[test]
+    fn line_puts_melee_in_front_and_horse_on_the_wings() {
+        let placed = arrange(
+            &army(&MIXED),
+            order(None),
+            Arrangement::Preset(Preset::Line),
+        );
+        no_overlaps(&placed);
+        let melee = of(&placed, Melee);
+        let horse = of(&placed, Horse);
+        let ranged = of(&placed, Ranged);
+        // The front line is on the target line, everyone faces north.
+        assert!(placed.iter().all(|p| p.turn == 0));
+        assert!(melee.iter().all(|p| p.back == 0.0));
+        assert!(horse.iter().all(|p| p.back == 0.0));
+        // One squadron beyond each end of the infantry.
+        let (lo, hi) = melee.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| {
+            (lo.min(p.lateral), hi.max(p.lateral))
+        });
+        assert!(horse.iter().any(|p| p.lateral < lo) && horse.iter().any(|p| p.lateral > hi));
+        // Ranged behind the melee, support in among them, engines last.
+        assert!(ranged.iter().all(|p| p.back > 4.0));
+        let support = of(&placed, Support)[0];
+        assert_eq!(support.back, ranged[0].back);
+        assert!(ranged.iter().any(|p| p.lateral < support.lateral));
+        assert!(ranged.iter().any(|p| p.lateral > support.lateral));
+        let rear = of(&placed, Rear)[0];
+        assert!(rear.back > support.back);
+        // The front row, wings and all, is centred on the target.
+        let front: Vec<Placed> = placed.iter().copied().filter(|p| p.back == 0.0).collect();
+        let left = front
+            .iter()
+            .map(|p| p.lateral - p.across / 2.0)
+            .fold(f64::MAX, f64::min);
+        let right = front
+            .iter()
+            .map(|p| p.lateral + p.across / 2.0)
+            .fold(f64::MIN, f64::max);
+        assert!((left + right).abs() < 0.01, "{left} {right}");
+    }
+
+    #[test]
+    fn a_drag_sets_the_whole_front_width() {
+        for width in [30, 45, 60] {
+            let placed = arrange(
+                &army(&MIXED),
+                order(Some(width)),
+                Arrangement::Preset(Preset::Line),
+            );
+            no_overlaps(&placed);
+            let front: Vec<Placed> = placed.iter().copied().filter(|p| p.back == 0.0).collect();
+            assert_eq!(front.len(), 5, "{placed:?}");
+            let left = front
+                .iter()
+                .map(|p| p.lateral - p.across / 2.0)
+                .fold(f64::MAX, f64::min);
+            let right = front
+                .iter()
+                .map(|p| p.lateral + p.across / 2.0)
+                .fold(f64::MIN, f64::max);
+            // Frontages are whole soldiers, so within a few tiles.
+            assert!(
+                (right - left - f64::from(width)).abs() <= 6.0,
+                "{width}: {left}..{right}"
+            );
+        }
+    }
+
+    #[test]
+    fn hammer_puts_every_horse_on_the_wing_they_stand_on() {
+        // The horse stand at the east end of the army now.
+        let roles = [Melee, Melee, Ranged, Horse, Horse];
+        let placed = arrange(
+            &army(&roles),
+            order(None),
+            Arrangement::Preset(Preset::Hammer),
+        );
+        no_overlaps(&placed);
+        let max_melee = of(&placed, Melee)
+            .iter()
+            .map(|p| p.lateral)
+            .fold(f64::MIN, f64::max);
+        assert!(
+            of(&placed, Horse).iter().all(|p| p.lateral > max_melee),
+            "{placed:?}"
+        );
+    }
+
+    #[test]
+    fn deep_is_narrow_and_keeps_horse_in_reserve() {
+        let roles = [
+            Melee, Melee, Melee, Melee, Melee, Melee, Ranged, Ranged, Horse,
+        ];
+        let placed = arrange(
+            &army(&roles),
+            order(None),
+            Arrangement::Preset(Preset::Deep),
+        );
+        no_overlaps(&placed);
+        let left = placed
+            .iter()
+            .map(|p| p.lateral - p.across / 2.0)
+            .fold(f64::MAX, f64::min);
+        let right = placed
+            .iter()
+            .map(|p| p.lateral + p.across / 2.0)
+            .fold(f64::MIN, f64::max);
+        assert!(right - left <= f(DEEP_LINE_MAX), "{left}..{right}");
+        let deepest = |r: Role| {
+            of(&placed, r)
+                .iter()
+                .map(|p| p.back)
+                .fold(f64::MIN, f64::max)
+        };
+        let shallowest = |r: Role| {
+            of(&placed, r)
+                .iter()
+                .map(|p| p.back)
+                .fold(f64::MAX, f64::min)
+        };
+        assert!(shallowest(Ranged) > deepest(Melee));
+        assert!(shallowest(Horse) > deepest(Ranged));
+        assert_eq!(shallowest(Melee), 0.0);
+    }
+
+    #[test]
+    fn square_faces_out_and_shelters_the_rest() {
+        for n_melee in 1..=7 {
+            let mut roles = alloc::vec![Melee; n_melee];
+            roles.extend([Ranged, Support, Horse]);
+            let placed = arrange(
+                &army(&roles),
+                order(None),
+                Arrangement::Preset(Preset::Square),
+            );
+            no_overlaps(&placed);
+            let melee = of(&placed, Melee);
+            // Each wall faces away from the middle.
+            for p in &melee {
+                let out = match p.turn {
+                    0 => -p.back,
+                    0x8000 => p.back,
+                    0x4000 => p.lateral,
+                    0xC000 => -p.lateral,
+                    t => panic!("turned {t:#x}"),
+                };
+                assert!(out > 0.0, "{n_melee}: {p:?}");
+            }
+            assert!(melee.iter().any(|p| p.turn == 0), "{n_melee}: a front wall");
+            // The sheltered stand inside the walls' reach.
+            let reach = melee
+                .iter()
+                .map(|p| p.lateral.abs().max(p.back.abs()))
+                .fold(0.0, f64::max);
+            for p in placed.iter().filter(|p| p.role != Melee) {
+                assert!(p.lateral.abs() < reach && p.back.abs() < reach, "{p:?}");
+                assert_eq!(p.turn, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn a_saved_shape_comes_back_as_it_was() {
+        // A hand-made shape: two blocks of foot side by side, archers
+        // behind the right one, horse ahead on the left facing east; the
+        // left foot face west, so on average the shape faces north.
+        let mut members = army(&[Melee, Melee, Ranged, Horse]);
+        let at = [(40, 60), (50, 60), (50, 68), (30, 54)];
+        for (m, (x, y)) in members.iter_mut().zip(at) {
+            m.position = FxVec2::from_ints(x, y);
+        }
+        members[3].facing = Angle::ZERO;
+        members[0].facing = Angle::HALF;
+        let shape = Shape::capture(&members).unwrap();
+        let placed = arrange(&members, order(None), Arrangement::Saved(&shape));
+        // Same offsets as they stood, the front-most (the horse) on the
+        // target line, each turned as it was.
+        let horse = placed.iter().find(|p| p.index == 3).unwrap();
+        assert_eq!(horse.back, 0.0);
+        assert_eq!(horse.turn, 0x4000);
+        assert_eq!(placed.iter().find(|p| p.index == 0).unwrap().turn, 0xC000);
+        for p in &placed {
+            let (x, y) = at[p.index as usize];
+            assert!(
+                (p.lateral - horse.lateral - f64::from(x - 30)).abs() < 0.01,
+                "{p:?}"
+            );
+            assert!((p.back - f64::from(y - 54)).abs() < 0.01, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn a_saved_shape_fits_a_different_army() {
+        let mut members = army(&[Melee, Melee, Melee, Ranged]);
+        let shape = Shape::capture(&members).unwrap();
+        // Fewer melee than melee slots: spread across them. Extra ranged
+        // take what slots are left, then stand behind.
+        members = army(&[Melee, Melee, Ranged, Ranged, Ranged]);
+        let placed = arrange(&members, order(None), Arrangement::Saved(&shape));
+        assert_eq!(placed.len(), 5);
+        let melee = of(&placed, Melee);
+        let spread = (melee[0].lateral - melee[1].lateral).abs();
+        assert!(
+            (spread - 18.0).abs() < 0.01,
+            "outer melee slots: {placed:?}"
+        );
+        no_overlaps(&placed);
+    }
+
+    #[test]
+    fn plain_and_single_regiments_are_plain_moves() {
+        let members = army(&MIXED);
+        let mut a = members.clone();
+        let mut b = members.clone();
+        let (mut out_a, mut out_b) = (Vec::new(), Vec::new());
+        arranged_move(
+            &mut a,
+            order(None),
+            Arrangement::Preset(Preset::Plain),
+            &mut out_a,
+        );
+        formation::group_move(&mut b, order(None), &mut out_b);
+        assert_eq!(out_a, out_b);
+        let mut one = [members[0]];
+        out_a.clear();
+        arranged_move(
+            &mut one,
+            order(None),
+            Arrangement::Preset(Preset::Square),
+            &mut out_a,
+        );
+        assert!(matches!(
+            out_a[..],
+            [Command::MoveTo { pace: Fx::ZERO, .. }]
+        ));
+    }
+
+    #[test]
+    fn every_preset_keeps_blocks_apart() {
+        let mixes: [&[Role]; 6] = [
+            &MIXED,
+            &[Horse, Horse, Horse],
+            &[Ranged, Ranged, Support],
+            &[Melee; 14],
+            &[Rear, Melee, Horse],
+            &[
+                Melee, Melee, Melee, Melee, Ranged, Ranged, Ranged, Ranged, Horse, Horse, Horse,
+                Horse, Rear, Rear, Support, Support,
+            ],
+        ];
+        for roles in mixes {
+            for preset in Preset::ALL {
+                for width in [None, Some(20), Some(80)] {
+                    let placed = arrange(&army(roles), order(width), Arrangement::Preset(preset));
+                    no_overlaps(&placed);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn spread_pairs_in_order() {
+        assert_eq!(spread(&[7], &[0, 1, 2]), [(7, 1)]);
+        assert_eq!(spread(&[7, 8], &[0, 1, 2]), [(7, 0), (8, 2)]);
+        assert_eq!(
+            spread(&[7, 8, 9], &[0, 1, 2, 3, 4]),
+            [(7, 0), (8, 2), (9, 4)]
+        );
+        assert_eq!(spread(&[7, 8, 9], &[0, 1]), [(7, 0), (8, 1)]);
+    }
 }
