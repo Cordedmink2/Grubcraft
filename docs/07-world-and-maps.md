@@ -132,6 +132,8 @@ Foot marches about 3 tiles a second. On maps of 512 tiles or more the starts sta
 
 **Making a random map.** A random map's side comes from its size and its player count (above). A recipe writes the north half from the seed, and the loader turns it half a circle for the south (`Rot2`), so both sides get the same ground. Every recipe puts the six starts on the plateaus of the seeded map: the four corners, and the middles of the north and south. If the starts of a random map can't all walk to each other, the next seed is tried, so nobody is shown a broken map.
 
+*Planned:* [27 · Living Land](27-living-land.md) replaces the Wilds' line and disc stamps with land grown from noise, strata, erosion and drainage, and makes maps fair by measurement instead of by mirroring (a Mirrored option stays).
+
 **The recipes.** Each one starts from rolling ground and adds its own shape:
 - **Pass:** a cliff wall along the middle, with two to four gaps. One gap is a ford, and a rise behind another gap holds it.
 - **Ford:** a river along the middle, with one to three fords and a rise on the bank above the first one.
