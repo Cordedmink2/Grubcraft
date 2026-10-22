@@ -120,6 +120,7 @@
 //! `--viewer NAME|start` opens the Unit viewer (main menu) on the named unit,
 //! or on the first unit with a model.
 
+mod army_shape;
 mod buildings;
 mod camera;
 mod conquest;
@@ -168,7 +169,7 @@ use gc_render::{
     UiQuad,
 };
 use gc_sim::events::Event;
-use gc_sim::formation::{self, GroupMember, GroupOrder};
+use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
     BuildingId, BuildingStats, Capacities, Formation, LOOSE_DEFENCE, MatchSetup, MoraleState,
@@ -629,6 +630,8 @@ struct Running {
     formation_pick: Option<(Vec<RegimentHandle>, Formation, u32)>,
     /// The selection's formation as the panel last showed it.
     shown_formation: Option<Option<Formation>>,
+    /// The shape a group order arranges the selection in, and your saved ones.
+    army_shapes: army_shape::ArmyShapes,
     /// Scratch space for building group orders.
     group: Vec<GroupMember>,
     group_commands: Vec<gc_sim::Command>,
@@ -719,6 +722,9 @@ struct UnitTable {
     points: Vec<u32>,
     /// Each type's soldier model, if it has one (none without art).
     models: Vec<Option<usize>>,
+    /// Each type's place in an arranged army, from its class; empty for the
+    /// Field types, which have none (their stats decide).
+    roles: Vec<gc_sim::arrange::Role>,
 }
 
 impl UnitTable {
@@ -737,6 +743,7 @@ impl UnitTable {
             models: models.map_or_else(Vec::new, |m| {
                 units.iter().map(|u| m.by_name(u.name())).collect()
             }),
+            roles: Vec::new(),
         }
     }
 }
@@ -1134,6 +1141,11 @@ impl App {
             game_data.conquest_units.iter().map(|u| &u.stats),
             models.as_ref(),
         );
+        other_units.roles = game_data
+            .conquest_units
+            .iter()
+            .map(|u| army_shape::role_of(u.class()))
+            .collect();
         // A Field Battle army buys roster troops at points from their cost.
         other_units.points = game_data
             .conquest_units
@@ -1329,6 +1341,7 @@ impl App {
             idle_from: None,
             formation_pick: None,
             shown_formation: None,
+            army_shapes: army_shape::ArmyShapes::default(),
             group: Vec::with_capacity(64),
             group_commands: Vec::with_capacity(64),
             boxed: Vec::with_capacity(64),
@@ -2055,19 +2068,34 @@ impl Running {
         }
     }
 
-    /// Expand a group order for the current selection into
-    /// `self.group_commands` (one move per regiment).
-    fn plan_order(&mut self, order: GroupOrder) {
+    /// Fill `self.group` with the selection as group orders see it, each
+    /// regiment with its place in an arranged army.
+    fn fill_group(&mut self) {
         let regiments = &self.world.regiments;
         self.selected.retain(|&h| regiments.get(h).is_some());
         self.group.clear();
         for &h in &self.selected {
             let r = self.world.regiments.get(h).unwrap();
-            self.group
-                .push(GroupMember::of(&r, &self.world.units()[r.unit as usize]));
+            let mut m = GroupMember::of(&r, &self.world.units()[r.unit as usize]);
+            if let Some(&role) = self.units.roles.get(r.unit as usize) {
+                m.role = role;
+            }
+            self.group.push(m);
         }
+    }
+
+    /// Expand a group order for the current selection into
+    /// `self.group_commands` (one move per regiment), arranged in the
+    /// chosen army shape.
+    fn plan_order(&mut self, order: GroupOrder) {
+        self.fill_group();
         self.group_commands.clear();
-        formation::group_move(&mut self.group, order, &mut self.group_commands);
+        gc_sim::arrange::arranged_move(
+            &mut self.group,
+            order,
+            self.army_shapes.arrangement(),
+            &mut self.group_commands,
+        );
         battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
     }
 

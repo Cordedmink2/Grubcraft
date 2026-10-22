@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
+use crate::arrange::Role;
 use crate::{Command, RegimentHandle, RegimentView, UnitStats};
 
 /// Most soldiers a regiment can have. The largest regiments in the design are
@@ -76,6 +77,8 @@ pub struct GroupMember {
     pub rank_spacing: Fx,
     /// Its own marching speed, tiles per second.
     pub speed: Fx,
+    /// Where it belongs when a mixed group is arranged (see [`crate::arrange`]).
+    pub role: Role,
 }
 
 impl GroupMember {
@@ -94,14 +97,15 @@ impl GroupMember {
             speed: Fx::from_raw(
                 (i64::from(stats.speed.raw()) * i64::from(r.formation.pace_percent()) / 100) as i32,
             ),
+            role: Role::guess(stats),
         }
     }
 
-    fn width(&self, files: u16) -> Fx {
+    pub(crate) fn width(&self, files: u16) -> Fx {
         block_size(files, self.models, self.file_spacing, Fx::ONE).0
     }
 
-    fn depth(&self) -> Fx {
+    pub(crate) fn depth(&self) -> Fx {
         block_size(self.files, self.models, Fx::ONE, self.rank_spacing).1
     }
 }
@@ -135,23 +139,8 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
         return;
     };
     let n = members.len() as i32;
-    let mut sum = (0i64, 0i64);
-    for m in members.iter() {
-        sum.0 += i64::from(m.position.x.raw());
-        sum.1 += i64::from(m.position.y.raw());
-    }
-    let centre = FxVec2::new(
-        Fx::from_raw((sum.0 / i64::from(n)) as i32),
-        Fx::from_raw((sum.1 / i64::from(n)) as i32),
-    );
-    let facing = order.facing.unwrap_or_else(|| {
-        let travel = order.target - centre;
-        if travel == FxVec2::ZERO {
-            first.facing
-        } else {
-            Angle::of_vec(travel)
-        }
-    });
+    let centre = centre_of(members);
+    let facing = facing_of(order, centre, first.facing);
     let ahead = facing.to_vec();
     let right = facing.wrapping_add(Angle::QUARTER).to_vec();
 
@@ -172,12 +161,10 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
     }
 
     let mut total = GROUP_GAP * (n - 1);
-    let mut pace = first.speed;
     for m in members.iter() {
         total += m.width(m.files);
-        pace = pace.min(m.speed);
     }
-    let pace = if members.len() > 1 { pace } else { Fx::ZERO };
+    let pace = pace_of(members);
 
     // Split into lines of equal count: the regiments furthest forward now
     // take the front line.
@@ -220,6 +207,42 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
             });
         }
     }
+}
+
+/// The middle of where the members stand now (`members` must not be empty).
+pub(crate) fn centre_of(members: &[GroupMember]) -> FxVec2 {
+    let n = i64::from(members.len().max(1) as u32);
+    let mut sum = (0i64, 0i64);
+    for m in members {
+        sum.0 += i64::from(m.position.x.raw());
+        sum.1 += i64::from(m.position.y.raw());
+    }
+    FxVec2::new(
+        Fx::from_raw((sum.0 / n) as i32),
+        Fx::from_raw((sum.1 / n) as i32),
+    )
+}
+
+/// The way a group order faces: as ordered, else from the group's centre
+/// toward the target, else `otherwise` (the target is the centre).
+pub(crate) fn facing_of(order: GroupOrder, centre: FxVec2, otherwise: Angle) -> Angle {
+    order.facing.unwrap_or_else(|| {
+        let travel = order.target - centre;
+        if travel == FxVec2::ZERO {
+            otherwise
+        } else {
+            Angle::of_vec(travel)
+        }
+    })
+}
+
+/// The pace a group marches at so it arrives together: the slowest
+/// member's, or zero (its own) for a group of one.
+pub(crate) fn pace_of(members: &[GroupMember]) -> Fx {
+    if members.len() < 2 {
+        return Fx::ZERO;
+    }
+    members.iter().map(|m| m.speed).min().unwrap_or(Fx::ZERO)
 }
 
 #[cfg(test)]
@@ -270,6 +293,7 @@ mod tests {
             file_spacing: Fx::ONE,
             rank_spacing: Fx::ONE,
             speed: Fx::from_int(3 + index as i32),
+            role: Role::Melee,
         }
     }
 

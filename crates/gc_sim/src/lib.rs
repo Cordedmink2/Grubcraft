@@ -17,6 +17,7 @@ extern crate alloc;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+pub mod arrange;
 pub mod champions;
 pub mod chords;
 pub mod combat;
