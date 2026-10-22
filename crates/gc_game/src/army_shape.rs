@@ -79,29 +79,9 @@ impl ArmyShapes {
         }
     }
 
-    /// The chosen shape's name: "Line", "Mine 2" ...
-    pub fn name(&self) -> &'static str {
-        self.choice.label()
-    }
-
-    /// The next choice: the presets, then the saved shapes there are.
-    pub fn next(&self) -> Choice {
-        let saved = |from: usize| {
-            (from..SAVED_SLOTS)
-                .find(|&k| self.saved[k].is_some())
-                .map(Choice::Saved)
-        };
-        match self.choice {
-            Choice::Preset(p) if p.next() != Preset::ALL[0] => Choice::Preset(p.next()),
-            Choice::Preset(_) => saved(0).unwrap_or_default(),
-            Choice::Saved(k) => saved(k + 1).unwrap_or_default(),
-        }
-    }
-}
-
-impl ArmyShapes {
     /// Every shape that can be chosen, in the order the selection panel
-    /// lists its chips: the presets, then the saved shapes there are.
+    /// lists its chips and `O` cycles them: the presets, then the saved
+    /// shapes there are.
     pub fn chips(&self) -> Vec<Choice> {
         let saved = (0..SAVED_SLOTS)
             .filter(|&k| self.saved[k].is_some())
@@ -111,6 +91,13 @@ impl ArmyShapes {
             .map(|&p| Choice::Preset(p))
             .chain(saved)
             .collect()
+    }
+
+    /// The next choice after the chosen one, in [`ArmyShapes::chips`] order.
+    pub fn next(&self) -> Choice {
+        let chips = self.chips();
+        let i = chips.iter().position(|&c| c == self.choice).unwrap_or(0);
+        chips[(i + 1) % chips.len()]
     }
 
     /// The slot a new shape goes in: the first empty one, else the chosen
@@ -219,20 +206,32 @@ impl ArmyShapes {
         shapes
     }
 
-    /// Read the shapes kept at `path`. No file, or one that does not read,
-    /// gives none (and a line in the log).
+    /// Read the shapes kept at `path`; a missing file gives none. A file
+    /// that cannot be read or does not parse also gives none, but is first
+    /// copied to `army_shapes.ron.broken` and logged (as the settings are),
+    /// so the next save doesn't silently wipe the player's shapes.
     pub fn load(path: &Path) -> ArmyShapes {
-        match std::fs::read_to_string(path) {
-            Ok(text) => match ron::from_str::<Record>(&text) {
-                Ok(record) => ArmyShapes::from_record(&record),
-                Err(e) => {
-                    logln!(
-                        "grubcraft: {} would not load ({e}); no saved army shapes",
-                        path.display()
-                    );
-                    ArmyShapes::default()
-                }
-            },
+        match std::fs::read(path) {
+            Ok(bytes) => std::str::from_utf8(&bytes)
+                .map_err(|e| e.to_string())
+                .and_then(|text| ron::from_str::<Record>(text).map_err(|e| e.to_string()))
+                .map_or_else(
+                    |e| {
+                        let mut broken = path.as_os_str().to_owned();
+                        broken.push(".broken");
+                        let broken = Path::new(&broken);
+                        let kept = match gc_platform::fsutil::write_atomic(broken, &bytes) {
+                            Ok(()) => format!("a copy is in {}", broken.display()),
+                            Err(e) => format!("the copy failed too: {e}"),
+                        };
+                        logln!(
+                            "grubcraft: {} would not load ({e}); no saved army shapes, {kept}",
+                            path.display()
+                        );
+                        ArmyShapes::default()
+                    },
+                    |record| ArmyShapes::from_record(&record),
+                ),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => ArmyShapes::default(),
             Err(e) => {
                 logln!(
@@ -245,8 +244,9 @@ impl ArmyShapes {
     }
 
     /// Keep the shapes and the choice at `path`; a failure is logged and
-    /// the game carries on.
-    pub fn store(&self, path: &Path) {
+    /// the game carries on. `durable` waits for the disk (a new saved
+    /// shape); a changed choice only needs the quick write.
+    pub fn store(&self, path: &Path, durable: bool) {
         let text = match ron::ser::to_string_pretty(
             &self.to_record(),
             ron::ser::PrettyConfig::default(),
@@ -257,7 +257,12 @@ impl ArmyShapes {
                 return;
             }
         };
-        if let Err(e) = gc_platform::fsutil::write_durable(path, text.as_bytes()) {
+        let written = if durable {
+            gc_platform::fsutil::write_durable(path, text.as_bytes())
+        } else {
+            gc_platform::fsutil::write_atomic(path, text.as_bytes())
+        };
+        if let Err(e) = written {
             logln!("grubcraft: cannot save {} ({e})", path.display());
         }
     }
@@ -315,13 +320,13 @@ mod tests {
         shapes.saved[0] = Some(shape(4));
         shapes.saved[2] = Some(shape(7));
         shapes.choice = Choice::Saved(2);
-        shapes.store(&path);
+        shapes.store(&path, true);
         let back = ArmyShapes::load(&path);
         assert_eq!(back.saved, shapes.saved);
         assert_eq!(back.choice, Choice::Saved(2));
 
         shapes.choice = Choice::Preset(Preset::Hammer);
-        shapes.store(&path);
+        shapes.store(&path, true);
         assert_eq!(
             ArmyShapes::load(&path).choice,
             Choice::Preset(Preset::Hammer)

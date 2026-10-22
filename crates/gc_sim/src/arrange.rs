@@ -121,12 +121,6 @@ impl Preset {
             Preset::Plain => "Side by side as they stand, no arranging.",
         }
     }
-
-    /// The next preset, for cycling with a key.
-    pub fn next(self) -> Preset {
-        let i = Preset::ALL.iter().position(|&p| p == self).unwrap_or(0);
-        Preset::ALL[(i + 1) % Preset::ALL.len()]
-    }
 }
 
 /// One regiment's place in a saved shape, in the order's frame.
@@ -156,21 +150,18 @@ impl Shape {
             return None;
         }
         let centre = formation::centre_of(members);
-        let mut sum = (0i64, 0i64);
+        let n = members.len() as i64;
+        let (mut x, mut y) = (0i64, 0i64);
         for m in members {
             let v = m.facing.to_vec();
-            sum.0 += i64::from(v.x.raw());
-            sum.1 += i64::from(v.y.raw());
+            x += i64::from(v.x.raw());
+            y += i64::from(v.y.raw());
         }
-        let facing = if sum == (0, 0) {
+        let mean = FxVec2::new(Fx::from_raw((x / n) as i32), Fx::from_raw((y / n) as i32));
+        let facing = if mean == FxVec2::ZERO {
             members[0].facing
         } else {
-            // Scaled down so a big army's sum fits the vector.
-            let k = (sum.0.abs().max(sum.1.abs()) >> 30) + 1;
-            Angle::of_vec(FxVec2::new(
-                Fx::from_raw((sum.0 / k) as i32),
-                Fx::from_raw((sum.1 / k) as i32),
-            ))
+            Angle::of_vec(mean)
         };
         let frame = Frame::new(centre, facing);
         let mut slots: Vec<Slot> = members
@@ -198,6 +189,9 @@ pub enum Arrangement<'a> {
     Preset(Preset),
     Saved(&'a Shape),
 }
+
+/// A three-quarter turn: facing left of the order's facing.
+const LEFT_TURN: Angle = Angle(Angle::HALF.0 + Angle::QUARTER.0);
 
 /// A regiment's place in the order's frame, before it becomes a command.
 #[derive(Clone, Copy, Debug)]
@@ -252,7 +246,7 @@ pub fn arranged_move(
     how: Arrangement,
     out: &mut Vec<Command>,
 ) {
-    if members.len() < 2 || how == Arrangement::Preset(Preset::Plain) {
+    if members.len() < 2 {
         formation::group_move(members, order, out);
         return;
     }
@@ -260,7 +254,12 @@ pub fn arranged_move(
     let facing = formation::facing_of(order, centre, members[0].facing);
     let frame = Frame::new(centre, facing);
     let mut spots = Vec::with_capacity(members.len());
-    match how {
+    // Whether the members' frontages were changed and must be ordered.
+    let reformed = match how {
+        Arrangement::Preset(Preset::Plain) => {
+            formation::group_move(members, order, out);
+            return;
+        }
         Arrangement::Preset(p @ (Preset::Line | Preset::Hammer)) => {
             battle_line(
                 members,
@@ -269,8 +268,12 @@ pub fn arranged_move(
                 p == Preset::Hammer,
                 &mut spots,
             );
+            order.width.is_some()
         }
-        Arrangement::Preset(Preset::Deep) => deep(members, &frame, order.width, &mut spots),
+        Arrangement::Preset(Preset::Deep) => {
+            deep(members, &frame, order.width, &mut spots);
+            false
+        }
         Arrangement::Preset(Preset::Square) => {
             // Back to the frontage they were raised with: a square of
             // blocks squeezed thin by an earlier narrow drag is all corners.
@@ -278,31 +281,33 @@ pub fn arranged_move(
                 m.files = m.raised_files.min(m.models.max(1));
             }
             square(members, &frame, &mut spots);
-            for s in &mut spots {
-                s.files = members[s.member].files;
-            }
+            true
         }
-        Arrangement::Saved(shape) => saved(members, &frame, shape, &mut spots),
-        Arrangement::Preset(Preset::Plain) => unreachable!(),
-    }
+        Arrangement::Saved(shape) => {
+            saved(members, &frame, shape, &mut spots);
+            false
+        }
+    };
     let pace = formation::pace_of(members);
-    let right = frame.right;
-    let ahead = frame.ahead;
     for s in &spots {
         out.push(Command::MoveTo {
             regiment: members[s.member].handle,
-            target: order.target + right * s.lateral - ahead * s.back,
+            target: order.target + frame.right * s.lateral - frame.ahead * s.back,
             facing: Some(facing.wrapping_add(s.turn)),
-            files: s.files,
+            files: if reformed {
+                members[s.member].files
+            } else {
+                s.files
+            },
             pace,
         });
     }
 }
 
-/// The members of `roles`, as indices, sorted left to right as they stand.
-fn of_roles(members: &[GroupMember], frame: &Frame, roles: &[Role]) -> Vec<usize> {
+/// The members of `role`, as indices, sorted left to right as they stand.
+fn of_role(members: &[GroupMember], frame: &Frame, role: Role) -> Vec<usize> {
     let mut idx: Vec<usize> = (0..members.len())
-        .filter(|&i| roles.contains(&members[i].role))
+        .filter(|&i| members[i].role == role)
         .collect();
     sort_by(&mut idx, members, |m| frame.lateral(m.position));
     idx
@@ -394,10 +399,33 @@ fn stack(
     back + last_depth.unwrap_or(Fx::ZERO) / 2
 }
 
+/// Stack the non-empty bands behind one another, the first row's front
+/// edge at `edge`, centred `mid` tiles to the right, in rows no wider than
+/// `max`. Returns where the last row's rear edge is.
+fn stack_bands(
+    members: &[GroupMember],
+    frame: &Frame,
+    bands: &[Vec<usize>],
+    max: Fx,
+    mid: Fx,
+    mut edge: Fx,
+    spots: &mut Vec<Spot>,
+) -> Fx {
+    for (k, band) in bands.iter().filter(|b| !b.is_empty()).enumerate() {
+        let band_rows = rows(members, frame, band, max);
+        if k > 0 {
+            edge += GROUP_LINE_GAP;
+        }
+        let depth = row_depth(members, &band_rows[0]);
+        edge = stack(members, &band_rows, mid, edge + depth / 2, spots);
+    }
+    edge
+}
+
 /// The ranged with support regiments in the middle of them, left to right.
 fn ranged_band(members: &[GroupMember], frame: &Frame) -> Vec<usize> {
-    let mut band = of_roles(members, frame, &[Role::Ranged]);
-    let support = of_roles(members, frame, &[Role::Support]);
+    let mut band = of_role(members, frame, Role::Ranged);
+    let support = of_role(members, frame, Role::Support);
     let at = band.len() / 2;
     band.splice(at..at, support);
     band
@@ -414,6 +442,17 @@ fn refit(members: &mut [GroupMember], num: i64, den: i64) {
     }
 }
 
+/// Width of a front row with its wings, `gap` between neighbours: the
+/// wings stand [`FLANK_GAP`] off the row's ends.
+fn front_width(members: &[GroupMember], row: &[usize], wings: [&[usize]; 2], gap: Fx) -> Fx {
+    wings
+        .iter()
+        .filter(|w| !w.is_empty())
+        .fold(row_width(members, row, gap), |total, w| {
+            total + row_width(members, w, gap) + FLANK_GAP
+        })
+}
+
 /// Line and Hammer: the first band (melee, else ranged, else the rest)
 /// with the flankers on its wings, then the bands after it.
 fn battle_line(
@@ -423,20 +462,21 @@ fn battle_line(
     hammer: bool,
     spots: &mut Vec<Spot>,
 ) {
-    let flankers = of_roles(members, frame, &[Role::Flanker]);
+    let flankers = of_role(members, frame, Role::Flanker);
     let mut bands: Vec<Vec<usize>> = [
-        of_roles(members, frame, &[Role::Melee]),
+        of_role(members, frame, Role::Melee),
         ranged_band(members, frame),
-        of_roles(members, frame, &[Role::Rear]),
+        of_role(members, frame, Role::Rear),
     ]
     .into_iter()
     .filter(|b| !b.is_empty())
     .collect();
-    // An army of horse alone is just a line of them.
     let (left, right) = if bands.is_empty() {
+        // An army of horse alone is just a line of them.
         bands.push(flankers);
         (Vec::new(), Vec::new())
-    } else if hammer {
+    } else if hammer || flankers.len() == 1 {
+        // All on one wing: the side they stand on now.
         let side: i64 = flankers
             .iter()
             .map(|&i| i64::from(frame.lateral(members[i].position).raw()))
@@ -446,36 +486,19 @@ fn battle_line(
         } else {
             (Vec::new(), flankers)
         }
-    } else if flankers.len() == 1 {
-        // A lone squadron takes the wing it is nearer.
-        if frame.lateral(members[flankers[0]].position) < Fx::ZERO {
-            (flankers, Vec::new())
-        } else {
-            (Vec::new(), flankers)
-        }
     } else {
         let half = flankers.len() / 2;
         (flankers[..half].to_vec(), flankers[half..].to_vec())
     };
 
-    // Lines no wider than the drag (after refitting) or the usual most;
-    // with a drag, the first band is one line however long.
+    // With a drag the first band is one line, refitted so it spans the
+    // drag with its wings; later bands make no line wider than the drag.
     let max = width.unwrap_or(GROUP_LINE_MAX);
-    if let Some(width) = width {
-        let first = &bands[0];
-        let wings = [&left, &right].iter().filter(|w| !w.is_empty()).count() as i32;
-        let gaps = GROUP_GAP * (first.len() as i32 - 1)
-            + GROUP_GAP * (left.len().max(1) as i32 - 1)
-            + GROUP_GAP * (right.len().max(1) as i32 - 1)
-            + FLANK_GAP * wings;
-        let blocks = row_width(members, first, Fx::ZERO)
-            + row_width(members, &left, Fx::ZERO)
-            + row_width(members, &right, Fx::ZERO);
+    let first_rows = if let Some(width) = width {
+        let blocks = front_width(members, &bands[0], [&left, &right], Fx::ZERO);
+        let gaps = front_width(members, &bands[0], [&left, &right], GROUP_GAP) - blocks;
         let room = (width - gaps).max(Fx::ZERO);
         refit(members, i64::from(room.raw()), i64::from(blocks.raw()));
-    }
-
-    let first_rows = if width.is_some() {
         alloc::vec![bands[0].clone()]
     } else {
         rows(members, frame, &bands[0], max)
@@ -483,193 +506,141 @@ fn battle_line(
     // The front row with its wings is centred on the target.
     let front = &first_rows[0];
     let core = row_width(members, front, GROUP_GAP);
-    let wing = |w: &[usize]| {
-        if w.is_empty() {
+    let total = front_width(members, front, [&left, &right], GROUP_GAP);
+    let lw = if left.is_empty() {
+        Fx::ZERO
+    } else {
+        row_width(members, &left, GROUP_GAP)
+    };
+    let core_left = -total / 2
+        + if left.is_empty() {
             Fx::ZERO
         } else {
-            row_width(members, w, GROUP_GAP) + FLANK_GAP
-        }
-    };
-    let (lw, rw) = (wing(&left), wing(&right));
-    let total = lw + core + rw;
-    let core_left = -total / 2 + lw;
+            lw + FLANK_GAP
+        };
     let mid = core_left + core / 2;
     lay(
         members,
         &left,
-        core_left - lw + (lw - FLANK_GAP).max(Fx::ZERO) / 2,
+        core_left - FLANK_GAP - lw / 2,
         Fx::ZERO,
         GROUP_GAP,
         spots,
     );
-    lay(
-        members,
-        &right,
-        core_left + core + FLANK_GAP + (rw - FLANK_GAP).max(Fx::ZERO) / 2,
-        Fx::ZERO,
-        GROUP_GAP,
-        spots,
-    );
+    let right_mid = core_left + core + FLANK_GAP + row_width(members, &right, GROUP_GAP) / 2;
+    lay(members, &right, right_mid, Fx::ZERO, GROUP_GAP, spots);
 
-    let mut rear = stack(members, &first_rows, mid, Fx::ZERO, spots);
-    for band in &bands[1..] {
-        let band_rows = rows(members, frame, band, max);
-        let depth = row_depth(members, &band_rows[0]);
-        rear = stack(
-            members,
-            &band_rows,
-            mid,
-            rear + GROUP_LINE_GAP + depth / 2,
-            spots,
-        );
-    }
-    if width.is_some() {
-        for s in spots.iter_mut() {
-            s.files = members[s.member].files;
-        }
-    }
+    let rear = stack(members, &first_rows, mid, Fx::ZERO, spots);
+    stack_bands(
+        members,
+        frame,
+        &bands[1..],
+        max,
+        mid,
+        rear + GROUP_LINE_GAP,
+        spots,
+    );
 }
 
 /// Deep: every band in lines no wider than the drag or [`DEEP_LINE_MAX`],
 /// one behind the other: melee, ranged, horse in reserve, then the rest.
+/// The front row's centre is on the target, as in a Line.
 fn deep(members: &[GroupMember], frame: &Frame, width: Option<Fx>, spots: &mut Vec<Spot>) {
-    let max = width.unwrap_or(DEEP_LINE_MAX);
     let bands = [
-        of_roles(members, frame, &[Role::Melee]),
+        of_role(members, frame, Role::Melee),
         ranged_band(members, frame),
-        of_roles(members, frame, &[Role::Flanker]),
-        of_roles(members, frame, &[Role::Rear]),
+        of_role(members, frame, Role::Flanker),
+        of_role(members, frame, Role::Rear),
     ];
-    let from = spots.len();
-    stack_bands(members, frame, &bands, max, Fx::ZERO, spots);
-    // The front row's centre on the target, as in a Line.
-    if let Some(first) = spots.get(from).map(|s| s.back) {
-        for s in &mut spots[from..] {
+    let max = width.unwrap_or(DEEP_LINE_MAX);
+    stack_bands(members, frame, &bands, max, Fx::ZERO, Fx::ZERO, spots);
+    if let Some(first) = spots.first().map(|s| s.back) {
+        for s in spots.iter_mut() {
             s.back -= first;
         }
     }
 }
 
-/// Stack non-empty bands behind one another from `back` (the first row's
-/// front edge), centred on the target, in rows no wider than `max`.
-/// Returns where the last row's rear edge is.
-fn stack_bands(
-    members: &[GroupMember],
-    frame: &Frame,
-    bands: &[Vec<usize>],
-    max: Fx,
-    mut edge: Fx,
-    spots: &mut Vec<Spot>,
-) -> Fx {
-    let mut first = true;
-    for band in bands.iter().filter(|b| !b.is_empty()) {
-        let band_rows = rows(members, frame, band, max);
-        let depth = row_depth(members, &band_rows[0]);
-        if !first {
-            edge += GROUP_LINE_GAP;
-        }
-        first = false;
-        edge = stack(members, &band_rows, Fx::ZERO, edge + depth / 2, spots);
-    }
-    edge
-}
-
 /// Square: whoever isn't melee in a block in the middle, the melee facing
 /// out round it on four sides. The target is the square's centre.
 fn square(members: &[GroupMember], frame: &Frame, spots: &mut Vec<Spot>) {
-    let mut melee = of_roles(members, frame, &[Role::Melee]);
-    let inner_bands = [
-        ranged_band(members, frame),
-        of_roles(members, frame, &[Role::Flanker]),
-        of_roles(members, frame, &[Role::Rear]),
-    ];
+    let mut melee = of_role(members, frame, Role::Melee);
     if melee.is_empty() {
         deep(members, frame, None, spots);
         return;
     }
-    // The inside, centred on the target.
-    let first_inner = spots.len();
+    // The inside, centred on the target: `a` and `b` are its half width
+    // and depth.
+    let inner = [
+        ranged_band(members, frame),
+        of_role(members, frame, Role::Flanker),
+        of_role(members, frame, Role::Rear),
+    ];
     let rear = stack_bands(
         members,
         frame,
-        &inner_bands,
+        &inner,
         SQUARE_INNER_MAX,
         Fx::ZERO,
+        Fx::ZERO,
         spots,
     );
-    let (mut a, mut b) = (SQUARE_GAP, SQUARE_GAP);
-    if spots.len() > first_inner {
-        let shift = rear / 2;
-        for s in &mut spots[first_inner..] {
-            s.back -= shift;
-            let m = &members[s.member];
-            a = a.max(s.lateral.abs() + m.width(m.files) / 2);
-        }
-        b = b.max(rear / 2);
+    let mut a = SQUARE_GAP;
+    for s in spots.iter_mut() {
+        s.back -= rear / 2;
+        let m = &members[s.member];
+        a = a.max(s.lateral.abs() + m.width(m.files) / 2);
     }
+    let b = SQUARE_GAP.max(rear / 2);
 
-    // Who takes which wall: [front, back, left, right].
+    // Who takes which wall: [front, back, left, right]. The front-most now
+    // take the front, the rear-most the back, the rest the sides.
     let n = melee.len();
-    let mut counts = [0usize; 4];
-    if n == 3 {
-        counts = [1, 0, 1, 1];
+    let counts: [usize; 4] = if n == 3 {
+        [1, 0, 1, 1]
     } else {
-        for k in 0..n {
-            counts[k % 4] += 1;
-        }
-    }
+        core::array::from_fn(|k| n / 4 + usize::from(k < n % 4))
+    };
     sort_by(&mut melee, members, |m| frame.back(m.position));
-    let front: Vec<usize> = melee[..counts[0]].to_vec();
-    let back_wall: Vec<usize> = melee[n - counts[1]..].to_vec();
-    let mut sides: Vec<usize> = melee[counts[0]..n - counts[1]].to_vec();
+    let mut front = melee[..counts[0]].to_vec();
+    let mut back_wall = melee[n - counts[1]..].to_vec();
+    let mut sides = melee[counts[0]..n - counts[1]].to_vec();
     sort_by(&mut sides, members, |m| frame.lateral(m.position));
-    let mut left: Vec<usize> = sides[..counts[2]].to_vec();
-    let mut right: Vec<usize> = sides[counts[2]..].to_vec();
-    let mut front = front;
-    let mut back_wall = back_wall;
-    sort_by(&mut front, members, |m| frame.lateral(m.position));
-    sort_by(&mut back_wall, members, |m| frame.lateral(m.position));
-    sort_by(&mut left, members, |m| frame.back(m.position));
-    sort_by(&mut right, members, |m| frame.back(m.position));
+    let mut left = sides[..counts[2]].to_vec();
+    let mut right = sides[counts[2]..].to_vec();
+    for wall in [&mut front, &mut back_wall] {
+        sort_by(wall, members, |m| frame.lateral(m.position));
+    }
+    for wall in [&mut left, &mut right] {
+        sort_by(wall, members, |m| frame.back(m.position));
+    }
 
     // Big enough that no wall runs past the ends of the walls across it.
-    let a = a
-        .max(row_width(members, &front, GROUP_GAP) / 2)
-        .max(row_width(members, &back_wall, GROUP_GAP) / 2);
-    let b = b
-        .max(row_width(members, &left, GROUP_GAP) / 2)
-        .max(row_width(members, &right, GROUP_GAP) / 2);
+    let half = |wall: &[usize]| row_width(members, wall, GROUP_GAP) / 2;
+    let a = a.max(half(&front)).max(half(&back_wall));
+    let b = b.max(half(&left)).max(half(&right));
 
-    let at = spots.len();
-    lay(
-        members,
-        &front,
-        Fx::ZERO,
-        -(b + SQUARE_GAP + row_depth(members, &front) / 2),
-        GROUP_GAP,
-        spots,
-    );
-    lay(
-        members,
-        &back_wall,
-        Fx::ZERO,
-        b + SQUARE_GAP + row_depth(members, &back_wall) / 2,
-        GROUP_GAP,
-        spots,
-    );
-    let back_at = at + front.len();
-    for s in &mut spots[back_at..] {
-        s.turn = Angle::HALF;
-    }
-    // The side walls are laid like rows and then turned on their side: a
-    // row's left-to-right runs front to back along the wall.
-    for (wall, sign, turn) in [(&left, -1, Angle(0xC000)), (&right, 1, Angle::QUARTER)] {
+    // Each wall is laid as a row across the order, then moved out to its
+    // side; the side walls are turned on their side, so a row's left to
+    // right runs front to back along the wall.
+    for (wall, out, turn) in [
+        (&front, -b, Angle::ZERO),
+        (&back_wall, b, Angle::HALF),
+        (&left, -a, LEFT_TURN),
+        (&right, a, Angle::QUARTER),
+    ] {
         let from = spots.len();
-        let off = a + SQUARE_GAP + row_depth(members, wall) / 2;
+        let sign = if out < Fx::ZERO { -1 } else { 1 };
+        let off = out + (SQUARE_GAP + row_depth(members, wall) / 2) * sign;
         lay(members, wall, Fx::ZERO, Fx::ZERO, GROUP_GAP, spots);
+        let sideways = turn == LEFT_TURN || turn == Angle::QUARTER;
         for s in &mut spots[from..] {
-            s.back = s.lateral;
-            s.lateral = off * sign;
+            if sideways {
+                s.back = s.lateral;
+                s.lateral = off;
+            } else {
+                s.back = off;
+            }
             s.turn = turn;
         }
     }
@@ -679,46 +650,45 @@ fn square(members: &[GroupMember], frame: &Frame, spots: &mut Vec<Spot>) {
 /// right order, spread across the slots when there are more slots than
 /// regiments; then any slot left; then a line behind the rest.
 fn saved(members: &[GroupMember], frame: &Frame, shape: &Shape, spots: &mut Vec<Spot>) {
+    let mut slots: Vec<usize> = (0..shape.slots.len()).collect();
+    slots.sort_unstable_by_key(|&k| (shape.slots[k].lateral, k));
     let mut used = alloc::vec![false; shape.slots.len()];
     let mut placed = alloc::vec![false; members.len()];
-    let take = |slot: &Slot, i: usize| Spot {
-        member: i,
-        lateral: slot.lateral,
-        back: slot.back,
-        turn: slot.turn,
-        files: slot.files.clamp(1, members[i].models.max(1)),
-    };
-    for role in Role::ALL {
-        let who = of_roles(members, frame, &[role]);
-        let mut free: Vec<usize> = (0..shape.slots.len())
-            .filter(|&k| shape.slots[k].role == role)
+    // `who` take the free slots (of `role`, or any), left to right.
+    let mut fill = |who: &[usize], role: Option<Role>, placed: &mut [bool]| {
+        let free: Vec<usize> = (slots.iter().copied())
+            .filter(|&k| !used[k] && role.is_none_or(|r| shape.slots[k].role == r))
             .collect();
-        free.sort_unstable_by_key(|&k| (shape.slots[k].lateral, k));
-        for (i, k) in spread(&who, &free) {
+        for (i, k) in spread(who, &free) {
+            let slot = &shape.slots[k];
             used[k] = true;
             placed[i] = true;
-            spots.push(take(&shape.slots[k], i));
+            spots.push(Spot {
+                member: i,
+                lateral: slot.lateral,
+                back: slot.back,
+                turn: slot.turn,
+                files: slot.files.clamp(1, members[i].models.max(1)),
+            });
         }
+    };
+    for role in Role::ALL {
+        fill(&of_role(members, frame, role), Some(role), &mut placed);
     }
     let mut rest: Vec<usize> = (0..members.len()).filter(|&i| !placed[i]).collect();
     sort_by(&mut rest, members, |m| frame.lateral(m.position));
-    let mut free: Vec<usize> = (0..shape.slots.len()).filter(|&k| !used[k]).collect();
-    free.sort_unstable_by_key(|&k| (shape.slots[k].lateral, k));
-    for (i, k) in spread(&rest, &free) {
-        placed[i] = true;
-        spots.push(take(&shape.slots[k], i));
-    }
-    let left: Vec<usize> = rest.into_iter().filter(|&i| !placed[i]).collect();
-    if !left.is_empty() {
+    fill(&rest, None, &mut placed);
+    rest.retain(|&i| !placed[i]);
+    if !rest.is_empty() {
         let rear = spots
             .iter()
             .map(|s| s.back + members[s.member].depth() / 2)
             .max()
             .unwrap_or(Fx::ZERO);
-        let depth = row_depth(members, &left);
+        let depth = row_depth(members, &rest);
         lay(
             members,
-            &left,
+            &rest,
             Fx::ZERO,
             rear + GROUP_LINE_GAP + depth / 2,
             GROUP_GAP,
@@ -731,9 +701,6 @@ fn saved(members: &[GroupMember], frame: &Frame, shape: &Shape, spots: &mut Vec<
 /// slots, spread evenly across them; otherwise the first `slots.len()`.
 fn spread(who: &[usize], slots: &[usize]) -> Vec<(usize, usize)> {
     let (m, s) = (who.len(), slots.len());
-    if m == 0 || s == 0 {
-        return Vec::new();
-    }
     if m >= s {
         return who.iter().copied().zip(slots.iter().copied()).collect();
     }
@@ -751,7 +718,7 @@ mod tests {
     use super::*;
     use crate::RegimentHandle;
 
-    const NORTH: Angle = Angle(0xC000);
+    use crate::scenario::NORTH;
     const TARGET: FxVec2 = FxVec2::from_ints(100, 20);
 
     /// A regiment of `role` standing at (x, 60) facing north: 24 soldiers

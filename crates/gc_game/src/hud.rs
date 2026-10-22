@@ -646,10 +646,9 @@ impl Running {
         let selection = (!self.selected.is_empty())
             .then(|| self.selection_info(side))
             .flatten();
-        // Army shapes to choose from, once two or more regiments are selected.
-        let shape_chips: Vec<ShapeChip> = if self.watching.is_none()
-            && selection.as_ref().is_some_and(|(_, s)| s.regiments > 1)
-        {
+        // Army shapes to choose from (the tray shows them for two or more
+        // regiments); none for a replay, which plays its recorded orders.
+        let shape_chips: Vec<ShapeChip> = if self.watching.is_none() && selection.is_some() {
             let on = self.army_shapes.choice;
             (self.army_shapes.chips().into_iter())
                 .map(|c| ShapeChip {

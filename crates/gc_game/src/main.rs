@@ -1596,9 +1596,7 @@ impl ApplicationHandler for App {
                     }
                     let off = if r.online.is_some() && (clock_or_side || edit_tool) {
                         Some("That sandbox tool is off in a network battle.")
-                    } else if r.watching.is_some()
-                        && (edit_tool || code == KeyCode::KeyF || code == KeyCode::KeyO)
-                    {
+                    } else if r.watching.is_some() && (edit_tool || code == KeyCode::KeyF) {
                         Some("That is off while you watch a replay.")
                     } else if r.conquest_match() && edit_tool {
                         Some("That sandbox tool is off in Conquest.")
@@ -1692,6 +1690,7 @@ impl ApplicationHandler for App {
                         KeyCode::KeyO
                             if down && !event.repeat && !r.input.command && !r.input.alt =>
                         {
+                            // Shift is part of the key here, so not `grid_key`.
                             if r.input.shift {
                                 r.save_army_shape();
                             } else {
@@ -2457,10 +2456,11 @@ impl Running {
         self.say(format!("{}{note}: {}", next.name(), formation_hint(next)));
     }
 
-    /// Keep the army shapes and the choice in the player's folder.
-    fn keep_army_shapes(&self) {
+    /// Keep the army shapes and the choice in the player's folder;
+    /// `durable` for a newly saved shape.
+    fn keep_army_shapes(&self, durable: bool) {
         if let Some(path) = army_shape::shapes_path() {
-            self.army_shapes.store(&path);
+            self.army_shapes.store(&path, durable);
         }
     }
 
@@ -2474,18 +2474,15 @@ impl Running {
     /// O: the next army shape, the presets and then your own.
     fn cycle_army_shape(&mut self) {
         self.army_shapes.choice = self.army_shapes.next();
-        self.keep_army_shapes();
+        self.keep_army_shapes(false);
         self.say_army_shape();
     }
 
     /// A chip of the selection panel: take the army shape it names.
     fn pick_army_shape(&mut self, chip: usize) {
-        if self.watching.is_some() {
-            return;
-        }
         if let Some(&choice) = self.army_shapes.chips().get(chip) {
             self.army_shapes.choice = choice;
-            self.keep_army_shapes();
+            self.keep_army_shapes(false);
             self.say_army_shape();
         }
     }
@@ -2500,9 +2497,9 @@ impl Running {
         };
         let full = self.army_shapes.saved.iter().all(Option::is_some);
         self.army_shapes.save(shape);
-        self.keep_army_shapes();
+        self.keep_army_shapes(true);
         self.ui_sound(sounds::UiSound::Select);
-        let name = self.army_shapes.name();
+        let name = self.army_shapes.choice.label();
         self.say(if full {
             format!("Saved as {name}, in place of the old one.")
         } else {
@@ -5512,7 +5509,7 @@ impl Running {
     fn army_shape_line(&self) -> String {
         format!(
             "Army shape for group orders: {}. O: next, Shift+O: save the selection's",
-            self.army_shapes.name()
+            self.army_shapes.choice.label()
         )
     }
 
