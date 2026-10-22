@@ -21,6 +21,7 @@ pub mod lobby;
 pub mod menu;
 pub mod placer;
 pub mod powers;
+pub mod quick_start;
 pub mod settings;
 pub mod ui;
 pub mod viewer;

@@ -672,6 +672,8 @@ struct Running {
     guide: Option<gc_ui::guide::Guide>,
     /// Wheel movement over the Guide not yet worth a whole row.
     guide_scroll: f32,
+    /// Each building's tips, for the HUD's tips card.
+    tip_book: guide_data::TipBook,
     /// Sandbox: draw regiments hidden from the side you command too (Shift+V).
     reveal_all: bool,
     /// The fog of war on the ground, when the match has it.
@@ -1382,6 +1384,7 @@ impl App {
             viewer_scroll: 0.0,
             guide: None,
             guide_scroll: 0.0,
+            tip_book: guide_data::tip_book(),
             reveal_all: false,
             fog: Default::default(),
             data_label: format!(
@@ -3528,7 +3531,10 @@ impl Running {
     /// Open the Guide over whatever is on screen.
     fn open_guide(&mut self) {
         if self.guide.is_none() {
-            self.guide = Some(gc_ui::guide::Guide::new(guide_data::load()));
+            let mut guide = gc_ui::guide::Guide::new(guide_data::load());
+            // New players start with the short illustrated page.
+            guide.select_tab(gc_ui::guide::GuideTab::QuickStart);
+            self.guide = Some(guide);
         }
         self.guide_scroll = 0.0;
         self.reset_ui_input();

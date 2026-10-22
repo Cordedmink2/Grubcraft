@@ -8,7 +8,9 @@ use gc_sim::{MoraleState, PlayerId, StructureHandle};
 use gc_ui::DrawList;
 use gc_ui::Icon;
 use gc_ui::alerts::{Alert, AlertData, AlertKind};
-use gc_ui::conquest::{Block, NodeDot, QUEUE_SLOTS, QueueItem, StructurePanel, TopBar, Tuning};
+use gc_ui::conquest::{
+    Block, NodeDot, QUEUE_SLOTS, QueueItem, StructurePanel, TipLine, TipsCard, TopBar, Tuning,
+};
 use gc_ui::hero::{HeroAbility, HeroPanel};
 use gc_ui::hud::{
     Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, HelpScroll, Hud,
@@ -153,6 +155,9 @@ pub struct HudState {
     pub armed: Option<Armed>,
     /// Conquest: the workers' build menu is open on the grid.
     pub build_menu: bool,
+    /// Conquest: the selected building's tips are showing (its info button
+    /// is on). Kept between selections and matches.
+    tips_open: bool,
     /// The Conquest card's slot names and prices, kept for their room.
     card_labels: [String; GRID_SLOTS],
     card_details: [String; GRID_SLOTS],
@@ -875,6 +880,29 @@ impl Running {
                 queued = i + 1;
             }
         }
+        // Tips: on the building being placed, else on the selected one when
+        // its info button is on.
+        let laying = match hud.armed {
+            Some(Armed::Lay(b)) => Some(self.buildings.name(b)),
+            _ => None,
+        };
+        let selected = picked_structure
+            .and_then(|h| self.world.structures()?.get(h))
+            // Tips are for your own buildings.
+            .filter(|s| s.owner == self.sandbox.side)
+            .map(|s| self.buildings.name(s.building));
+        let tips_open = selected
+            .filter(|n| self.tip_book.contains_key(*n))
+            .map(|_| hud.tips_open);
+        let tip_name = laying.or(selected.filter(|_| hud.tips_open));
+        let tip_lines: Vec<TipLine> =
+            tip_name
+                .and_then(|n| self.tip_book.get(n))
+                .map_or_else(Vec::new, |tips| {
+                    tips.iter()
+                        .map(|(icon, text)| TipLine { icon: *icon, text })
+                        .collect()
+                });
         let structure = picked_structure
             .and_then(|h| self.world.structures()?.get(h))
             .map(|s| {
@@ -904,6 +932,7 @@ impl Running {
                     tuning: mine_up
                         .then(|| tuning_of(&self.world, &self.buildings, &s))
                         .flatten(),
+                    tips_open,
                 }
             });
 
@@ -939,6 +968,11 @@ impl Running {
             },
             cards: &hud.cards,
             structure,
+            tips: (!tip_lines.is_empty()).then_some(TipsCard {
+                title: tip_name.unwrap_or_default(),
+                lines: &tip_lines,
+                closable: laying.is_none(),
+            }),
             top: hud.readout.map(|r| r.top),
             tray_title: &title,
             powers: &power_buttons[..powers_shown],
@@ -1018,6 +1052,7 @@ impl Running {
             }
             HudEvent::IdleWorker => self.next_idle_worker(),
             HudEvent::ToggleHelp => self.toggle_help(),
+            HudEvent::ToggleTips => self.hud.tips_open = !self.hud.tips_open,
             HudEvent::OpenGuide => self.open_guide(),
             HudEvent::TogglePlacer => self.toggle_placer(),
             HudEvent::PlaceUnit(i) => self.place_unit(i),

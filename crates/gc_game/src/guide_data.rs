@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 
 use gc_data::Faction;
+use gc_ui::Icon;
 use gc_ui::guide::{FactionGuide, GuideData, GuideEntry, GuideUpgrade};
 use serde::Deserialize;
 
@@ -23,6 +24,9 @@ use serde::Deserialize;
 pub const MAX_SUMMARY: usize = 350;
 #[cfg_attr(not(test), allow(dead_code))]
 pub const MAX_TAGLINE: usize = 80;
+/// The most characters in one building tip, so the tips card stays short.
+#[cfg_attr(not(test), allow(dead_code))]
+pub const MAX_TIP: usize = 100;
 
 /// What the roster files say about hiring a hero (docs/17 "Shared rules").
 /// They have no field for it yet, so the Guide labels it a design value.
@@ -294,6 +298,37 @@ pub struct BuildingText {
     /// building it makes) or "Research".
     #[serde(default)]
     pub notes: Vec<(String, String)>,
+    /// Two or three succinct tips on using the building, shown while it is
+    /// being placed and behind the info button on its card.
+    #[serde(default)]
+    pub tips: Vec<TipText>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TipText {
+    pub icon: Icon,
+    pub text: String,
+}
+
+/// A building's tips: (picture, sentence), keyed by the building's name.
+pub type TipBook = HashMap<String, Vec<(Icon, String)>>;
+
+fn tips_of(text: &BuildingText) -> Vec<(Icon, String)> {
+    text.tips.iter().map(|t| (t.icon, ascii(&t.text))).collect()
+}
+
+/// Every faction's building tips, for the game to show while placing and
+/// selecting. Building names are unique across factions (a test checks).
+pub fn tip_book() -> TipBook {
+    let mut book = TipBook::new();
+    for src in EMBEDDED.guides {
+        let file: GuideFile = ron::from_str(src).unwrap_or_else(|e| panic!("data/guide: {e}"));
+        for b in &file.buildings {
+            book.insert(b.name.clone(), tips_of(b));
+        }
+    }
+    book
 }
 
 #[derive(Deserialize)]
@@ -989,6 +1024,7 @@ impl Ctx<'_> {
             kind: format!("{}, tier {}", role_name(b.role), b.tier),
             tag: format!("T{}", b.tier),
             summary: text.map_or_else(String::new, |t| ascii(&t.summary)),
+            tips: text.map_or_else(Vec::new, tips_of),
             facts,
             links,
             upgrades,
@@ -1130,6 +1166,7 @@ impl Ctx<'_> {
             facts,
             links,
             upgrades,
+            tips: Vec::new(),
             no_upgrades: "No evolutions or abilities.".into(),
             name,
         }
@@ -1171,6 +1208,7 @@ impl Ctx<'_> {
                 .iter()
                 .map(|a| ability_upgrade(a, true))
                 .collect(),
+            tips: Vec::new(),
             no_upgrades: "No abilities.".into(),
             name,
         }
@@ -1239,10 +1277,29 @@ mod tests {
     }
 
     #[test]
+    fn the_tip_book_has_every_building_once() {
+        let book = tip_book();
+        let total: usize = rosters().iter().map(|r| r.buildings.len()).sum();
+        assert_eq!(book.len(), total, "building names repeat across factions");
+        for (name, tips) in &book {
+            assert!(!tips.is_empty(), "{name} has no tips");
+        }
+    }
+
+    #[test]
     fn guide_text_is_plain_ascii_and_fits() {
         for g in guides() {
             for b in &g.buildings {
                 check_text(&b.name, &b.summary, MAX_SUMMARY);
+                assert!(
+                    (2..=3).contains(&b.tips.len()),
+                    "{}: wants 2 or 3 tips, has {}",
+                    b.name,
+                    b.tips.len()
+                );
+                for t in &b.tips {
+                    check_text(&b.name, &t.text, MAX_TIP);
+                }
                 for (what, benefit) in &b.notes {
                     check_text(what, benefit, 220);
                 }

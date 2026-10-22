@@ -8,6 +8,11 @@
             notes: [
                 ("Great Hive", "The gate to the mid game: the Chrysalis Chamber's evolutions, Drone-Moths, the Broodmother Bulk and a second hero. Upgrading uses no Gnawer, but it costs Marrow."),
             ],
+            tips: [
+                (icon: Grub, text: "Send Gnawers into the nearest seeps early, since their Grub funds everything else."),
+                (icon: Marrow, text: "Bank 100 Marrow for the Great Hive, which needs no Gnawer but does cost Marrow."),
+                (icon: Hammer, text: "Watch the larva count; once Grub piles up with no larvae free, grow a Hatchery Pit."),
+            ],
         ),
         (
             name: "Great Hive",
@@ -15,46 +20,91 @@
             notes: [
                 ("Throne Hive", "The late game: the Colossus Maw monster, the third hero and the top upgrades (not designed yet). Costly in Grub and Marrow, so build it when you hold a second base."),
             ],
+            tips: [
+                (icon: Hammer, text: "Upgrade as soon as you can afford it, since larvae keep hatching during the upgrade."),
+                (icon: Supply, text: "Use the higher supply cap to mass tier-1 regiments, then evolve them at the Chrysalis Chamber."),
+                (icon: Marrow, text: "Keep Marrow back for the Chrysalis Chamber, Moth Roost and Gorge, which all need it."),
+            ],
         ),
         (
             name: "Throne Hive",
             summary: "The final tier of the main building. It raises the supply cap again, lets the Gorge hatch the Colossus Maw and opens the third hero slot. Nothing is left to upgrade, so spend on larvae, armies and defence.",
             notes: [],
+            tips: [
+                (icon: Skill, text: "Hire the third hero at the Queen's Chamber, since this tier opens that slot."),
+                (icon: Brace, text: "Defend it with an army and Spine Mounds; at 4200 HP it has the most of any building."),
+                (icon: Attack, text: "Pair it with a Gorge, which can hatch the Colossus Maw now that this tier is up."),
+            ],
         ),
         (
             name: "Pustule",
             summary: "Housing that also carries the root-veins 8 tiles further, so far seeps keep delivering Grub. Kill one and every seep beyond it stops delivering, so guard the chain. Build a line of them to expand, and a few extra for supply.",
             notes: [],
+            tips: [
+                (icon: Grub, text: "Chain Pustules out toward far seeps, since their root-veins bring that Grub home."),
+                (icon: Alarm, text: "Guard the chain with Spine Mounds, because one dead Pustule cuts off every seep beyond."),
+                (icon: Supply, text: "Add a few spare Pustules for supply; each gives 8 supply for only 40 Grub."),
+            ],
         ),
         (
             name: "Hatchery Pit",
             summary: "Holds 3 more larvae and spawns its own every 12 seconds. Each pit raises how fast you can field regiments. Build a few when Grub piles up while the Hive has no larvae left.",
             notes: [],
+            tips: [
+                (icon: Hammer, text: "Build a few rather than one; each pit adds 3 larvae and spawns its own every 12 s."),
+                (icon: Move, text: "Place pits close to the front so fresh regiments reach the fight quickly."),
+                (icon: Alarm, text: "Guard pits with Spine Mounds; a destroyed pit loses its 3 larvae and its spawning."),
+            ],
         ),
         (
             name: "Chrysalis Chamber",
             summary: "Unlocks evolutions: tier-1 regiments can cocoon into their tier-2 forms anywhere on the field. Tier 2, and each evolution costs extra Grub and Marrow and 15 seconds in the cocoon. Build it to turn swarms into archers, burrowers, reapers or shellbacks.",
             notes: [],
+            tips: [
+                (icon: Marrow, text: "Bank Marrow first, since each evolution costs extra Grub and Marrow on top of its unit."),
+                (icon: Hammer, text: "Start a cocoon before a clash, because each evolution takes 15 seconds in the cocoon."),
+                (icon: Spear, text: "Evolve Chitin Guard into Mantid Reapers once the enemy fields cavalry or monsters."),
+            ],
         ),
         (
             name: "Moth Roost",
             summary: "Lets larvae hatch into Drone-Moths: fast flyers whose Spore Bombs spoil enemy archers' accuracy and whose antennae detect burrowed units. Tier 2 and needs Marrow. Build one to scout, to hunt artillery or to reveal stealth.",
             notes: [],
+            tips: [
+                (icon: Bow, text: "Send Drone-Moths at enemy archers, since Spore Bombs cut their ranged accuracy."),
+                (icon: Alarm, text: "Station Moths near seeps and Burrowers, since antennae reveal burrowed units within 10 tiles."),
+                (icon: Move, text: "Scout with Moths, but pull them back from enemy archers and flyers, which answer them."),
+            ],
         ),
         (
             name: "Gorge",
             summary: "Lets larvae hatch into Broodmother Bulks, your long-range artillery, and at tier 3 the Colossus Maw. Tier 2 and needs Marrow. Build it once the front is steady and you want to outrange defenders or crack open a base.",
             notes: [],
+            tips: [
+                (icon: Brace, text: "Screen Broodmother Bulks with Chitin Guard, since flyers and cavalry can reach them."),
+                (icon: Attack, text: "Aim Bulks at packed infantry from up to 45 tiles away, where their sacs burst over 2 tiles."),
+                (icon: Alarm, text: "Keep the sacs away from your own lines, since their burst can hit friendly regiments too."),
+            ],
         ),
         (
             name: "Spine Mound",
             summary: "Flings spines at ground and air. A cheap static guard for vein edges, Pustules and your Hive. It is Living, so it regrows while on root-veins, but it will not stop an army. Pair with Shellbacks and Chitin Guard.",
             notes: [],
+            tips: [
+                (icon: Heart, text: "Build them on root-veins, where the Living mound regrows between fights."),
+                (icon: Alarm, text: "Place them on vein edges and beside Pustules and the Hive to guard the approaches."),
+                (icon: Brace, text: "Pair them with Chitin Guard, so the line holds while the mounds shoot over it."),
+            ],
         ),
         (
             name: "Queen's Chamber",
             summary: "Hatches and revives heroes. Build it early: the Queen-in-Waiting, the Devourer and the Whisperer lead the brood and each turns a fight. Heroes cost Marrow too, so keep some in reserve for a replacement.",
             notes: [],
+            tips: [
+                (icon: Skill, text: "Build it early so your first hero is ready to turn the opening fights."),
+                (icon: Marrow, text: "Keep Marrow in reserve, so a fallen hero can be replaced without stalling the army."),
+                (icon: Heart, text: "Hire the Queen-in-Waiting for healing and haste, since she supports the whole army."),
+            ],
         ),
     ],
     units: [

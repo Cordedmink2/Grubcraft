@@ -11,7 +11,8 @@ use std::fmt::Write as _;
 
 use crate::draw::{CELL_H, CELL_W, Color, DrawList, Rect, fit, mix, text_width, wrap};
 use crate::hud::{
-    HudEvent, HudInput, WIDGET_QUEUE, draw_portrait, health_color, ink_meter, muted_ink, rgb,
+    HudEvent, HudInput, WIDGET_QUEUE, WIDGET_TIPS, draw_portrait, health_color, ink_meter,
+    linen_light, muted_ink, rgb,
 };
 use crate::icons::{self, Icon};
 use crate::lobby::thousands;
@@ -107,7 +108,32 @@ pub struct StructurePanel<'a> {
     pub powered: Option<bool>,
     /// A building of yours that tunes seeps or veins (None for any other).
     pub tuning: Option<Tuning>,
+    /// Whether it has tips, and whether they are showing: draws the info
+    /// button on its card (None for a building with no tips).
+    pub tips_open: Option<bool>,
 }
+
+/// One tip of a [`TipsCard`]: a small picture and a sentence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TipLine<'a> {
+    pub icon: Icon,
+    pub text: &'a str,
+}
+
+/// Succinct tips on a building, as a card over the field beside the tray:
+/// shown while a building is being placed and when its info button is on.
+#[derive(Clone, Copy, Debug)]
+pub struct TipsCard<'a> {
+    pub title: &'a str,
+    pub lines: &'a [TipLine<'a>],
+    /// Draw a close box (the card was opened by hand, not by placing).
+    pub closable: bool,
+}
+
+/// Width of the tips card.
+const TIPS_W: i32 = 400;
+/// Room the info button takes at the right of the building's card.
+const INFO_W: i32 = 26;
 
 /// What a tuning building (a Resonator or Siphon) is working.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -352,6 +378,27 @@ pub(crate) fn draw_structure(
 ) {
     let card = Rect::new(row.x, row.y, STRUCT_CARD_W.min(row.w / 2), row.h.min(126));
     draw_structure_card(draw, card, s);
+    if let Some(open) = s.tips_open {
+        let r = Rect::new(
+            card.right() - INFO_W - 2,
+            card.y + 4,
+            INFO_W - 2,
+            INFO_W - 2,
+        );
+        let (clicked, held) = press.widget(
+            WIDGET_TIPS,
+            r,
+            input.mouse,
+            input.left_pressed,
+            input.left_released,
+        );
+        if clicked {
+            events.push(HudEvent::ToggleTips);
+        }
+        let lit = open || held || r.contains(input.mouse.0, input.mouse.1);
+        draw.boxed(r, if lit { theme::WELD } else { theme::LINEN }, 2);
+        icons::icon(draw, r.inset(2), Icon::Info, theme::INK);
+    }
 
     let left = card.right() + CARD_GAP;
     let gaps = (QUEUE_SLOTS as i32 - 1) * CARD_GAP;
@@ -414,7 +461,13 @@ fn draw_structure_card(draw: &mut DrawList, r: Rect, s: &StructurePanel) {
     draw_portrait(draw, portrait, s.color, s.name, 2);
     let x = portrait.right() + 6;
     let chars = ((inner.right() - x) / CELL_W).max(1) as usize;
-    draw.text_bold(x, inner.y, 1, theme::INK, &fit(s.name, chars));
+    let button = if s.tips_open.is_some() {
+        INFO_W as usize / CELL_W as usize
+    } else {
+        0
+    };
+    let name_room = chars.saturating_sub(button).max(1);
+    draw.text_bold(x, inner.y, 1, theme::INK, &fit(s.name, name_room));
     let hp = s.hp as f32 / s.max_hp.max(1) as f32;
     ink_meter(
         draw,
@@ -470,6 +523,77 @@ fn draw_structure_card(draw: &mut DrawList, r: Rect, s: &StructurePanel) {
     }
 }
 
+/// The tips card above the tray's left end, `field` being the screen between
+/// the bars. Its rectangle goes into `over` so clicks on it stay off the
+/// world; a close box (when `closable`) sends [`HudEvent::ToggleTips`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_tips(
+    draw: &mut DrawList,
+    press: &mut Press,
+    field: Rect,
+    tray: Rect,
+    input: HudInput,
+    card: &TipsCard,
+    over: &mut Vec<Rect>,
+    events: &mut Vec<HudEvent>,
+) {
+    const PAD: i32 = 10;
+    const ICON: i32 = 24;
+    let w = TIPS_W.min(field.w - 8);
+    let text_x = PAD + ICON + 8;
+    let chars = ((w - text_x - PAD) / CELL_W).max(1) as usize;
+    let wrapped: Vec<Vec<String>> = card.lines.iter().map(|l| wrap(l.text, chars)).collect();
+    let body: i32 = wrapped
+        .iter()
+        .map(|w| (w.len() as i32 * CELL_H).max(ICON) + 8)
+        .sum();
+    let h = PAD + 22 + body + PAD - 4;
+    let r = Rect::new(tray.x, (tray.y - h - 8).max(field.y + 4), w, h);
+    over.push(r);
+    draw.shadow(r, 3);
+    draw.boxed(r, linen_light(), 2);
+    draw.border(r.inset(3), 1, theme::WELD);
+    let head = format!("{} - tips", card.title);
+    draw.text_bold(
+        r.x + PAD,
+        r.y + PAD - 1,
+        1,
+        theme::MADDER,
+        &fit(&head, chars),
+    );
+    if card.closable {
+        let x = Rect::new(r.right() - 24, r.y + 6, 18, 18);
+        let (clicked, held) = press.widget(
+            WIDGET_TIPS + 1,
+            x,
+            input.mouse,
+            input.left_pressed,
+            input.left_released,
+        );
+        if clicked {
+            events.push(HudEvent::ToggleTips);
+        }
+        let lit = held || x.contains(input.mouse.0, input.mouse.1);
+        draw.boxed(x, if lit { theme::WELD } else { theme::LINEN }, 1);
+        draw.text_centered(x, 1, theme::INK, "x");
+    }
+    let mut y = r.y + PAD + 22;
+    for (line, lines) in card.lines.iter().zip(&wrapped) {
+        let row_h = (lines.len() as i32 * CELL_H).max(ICON);
+        icons::icon(
+            draw,
+            Rect::new(r.x + PAD, y + (row_h - ICON) / 2, ICON, ICON),
+            line.icon,
+            theme::WOAD,
+        );
+        let top = y + (row_h - lines.len() as i32 * CELL_H) / 2;
+        for (i, text) in lines.iter().enumerate() {
+            draw.text(r.x + text_x, top + i as i32 * CELL_H, 1, theme::INK, text);
+        }
+        y += row_h + 8;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,6 +644,45 @@ mod tests {
         assert_eq!(line(2, 0), "Tuning 2 seeps: about 240 Grub a minute");
         // Nothing tuned, nothing to sing over.
         assert_eq!(line(0, 35), "No seep in reach");
+    }
+
+    #[test]
+    fn the_tips_card_stays_on_the_field_and_reserves_its_clicks() {
+        let field = Rect::new(0, 40, 1280, 600);
+        let tray = Rect::new(150, 650, 700, 120);
+        let lines = [
+            TipLine {
+                icon: Icon::Grub,
+                text: "Build it beside a seep so workers walk less and Grub flows faster.",
+            },
+            TipLine {
+                icon: Icon::Hammer,
+                text: "Short tip.",
+            },
+        ];
+        let card = TipsCard {
+            title: "Pustule",
+            lines: &lines,
+            closable: true,
+        };
+        let mut draw = DrawList::default();
+        let (mut over, mut events) = (Vec::new(), Vec::new());
+        let mut press = Press::default();
+        let input = HudInput::default();
+        draw_tips(
+            &mut draw,
+            &mut press,
+            field,
+            tray,
+            input,
+            &card,
+            &mut over,
+            &mut events,
+        );
+        assert_eq!(over.len(), 1);
+        let r = over[0];
+        assert!(r.bottom() <= tray.y && r.y >= field.y && r.x == tray.x);
+        assert!(!draw.quads.is_empty() && events.is_empty());
     }
 
     #[test]
