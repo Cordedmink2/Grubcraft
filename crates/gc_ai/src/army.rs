@@ -69,7 +69,10 @@ fn pick_army_of(
         .collect();
     if mine.is_empty() {
         // A faction with no regiments of its own yet borrows everyone's.
-        mine = (0..units.len()).filter(|&i| usable(i)).map(|i| i as UnitId).collect();
+        mine = (0..units.len())
+            .filter(|&i| usable(i))
+            .map(|i| i as UnitId)
+            .collect();
     }
     let of_class = |c: Class| -> Vec<UnitId> {
         mine.iter()
