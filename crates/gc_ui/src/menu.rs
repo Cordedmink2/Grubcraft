@@ -1199,7 +1199,12 @@ impl<N: Network> Menu<N> {
             let unit = &self.roster[u];
             let (col, line) = (n / per_col.max(1), n % per_col.max(1));
             let row_y = top + line as i32 * (row_h + sp(6));
-            let row = Rect::new(panel.x + 24 + col as i32 * (col_w + 16), row_y, col_w, row_h);
+            let row = Rect::new(
+                panel.x + 24 + col as i32 * (col_w + 16),
+                row_y,
+                col_w,
+                row_h,
+            );
             y = y.max(row_y + row_h + sp(6));
             ui.draw.rect(row, theme::CLOTH);
             let text_y = row.y + (row.h - 16) / 2;
