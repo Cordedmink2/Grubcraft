@@ -243,8 +243,9 @@ impl Frame {
 ///
 /// With a dragged width, Line and Hammer refit every regiment's frontage by
 /// the same factor so the front line (wings included) spans the drag; Deep
-/// keeps frontages and makes no line wider than the drag. A Square and a
-/// saved shape keep their size and take only the drag's place and facing.
+/// keeps frontages and makes no line wider than the drag. A Square re-forms
+/// every regiment to its raised frontage and a saved shape to the frontages
+/// it saved; both take only the drag's place and facing.
 pub fn arranged_move(
     members: &mut [GroupMember],
     order: GroupOrder,
@@ -270,7 +271,17 @@ pub fn arranged_move(
             );
         }
         Arrangement::Preset(Preset::Deep) => deep(members, &frame, order.width, &mut spots),
-        Arrangement::Preset(Preset::Square) => square(members, &frame, &mut spots),
+        Arrangement::Preset(Preset::Square) => {
+            // Back to the frontage they were raised with: a square of
+            // blocks squeezed thin by an earlier narrow drag is all corners.
+            for m in members.iter_mut().filter(|m| m.raised_files > 0) {
+                m.files = m.raised_files.min(m.models.max(1));
+            }
+            square(members, &frame, &mut spots);
+            for s in &mut spots {
+                s.files = members[s.member].files;
+            }
+        }
         Arrangement::Saved(shape) => saved(members, &frame, shape, &mut spots),
         Arrangement::Preset(Preset::Plain) => unreachable!(),
     }
@@ -761,6 +772,7 @@ mod tests {
             rank_spacing: Fx::ONE,
             speed: Fx::from_int(if horse { 6 } else { 3 }),
             role,
+            raised_files: if horse { 4 } else { 6 },
         }
     }
 

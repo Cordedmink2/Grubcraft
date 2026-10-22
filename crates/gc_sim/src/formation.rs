@@ -79,6 +79,8 @@ pub struct GroupMember {
     pub speed: Fx,
     /// Where it belongs when a mixed group is arranged (see [`crate::arrange`]).
     pub role: Role,
+    /// Its frontage when raised (0 for not known): a Square re-forms to it.
+    pub raised_files: u16,
 }
 
 impl GroupMember {
@@ -98,6 +100,7 @@ impl GroupMember {
                 (i64::from(stats.speed.raw()) * i64::from(r.formation.pace_percent()) / 100) as i32,
             ),
             role: Role::guess(stats),
+            raised_files: stats.files,
         }
     }
 
@@ -294,6 +297,7 @@ mod tests {
             rank_spacing: Fx::ONE,
             speed: Fx::from_int(3 + index as i32),
             role: Role::Melee,
+            raised_files: 6,
         }
     }
 

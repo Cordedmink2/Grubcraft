@@ -12,7 +12,8 @@ use gc_ui::conquest::{Block, NodeDot, QUEUE_SLOTS, QueueItem, StructurePanel, To
 use gc_ui::hero::{HeroAbility, HeroPanel};
 use gc_ui::hud::{
     Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, HelpScroll, Hud,
-    HudData, HudEvent, HudInput, MinimapData, MinimapTerrain, Selection, SlotState, StatusStrip,
+    HudData, HudEvent, HudInput, MinimapData, MinimapTerrain, Selection, ShapeChip, SlotState,
+    StatusStrip,
 };
 use gc_ui::placer::{PlaceLater, PlacePicker, PlaceRow, PlaceSide};
 use gc_ui::powers::{POWER_KEYS, PowerButton};
@@ -532,6 +533,7 @@ impl Running {
                 Some(Some(f)) => f.name(),
                 _ => "",
             },
+            shapes: &[],
         };
         Some((name, selection))
     }
@@ -644,6 +646,21 @@ impl Running {
         let selection = (!self.selected.is_empty())
             .then(|| self.selection_info(side))
             .flatten();
+        // Army shapes to choose from, once two or more regiments are selected.
+        let shape_chips: Vec<ShapeChip> = if self.watching.is_none()
+            && selection.as_ref().is_some_and(|(_, s)| s.regiments > 1)
+        {
+            let on = self.army_shapes.choice;
+            (self.army_shapes.chips().into_iter())
+                .map(|c| ShapeChip {
+                    label: c.label(),
+                    tip: c.tip(),
+                    on: c == on,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let help_notes = if self.hud.help {
             self.help_notes()
         } else {
@@ -905,7 +922,11 @@ impl Running {
         let data = HudData {
             grid: &grid,
             status,
-            selection: selection.as_ref().map(|(name, s)| Selection { name, ..*s }),
+            selection: selection.as_ref().map(|(name, s)| Selection {
+                name,
+                shapes: &shape_chips,
+                ..*s
+            }),
             help: hud.help.then_some(HelpScroll { notes: &help_notes }),
             picker: place_view.as_ref().map(|v| v.picker(hud.placer, placing)),
             hero,
@@ -1004,6 +1025,7 @@ impl Running {
             HudEvent::PlaceSide(i) => self.set_side(i as PlayerId),
             HudEvent::PlaceTab(i) => self.place_tab_to(i),
             HudEvent::PlaceFaction(i) => self.place_faction_to(i),
+            HudEvent::ArmyShape(i) => self.pick_army_shape(i),
             // The queue gives back its last regiment, whichever is clicked.
             HudEvent::Unqueue(_) => self.untrain(),
             HudEvent::Ready => {

@@ -168,6 +168,7 @@ use gc_render::{
     BoxInstance, FrameParams, Renderer, RendererOptions, SoldierBatch, SoldierInstance, Terrain,
     UiQuad,
 };
+use gc_sim::arrange::Shape;
 use gc_sim::events::Event;
 use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
@@ -1341,7 +1342,10 @@ impl App {
             idle_from: None,
             formation_pick: None,
             shown_formation: None,
-            army_shapes: army_shape::ArmyShapes::default(),
+            army_shapes: army_shape::shapes_path()
+                .map_or_else(army_shape::ArmyShapes::default, |p| {
+                    army_shape::ArmyShapes::load(&p)
+                }),
             group: Vec::with_capacity(64),
             group_commands: Vec::with_capacity(64),
             boxed: Vec::with_capacity(64),
@@ -1592,7 +1596,9 @@ impl ApplicationHandler for App {
                     }
                     let off = if r.online.is_some() && (clock_or_side || edit_tool) {
                         Some("That sandbox tool is off in a network battle.")
-                    } else if r.watching.is_some() && (edit_tool || code == KeyCode::KeyF) {
+                    } else if r.watching.is_some()
+                        && (edit_tool || code == KeyCode::KeyF || code == KeyCode::KeyO)
+                    {
                         Some("That is off while you watch a replay.")
                     } else if r.conquest_match() && edit_tool {
                         Some("That sandbox tool is off in Conquest.")
@@ -1680,6 +1686,17 @@ impl ApplicationHandler for App {
                         // Otherwise F stays as R's twin until the Ultimate slot has an ability.
                         KeyCode::KeyR | KeyCode::KeyF if grid_key => {
                             r.battle_press(hud::SLOT_FORMATION);
+                        }
+                        // O picks the army's shape for group orders, Shift+O saves
+                        // the selection's own.
+                        KeyCode::KeyO
+                            if down && !event.repeat && !r.input.command && !r.input.alt =>
+                        {
+                            if r.input.shift {
+                                r.save_army_shape();
+                            } else {
+                                r.cycle_army_shape();
+                            }
                         }
                         KeyCode::KeyZ if grid_key => r.battle_press(hud::SLOT_BRACE),
                         KeyCode::KeyV if grid_key => r.battle_press(hud::SLOT_FALL_BACK),
@@ -2438,6 +2455,59 @@ impl Running {
             ""
         };
         self.say(format!("{}{note}: {}", next.name(), formation_hint(next)));
+    }
+
+    /// Keep the army shapes and the choice in the player's folder.
+    fn keep_army_shapes(&self) {
+        if let Some(path) = army_shape::shapes_path() {
+            self.army_shapes.store(&path);
+        }
+    }
+
+    /// Say which army shape group orders take now.
+    fn say_army_shape(&mut self) {
+        let choice = self.army_shapes.choice;
+        self.ui_sound(sounds::UiSound::Select);
+        self.say(format!("Army shape: {}. {}", choice.label(), choice.tip()));
+    }
+
+    /// O: the next army shape, the presets and then your own.
+    fn cycle_army_shape(&mut self) {
+        self.army_shapes.choice = self.army_shapes.next();
+        self.keep_army_shapes();
+        self.say_army_shape();
+    }
+
+    /// A chip of the selection panel: take the army shape it names.
+    fn pick_army_shape(&mut self, chip: usize) {
+        if self.watching.is_some() {
+            return;
+        }
+        if let Some(&choice) = self.army_shapes.chips().get(chip) {
+            self.army_shapes.choice = choice;
+            self.keep_army_shapes();
+            self.say_army_shape();
+        }
+    }
+
+    /// Shift+O: keep the shape the selected regiments stand in, as one of
+    /// your own, and use it from now on.
+    fn save_army_shape(&mut self) {
+        self.fill_group();
+        let Some(shape) = Shape::capture(&self.group) else {
+            self.say("Select two or more regiments to save their shape.".into());
+            return;
+        };
+        let full = self.army_shapes.saved.iter().all(Option::is_some);
+        self.army_shapes.save(shape);
+        self.keep_army_shapes();
+        self.ui_sound(sounds::UiSound::Select);
+        let name = self.army_shapes.name();
+        self.say(if full {
+            format!("Saved as {name}, in place of the old one.")
+        } else {
+            format!("Saved as {name}.")
+        });
     }
 
     /// Z: set the selection's spears and pikes against a charge, or, if
@@ -5367,6 +5437,7 @@ impl Running {
             ));
             minds(&mut lines);
             lines.push(self.formation_line());
+            lines.push(self.army_shape_line());
             return lines;
         }
         let mode = if self.battle.is_some() {
@@ -5406,6 +5477,7 @@ impl Running {
             ));
         }
         lines.push(self.formation_line());
+        lines.push(self.army_shape_line());
         if self.battle.is_none() {
             lines.push(if self.reveal_all {
                 "Woods: Shift+V hides what this side can't see (now showing everything)".to_string()
@@ -5435,6 +5507,13 @@ impl Running {
             Some(Some(f)) => format!("Selection stands in {}. R: next formation", f.name()),
             Some(None) => "Selection stands in mixed formations. R: next formation".into(),
         }
+    }
+
+    fn army_shape_line(&self) -> String {
+        format!(
+            "Army shape for group orders: {}. O: next, Shift+O: save the selection's",
+            self.army_shapes.name()
+        )
     }
 
     /// " · paused" or " · speed 0.25x"; empty at normal speed.
