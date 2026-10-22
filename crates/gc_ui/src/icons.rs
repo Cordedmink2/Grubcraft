@@ -9,7 +9,7 @@ use crate::draw::{Color, DrawList, Rect};
 pub const ICON_CELLS: i32 = 12;
 
 /// Every glyph the HUD draws.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Deserialize)]
 pub enum Icon {
     /// Draws nothing.
     #[default]
@@ -41,11 +41,13 @@ pub enum Icon {
     Alarm,
     /// An open book: the Guide.
     Book,
+    /// A lower-case i: tips for the selected building.
+    Info,
 }
 
 impl Icon {
     /// Every icon that draws something.
-    pub const ALL: [Icon; 25] = [
+    pub const ALL: [Icon; 26] = [
         Icon::Move,
         Icon::Attack,
         Icon::Hold,
@@ -71,6 +73,7 @@ impl Icon {
         Icon::Flag,
         Icon::Alarm,
         Icon::Book,
+        Icon::Info,
     ];
 
     /// The pattern, top row first; `#` is ink.
@@ -425,6 +428,20 @@ impl Icon {
                 "############",
                 "............",
                 ".....##.....",
+                "............",
+            ],
+            Icon::Info => [
+                "....####....",
+                "....####....",
+                "............",
+                "...#####....",
+                "...#####....",
+                "....####....",
+                "....####....",
+                "....####....",
+                "....####....",
+                "...######...",
+                "...######...",
                 "............",
             ],
         }

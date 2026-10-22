@@ -14,7 +14,7 @@
 //! north (smaller z) at the top of the minimap.
 
 use crate::alerts::{self, AlertData};
-use crate::conquest::{self, Block, NodeDot, StructurePanel, TopBar};
+use crate::conquest::{self, Block, NodeDot, StructurePanel, TipsCard, TopBar};
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, mix, text_width, wrap};
 use crate::hero::{self, HeroPanel};
 use crate::icons::{self, Icon};
@@ -329,6 +329,9 @@ pub struct HudData<'a> {
     pub powers: &'a [PowerButton<'a>],
     /// The Place panel and its top-bar button (Sandbox); `None` hides both.
     pub picker: Option<PlacePicker<'a>>,
+    /// Tips on the building being placed or selected (Conquest); `None`
+    /// draws nothing.
+    pub tips: Option<TipsCard<'a>>,
 }
 
 /// The deployment phase, as this player sees it.
@@ -353,6 +356,7 @@ pub(crate) const WIDGET_GUIDE: u32 = 9 << 24;
 pub(crate) const WIDGET_PLACE: u32 = 10 << 24;
 pub(crate) const WIDGET_PLACE_ROW: u32 = 11 << 24;
 pub(crate) const WIDGET_PLACE_SIDE: u32 = 12 << 24;
+pub(crate) const WIDGET_TIPS: u32 = 13 << 24;
 
 /// What the mouse did since the last frame, in UI pixels.
 #[derive(Clone, Copy, Debug, Default)]
@@ -410,6 +414,9 @@ pub enum HudEvent {
     /// A faction chip of the Place panel's roster tab was clicked (its place
     /// in [`PlacePicker::chips`]).
     PlaceFaction(usize),
+    /// The info button of a selected building (or its tips card's close
+    /// box) was clicked: show or hide the building's tips.
+    ToggleTips,
 }
 
 #[derive(Default)]
@@ -568,6 +575,18 @@ impl Hud {
                 text: t.text,
                 note: String::new(),
             });
+        }
+        if let Some(card) = &data.tips {
+            conquest::draw_tips(
+                draw,
+                &mut self.press,
+                layout.field,
+                layout.tray,
+                input,
+                card,
+                &mut self.over,
+                events,
+            );
         }
         if let Some(scroll) = &data.help {
             let top = if data.powers.is_empty() { 8 } else { 54 };
@@ -1559,6 +1578,7 @@ mod tests {
         blocks: &'a [Block],
         powers: &'a [PowerButton<'a>],
         picker: Option<PlacePicker<'a>>,
+        tips: Option<TipsCard<'a>>,
     }
 
     fn run(
@@ -1610,6 +1630,7 @@ mod tests {
             structure: extras.structure,
             powers: extras.powers,
             picker: extras.picker,
+            tips: extras.tips,
         };
         let mut draw = DrawList::default();
         let mut events = Vec::new();
@@ -1704,6 +1725,7 @@ mod tests {
                 structure: None,
                 powers: &[],
                 picker: None,
+                tips: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             Hud::default().frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -1753,6 +1775,7 @@ mod tests {
                 structure: None,
                 powers: &[],
                 picker: None,
+                tips: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             hud.frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -1832,6 +1855,7 @@ mod tests {
             structure: None,
             powers: &[],
             picker: None,
+            tips: None,
         };
         let l = HudLayout::new(SCREEN);
         let over_panel = (30, l.bar.y - 40);
@@ -2273,6 +2297,7 @@ mod tests {
                     structure: None,
                     powers: &[],
                     picker: None,
+                    tips: None,
                 };
                 let input = HudInput {
                     // The last button, in the bar's bottom-right corner.
@@ -2332,6 +2357,7 @@ mod tests {
                 structure: None,
                 powers: &[],
                 picker: None,
+                tips: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             hud.frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);
@@ -2400,6 +2426,7 @@ mod tests {
             structure: None,
             powers: &[],
             picker: None,
+            tips: None,
         };
         let screen = (1280, 720);
         let (mut draw, mut events) = (DrawList::default(), Vec::new());
@@ -2454,6 +2481,7 @@ mod tests {
             structure: None,
             powers: &[],
             picker: None,
+            tips: None,
         };
         let (mut draw, mut events) = (DrawList::default(), Vec::new());
         Hud::default().frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);
@@ -2580,6 +2608,7 @@ mod tests {
                 rooted: None,
                 powered: None,
                 tuning: None,
+                tips_open: None,
             }),
             ..Extras::default()
         }

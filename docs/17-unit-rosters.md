@@ -579,6 +579,7 @@ The in-game Guide ([08 · UI/UX](08-ui-ux.md#guide)) shows the numbers of this f
             name: "Clan Hall",            // as in the roster
             summary: "...",               // at most 350 characters: role, when to build it, what beats it
             notes: [("Castle Keep", "...")],   // benefit line for each tier upgrade, by the building it makes
+            tips: [(icon: Grub, text: "...")], // 2 or 3 how-to-use tips, one sentence of at most 100 characters each
         ),
     ],
     units: [                              // regiments, summoned regiments and heroes
@@ -588,6 +589,7 @@ The in-game Guide ([08 · UI/UX](08-ui-ux.md#guide)) shows the numbers of this f
 ```
 
 - **Buildings.** `notes` holds a benefit line for the main building's tier upgrade (keyed by the upgrade's name) and, for a building whose rules text promises research, a `"Research"` note saying it is not designed yet. Everything else on a building's Upgrades tab is computed: the units it trains (their `tagline` is the benefit line), the heroes it hires, and for the Brood's tech building the evolutions.
+- **Tips.** Every building has two or three `tips`: an `icon` (one of the HUD's pixel icons, by its `gc_ui::Icon` name, e.g. Grub, Marrow, Supply, Hammer, Heart, Flag, Alarm, Sword, Spear, Bow, Hold, Formation, Move, Attack, Skill, Charge, Brace, Run, Book) and a `text` that says succinctly how to use the building to your advantage (where to put it, what to pair it with, what to watch for). They are second person, imperative and printable ASCII; the game shows them while a building is being placed, behind the info button on a selected building and on its Guide card ([08 · UI/UX](08-ui-ux.md#guide)). A test fails a building with fewer than two or more than three tips, or a tip over 100 characters.
 - **Units.** `tagline` is the one-line benefit shown wherever the unit appears as something a building trains, hires or evolves into. A unit's own Upgrades tab lists its evolutions and its roster abilities (the roster's `effect` is the benefit line).
 - **Class counters.** `classes.ron` holds the damage multipliers of [Classes and counters](#classes-and-counters) as `(attacker, target, multiplier)` rows. A troop's "Strong against" is every class it deals more than x1.0 to, and its "Weak against" every class that deals it more than x1.0 or that it deals less than x1.0 to. Heroes take and deal x1.0.
 - **Rules, checked by `guide_data` tests.** Every building, unit and hero in the rosters has exactly one entry, and every entry names something in the roster. Summaries are at most 350 characters, taglines at most 80, text is printable ASCII (the font draws nothing else) with no stray spaces. Every tier upgrade has a note, and no note names something that does not exist. Adding a roster entry without prose fails `cargo test -p gc_game guide_data`.

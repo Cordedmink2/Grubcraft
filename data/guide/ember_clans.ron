@@ -16,6 +16,11 @@
             notes: [
                 ("Castle Keep", "The gate to the mid game: samurai, cavalry, rocket carts, War Kites and a second hero. It costs Marrow, so claim a Marrow vein first."),
             ],
+            tips: [
+                (icon: Grub, text: "Queue Hands early and put them on the nearest seeps, since the hall takes Grub and Marrow."),
+                (icon: Marrow, text: "Claim a Marrow vein early, since the Castle Keep upgrade costs Marrow on top of Grub."),
+                (icon: Alarm, text: "Keep spears close to the hall, since rams hit Fortified halls for triple damage."),
+            ],
         ),
         (
             name: "Castle Keep",
@@ -23,21 +28,41 @@
             notes: [
                 ("Daimyo's Citadel", "The late game: the Oni-Bound monster, the third hero and the top upgrades (not designed yet). Expensive, so upgrade when you hold a second base."),
             ],
+            tips: [
+                (icon: Hammer, text: "Upgrade once you can pay 300 Grub and 100 Marrow; the hall keeps working during the upgrade."),
+                (icon: Supply, text: "Upgrade before supply caps your army, since the Keep adds more supply than the Hall."),
+                (icon: Sword, text: "Once the Keep stands, queue Katana Samurai at the Dojo as your shock core."),
+            ],
         ),
         (
             name: "Daimyo's Citadel",
             summary: "The final tier of the main building. It raises the supply cap again, lets the Ancestor Shrine bind the Oni-Bound and opens the third hero slot. Nothing is left to upgrade, so spend on armies and defence from here.",
             notes: [],
+            tips: [
+                (icon: Hammer, text: "Upgrade only when you hold a second base, since it costs 600 Grub and 250 Marrow."),
+                (icon: Hold, text: "Once it stands, your Ancestor Shrine can bind the Oni-Bound and a third hero slot opens."),
+                (icon: Sword, text: "Spend Grub on armies and defence from here, since no main-building upgrade is left."),
+            ],
         ),
         (
             name: "Outpost Hall",
             summary: "A cheaper hall for expansions: a drop-off for Grub and Marrow and a reinforcement point beside a far seep or vein. It trains nothing and cannot be upgraded, so it is a forward base rather than a second home. Build it when home seeps run low or to claim Marrow.",
             notes: [],
+            tips: [
+                (icon: Flag, text: "Place it beside a far seep or Marrow vein to make a forward drop-off and reinforcement point."),
+                (icon: Grub, text: "Build it once home seeps run low; it is cheaper than a Clan Hall and takes Grub and Marrow."),
+                (icon: Alarm, text: "Screen it with spears, since it trains nothing and cannot be upgraded."),
+            ],
         ),
         (
             name: "Farmstead",
             summary: "Housing: every regiment uses supply, and each Farmstead raises the cap. Cheap and quick to raise, so build one before you hit the cap, not after, and keep them away from the front where raiders will burn them.",
             notes: [],
+            tips: [
+                (icon: Supply, text: "Raise one before you hit the supply cap, since each Farmstead adds 10 supply."),
+                (icon: Alarm, text: "Keep Farmsteads back from the front, since raiders will burn them."),
+                (icon: Hammer, text: "Raise several at once from behind the hall, since each costs 80 Grub and goes up quickly."),
+            ],
         ),
         (
             name: "Granary",
@@ -45,31 +70,61 @@
             notes: [
                 ("Research", "Economy upgrades are planned for the Granary. No research, costs or times are designed or built yet, so nothing can be bought here today."),
             ],
+            tips: [
+                (icon: Grub, text: "Put one beside each far seep so Hands walk less on every trip."),
+                (icon: Marrow, text: "It takes Grub only, so send Marrow to a Clan Hall or Outpost Hall instead."),
+                (icon: Book, text: "Ignore its research for now, since no economy upgrades are designed or built yet."),
+            ],
         ),
         (
             name: "Dojo",
             summary: "The infantry barracks: Yari spearmen and Yumi archers at tier 1, Katana Samurai at tier 2. Regiments reinforce beside it, so raise it near the front. It is your first military building and the one you will build most; without it you have no army.",
             notes: [],
+            tips: [
+                (icon: Flag, text: "Place it near the front, since regiments reinforce beside it and you will build it most."),
+                (icon: Spear, text: "Train Yari spears first to anchor the line, with Yumi archers kept behind them."),
+                (icon: Sword, text: "Add Katana Samurai once the Castle Keep stands, since they need Marrow as well."),
+            ],
         ),
         (
             name: "Stables",
             summary: "Trains Mounted Samurai (shock cavalry) and Yabusame Riders (horse archers). Tier 2 and needs Marrow. Regiments reinforce beside it. Cavalry ride down archers, artillery and routing troops; keep spears nearby for the enemy's own horse.",
             notes: [],
+            tips: [
+                (icon: Spear, text: "Keep spear regiments nearby, since the enemy's own horse will come for your cavalry."),
+                (icon: Charge, text: "Send Mounted Samurai at archers, artillery and routing troops, not into braced spears."),
+                (icon: Marrow, text: "Claim Marrow first, since the Stables and the cavalry they train both cost Marrow."),
+            ],
         ),
         (
             name: "Ember Workshop",
             summary: "Builds Battering Rams at tier 1 and Ember Rocket Carts at tier 2, so it is your only siege and artillery. Raise one before you attack a base: rams are how you break Fortified halls, towers and walls.",
             notes: [],
+            tips: [
+                (icon: Hammer, text: "Build one or two rams before you assault a base; they break Fortified halls, towers and walls."),
+                (icon: Spear, text: "Escort rams with spears, since rams cannot fight and cavalry or heavy infantry catch them."),
+                (icon: Alarm, text: "Keep rocket carts behind a spear line, since their salvos can hit your own troops."),
+            ],
         ),
         (
             name: "Kite Loft",
             summary: "Builds War Kites, the Clans' only flyers: fast scouts that see far and set structures burning. Tier 2 and needs Marrow. Build one to scout, to hunt workers and artillery, or to burn walls out from under a defender.",
             notes: [],
+            tips: [
+                (icon: Bow, text: "Scout with War Kites, which see 18 tiles; only archers and other flyers can answer them."),
+                (icon: Marrow, text: "Save Marrow for it, since the Kite Loft and each War Kite both cost Marrow."),
+                (icon: Alarm, text: "Use kites to hunt workers and artillery, or to set walls burning under a defender."),
+            ],
         ),
         (
             name: "Ancestor Shrine",
             summary: "Hires and revives heroes and holds the Honor Edicts; each finished Shrine earns a point of Honor every 30 seconds. Build it early, since heroes lead your army and Honor is the Clans' faction power. At tier 3 it binds the Oni-Bound.",
             notes: [],
+            tips: [
+                (icon: Heart, text: "Build it early and revive fallen heroes here, since heroes lead your army."),
+                (icon: Flag, text: "Each finished Shrine earns Honor every 30 seconds, so a second Shrine adds to your Honor."),
+                (icon: Sword, text: "Save Honor for a decisive fight, since Spectral Samurai fade after 60 seconds."),
+            ],
         ),
         (
             name: "Forge",
@@ -77,21 +132,40 @@
             notes: [
                 ("Research", "Weapon and armour upgrades are planned for the Forge. No research, costs or times are designed or built yet, so nothing can be bought here today."),
             ],
+            tips: [
+                (icon: Book, text: "Build it after your first military building, but expect nothing to buy there until research arrives."),
+                (icon: Grub, text: "Spend early Grub on Hands and the Dojo instead, since the Forge does nothing you can buy yet."),
+            ],
         ),
         (
             name: "Watchtower",
             summary: "Two archers that shoot ground and air. A cheap deterrent for seeps and approaches: it will not stop an army, but it punishes lone raiders and flyers. It is Fortified, so rams and fire still beat it.",
             notes: [],
+            tips: [
+                (icon: Alarm, text: "Place it at seeps and approaches to punish lone raiders and flyers, since it will not stop an army."),
+                (icon: Spear, text: "Guard it with spears, since rams and Fire Arrows still beat it."),
+                (icon: Bow, text: "Count on it to shoot down War Kites and flyers as well as ground troops."),
+            ],
         ),
         (
             name: "Palisade",
             summary: "One wall segment that blocks movement. Cheap and quick: close a choke point or screen archers. Fire Arrows burn it and rams break it, so walls buy time rather than stop a siege.",
             notes: [],
+            tips: [
+                (icon: Alarm, text: "Close a choke point or screen archers with it, since it is cheap and quick to raise."),
+                (icon: Hammer, text: "Expect walls only to buy time: Fire Arrows burn them and rams break them."),
+                (icon: Move, text: "Put a Gate in any wall line your own army must pass, since a Palisade blocks movement."),
+            ],
         ),
         (
             name: "Gate",
             summary: "A wall segment that opens for your own and allied regiments. Put one in each wall line so your army can march out. Enemies must break it down like any wall.",
             notes: [],
+            tips: [
+                (icon: Move, text: "Put one in each wall line so your army can march out."),
+                (icon: Flag, text: "Place gates on the routes your army uses, since allied regiments can pass through them too."),
+                (icon: Alarm, text: "Expect enemies to break a Gate down like any wall, so guard the spot with spears."),
+            ],
         ),
     ],
     units: [

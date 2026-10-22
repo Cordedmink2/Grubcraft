@@ -18,6 +18,7 @@
 //! ([`Guide::wheel`]).
 
 use crate::draw::{CELL_W, Rect, fit, wrap};
+use crate::icons::Icon;
 use crate::ui::{ButtonStyle, Press, Ui, theme};
 
 /// Everything the Guide shows, one [`FactionGuide`] per faction in the
@@ -46,6 +47,8 @@ pub struct GuideEntry {
     pub tag: String,
     /// The short paragraph on its role and when to use it.
     pub summary: String,
+    /// Succinct tips on using a building: a picture and a sentence each.
+    pub tips: Vec<(Icon, String)>,
     /// (label, value) rows of real numbers.
     pub facts: Vec<(String, String)>,
     /// (label, text) rows of links to other entries: "Trains", "Weak against".
@@ -75,15 +78,18 @@ pub struct GuideUpgrade {
 pub enum GuideTab {
     Buildings,
     Troops,
+    /// A short illustrated page on getting going; it has no list or card.
+    QuickStart,
 }
 
 impl GuideTab {
-    pub const ALL: [GuideTab; 2] = [GuideTab::Buildings, GuideTab::Troops];
+    pub const ALL: [GuideTab; 3] = [GuideTab::QuickStart, GuideTab::Buildings, GuideTab::Troops];
 
     pub fn name(self) -> &'static str {
         match self {
             GuideTab::Buildings => "Buildings",
             GuideTab::Troops => "Troops",
+            GuideTab::QuickStart => "Quick Start",
         }
     }
 
@@ -132,7 +138,7 @@ const SCROLLBAR_W: i32 = 8;
 struct Layout {
     panel: Rect,
     close: Rect,
-    tabs: [Rect; 2],
+    tabs: [Rect; 3],
     factions: [Rect; MAX_FACTIONS],
     list: Rect,
     card: Rect,
@@ -149,12 +155,9 @@ fn layout(screen: (i32, i32)) -> Layout {
     let right = panel.right() - 24;
     let close = Rect::new(right - 96, panel.y + 12, 96, 30);
     let row_y = panel.y + 50;
-    let tab_w = 124;
-    let tabs = [
-        Rect::new(x0, row_y, tab_w, 34),
-        Rect::new(x0 + tab_w + 6, row_y, tab_w, 34),
-    ];
-    let fx = x0 + 2 * tab_w + 6 + 30;
+    let tab_w = 112;
+    let tabs = std::array::from_fn(|i| Rect::new(x0 + i as i32 * (tab_w + 6), row_y, tab_w, 34));
+    let fx = x0 + 3 * tab_w + 2 * 6 + 24;
     let fw = ((right - fx - 3 * 6) / MAX_FACTIONS as i32).clamp(60, 170);
     let factions = std::array::from_fn(|i| Rect::new(fx + i as i32 * (fw + 6), row_y, fw, 34));
     let top = row_y + 34 + 12;
@@ -200,8 +203,8 @@ pub struct Guide {
     tab: GuideTab,
     faction: usize,
     /// Selected entry and first visible list row, for each tab and faction.
-    selected: [[usize; MAX_FACTIONS]; 2],
-    top: [[usize; MAX_FACTIONS]; 2],
+    selected: [[usize; MAX_FACTIONS]; 3],
+    top: [[usize; MAX_FACTIONS]; 3],
     card: CardTab,
     upgrade: usize,
     /// First visible line of the card's text.
@@ -220,8 +223,8 @@ impl Guide {
             data,
             tab: GuideTab::Buildings,
             faction: 0,
-            selected: [[0; MAX_FACTIONS]; 2],
-            top: [[0; MAX_FACTIONS]; 2],
+            selected: [[0; MAX_FACTIONS]; 3],
+            top: [[0; MAX_FACTIONS]; 3],
             card: CardTab::Overview,
             upgrade: 0,
             scroll: 0,
@@ -272,6 +275,7 @@ impl Guide {
             Some(f) => match self.tab {
                 GuideTab::Buildings => &f.buildings,
                 GuideTab::Troops => &f.troops,
+                GuideTab::QuickStart => &[],
             },
             None => &[],
         }
@@ -339,6 +343,7 @@ impl Guide {
         let list = match tab {
             GuideTab::Buildings => &f.buildings,
             GuideTab::Troops => &f.troops,
+            GuideTab::QuickStart => return false,
         };
         let Some(at) = list.iter().position(|e| e.name == name) else {
             return false;
@@ -399,14 +404,17 @@ impl Guide {
         }
 
         // Keys: Up and Down walk the list, Left and Right the factions.
-        if ui.input.up {
-            self.step(-1);
-        } else if ui.input.down {
-            self.step(1);
-        } else if ui.input.left {
-            self.step_faction(-1);
-        } else if ui.input.right {
-            self.step_faction(1);
+        let quick = self.tab == GuideTab::QuickStart;
+        if !quick {
+            if ui.input.up {
+                self.step(-1);
+            } else if ui.input.down {
+                self.step(1);
+            } else if ui.input.left {
+                self.step_faction(-1);
+            } else if ui.input.right {
+                self.step_faction(1);
+            }
         }
 
         ui.draw
@@ -425,15 +433,21 @@ impl Guide {
             }
         }
         let names: Vec<String> = self.data.factions.iter().map(|f| f.name.clone()).collect();
-        for (i, r) in l.factions.iter().enumerate().take(names.len()) {
-            if ui.button(*r, &names[i], style_for(self.faction == i), true) {
-                self.select_faction(i);
+        if quick {
+            // The faction buttons have nothing to pick on this page.
+            ui.reserve_ids(MAX_FACTIONS);
+            let area = Rect::new(l.list.x, l.list.y, l.card.right() - l.list.x, l.list.h);
+            crate::quick_start::draw(&mut ui.draw, area);
+        } else {
+            for (i, r) in l.factions.iter().enumerate().take(names.len()) {
+                if ui.button(*r, &names[i], style_for(self.faction == i), true) {
+                    self.select_faction(i);
+                }
             }
+            ui.reserve_ids(MAX_FACTIONS.saturating_sub(names.len()));
+            self.list(ui, l.list);
+            self.card_panel(ui, &l);
         }
-        ui.reserve_ids(MAX_FACTIONS.saturating_sub(names.len()));
-
-        self.list(ui, l.list);
-        self.card_panel(ui, &l);
 
         ui.label(
             l.panel.x + 24,
@@ -492,6 +506,7 @@ impl Guide {
             let e = match self.tab {
                 GuideTab::Buildings => &e.buildings[i],
                 GuideTab::Troops => &e.troops[i],
+                GuideTab::QuickStart => return,
             };
             let hot = row.contains(mouse.0, mouse.1);
             let is_sel = i == selected;
@@ -700,6 +715,19 @@ fn overview_lines(e: &GuideEntry, chars: usize) -> Vec<Line> {
     for t in wrap(&e.summary, chars) {
         lines.push(Line::Text(theme::INK, t));
     }
+    if !e.tips.is_empty() {
+        lines.push(Line::Blank);
+        lines.push(Line::Heading("Tips".into()));
+        for (_, tip) in &e.tips {
+            for (k, t) in wrap(tip, chars.saturating_sub(2).max(8))
+                .into_iter()
+                .enumerate()
+            {
+                let bullet = if k == 0 { "- " } else { "  " };
+                lines.push(Line::Text(theme::INK, format!("{bullet}{t}")));
+            }
+        }
+    }
     if !e.facts.is_empty() {
         lines.push(Line::Blank);
         lines.push(Line::Heading("Numbers".into()));
@@ -795,6 +823,7 @@ mod tests {
             tag: "T2".into(),
             summary: "It does a useful thing at a useful time, and costs a fair amount for it. "
                 .repeat(8),
+            tips: vec![(Icon::Grub, "Build it beside a seep.".into())],
             facts: (0..24)
                 .map(|k| (format!("Fact {k}"), format!("value {k}")))
                 .collect(),
@@ -860,6 +889,22 @@ mod tests {
     }
 
     #[test]
+    fn the_quick_start_tab_draws_its_page_and_ignores_the_list_keys() {
+        let mut g = Guide::new(data());
+        let mut ui = Ui::new();
+        idle(&mut g, &mut ui);
+        let l = layout(SCREEN);
+        click(&mut g, &mut ui, centre(l.tabs[0]));
+        assert_eq!(g.tab(), GuideTab::QuickStart);
+        assert!(g.selected().is_none());
+        // Right would change faction on the other tabs; here it does nothing.
+        key(&mut g, &mut ui, |i| i.right = true);
+        assert_eq!(g.faction(), 0);
+        assert!(!g.show(GuideTab::QuickStart, 0, "Thing 0-0"));
+        assert_eq!(g.list_top(), 0);
+    }
+
+    #[test]
     fn it_opens_on_the_first_factions_first_building() {
         let mut g = Guide::new(data());
         let mut ui = Ui::new();
@@ -876,13 +921,13 @@ mod tests {
         let mut ui = Ui::new();
         idle(&mut g, &mut ui);
         let l = layout(SCREEN);
-        click(&mut g, &mut ui, centre(l.tabs[1]));
+        click(&mut g, &mut ui, centre(l.tabs[2]));
         assert_eq!(g.tab(), GuideTab::Troops);
         assert_eq!(g.selected().unwrap().name, "Thing 0-100");
         click(&mut g, &mut ui, centre(l.factions[2]));
         assert_eq!(g.faction(), 2);
         assert_eq!(g.selected().unwrap().name, "Thing 2-100");
-        click(&mut g, &mut ui, centre(l.tabs[0]));
+        click(&mut g, &mut ui, centre(l.tabs[1]));
         assert_eq!(g.selected().unwrap().name, "Thing 2-0");
         click(&mut g, &mut ui, centre(l.factions[3]));
         click(&mut g, &mut ui, centre(l.factions[0]));

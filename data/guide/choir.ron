@@ -8,6 +8,11 @@
             notes: [
                 ("Cathedral", "The mid game: Harmonic Walkers, Glass Striders, the Skyglass Loom's Skyglass, the Conductor and a second hero. It costs Marrow, so build a Siphon first."),
             ],
+            tips: [
+                (icon: Grub, text: "Tune nearby seeps with your two starting Resonators first; they are your only early income."),
+                (icon: Marrow, text: "Build a Siphon early so you have the Marrow for the Cathedral upgrade."),
+                (icon: Alarm, text: "Keep it away from the front; it is the only building that trains Tuners and Conductors."),
+            ],
         ),
         (
             name: "Cathedral",
@@ -15,26 +20,51 @@
             notes: [
                 ("Grand Organ", "The late game: the Monolith monster, the third hero and the top upgrades (not designed yet). Expensive, so upgrade once several chords pay your way."),
             ],
+            tips: [
+                (icon: Marrow, text: "Build a Siphon on a Marrow vein first, because the upgrade costs 100 Marrow."),
+                (icon: Sword, text: "Queue Harmonic Walkers and Glass Striders at the Forge as soon as the upgrade finishes."),
+                (icon: Supply, text: "Upgrade before your supply cap holds back your army; it adds 14 to the cap."),
+            ],
         ),
         (
             name: "Grand Organ",
             summary: "The final tier of the main building. It raises the supply cap again, lets the Forge of Facets build the Monolith and opens the third hero slot. Nothing is left to upgrade, so spend on chords, armies and defence.",
             notes: [],
+            tips: [
+                (icon: Grub, text: "Wait until several chords pay for its 600 Grub and 250 Marrow before you upgrade."),
+                (icon: Attack, text: "Once it finishes, queue the Monolith at the Forge of Facets for slow siege work."),
+                (icon: Alarm, text: "Guard it closely, because the Monolith and the third hero are locked behind it."),
+            ],
         ),
         (
             name: "Resonator",
             summary: "Tunes a seep within 4 tiles to make Grub with no workers, powers buildings within 6 tiles, and links with Resonators within 14 tiles. Three linked Resonators make a chord that speeds the seeps inside it and charges Resonance. Build them in triangles at your seeps.",
             notes: [],
+            tips: [
+                (icon: Grub, text: "Place each Resonator within 4 tiles of a seep so it can tune that seep for Grub."),
+                (icon: Flag, text: "Build three Resonators in a triangle within 14 tiles of each other to form a chord."),
+                (icon: Alarm, text: "Site Resonators so they power Forges and Sanctums within 6 tiles; both need power."),
+            ],
         ),
         (
             name: "Siphon",
             summary: "A Resonator built against a Marrow vein (within 3 tiles): it draws Marrow with no workers, and also links chords and powers buildings. Build one on every Marrow vein you hold; tier-2 buildings and units cost Marrow.",
             notes: [],
+            tips: [
+                (icon: Marrow, text: "Place it within 3 tiles of a Marrow vein; it draws about 50 Marrow a minute with no workers."),
+                (icon: Marrow, text: "Take every Marrow vein you can, since tier-2 buildings, units and heroes all cost Marrow."),
+                (icon: Grub, text: "Like a Resonator, it links chords, so keep it within 14 tiles of your other Resonators."),
+            ],
         ),
         (
             name: "Forge of Facets",
             summary: "Builds every Choir regiment that walks: Shardlings, Prism Lancers, Harmonic Walkers, Glass Striders and the Monolith. Needs power. It is the heart of your army, so raise it inside a powered field as soon as the economy runs.",
             notes: [],
+            tips: [
+                (icon: Hammer, text: "Raise it inside a powered field, since it needs power before it can train any regiment."),
+                (icon: Sword, text: "Train Shardlings as a cheap screen and stand Prism Lancers behind them to split their volleys."),
+                (icon: Marrow, text: "Bank Marrow for Harmonic Walkers and Glass Striders, which both cost Marrow to train here."),
+            ],
         ),
         (
             name: "Harmonics Lab",
@@ -42,21 +72,40 @@
             notes: [
                 ("Research", "Upgrades are planned for the Harmonics Lab. No research, costs or times are designed or built yet, so nothing can be bought here today."),
             ],
+            tips: [
+                (icon: Grub, text: "Skip it for now; no upgrades are built yet, so its 175 Grub is better spent on Resonators."),
+                (icon: Book, text: "Plan a spot inside a powered field now, so it is ready once research is added."),
+            ],
         ),
         (
             name: "Skyglass Loom",
             summary: "Builds Skyglass, the Choir's flyers. Tier 2, needs Marrow and power. Build one to win the air, to hunt artillery and archers, or to counter enemy flyers: Skyglass deal extra damage to air regiments.",
             notes: [],
+            tips: [
+                (icon: Alarm, text: "Build it when the enemy fields flyers, since Skyglass deal 50% more damage to air regiments."),
+                (icon: Marrow, text: "Keep spare Marrow for the Loom and each Skyglass, since both cost Marrow."),
+                (icon: Attack, text: "Send Skyglass after enemy artillery and workers, the targets they are built to raid."),
+            ],
         ),
         (
             name: "Bell Tower",
             summary: "A beam tower that hits ground and air. Every 20 seconds it tolls and silences enemy abilities within 10 tiles for 5 seconds, which shuts down hero spells and unit powers at your gates. Needs power, so keep it inside a field.",
             notes: [],
+            tips: [
+                (icon: Alarm, text: "Place it where enemy heroes will push, since its toll silences their abilities within 10 tiles."),
+                (icon: Charge, text: "Time your charges for right after a toll, while enemy hero spells and unit powers are silenced."),
+                (icon: Hammer, text: "Keep it inside a powered field, since it needs power, and it hits air as well as ground."),
+            ],
         ),
         (
             name: "Sanctum of Echoes",
             summary: "Builds and restores heroes: the Maestro, the Refractor and the Hollow Bell. Needs power. Build it early; the Maestro boosts chords and the others turn fights. Heroes cost Marrow, so keep some in reserve for a replacement.",
             notes: [],
+            tips: [
+                (icon: Heart, text: "Keep spare Marrow in reserve here, because heroes cost Marrow to build or restore."),
+                (icon: Grub, text: "Keep the Maestro near your chords, not the front, so Harmony adds Grub from them."),
+                (icon: Sword, text: "Pair the Refractor with Prism Lancers for damage, and the Hollow Bell for stuns and morale."),
+            ],
         ),
     ],
     units: [

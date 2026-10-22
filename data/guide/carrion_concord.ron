@@ -8,6 +8,11 @@
             notes: [
                 ("Exchange", "The mid game: Gravewardens, Debt Collectors, Lantern Wraiths and a second hero. It costs Marrow, so put Clerks on a vein first."),
             ],
+            tips: [
+                (icon: Marrow, text: "Keep Ledger Clerks on the nearest Marrow vein so each trip back to this building stays short."),
+                (icon: Grub, text: "Send Caravans out from here, since Grub only comes in through trade routes."),
+                (icon: Hammer, text: "Upgrade to the Exchange once Marrow is banked, since that upgrade costs 100 Marrow."),
+            ],
         ),
         (
             name: "Exchange",
@@ -15,51 +20,101 @@
             notes: [
                 ("Grand Bourse", "The late game: the Mausoleum Engine, the Insolvent, the third hero and the top upgrades (not designed yet). Expensive, so upgrade once trade and Tithe fund it."),
             ],
+            tips: [
+                (icon: Hammer, text: "Upgrade while it keeps working, so training and trade do not stop during the upgrade."),
+                (icon: Supply, text: "Upgrade before supply runs short, since this raises your cap from 12 to 22."),
+                (icon: Hammer, text: "Then build the Lantern Spire, which this tier unlocks, for Lantern Wraiths."),
+            ],
         ),
         (
             name: "Grand Bourse",
             summary: "The final tier of the main building. It raises the supply cap again, lets the Ossuary raise the Mausoleum Engine and the Insolvent, and opens the third hero slot. Nothing is left to upgrade, so spend on armies and trade.",
             notes: [],
+            tips: [
+                (icon: Supply, text: "Save for this upgrade before the late army; it raises your supply cap to 32."),
+                (icon: Sword, text: "Then raise the Mausoleum Engine and Insolvent at the Ossuary for your late-game push."),
+                (icon: Sword, text: "Hire your third hero at the Vault of Names now that this tier opens the slot."),
+            ],
         ),
         (
             name: "Waystation",
             summary: "Your own trade post for caravan routes, paying at half rate, and a Marrow drop-off for expansions. Build one far from your Counting House so caravans earn on long routes and Clerks have a short walk home.",
             notes: [],
+            tips: [
+                (icon: Grub, text: "Place it far from your Counting House, since caravan pay grows with route length."),
+                (icon: Marrow, text: "Use it as a Marrow drop-off when you expand, so Clerks walk less on new patches."),
+                (icon: Alarm, text: "Guard the route to it, since a destroyed Caravan drops half its cargo."),
+            ],
         ),
         (
             name: "Tenement",
             summary: "Housing: every regiment uses supply, and each Tenement raises the cap. Cheap and quick to raise, so build one before you hit the cap, and keep them behind the front line.",
             notes: [],
+            tips: [
+                (icon: Supply, text: "Build one before you reach the cap; each adds 10 supply and goes up quickly."),
+                (icon: Alarm, text: "Place them behind your front line, so raiders must get past your army to reach them."),
+                (icon: Grub, text: "Keep a spare Tenement ready as cheap insurance, since each costs only 80 Grub."),
+            ],
         ),
         (
             name: "Reliquary",
             summary: "Every model that dies within 12 tiles, on any side, pays you 1 Tithe. Small, cheap and buildable anywhere you have vision, so plant it beside other people's fights. Your own undead crumble away from Reliquaries, so keep them clear of your army.",
             notes: [],
+            tips: [
+                (icon: Flag, text: "Plant it near fights you can see; every death within 12 tiles pays you Tithe."),
+                (icon: Alarm, text: "Build it on a flank, and keep your undead out of its range, since they crumble nearby."),
+                (icon: Grub, text: "Spend the Tithe it earns on Hire Militia or Raise the Bound for quick help."),
+            ],
         ),
         (
             name: "Ossuary",
             summary: "Raises the undead: Bone Pikes and Gravewardens, and at tier 3 the Mausoleum Engine and the Insolvent. Undead never rout, so this is your steady frontline. Build it first among military buildings; Bone Pikes need no Marrow.",
             notes: [],
+            tips: [
+                (icon: Spear, text: "Open with Bone Pikes, since they cost only Grub and make a steady line from the start."),
+                (icon: Sword, text: "Add Gravewardens as a line anchor later, and screen them from enemy archers and monsters."),
+                (icon: Hammer, text: "Get the Grand Bourse before the Mausoleum Engine or Insolvent, since both need it."),
+            ],
         ),
         (
             name: "Guildhall",
             summary: "Trains your living troops: Crossbow Auditors and Debt Collectors. Living regiments reinforce near it. Build it beside the Ossuary so crossbows shoot over your undead pikes, and so cavalry can punish a stalled enemy.",
             notes: [],
+            tips: [
+                (icon: Heart, text: "Send wounded living regiments back here to reinforce, since they refill near this building."),
+                (icon: Bow, text: "Mass Crossbow Auditors against heavies and cavalry; their bolts add 30% against both."),
+                (icon: Sword, text: "Send Debt Collectors to raid enemy structures, but keep them away from enemy spears."),
+            ],
         ),
         (
             name: "Lantern Spire",
             summary: "Trains Lantern Wraiths, the Concord's flyers. Tier 2 and needs Marrow. Build one to scout, to harass archers and artillery, or to unnerve a line with the Wraiths' Dread Light.",
             notes: [],
+            tips: [
+                (icon: Flag, text: "Send Lantern Wraiths ahead to scout, since they are fast flyers that never rout."),
+                (icon: Bow, text: "Harass archers and artillery with Wraiths, but pull back from enemy archers and flyers."),
+                (icon: Alarm, text: "Fly Wraiths into a stalled line, since Dread Light drains morale from enemies within 8 tiles."),
+            ],
         ),
         (
             name: "Tollgate",
             summary: "Two crossbows that shoot ground and air, and every 4 damage they deal earns you 1 Grub. It is Fortified. Build one at your seeps and gates: it pays for itself while it kills, but it will not stop a real army.",
             notes: [],
+            tips: [
+                (icon: Grub, text: "Build it at seeps and gates where enemies pass, so its shots earn Grub while it fights."),
+                (icon: Alarm, text: "Use it as an early warning and anti-air post, since it shoots both ground and air."),
+                (icon: Hammer, text: "Pair it with a real army, since it earns Grub while it fights but will not hold alone."),
+            ],
         ),
         (
             name: "Vault of Names",
             summary: "Hires and revives heroes: the Magnate, the Undertaker and the Usurer. Build it early; the Magnate pays for itself and the Undertaker multiplies your dead. Heroes cost Marrow, so keep some in reserve for a replacement.",
             notes: [],
+            tips: [
+                (icon: Grub, text: "Hire the Magnate for economy; Bribe pays Grub to pacify creep camps nearby."),
+                (icon: Sword, text: "Hire the Undertaker to fight where bodies fall, since it raises Bound Dead from corpses."),
+                (icon: Heart, text: "Keep Marrow in reserve for a replacement hero, since heroes cost Marrow here."),
+            ],
         ),
     ],
     units: [
