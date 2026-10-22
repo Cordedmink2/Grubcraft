@@ -1168,7 +1168,7 @@ impl<N: Network> Menu<N> {
         let mut army = self.army_draft.take().unwrap_or_else(|| me.army.clone());
         let k = (ui.screen.1 as f32 / 720.0).clamp(0.72, 1.0);
         let sp = |n: i32| (n as f32 * k).round() as i32;
-        let panel = centered(ui.screen, 640, sp(560));
+        let panel = centered(ui.screen, 900, sp(600));
         ui.panel(panel);
         ui.header(
             panel,
@@ -1183,21 +1183,29 @@ impl<N: Network> Menu<N> {
             ),
         );
 
-        // One row per regiment type of your faction: cost, and how many.
+        // One row per regiment type of your faction (in two columns): cost,
+        // and how many. Types that cost nothing are not for Field Battles.
         let spent = army_points(&self.roster, &army);
         let mut changed = false;
-        let row_h = sp(44);
-        let mut y = panel.y + sp(64);
-        for (u, unit) in self.roster.iter().enumerate() {
-            if unit.faction != me.faction {
-                continue;
-            }
-            let row = Rect::new(panel.x + 24, y, panel.w - 48, row_h);
+        let row_h = sp(36);
+        let top = panel.y + sp(64);
+        let col_w = (panel.w - 48 - 16) / 2;
+        let mine: Vec<usize> = (0..self.roster.len())
+            .filter(|&u| self.roster[u].faction == me.faction && self.roster[u].points > 0)
+            .collect();
+        let per_col = mine.len().div_ceil(2);
+        let mut y = top;
+        for (n, &u) in mine.iter().enumerate() {
+            let unit = &self.roster[u];
+            let (col, line) = (n / per_col.max(1), n % per_col.max(1));
+            let row_y = top + line as i32 * (row_h + sp(6));
+            let row = Rect::new(panel.x + 24 + col as i32 * (col_w + 16), row_y, col_w, row_h);
+            y = y.max(row_y + row_h + sp(6));
             ui.draw.rect(row, theme::CLOTH);
             let text_y = row.y + (row.h - 16) / 2;
-            ui.label(row.x + 12, text_y, 1, theme::INK, &fit(&unit.name, 24));
+            ui.label(row.x + 10, text_y, 1, theme::INK, &fit(&unit.name, 20));
             ui.label(
-                row.x + 260,
+                row.x + 200,
                 text_y,
                 1,
                 theme::INK_MUTED,
@@ -1225,7 +1233,6 @@ impl<N: Network> Menu<N> {
                 army.insert(at, u as u16);
                 changed = true;
             }
-            y += row_h + sp(8);
         }
 
         let summary_y = y + sp(8);

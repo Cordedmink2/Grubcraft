@@ -53,6 +53,19 @@ pub fn short_name(faction: Faction) -> &'static str {
     }
 }
 
+/// What `unit` costs in a Field Battle army, from its roster cost: three
+/// points a Grub and six a Marrow, to the nearest 10 (a Yari Ashigaru
+/// regiment is 360). 0 for a troop a Field Battle army can't take: the ones
+/// the sandbox leaves out, and summoned troops (a power calls them, nobody
+/// buys them).
+pub fn field_points(unit: &ConquestUnitRecord) -> u32 {
+    if left_out(unit) || unit.tier == 0 {
+        return 0;
+    }
+    let raw = 3 * (u32::from(unit.cost_grub) + 2 * u32::from(unit.cost_marrow));
+    (raw + 5) / 10 * 10
+}
+
 /// What a troop costs, in a few words: its Grub and Marrow, or that it is
 /// summoned (a power calls it, nobody trains it).
 pub fn cost_text(unit: &ConquestUnitRecord) -> String {
@@ -94,6 +107,29 @@ mod tests {
             ["Hands", "Gnawer", "Tuner", "Ledger Clerk", "Caravan"],
             "left out: the workers and the caravan"
         );
+    }
+
+    /// Every faction can field several troop types in a Field Battle, each
+    /// priced from its roster cost.
+    #[test]
+    fn field_battle_points_come_from_roster_costs() {
+        let data = crate::data::load();
+        let price = |name: &str| {
+            let u = data.conquest_units.iter().find(|u| u.name() == name).unwrap();
+            field_points(u)
+        };
+        assert_eq!(price("Yari Ashigaru"), 360);
+        assert_eq!(price("Katana Samurai"), 720);
+        assert_eq!(price("Hands"), 0, "workers stay home");
+        assert_eq!(price("Spectral Samurai"), 0, "summoned troops can't be bought");
+        for f in Faction::ALL {
+            let n = data
+                .conquest_units
+                .iter()
+                .filter(|u| u.faction() == f && field_points(u) > 0)
+                .count();
+            assert!(n >= 6, "{f:?} fields {n} types");
+        }
     }
 
     /// A flat 128-tile world on the roster table, set up as the sandbox on
