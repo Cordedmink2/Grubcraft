@@ -2490,6 +2490,11 @@ impl Running {
     /// Shift+O: keep the shape the selected regiments stand in, as one of
     /// your own, and use it from now on.
     fn save_army_shape(&mut self) {
+        // A replay's regiments stand where their player put them, not you.
+        if self.watching.is_some() {
+            self.say("That is off while you watch a replay.".into());
+            return;
+        }
         self.fill_group();
         let Some(shape) = Shape::capture(&self.group) else {
             self.say("Select two or more regiments to save their shape.".into());

@@ -564,13 +564,8 @@ fn deep(members: &[GroupMember], frame: &Frame, width: Option<Fx>, spots: &mut V
 /// Square: whoever isn't melee in a block in the middle, the melee facing
 /// out round it on four sides. The target is the square's centre.
 fn square(members: &[GroupMember], frame: &Frame, spots: &mut Vec<Spot>) {
-    let mut melee = of_role(members, frame, Role::Melee);
-    if melee.is_empty() {
-        deep(members, frame, None, spots);
-        return;
-    }
     // The inside, centred on the target: `a` and `b` are its half width
-    // and depth.
+    // and depth. With no melee for walls, that is all there is.
     let inner = [
         ranged_band(members, frame),
         of_role(members, frame, Role::Flanker),
@@ -592,6 +587,10 @@ fn square(members: &[GroupMember], frame: &Frame, spots: &mut Vec<Spot>) {
         a = a.max(s.lateral.abs() + m.width(m.files) / 2);
     }
     let b = SQUARE_GAP.max(rear / 2);
+    let mut melee = of_role(members, frame, Role::Melee);
+    if melee.is_empty() {
+        return;
+    }
 
     // Who takes which wall: [front, back, left, right]. The front-most now
     // take the front, the rear-most the back, the rest the sides.
@@ -682,7 +681,12 @@ fn saved(members: &[GroupMember], frame: &Frame, shape: &Shape, spots: &mut Vec<
     if !rest.is_empty() {
         let rear = spots
             .iter()
-            .map(|s| s.back + members[s.member].depth() / 2)
+            .map(|s| {
+                // Its depth at the slot's frontage, which it re-forms to.
+                let m = &members[s.member];
+                s.back
+                    + formation::block_size(s.files, m.models, m.file_spacing, m.rank_spacing).1 / 2
+            })
             .max()
             .unwrap_or(Fx::ZERO);
         let depth = row_depth(members, &rest);
@@ -1090,6 +1094,42 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_square_without_melee_is_still_centred() {
+        let placed = arrange(
+            &army(&[Ranged, Ranged, Horse, Rear]),
+            order(None),
+            Arrangement::Preset(Preset::Square),
+        );
+        no_overlaps(&placed);
+        let front = placed
+            .iter()
+            .map(|p| p.back - p.along / 2.0)
+            .fold(f64::MAX, f64::min);
+        let rear = placed
+            .iter()
+            .map(|p| p.back + p.along / 2.0)
+            .fold(f64::MIN, f64::max);
+        assert!((front + rear).abs() < 0.01, "{front}..{rear}");
+    }
+
+    #[test]
+    fn the_line_behind_a_saved_shape_clears_reformed_blocks() {
+        // Saved from blocks two files wide (12 deep); applied to blocks
+        // six wide, which re-form to two files and so grow deeper.
+        let mut narrow = army(&[Melee, Melee]);
+        for m in &mut narrow {
+            m.files = 2;
+        }
+        let shape = Shape::capture(&narrow).unwrap();
+        let placed = arrange(
+            &army(&[Melee, Melee, Melee]),
+            order(None),
+            Arrangement::Saved(&shape),
+        );
+        no_overlaps(&placed);
     }
 
     #[test]
