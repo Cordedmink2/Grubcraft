@@ -120,6 +120,7 @@
 //! `--viewer NAME|start` opens the Unit viewer (main menu) on the named unit,
 //! or on the first unit with a model.
 
+mod army_shape;
 mod buildings;
 mod camera;
 mod conquest;
@@ -167,8 +168,9 @@ use gc_render::{
     BoxInstance, FrameParams, Renderer, RendererOptions, SoldierBatch, SoldierInstance, Terrain,
     UiQuad,
 };
+use gc_sim::arrange::Shape;
 use gc_sim::events::Event;
-use gc_sim::formation::{self, GroupMember, GroupOrder};
+use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
     BuildingId, BuildingStats, Capacities, Formation, LOOSE_DEFENCE, MatchSetup, MoraleState,
@@ -629,6 +631,8 @@ struct Running {
     formation_pick: Option<(Vec<RegimentHandle>, Formation, u32)>,
     /// The selection's formation as the panel last showed it.
     shown_formation: Option<Option<Formation>>,
+    /// The shape a group order arranges the selection in, and your saved ones.
+    army_shapes: army_shape::ArmyShapes,
     /// Scratch space for building group orders.
     group: Vec<GroupMember>,
     group_commands: Vec<gc_sim::Command>,
@@ -719,6 +723,9 @@ struct UnitTable {
     points: Vec<u32>,
     /// Each type's soldier model, if it has one (none without art).
     models: Vec<Option<usize>>,
+    /// Each type's place in an arranged army, from its class; empty for the
+    /// Field types, which have none (their stats decide).
+    roles: Vec<gc_sim::arrange::Role>,
 }
 
 impl UnitTable {
@@ -737,6 +744,7 @@ impl UnitTable {
             models: models.map_or_else(Vec::new, |m| {
                 units.iter().map(|u| m.by_name(u.name())).collect()
             }),
+            roles: Vec::new(),
         }
     }
 }
@@ -1134,6 +1142,11 @@ impl App {
             game_data.conquest_units.iter().map(|u| &u.stats),
             models.as_ref(),
         );
+        other_units.roles = game_data
+            .conquest_units
+            .iter()
+            .map(|u| army_shape::role_of(u.class()))
+            .collect();
         // A Field Battle army buys roster troops at points from their cost.
         other_units.points = game_data
             .conquest_units
@@ -1329,6 +1342,10 @@ impl App {
             idle_from: None,
             formation_pick: None,
             shown_formation: None,
+            army_shapes: army_shape::shapes_path()
+                .map_or_else(army_shape::ArmyShapes::default, |p| {
+                    army_shape::ArmyShapes::load(&p)
+                }),
             group: Vec::with_capacity(64),
             group_commands: Vec::with_capacity(64),
             boxed: Vec::with_capacity(64),
@@ -1667,6 +1684,18 @@ impl ApplicationHandler for App {
                         // Otherwise F stays as R's twin until the Ultimate slot has an ability.
                         KeyCode::KeyR | KeyCode::KeyF if grid_key => {
                             r.battle_press(hud::SLOT_FORMATION);
+                        }
+                        // O picks the army's shape for group orders, Shift+O saves
+                        // the selection's own.
+                        KeyCode::KeyO
+                            if down && !event.repeat && !r.input.command && !r.input.alt =>
+                        {
+                            // Shift is part of the key here, so not `grid_key`.
+                            if r.input.shift {
+                                r.save_army_shape();
+                            } else {
+                                r.cycle_army_shape();
+                            }
                         }
                         KeyCode::KeyZ if grid_key => r.battle_press(hud::SLOT_BRACE),
                         KeyCode::KeyV if grid_key => r.battle_press(hud::SLOT_FALL_BACK),
@@ -2055,19 +2084,34 @@ impl Running {
         }
     }
 
-    /// Expand a group order for the current selection into
-    /// `self.group_commands` (one move per regiment).
-    fn plan_order(&mut self, order: GroupOrder) {
+    /// Fill `self.group` with the selection as group orders see it, each
+    /// regiment with its place in an arranged army.
+    fn fill_group(&mut self) {
         let regiments = &self.world.regiments;
         self.selected.retain(|&h| regiments.get(h).is_some());
         self.group.clear();
         for &h in &self.selected {
             let r = self.world.regiments.get(h).unwrap();
-            self.group
-                .push(GroupMember::of(&r, &self.world.units()[r.unit as usize]));
+            let mut m = GroupMember::of(&r, &self.world.units()[r.unit as usize]);
+            if let Some(&role) = self.units.roles.get(r.unit as usize) {
+                m.role = role;
+            }
+            self.group.push(m);
         }
+    }
+
+    /// Expand a group order for the current selection into
+    /// `self.group_commands` (one move per regiment), arranged in the
+    /// chosen army shape.
+    fn plan_order(&mut self, order: GroupOrder) {
+        self.fill_group();
         self.group_commands.clear();
-        formation::group_move(&mut self.group, order, &mut self.group_commands);
+        gc_sim::arrange::arranged_move(
+            &mut self.group,
+            order,
+            self.army_shapes.arrangement(),
+            &mut self.group_commands,
+        );
         battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
     }
 
@@ -2410,6 +2454,62 @@ impl Running {
             ""
         };
         self.say(format!("{}{note}: {}", next.name(), formation_hint(next)));
+    }
+
+    /// Keep the army shapes and the choice in the player's folder;
+    /// `durable` for a newly saved shape.
+    fn keep_army_shapes(&self, durable: bool) {
+        if let Some(path) = army_shape::shapes_path() {
+            self.army_shapes.store(&path, durable);
+        }
+    }
+
+    /// Say which army shape group orders take now.
+    fn say_army_shape(&mut self) {
+        let choice = self.army_shapes.choice;
+        self.ui_sound(sounds::UiSound::Select);
+        self.say(format!("Army shape: {}. {}", choice.label(), choice.tip()));
+    }
+
+    /// O: the next army shape, the presets and then your own.
+    fn cycle_army_shape(&mut self) {
+        self.army_shapes.choice = self.army_shapes.next();
+        self.keep_army_shapes(false);
+        self.say_army_shape();
+    }
+
+    /// A chip of the selection panel: take the army shape it names.
+    fn pick_army_shape(&mut self, chip: usize) {
+        if let Some(&choice) = self.army_shapes.chips().get(chip) {
+            self.army_shapes.choice = choice;
+            self.keep_army_shapes(false);
+            self.say_army_shape();
+        }
+    }
+
+    /// Shift+O: keep the shape the selected regiments stand in, as one of
+    /// your own, and use it from now on.
+    fn save_army_shape(&mut self) {
+        // A replay's regiments stand where their player put them, not you.
+        if self.watching.is_some() {
+            self.say("That is off while you watch a replay.".into());
+            return;
+        }
+        self.fill_group();
+        let Some(shape) = Shape::capture(&self.group) else {
+            self.say("Select two or more regiments to save their shape.".into());
+            return;
+        };
+        let full = self.army_shapes.saved.iter().all(Option::is_some);
+        self.army_shapes.save(shape);
+        self.keep_army_shapes(true);
+        self.ui_sound(sounds::UiSound::Select);
+        let name = self.army_shapes.choice.label();
+        self.say(if full {
+            format!("Saved as {name}, in place of the old one.")
+        } else {
+            format!("Saved as {name}.")
+        });
     }
 
     /// Z: set the selection's spears and pikes against a charge, or, if
@@ -5339,6 +5439,7 @@ impl Running {
             ));
             minds(&mut lines);
             lines.push(self.formation_line());
+            lines.push(self.army_shape_line());
             return lines;
         }
         let mode = if self.battle.is_some() {
@@ -5378,6 +5479,7 @@ impl Running {
             ));
         }
         lines.push(self.formation_line());
+        lines.push(self.army_shape_line());
         if self.battle.is_none() {
             lines.push(if self.reveal_all {
                 "Woods: Shift+V hides what this side can't see (now showing everything)".to_string()
@@ -5407,6 +5509,13 @@ impl Running {
             Some(Some(f)) => format!("Selection stands in {}. R: next formation", f.name()),
             Some(None) => "Selection stands in mixed formations. R: next formation".into(),
         }
+    }
+
+    fn army_shape_line(&self) -> String {
+        format!(
+            "Army shape for group orders: {}. O: next, Shift+O: save the selection's",
+            self.army_shapes.choice.label()
+        )
     }
 
     /// " · paused" or " · speed 0.25x"; empty at normal speed.

@@ -251,6 +251,8 @@ impl Drill {
                 file_spacing: Fx::ZERO,
                 rank_spacing: Fx::ZERO,
                 speed: Fx::ZERO,
+                role: Default::default(),
+                raised_files: 0,
             }; 3];
             let mut count = 0;
             for _ in 0..members.len() {
