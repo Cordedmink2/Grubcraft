@@ -21,6 +21,8 @@ struct SceneryIn {
     @location(5) scale: f32,
     // sRGB multiplier (0.5 leaves the colour as baked); alpha is the wind phase.
     @location(6) tint: vec4<f32>,
+    // What surface detail to paint (`detail` in scenery.rs).
+    @location(7) kind: u32,
 };
 
 struct SceneryOut {
@@ -30,6 +32,15 @@ struct SceneryOut {
     @location(2) color: vec3<f32>,
     // 1 for leaves and blades (what moves in the wind), 0 for rocks and bases.
     @location(3) leafy: f32,
+    // The position and normal in the model's own space (scaled to tiles, not
+    // turned), which the detail textures stick to, the way the model faces,
+    // and its kind.
+    @location(4) local: vec3<f32>,
+    @location(5) normal_local: vec3<f32>,
+    @location(6) facing: vec2<f32>,
+    @location(7) @interpolate(flat) kind: u32,
+    // How green the baked colour is, 0 (bark) to 1 (leaf), before the tint.
+    @location(8) leaf: f32,
 };
 
 // How the wind pushes things at `xz` right now: a unit-ish vector along the
@@ -73,6 +84,11 @@ fn vs_scenery(v: SceneryIn) -> SceneryOut {
     out.normal = normalize(vec3<f32>(n_xz.x, v.normal.y, n_xz.y) + vec3<f32>(0.0, 1e-4, 0.0));
     out.color = min(v.color.rgb * v.tint.rgb * 2.0, vec3<f32>(1.0));
     out.leafy = select(0.0, 1.0, v.color.a > 0.0);
+    out.local = vec3<f32>(v.pos.xyz) * (v.scale / POSITION_SCALE);
+    out.normal_local = v.normal.xyz;
+    out.facing = v.facing;
+    out.kind = v.kind;
+    out.leaf = smoothstep(0.0, 0.06, v.color.g - max(v.color.r, v.color.b) * 0.95);
     return out;
 }
 
@@ -82,13 +98,187 @@ fn vs_scenery_depth(v: SceneryIn) -> @builtin(position) vec4<f32> {
     return g.view_proj * vec4<f32>(place(v), 1.0);
 }
 
+// ---------------------------------------------------------------- detail
+//
+// The models are vertex-coloured, with no texture coordinates, so detail
+// textures are projected from the model's own space (triplanar, as the cliffs
+// are) and stick to it as it turns and scales. As on the ground, a texture's
+// colour relative to its own mean multiplies the baked colour (mostly its
+// light and dark), and its normal map tilts the surface. Stone is the cliffs'
+// Rock035; bark and foliage use the scenery arrays. Nothing is read beyond
+// a kind's reach from the eye, where mips would have flattened it.
+
+const DETAIL_NONE: u32 = 0u;
+const DETAIL_BROADLEAF: u32 = 1u;
+const DETAIL_CONIFER: u32 = 2u;
+const DETAIL_FOLIAGE: u32 = 3u;
+const DETAIL_STONE: u32 = 4u;
+const DETAIL_MOSSY_STONE: u32 = 5u;
+// Tiles from the eye: grass and bushes, stone, trees.
+const FOLIAGE_REACH: f32 = 36.0;
+const STONE_REACH: f32 = 60.0;
+const TREE_REACH: f32 = 70.0;
+// Texture repeats a tile of model space.
+const BARK_SCALE: f32 = 1.4;
+const FOLIAGE_SCALE: f32 = 5.0;
+const STONE_SCALE: f32 = 5.0;
+// Linear mean colours of the albedo maps, to turn them into ratios.
+const BARK_BROAD_MEAN: vec3<f32> = vec3<f32>(0.2285, 0.2208, 0.2026);
+const BARK_CONIFER_MEAN: vec3<f32> = vec3<f32>(0.1994, 0.1389, 0.0858);
+const MOSS_MEAN: vec3<f32> = vec3<f32>(0.0723, 0.1366, 0.0107);
+
+struct Detail {
+    // Multiplies the baked colour.
+    ratio: vec3<f32>,
+    // The normal map's x and y, along the plane's two axes.
+    tilt: vec2<f32>,
+};
+
+fn scenery_sample(layer: i32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, mean: vec3<f32>) -> Detail {
+    var r: Detail;
+    r.ratio = min(textureSampleGrad(scenery_color, rock_sampler, uv, layer, dx, dy).rgb / mean, vec3<f32>(3.0));
+    r.tilt = textureSampleGrad(scenery_normal, rock_sampler, uv, layer, dx, dy).xy * 2.0 - 1.0;
+    return r;
+}
+
+// A layer's colour ratio and the model-space normal tilted by its normal map.
+struct Surface {
+    ratio: vec3<f32>,
+    normal: vec3<f32>,
+};
+
+// A layer of the scenery arrays projected triplanar from model space at
+// `scale` repeats a tile, with `nl` the model-space normal. Rows run down and
+// the map's green runs up, so each plane's second coordinate is negated. `top`
+// (0 to 1) is how much the horizontal plane counts: bark leaves it out (a
+// trunk's ends are tiny).
+fn triplanar(layer: i32, mean: vec3<f32>, scale: f32, top: f32, p: vec3<f32>, nl: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>) -> Surface {
+    var w = vec3<f32>(nl.z * nl.z, nl.x * nl.x, nl.y * nl.y * top) + vec3<f32>(0.02, 0.02, 0.0);
+    w = w / (w.x + w.y + w.z);
+    var ratio = vec3<f32>(0.0);
+    var tilt = vec3<f32>(0.0);
+    var used = 0.0;
+    // Facing +z or -z: the (x, y) plane.
+    if w.x > 0.03 {
+        let d = scenery_sample(layer, vec2<f32>(p.x, -p.y) * scale, vec2<f32>(dpx.x, -dpx.y) * scale, vec2<f32>(dpy.x, -dpy.y) * scale, mean);
+        ratio += d.ratio * w.x;
+        tilt += vec3<f32>(d.tilt.x, d.tilt.y, 0.0) * w.x;
+        used += w.x;
+    }
+    // Facing +x or -x: the (z, y) plane.
+    if w.y > 0.03 {
+        let d = scenery_sample(layer, vec2<f32>(p.z, -p.y) * scale, vec2<f32>(dpx.z, -dpx.y) * scale, vec2<f32>(dpy.z, -dpy.y) * scale, mean);
+        ratio += d.ratio * w.y;
+        tilt += vec3<f32>(0.0, d.tilt.y, d.tilt.x) * w.y;
+        used += w.y;
+    }
+    // Facing up or down: the (x, z) plane.
+    if w.z > 0.03 {
+        let d = scenery_sample(layer, vec2<f32>(p.x, -p.z) * scale, vec2<f32>(dpx.x, -dpx.z) * scale, vec2<f32>(dpy.x, -dpy.z) * scale, mean);
+        ratio += d.ratio * w.z;
+        tilt += vec3<f32>(d.tilt.x, 0.0, d.tilt.y) * w.z;
+        used += w.z;
+    }
+    // Planes that were skipped leave their share out; the rest stand in.
+    var r: Surface;
+    r.ratio = ratio / used;
+    r.normal = normalize(nl + tilt / used);
+    return r;
+}
+
+// The same, from the one plane the surface faces most: a third of the cost,
+// for foliage, where the leaves are small and busy enough to hide the seams.
+fn single_plane(layer: i32, mean: vec3<f32>, scale: f32, p: vec3<f32>, nl: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>) -> Surface {
+    let a = abs(nl);
+    var uv = vec2<f32>(p.x, -p.y);
+    var dx = vec2<f32>(dpx.x, -dpx.y);
+    var dy = vec2<f32>(dpy.x, -dpy.y);
+    var axes = 0;
+    if a.y >= a.x && a.y >= a.z {
+        uv = vec2<f32>(p.x, -p.z);
+        dx = vec2<f32>(dpx.x, -dpx.z);
+        dy = vec2<f32>(dpy.x, -dpy.z);
+        axes = 1;
+    } else if a.x >= a.z {
+        uv = vec2<f32>(p.z, -p.y);
+        dx = vec2<f32>(dpx.z, -dpx.y);
+        dy = vec2<f32>(dpy.z, -dpy.y);
+        axes = 2;
+    }
+    let d = scenery_sample(layer, uv * scale, dx * scale, dy * scale, mean);
+    var tilt = vec3<f32>(d.tilt.x, d.tilt.y, 0.0);
+    if axes == 1 {
+        tilt = vec3<f32>(d.tilt.x, 0.0, d.tilt.y);
+    } else if axes == 2 {
+        tilt = vec3<f32>(0.0, d.tilt.y, d.tilt.x);
+    }
+    var r: Surface;
+    r.ratio = d.ratio;
+    r.normal = normalize(nl + tilt);
+    return r;
+}
+
 @fragment
 fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    // Derivatives first, while control flow is uniform.
+    let dpx = dpdx(in.local);
+    let dpy = dpdy(in.local);
     // A little colour noise by place, so a wood is not one flat green.
     let wobble = vnoise(in.world.xz * 1.7 + vec2<f32>(in.world.y * 0.9, 0.0));
-    let albedo = srgb_to_linear(in.color) * (0.91 + 0.18 * wobble);
+    var albedo = srgb_to_linear(in.color) * (0.91 + 0.18 * wobble);
     // Leaves and blades may be single planes: light them from the side shown.
-    let n = select(-in.normal, in.normal, front);
+    var n = select(-in.normal, in.normal, front);
+
+    var reach = TREE_REACH;
+    if in.kind == DETAIL_FOLIAGE {
+        reach = FOLIAGE_REACH;
+    } else if in.kind >= DETAIL_STONE {
+        reach = STONE_REACH;
+    }
+    if in.kind != DETAIL_NONE && distance(in.world, g.camera_pos.xyz) < reach {
+        let nl = select(-in.normal_local, in.normal_local, front);
+        var detailed = nl;
+        if in.kind >= DETAIL_STONE {
+            let r = rock_surface(in.local * STONE_SCALE, nl, dpx * STONE_SCALE, dpy * STONE_SCALE);
+            albedo = albedo * mix(1.0, rock_pattern(r.albedo), 0.85);
+            detailed = r.n;
+            if in.kind == DETAIL_MOSSY_STONE {
+                // Moss settles on what faces up.
+                let up = detailed.y;
+                let clump = vnoise(in.local.xz * 3.0 + vec2<f32>(in.local.y * 2.0, 4.0));
+                let moss = smoothstep(0.45, 0.8, up) * smoothstep(0.25, 0.7, clump);
+                let moss_tex = scenery_sample(2, in.local.xz * 2.0, dpx.xz * 2.0, dpy.xz * 2.0, MOSS_MEAN);
+                albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.22, 0.34, 0.12)) * moss_tex.ratio, moss * 0.8);
+            }
+        } else {
+            // Trees: bark where the baked colour is not green, leaves where it is.
+            var leaf = 1.0;
+            if in.kind != DETAIL_FOLIAGE {
+                leaf = in.leaf;
+            }
+            var ratio = vec3<f32>(1.0);
+            if leaf > 0.02 {
+                let f = single_plane(2, MOSS_MEAN, FOLIAGE_SCALE, in.local, nl, dpx, dpy);
+                ratio = mix(ratio, muted(f.ratio, 0.5), leaf);
+                detailed = normalize(nl + (f.normal - nl) * 0.8);
+            }
+            if leaf < 0.98 {
+                var b: Surface;
+                if in.kind == DETAIL_CONIFER {
+                    b = triplanar(1, BARK_CONIFER_MEAN, BARK_SCALE, 0.0, in.local, nl, dpx, dpy);
+                } else {
+                    b = triplanar(0, BARK_BROAD_MEAN, BARK_SCALE, 0.0, in.local, nl, dpx, dpy);
+                }
+                ratio = mix(muted(b.ratio, 0.3), ratio, leaf);
+                detailed = normalize(mix(b.normal, detailed, leaf));
+            }
+            albedo = albedo * ratio;
+        }
+        // Back to the world: the model is turned about the vertical.
+        let left = vec2<f32>(in.facing.y, -in.facing.x);
+        let xz = left * detailed.x + in.facing * detailed.z;
+        n = normalize(vec3<f32>(xz.x, detailed.y, xz.y));
+    }
     var c = shade(albedo, n, in.world);
     // Leaves and blades pass light on: with the sun behind them they glow,
     // yellower than they are lit from the front.

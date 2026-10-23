@@ -12,7 +12,6 @@
 
 mod debug_font;
 mod detail;
-mod ground;
 mod look;
 mod overlay;
 mod post;
@@ -20,6 +19,7 @@ mod rock;
 mod scenery;
 mod shadows;
 mod soldiers;
+mod surface;
 
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,7 +65,7 @@ pub use look::{Look, LookPreset};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
-pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance};
+pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
 pub use soldiers::{MAX_SOLDIER_INSTANCES, SoldierBatch, SoldierInstance, TONE_NEUTRAL};
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 use shadows::{SHADOW_BIAS, SHADOW_FORMAT, SHADOW_SIZE};
@@ -304,9 +304,10 @@ pub struct Renderer {
     /// anisotropic sampler for them.
     rock: rock::RockTextures,
     rock_sampler: wgpu::Sampler,
-    /// The grass and soil the ground is blended from (see ground.rs); it
-    /// shares the rock's sampler.
+    /// The grass and soil the ground is blended from, and the bark and moss
+    /// scenery is (see surface.rs); both share the rock's sampler.
     ground: rock::RockTextures,
+    scenery_detail: rock::RockTextures,
     /// Bound where the shadow map would be while the shadow map is drawn.
     no_shadow_map: wgpu::TextureView,
     post: post::PostGpu,
@@ -664,6 +665,26 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -789,7 +810,8 @@ impl Renderer {
             ..Default::default()
         });
         let rock = rock::load(&device, &queue);
-        let ground = ground::load(&device, &queue);
+        let ground = surface::load(&device, &queue, "ground", surface::GROUND);
+        let scenery_detail = surface::load(&device, &queue, "scenery detail", surface::SCENERY);
         let rock_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("rock"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -841,6 +863,7 @@ impl Renderer {
         );
         let static_gpu_bytes = rock.bytes
             + ground.bytes
+            + scenery_detail.bytes
             + 2 * size_of::<Globals>() as u64
             + u64::from(shadow_side)
                 * u64::from(shadow_side)
@@ -874,6 +897,7 @@ impl Renderer {
             rock,
             rock_sampler,
             ground,
+            scenery_detail,
             no_shadow_map,
             post,
             post_targets,
@@ -1256,6 +1280,14 @@ impl Renderer {
                     wgpu::BindGroupEntry {
                         binding: 13,
                         resource: wgpu::BindingResource::TextureView(&self.ground.normal),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 14,
+                        resource: wgpu::BindingResource::TextureView(&self.scenery_detail.color),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 15,
+                        resource: wgpu::BindingResource::TextureView(&self.scenery_detail.normal),
                     },
                 ],
             })

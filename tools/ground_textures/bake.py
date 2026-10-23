@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Bake the ground textures the terrain shader blends (assets/textures/terrain).
+"""Bake the ground and scenery detail textures the shaders blend (assets/textures/terrain).
 
-Usage: bake.py GRASS001_DIR GROUND054_DIR OUT_DIR
-Each DIR is an unzipped ambientCG 1K JPG set (CC0); OUT_DIR is assets/textures/terrain.
-Writes grass001_albedo.png, grass001_normal.png, ground054_albedo.png and ground054_normal.png,
-512x512 8-bit RGB, resized with Pillow LANCZOS (normals: the OpenGL-convention map, renormalised).
+Usage: bake.py OUT_DIR NAME=DIR [NAME=DIR ...]
+Each DIR is an unzipped ambientCG 1K JPG set (CC0) and NAME its asset id in lower case
+(grass001, ground054, bark001, bark014, moss002); OUT_DIR is assets/textures/terrain.
+Writes NAME_albedo.png and NAME_normal.png: 512x512 8-bit RGB, resized with Pillow LANCZOS
+(normals: the OpenGL-convention map, renormalised).
 """
 import sys
 from pathlib import Path
@@ -28,6 +29,7 @@ def bake(src: Path, name: str, out: Path) -> None:
 
 
 if __name__ == "__main__":
-    grass, ground, out = (Path(a) for a in sys.argv[1:4])
-    bake(grass, "grass001", out)
-    bake(ground, "ground054", out)
+    out = Path(sys.argv[1])
+    for pair in sys.argv[2:]:
+        name, src = pair.split("=", 1)
+        bake(Path(src), name, out)

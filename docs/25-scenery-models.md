@@ -4,7 +4,7 @@ Scenery is the trees, bushes, grass and rocks that dress the field. This documen
 
 ## What it is
 
-Each model is one mesh with vertex colours (the paint is on the mesh itself, with its ambient occlusion already in). There are no textures. Each model has four levels of detail: LOD0 is the closest and most detailed, LOD3 the farthest and simplest. Units are tiles, with 1 Blender metre to a tile, and a soldier is about 1.6 tall.
+Each model is one mesh with vertex colours (the paint is on the mesh itself, with its ambient occlusion already in). The pack has no textures and no texture coordinates; the game's shader adds surface detail over the vertex colours (see [Surface detail](#surface-detail)). Each model has four levels of detail: LOD0 is the closest and most detailed, LOD3 the farthest and simplest. Units are tiles, with 1 Blender metre to a tile, and a soldier is about 1.6 tall.
 
 - Trees and rocks (not pebbles) cast shadows. Bushes and grass do not.
 - The wind bends each model by height, so the tops move and the base stays put. The game computes the weights when the pack is baked, so the models need no rig.
@@ -96,3 +96,18 @@ The game embeds `assets/scenery.pak` at build time. The pack is read by `gc_asse
 
 - **No flying or draping.** A model stands at the terrain height under its base. It does not follow slopes.
 - **Faces are double-sided.** Leaves and blades may be single planes, because the game draws both faces.
+
+## Surface detail
+
+Added 2026-10-23, render only, without re-baking the pack. The shader (`scenery.wgsl`) projects detail textures from each model's own space and lays their light and dark and their normal maps over the baked vertex colours, within reach of the camera (36 tiles for bushes and grass, 60 for stone, 70 for trees):
+
+| Surface | Models | Texture |
+|---|---|---|
+| Broadleaf bark and leaves | `oak-a`, `oak-b`, `birch`, `willow` | Bark001 (bark), Moss002 (leaves) |
+| Conifer bark and needles, dead wood | `pine-a`, `pine-b`, `thicket-fir`, `crag-pine`, `snag` | Bark014 (bark), Moss002 (needles) |
+| Foliage | every bush and every grass | Moss002 |
+| Stone | `boulder`, `crag`, `slab` | Rock035, the same as the cliffs |
+| Mossy stone | `mossy-boulder` | Rock035, with Moss002 on what faces up |
+| None | `pebbles`, `bone-spire`, `bone-ribs`, gathering spots, banners | |
+
+A tree's vertices are bark where their baked colour (before the instance's tint) is not green and leaves where it is. A later re-bake should carry the kind and the bark or leaf choice per vertex in the vertex's spare component, instead of the game matching model names and guessing from colour. Which kind a model gets is `Model::detail` in `gc_game/src/scenery.rs`. A new model with no entry fails to compile, so none is forgotten. Stumps and cleared ground ([27](27-living-land.md), idea 22) will use the bark kinds.

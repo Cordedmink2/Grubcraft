@@ -1031,3 +1031,14 @@ fbba2a3f5cd8a394a062055be96dd5f027d7e86baaeb2a8e70d2b701ebcc9b20  grass001_norma
 b05e52f6e96412965e64eeda2865da1ab026d8e39ac38e6fbdd1f246f2e30f69  ground054_albedo.png
 485b8cfed94ca8cbdfa062e5fb13458f5bb35f5679d619d08538f18cae5ddbea  ground054_normal.png
 ```
+
+Scenery detail (2026-10-23): `bark001_*`, `bark014_*` and `moss002_*` (`_albedo.png` and `_normal.png`) are baked the same way, by the same script, from `ambientcg/Bark001.zip`, `Bark014.zip` and `Moss002.zip` (CC0, ambientCG, downloaded 2026-10-23 from ambientcg.com).
+
+```
+aea06a7d2da0ffac8c89fb6f949c0398a41c25acc6dc1f51efdccf14376a40ef  bark001_albedo.png
+6572673b79e34b309b11e935b70ba8bc3804a6d6817ac0bca5e75c1dd6f2df63  bark001_normal.png
+b5ea95eb0a58c94bf31cfa5dc95b7b0014ce2b9dc22c309aba3565389ac7a2c8  bark014_albedo.png
+998c5a5ee6a1f138949e5df8bb43fdd4697f3c5877138cfeca5eb38e388c5d0c  bark014_normal.png
+cef2215af139406764545963dab13264de7be678cee86be827b815537bfa77a3  moss002_albedo.png
+2e71cad181bafde46dceb073123d90ae3bc96e8a801c03411fd59984834b6473  moss002_normal.png
+```

@@ -18,7 +18,25 @@ use crate::Target;
 /// Fixed capacity of the scenery instance buffer; never reallocated.
 pub const MAX_SCENERY_INSTANCES: usize = 65_536;
 
-/// One piece of scenery to draw. 24 bytes.
+/// What surface detail a piece of scenery's shader paints over its baked
+/// vertex colours (`SceneryInstance::kind`; the same numbers are in
+/// scenery.wgsl).
+pub mod surface_kind {
+    /// Nothing: bones, gathering spots, banners.
+    pub const NONE: u32 = 0;
+    /// Trees with broadleaf bark (and leaves): oaks, birch, willow.
+    pub const BROADLEAF: u32 = 1;
+    /// Trees with conifer bark (and needles), and dead wood.
+    pub const CONIFER: u32 = 2;
+    /// Bushes and grass: leaf and blade mottling.
+    pub const FOLIAGE: u32 = 3;
+    /// Rocks, from the same Rock035 as the cliffs.
+    pub const STONE: u32 = 4;
+    /// Rocks with moss on their tops.
+    pub const MOSSY_STONE: u32 = 5;
+}
+
+/// One piece of scenery to draw. 28 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct SceneryInstance {
@@ -32,6 +50,8 @@ pub struct SceneryInstance {
     /// in `a` the instance's wind phase (0 to 255 for one full cycle), so
     /// neighbours don't sway in step.
     pub tint: [u8; 4],
+    /// Which surface detail to paint: one of [`detail`].
+    pub kind: u32,
 }
 
 /// A run of instances drawn with one model at one level of detail.
@@ -111,7 +131,7 @@ pub(crate) fn make(
         array_stride: size_of::<SceneryInstance>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &wgpu::vertex_attr_array![
-            3 => Float32x2, 4 => Float32x2, 5 => Float32, 6 => Unorm8x4
+            3 => Float32x2, 4 => Float32x2, 5 => Float32, 6 => Unorm8x4, 7 => Uint32
         ],
     };
     let pipeline = |label, vs, target: Target<'_>| {
@@ -311,7 +331,7 @@ mod tests {
     fn scenery_layouts_are_stable() {
         // The vertex attribute offsets in `make` and the shader's inputs
         // depend on these.
-        assert_eq!(size_of::<SceneryInstance>(), 24);
+        assert_eq!(size_of::<SceneryInstance>(), 28);
         assert_eq!(size_of::<SceneryVertex>(), 16);
     }
 

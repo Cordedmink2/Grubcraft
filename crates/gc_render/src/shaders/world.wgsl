@@ -80,6 +80,10 @@ const HIGHLIGHT: f32 = 1.6;
 // share rock_sampler.
 @group(0) @binding(12) var ground_color: texture_2d_array<f32>;
 @group(0) @binding(13) var ground_normal: texture_2d_array<f32>;
+// The same for scenery (scenery.wgsl): Bark001 (layer 0), Bark014 (1) and
+// Moss002 (2).
+@group(0) @binding(14) var scenery_color: texture_2d_array<f32>;
+@group(0) @binding(15) var scenery_normal: texture_2d_array<f32>;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -425,6 +429,20 @@ fn rock_plane(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, ng2: vec2<f32>, ngn: 
     return r;
 }
 
+// How light or dark Rock035's albedo is, relative to its mean, as a factor for
+// a stone colour: its own colour is near black (mean 0.01 linear), so it gives
+// the pattern only. Cliffs and scenery rocks share this, to look alike.
+fn rock_pattern(albedo: vec3<f32>) -> f32 {
+    let l = dot(albedo, vec3<f32>(0.2126, 0.7152, 0.0722));
+    return pow(clamp(l / 0.0095, 0.02, 6.0), 0.45);
+}
+
+// A detail texture's colour ratio mostly as light and dark: its own hues would
+// fight the colour it is laid over. `chroma` is how much of the hue is kept.
+fn muted(ratio: vec3<f32>, chroma: f32) -> vec3<f32> {
+    return mix(vec3<f32>(dot(ratio, vec3<f32>(0.2126, 0.7152, 0.0722))), ratio, chroma);
+}
+
 // Triplanar Rock035 at `p` on a surface facing `ng`: the three projections
 // weighted by how squarely they face the surface, each normal map blended in
 // whiteout style. `dpx` and `dpy` are the screen derivatives of `p`, taken
@@ -624,8 +642,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
             );
         }
         // Mostly its light and dark: the texture's own hues would fight the land's tint.
-        let detail_l = dot(detail.ratio, vec3<f32>(0.2126, 0.7152, 0.0722));
-        albedo = albedo * mix(vec3<f32>(detail_l), detail.ratio, 0.35);
+        albedo = albedo * muted(detail.ratio, 0.35);
         // The surface, tilted by the ground's normal map (whiteout blend, the
         // map's plane being the ground's).
         // Steeper ground takes less of it, so it cannot turn the normal over.
@@ -641,8 +658,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         // Rock035's own colour is near black (mean 0.01 linear), so it gives the
         // pattern only: its brightness, relative to its mean, scales a stone
         // colour from the game's palette.
-        let tex_l = dot(r.albedo, vec3<f32>(0.2126, 0.7152, 0.0722));
-        let pattern = pow(clamp(tex_l / 0.0095, 0.02, 6.0), 0.45);
+        let pattern = rock_pattern(r.albedo);
         let stone = srgb_to_linear(vec3<f32>(0.5, 0.45, 0.38)) * 0.8;
         var rc = stone * pattern * (0.78 + 0.44 * band) * mix(vec3<f32>(1.0), vec3<f32>(1.14, 0.98, 0.8), warm);
         // Higher stone is paler and cooler.
