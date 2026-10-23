@@ -188,6 +188,7 @@ impl Layout {
     fn aim(&self, camera: &mut RtsCamera, low: f32, high: f32) {
         let (bottom, top) = (low, high + self.top);
         camera.face(-FACING);
+        camera.level_pitch();
         camera.focus = self.focus();
         camera.focus_height = (bottom + top) * 0.5;
         let corners = [self.low.x, self.high.x].into_iter().flat_map(|x| {

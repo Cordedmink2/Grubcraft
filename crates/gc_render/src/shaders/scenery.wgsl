@@ -28,6 +28,8 @@ struct SceneryOut {
     @location(0) world: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
+    // 1 for leaves and blades (what moves in the wind), 0 for rocks and bases.
+    @location(3) leafy: f32,
 };
 
 // How the wind pushes things at `xz` right now: a unit-ish vector along the
@@ -70,6 +72,7 @@ fn vs_scenery(v: SceneryIn) -> SceneryOut {
     out.world = world;
     out.normal = normalize(vec3<f32>(n_xz.x, v.normal.y, n_xz.y) + vec3<f32>(0.0, 1e-4, 0.0));
     out.color = min(v.color.rgb * v.tint.rgb * 2.0, vec3<f32>(1.0));
+    out.leafy = select(0.0, 1.0, v.color.a > 0.0);
     return out;
 }
 
@@ -86,6 +89,13 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
     let albedo = srgb_to_linear(in.color) * (0.91 + 0.18 * wobble);
     // Leaves and blades may be single planes: light them from the side shown.
     let n = select(-in.normal, in.normal, front);
-    let c = shade(albedo, n, in.world);
+    var c = shade(albedo, n, in.world);
+    // Leaves and blades pass light on: with the sun behind them they glow,
+    // yellower than they are lit from the front.
+    let behind = max(dot(-n, g.sun_dir.xyz), 0.0);
+    if in.leafy > 0.5 && behind > 0.0 {
+        let glow = albedo * vec3<f32>(1.2, 1.1, 0.7) * g.sun_color.rgb * behind * sunlight(in.world, -n);
+        c += glow * g.sun_color.a * (1.0 - air_amount(in.world, distance(in.world, g.camera_pos.xyz)));
+    }
     return vec4<f32>(veil(c, in.world.xz), 1.0);
 }

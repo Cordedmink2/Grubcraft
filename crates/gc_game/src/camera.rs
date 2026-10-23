@@ -7,7 +7,13 @@ use crate::buildings::ray_box;
 use glam::camera::rh::{proj::directx::perspective, view::look_at_mat4};
 use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
 
+/// How steeply the bird's-eye camera looks down from its default distance
+/// and further out.
 const PITCH: f32 = 55.0 * std::f32::consts::PI / 180.0;
+/// How steeply it looks down at its closest zoom: nearer the horizon, so
+/// the scene reads as a diorama seen at eye level and the sky starts to
+/// show. In between, the tilt follows the zoom.
+const CLOSE_PITCH: f32 = 30.0 * std::f32::consts::PI / 180.0;
 const FOV_Y: f32 = 35.0 * std::f32::consts::PI / 180.0;
 const MAX_YAW: f32 = 45.0 * std::f32::consts::PI / 180.0;
 pub const MIN_DISTANCE: f32 = 14.0;
@@ -33,7 +39,8 @@ pub struct RtsCamera {
     pub focus_height: f32,
     pub distance: f32,
     /// How steeply the camera looks down, in radians. The battlefield view
-    /// keeps `PITCH`; only the unit viewer tilts it.
+    /// follows the zoom (`pitch_for`; zoom with `zoom` or `set_distance`);
+    /// the unit viewer sets it itself.
     pub pitch: f32,
     /// Rotation away from the default north-facing view, in radians.
     pub yaw: f32,
@@ -50,12 +57,32 @@ impl RtsCamera {
             focus,
             focus_height: 0.0,
             distance: DEFAULT_DISTANCE,
-            pitch: PITCH,
+            pitch: Self::pitch_for(DEFAULT_DISTANCE),
             yaw: 0.0,
             home_yaw: 0.0,
             map_size,
             aspect: 16.0 / 9.0,
         }
+    }
+
+    /// How steeply to look down from `distance`: `CLOSE_PITCH` at the
+    /// closest zoom, easing out to `PITCH` at the default distance.
+    fn pitch_for(distance: f32) -> f32 {
+        let t = ((distance - MIN_DISTANCE) / (DEFAULT_DISTANCE - MIN_DISTANCE)).clamp(0.0, 1.0);
+        CLOSE_PITCH + (PITCH - CLOSE_PITCH) * t * t * (3.0 - 2.0 * t)
+    }
+
+    /// Look down at the full battlefield angle whatever the zoom, for the
+    /// showroom, which frames its models from the usual pitch.
+    pub fn level_pitch(&mut self) {
+        self.pitch = PITCH;
+    }
+
+    /// Move to `distance` from the focus (within the zoom range), tilting
+    /// with it.
+    pub fn set_distance(&mut self, distance: f32) {
+        self.distance = distance.clamp(MIN_DISTANCE, MAX_DISTANCE);
+        self.pitch = Self::pitch_for(self.distance);
     }
 
     fn offset_dir(&self) -> Vec3 {
@@ -129,7 +156,7 @@ impl RtsCamera {
     /// Multiply the distance by `factor` (< 1 zooms in).
     pub fn zoom(&mut self, factor: f32) {
         if factor.is_finite() {
-            self.distance = (self.distance * factor).clamp(MIN_DISTANCE, MAX_DISTANCE);
+            self.set_distance(self.distance * factor);
         }
     }
 
@@ -170,7 +197,7 @@ impl RtsCamera {
     pub fn resume_from_ride(&mut self, focus: Vec2, ground: f32, looking: Vec2) {
         self.focus = focus.clamp(Vec2::ZERO, Vec2::splat(self.map_size));
         self.focus_height = ground;
-        self.distance = DEFAULT_DISTANCE;
+        self.set_distance(DEFAULT_DISTANCE);
         // The eye sits at `+(sin yaw, cos yaw)` from the focus, so it looks
         // along `-(sin yaw, cos yaw)`.
         self.yaw = if looking.length_squared() > 1e-6 {
@@ -525,6 +552,22 @@ mod tests {
             (hit.x - 100.0).abs() < 0.01 && (hit.z - 120.0).abs() < 0.01,
             "{hit}"
         );
+    }
+
+    #[test]
+    fn zooming_in_tilts_the_view_toward_the_horizon() {
+        let mut cam = RtsCamera::new(256.0, Vec2::ZERO);
+        assert_eq!(cam.pitch, PITCH);
+        cam.zoom(1000.0);
+        assert_eq!(cam.pitch, PITCH);
+        let mut last = cam.pitch;
+        for _ in 0..40 {
+            cam.zoom(0.9);
+            assert!(cam.pitch <= last + 1e-6);
+            last = cam.pitch;
+        }
+        assert!((cam.pitch - CLOSE_PITCH).abs() < 1e-5);
+        assert_eq!(cam.distance, MIN_DISTANCE);
     }
 
     #[test]

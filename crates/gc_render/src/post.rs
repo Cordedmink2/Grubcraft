@@ -1,19 +1,14 @@
 //! The frame after the world is drawn: the HDR image the world renders
 //! into, the glow (a chain of half-size images, see `shaders/post.wgsl`),
-//! and the composite that tone-maps both onto the screen.
+//! and the composite that grades both onto the screen.
+
+use crate::look::{Look, rgba};
 
 /// How strongly the glow adds to the frame.
-const BLOOM_STRENGTH: f64 = 0.35;
+const BLOOM_STRENGTH: f64 = 0.55;
 /// Levels in the glow chain, at most; each is half the size of the last,
 /// the first half the frame's.
 const BLOOM_LEVELS: u32 = 6;
-/// The tone curve's exposure: `tonemap(c) = 1 - exp(-c × EXPOSURE)`.
-const EXPOSURE: f64 = 1.25;
-
-/// The HDR value the tone curve maps to `c`.
-pub(crate) fn untonemap(c: f64) -> f32 {
-    (-(1.0 - c.min(0.999)).ln() / EXPOSURE) as f32
-}
 
 pub(crate) struct PostGpu {
     /// The format of the HDR image and the glow chain.
@@ -26,6 +21,22 @@ pub(crate) struct PostGpu {
     up: wgpu::RenderPipeline,
     pub composite: wgpu::RenderPipeline,
     glow: bool,
+    /// The grade (see [`Grade`]), read by the composite.
+    grade: wgpu::Buffer,
+}
+
+/// What the composite grades the frame with (`Grade` in `post.wgsl`).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Grade {
+    /// Exposure, contrast, saturation, vignette.
+    tone: [f32; 4],
+    /// Tint for the dark end (rgb).
+    shadow_tint: [f32; 4],
+    /// Tint for the bright end (rgb).
+    light_tint: [f32; 4],
+    /// Film grain, time in seconds.
+    film: [f32; 4],
 }
 
 /// Images sized to the frame, remade when the window resizes.
@@ -73,7 +84,21 @@ pub(crate) fn make(
     });
     let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("composite"),
-        entries: &[texture(0), sampler_entry, texture(2)],
+        entries: &[
+            texture(0),
+            sampler_entry,
+            texture(2),
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
     });
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("post.wgsl"),
@@ -95,7 +120,7 @@ pub(crate) fn make(
         let strength = if glow { BLOOM_STRENGTH } else { 0.0 };
         let constants: &[(&str, f64)] = match chain {
             Some(_) => &[],
-            None => &[("BLOOM_STRENGTH", strength), ("EXPOSURE", EXPOSURE)],
+            None => &[("BLOOM_STRENGTH", strength)],
         };
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some(label),
@@ -150,10 +175,27 @@ pub(crate) fn make(
         composite_layout,
         sampler,
         glow,
+        grade: device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("grade"),
+            size: size_of::<Grade>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }),
     }
 }
 
 impl PostGpu {
+    /// Upload the grade of `look`, and the time for the film grain.
+    pub fn write_grade(&self, queue: &wgpu::Queue, look: &Look, time_seconds: f32) {
+        let grade = Grade {
+            tone: [look.exposure, look.contrast, look.saturation, look.vignette],
+            shadow_tint: rgba(look.shadow_tint, 0.0),
+            light_tint: rgba(look.light_tint, 0.0),
+            film: [look.grain, time_seconds, 0.0, 0.0],
+        };
+        queue.write_buffer(&self.grade, 0, bytemuck::bytes_of(&grade));
+    }
+
     /// The HDR image and glow chain for a `width × height` frame.
     pub fn targets(&self, device: &wgpu::Device, width: u32, height: u32) -> PostTargets {
         let image = |label, width, height, mips| {
@@ -228,6 +270,10 @@ impl PostGpu {
             entries.push(wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::TextureView(glow),
+            });
+            entries.push(wgpu::BindGroupEntry {
+                binding: 3,
+                resource: self.grade.as_entire_binding(),
             });
         }
         device.create_bind_group(&wgpu::BindGroupDescriptor {

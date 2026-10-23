@@ -11,6 +11,7 @@
 //! surface target and per-frame camera and instance data.
 
 mod debug_font;
+mod look;
 mod overlay;
 mod post;
 mod rock;
@@ -57,6 +58,8 @@ const LOD_DISTANCES: [f32; TERRAIN_LEVELS - 1] = [128.0, 256.0, 384.0];
 const CHUNK_INSTANCE_BYTES: u64 = 12;
 /// Fixed capacity of the box instance buffer (soldiers and markers); never reallocated.
 pub const MAX_BOX_INSTANCES: usize = 65_536;
+use look::rgba;
+pub use look::{Look, LookPreset};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
@@ -64,9 +67,7 @@ pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance};
 pub use soldiers::{MAX_SOLDIER_INSTANCES, SoldierBatch, SoldierInstance, TONE_NEUTRAL};
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 use shadows::{SHADOW_BIAS, SHADOW_FORMAT, SHADOW_SIZE};
-/// Direction toward the sun.
-const SUN: Vec3 = Vec3::new(-0.45, 0.75, -0.35);
-/// The sky (and fog) colour, in sRGB.
+/// The colour a frame with nothing drawn shows, in sRGB.
 const SKY: [f32; 3] = [0.62, 0.66, 0.70];
 
 #[derive(Debug)]
@@ -245,6 +246,16 @@ struct Globals {
     misc: [f32; 4],
     sun_view_proj: [[f32; 4]; 4],
     shadow: [f32; 4],
+    /// The camera's view backwards, for the sky.
+    inv_view_proj: [[f32; 4]; 4],
+    /// The `Look`, packed (see the `Globals` struct in `shaders/world.wgsl`).
+    sun_color: [f32; 4],
+    sky_ambient: [f32; 4],
+    ground_ambient: [f32; 4],
+    haze: [f32; 4],
+    air: [f32; 4],
+    sky_top: [f32; 4],
+    sky_horizon: [f32; 4],
 }
 
 struct TerrainGpu {
@@ -281,6 +292,7 @@ pub struct Renderer {
     block_pipeline: wgpu::RenderPipeline,
     terrain_shadow_pipeline: wgpu::RenderPipeline,
     block_shadow_pipeline: wgpu::RenderPipeline,
+    sky_pipeline: wgpu::RenderPipeline,
     shadow_map: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
     /// Soft edges for the fog map, and the ground tint blended between
@@ -294,8 +306,8 @@ pub struct Renderer {
     no_shadow_map: wgpu::TextureView,
     post: post::PostGpu,
     post_targets: post::PostTargets,
-    /// The sky colour, scaled so that it tone-maps back to itself.
-    fog_color: [f32; 3],
+    /// How the world is lit and the frame graded (see [`Renderer::set_look`]).
+    look: Look,
     /// The chunk grid's triangles at every level of detail, one after the
     /// other (see [`level_indices`]).
     chunk_indices: wgpu::Buffer,
@@ -617,6 +629,16 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -671,6 +693,38 @@ impl Renderer {
         };
         let block_pipeline = block(Target::Color(hdr_format, "fs_block"));
         let block_shadow_pipeline = block(Target::Shadow);
+        // The sky: one triangle at the far plane, drawn after everything else.
+        let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sky"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_sky"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_sky"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: hdr_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
 
         let soldiers = soldiers::make(&device, &bind_group_layout, &shader, hdr_format);
         let scenery = scenery::make(&device, &layout, hdr_format);
@@ -786,6 +840,7 @@ impl Renderer {
             block_pipeline,
             terrain_shadow_pipeline,
             block_shadow_pipeline,
+            sky_pipeline,
             shadow_map,
             shadow_sampler,
             soft_sampler,
@@ -794,7 +849,7 @@ impl Renderer {
             no_shadow_map,
             post,
             post_targets,
-            fog_color: SKY.map(|c| post::untonemap(srgb_to_linear(c))),
+            look: Look::default(),
             chunk_indices,
             chunk_instances,
             chunk_instance_capacity: 1,
@@ -835,6 +890,11 @@ impl Renderer {
             .unwrap_or_default()
     }
 
+    /// Light and grade the world as `look` says, from the next frame on.
+    pub fn set_look(&mut self, look: Look) {
+        self.look = look;
+    }
+
     pub fn stats(&self) -> RenderStats {
         self.stats
     }
@@ -855,7 +915,7 @@ impl Renderer {
         self.options.shadows.then(|| {
             shadows::sun_view_proj(
                 view_proj,
-                SUN.normalize(),
+                self.look.sun_dir(),
                 terrain.tiles as f32,
                 terrain.max_height + RELIEF_MAX,
                 self.shadow_range,
@@ -1067,7 +1127,18 @@ impl Renderer {
             assert_eq!(t.cliff.len(), (cells * cells) as usize);
             (cells, rock::cliff_mask(t.cliff, cells as usize))
         };
-        let cliff_view = rock::upload_mask(&self.device, &self.queue, mask_side, &mask);
+        let cliff_view =
+            rock::upload_mask(&self.device, &self.queue, "cliff mask", mask_side, &mask);
+        // Ground occlusion, a texel per tile, baked from the heights now.
+        let (occlusion_side, occlusion) =
+            look::ground_occlusion(t.heights, t.size, t.samples_per_tile, t.max_height);
+        let occlusion_view = rock::upload_mask(
+            &self.device,
+            &self.queue,
+            "ground occlusion",
+            occlusion_side,
+            &occlusion,
+        );
         // All clear until `set_fog` says otherwise.
         let tiles = (t.size - 1) / t.samples_per_tile;
         let fog_map = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -1140,6 +1211,10 @@ impl Renderer {
                         binding: 10,
                         resource: wgpu::BindingResource::TextureView(&cliff_view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 11,
+                        resource: wgpu::BindingResource::TextureView(&occlusion_view),
+                    },
                 ],
             })
         };
@@ -1164,7 +1239,8 @@ impl Renderer {
         self.terrain_gpu_bytes = t.heights.len() as u64 * 2
             + u64::from(tint_side * tint_side) * 4
             + u64::from(tiles * tiles)
-            + u64::from(mask_side * mask_side);
+            + u64::from(mask_side * mask_side)
+            + u64::from(occlusion_side * occlusion_side);
         self.terrain = Some(TerrainGpu {
             bind_group,
             shadow_bind_group,
@@ -1253,8 +1329,10 @@ impl Renderer {
             | wgpu::CurrentSurfaceTexture::Validation => return FrameOutcome::Skipped,
         };
 
-        let fog_color = self.fog_color;
-        let sun = SUN.normalize();
+        let look = self.look;
+        let sun = look.sun_dir();
+        let fog_color = look.hdr(look.fog);
+        let haze = look.hdr(look.haze);
         let shadows = self.options.shadows;
         let (sun_view_proj, texel) = self
             .sun_view(frame.view_proj, terrain)
@@ -1269,7 +1347,7 @@ impl Renderer {
                 CHUNK_TILES as f32,
                 CHUNK_QUADS as f32,
             ],
-            fog: [fog_color[0], fog_color[1], fog_color[2], 0.0025],
+            fog: [fog_color[0], fog_color[1], fog_color[2], look.fog_density],
             misc: [terrain.water_level, frame.time_seconds, 0.0, 0.0],
             sun_view_proj: sun_view_proj.to_cols_array_2d(),
             shadow: [
@@ -1278,7 +1356,24 @@ impl Renderer {
                 shadows::SHADOW_FADE,
                 0.0,
             ],
+            inv_view_proj: frame.view_proj.inverse().to_cols_array_2d(),
+            sun_color: rgba(look.sun_color, look.foliage_glow),
+            sky_ambient: rgba(look.sky_ambient, look.rim),
+            ground_ambient: rgba(look.ground_ambient, look.cloud_shadows),
+            haze: rgba(haze, 0.0),
+            // How the air thins with height, the ground occlusion, and how
+            // thick the air is at the camera (it only changes per frame).
+            air: [
+                look.fog_falloff,
+                look.ground_occlusion,
+                (-look.fog_falloff * frame.camera_pos.y).exp(),
+                0.0,
+            ],
+            sky_top: rgba(look.hdr(look.sky_top), 0.0),
+            sky_horizon: rgba(look.hdr(look.sky_horizon), 0.0),
         };
+        self.post
+            .write_grade(&self.queue, &look, frame.time_seconds);
         // With nothing to draw the frame is a bare clear: no uploads and no
         // depth buffer, to measure the floor cost of presenting.
         let bare = !self.options.draw_terrain && !self.options.draw_blocks;
@@ -1510,6 +1605,10 @@ impl Renderer {
             soldiers_drawn = drawn;
             triangles = tris + scenery_tris;
             draw_calls += draw_boxes(&mut pass, &self.block_pipeline);
+            // The sky last, at the far plane: only pixels nothing covered.
+            pass.set_pipeline(&self.sky_pipeline);
+            pass.draw(0..3, 0..1);
+            draw_calls += 1;
             drop(pass);
             draw_calls += self.post.glow(&mut encoder, &self.post_targets);
         }

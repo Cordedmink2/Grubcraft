@@ -75,6 +75,7 @@ pub fn cliff_mask(cliffs: &[u8], side: usize) -> Vec<u8> {
 pub fn upload_mask(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    label: &str,
     side: u32,
     texels: &[u8],
 ) -> wgpu::TextureView {
@@ -84,7 +85,7 @@ pub fn upload_mask(
         depth_or_array_layers: 1,
     };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("cliff mask"),
+        label: Some(label),
         size,
         mip_level_count: 1,
         sample_count: 1,

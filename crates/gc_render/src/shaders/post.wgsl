@@ -1,5 +1,5 @@
-// After the world is drawn in linear HDR: the glow (bloom) and the tone curve
-// that brings the frame to the screen.
+// After the world is drawn in linear HDR: the glow (bloom) and the film
+// curve and colour grade that bring the frame to the screen.
 //
 // Glow: the bright parts of the frame (sun glints on metal, emitted light)
 // are kept and shrunk down a chain of half-size images, then grown back up,
@@ -15,8 +15,6 @@
 
 // How strongly the glow adds to the frame; 0 with the glow off.
 override BLOOM_STRENGTH: f32 = 0.0;
-// The tone curve's exposure (post.rs's EXPOSURE, which also inverts it).
-override EXPOSURE: f32 = 1.25;
 
 // Light brighter than this (in the HDR scale, where sunlit white paint is
 // about 1.7) starts to glow, easing in over `KNEE` below it.
@@ -84,9 +82,31 @@ fn fs_bloom_up(in: Fullscreen) -> @location(0) vec4<f32> {
     return vec4<f32>(c / 16.0, 1.0);
 }
 
-// Soft filmic curve so bright sunlit slopes don't clip to white.
-fn tonemap(c: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(1.0) - exp(-c * EXPOSURE);
+// What the composite grades the frame with (`Grade` in post.rs).
+struct Grade {
+    // x: exposure, y: contrast, z: saturation, w: vignette
+    tone: vec4<f32>,
+    // rgb: tint of the dark end
+    shadow_tint: vec4<f32>,
+    // rgb: tint of the bright end
+    light_tint: vec4<f32>,
+    // x: film grain, y: time in seconds
+    film: vec4<f32>,
+};
+@group(0) @binding(3) var<uniform> grade: Grade;
+
+// The film curve: Narkowicz's fit of the ACES curve (2015). look.rs has its
+// inverse, which turns an authored colour into the HDR value that draws as it.
+fn film(x: vec3<f32>) -> vec3<f32> {
+    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+const LUMA = vec3<f32>(0.2126, 0.7152, 0.0722);
+
+fn hash12(p: vec2<f32>) -> f32 {
+    var q = fract(vec3<f32>(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
 }
 
 @fragment
@@ -95,5 +115,23 @@ fn fs_composite(in: Fullscreen) -> @location(0) vec4<f32> {
     if BLOOM_STRENGTH > 0.0 {
         c += textureSampleLevel(bloom, src_sampler, in.uv, 0.0).rgb * BLOOM_STRENGTH;
     }
-    return vec4<f32>(tonemap(c), 1.0);
+    // Film curve, then split toning: cool shade, warm light.
+    var t = film(c * grade.tone.x);
+    t = t * mix(grade.shadow_tint.rgb, grade.light_tint.rgb, smoothstep(0.05, 0.7, dot(t, LUMA)));
+    // Saturation, then contrast round mid grey in display space.
+    t = max(mix(vec3<f32>(dot(t, LUMA)), t, grade.tone.z), vec3<f32>(0.0));
+    var p = pow(t, vec3<f32>(1.0 / 2.2));
+    p = clamp((p - 0.45) * grade.tone.y + 0.45, vec3<f32>(0.0), vec3<f32>(1.0));
+    // Vignette.
+    let q = in.uv - 0.5;
+    p = p * (1.0 - grade.tone.w * smoothstep(0.15, 0.75, dot(q, q) * 2.2));
+    // Film grain, strongest in the mid tones, and dither (triangular noise
+    // of one display step) so the sky's gradient does not band.
+    // Both change every frame.
+    let seed = in.clip.xy + fract(grade.film.y * 7.13) * 91.7;
+    let grain = hash12(seed) - 0.5;
+    let mid = 4.0 * p.g * (1.0 - p.g);
+    let dither = (hash12(seed + 17.1) + hash12(seed + 43.7) - 1.0) * (1.0 / 255.0);
+    p = clamp(p + grain * grade.film.x * mid + dither, vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(pow(p, vec3<f32>(2.2)), 1.0);
 }

@@ -26,6 +26,23 @@ struct Globals {
     // y: 1 with shadows on, z: where shadows start fading toward the map's
     // edge (`SHADOW_FADE` in shadows.rs)
     shadow: vec4<f32>,
+    // The camera's view backwards, for the sky.
+    inv_view_proj: mat4x4<f32>,
+    // The `Look` (look.rs). rgb: the sun's light (HDR), a: how much
+    // leaves and grass glow with the sun behind them
+    sun_color: vec4<f32>,
+    // rgb: light from the sky, a: rim light on soldiers and buildings
+    sky_ambient: vec4<f32>,
+    // rgb: light from the ground, a: how dark cloud shadows are
+    ground_ambient: vec4<f32>,
+    // rgb: air colour toward the sun (HDR)
+    haze: vec4<f32>,
+    // x: how quickly the air thins with height, y: ground occlusion strength,
+    // z: how thick the air is at the camera, relative to sea level
+    // (exp(-x * camera height))
+    air: vec4<f32>,
+    sky_top: vec4<f32>,
+    sky_horizon: vec4<f32>,
 };
 
 // The selection highlight's strength. It is added before tone mapping,
@@ -39,7 +56,8 @@ const HIGHLIGHT: f32 = 1.6;
 // Fog of war: one texel per tile, 1 in view, about 0.55 seen before, about
 // 0.2 never seen. All 1 when the match has no fog.
 @group(0) @binding(4) var fog_map: texture_2d<f32>;
-// Linear: soft fog edges, and the ground tint blended between texels.
+// Linear: soft fog edges, the ground tint blended between texels, and the
+// ground occlusion.
 @group(0) @binding(5) var soft_sampler: sampler;
 // The grass colour by the land it grows in (sRGB, alpha 1 where the map has
 // lands), a texel per few tiles over the whole map; one clear texel if not.
@@ -54,6 +72,9 @@ const HIGHLIGHT: f32 = 1.6;
 // stand on, rising to 1 three cells into ground too steep to climb (set_terrain
 // builds it from gc_map's cliff cells). Relief is weighted by it.
 @group(0) @binding(10) var cliff_mask: texture_2d<f32>;
+// Ground occlusion, a texel per tile baked from the heights (look.rs): 1 on
+// open ground, less in valleys and at the foot of slopes.
+@group(0) @binding(11) var ground_occlusion: texture_2d<f32>;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -105,20 +126,53 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return pow(c, vec3<f32>(2.2));
 }
 
-const SUN_COLOR = vec3<f32>(1.0, 0.9, 0.74) * 1.9;
-
 fn ambient_light(n: vec3<f32>) -> vec3<f32> {
-    let sky = vec3<f32>(0.36, 0.45, 0.62);
-    let ground = vec3<f32>(0.24, 0.18, 0.12);
-    return mix(ground, sky, n.y * 0.5 + 0.5) * 0.45;
+    return mix(g.ground_ambient.rgb, g.sky_ambient.rgb, n.y * 0.5 + 0.5);
 }
 
-// Fade lit colour into the fog with distance. `fog.rgb` is already in the
-// HDR scale (the colour that tone-maps to the sky).
+// How much of the way to the air's colour a point is, 0 to 1. The air is
+// thick low down and thin on the hills (its density falls off with height,
+// integrated along the view ray).
+fn air_amount(world: vec3<f32>, dist: f32) -> f32 {
+    let k = max(g.air.x, 1e-4);
+    let dy = world.y - g.camera_pos.y;
+    var along = 1.0;
+    if abs(dy) > 0.01 {
+        along = (1.0 - exp(-k * dy)) / (k * dy);
+    }
+    return clamp(1.0 - exp(-dist * g.fog.a * g.air.z * along), 0.0, 1.0);
+}
+
+// Fade lit colour into the air, which is warmer toward the sun. Its colours
+// are in the HDR scale.
 fn finish(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
-    let dist = distance(world, g.camera_pos.xyz);
-    let fog = 1.0 - exp(-dist * g.fog.a);
-    return mix(c, g.fog.rgb, clamp(fog, 0.0, 1.0));
+    let to = world - g.camera_pos.xyz;
+    let dist = length(to);
+    let facing = max(dot(to / max(dist, 1e-3), g.sun_dir.xyz), 0.0);
+    let f2 = facing * facing;
+    let f4 = f2 * f2;
+    let toward = 0.8 * f4 * f4;
+    return mix(c, mix(g.fog.rgb, g.haze.rgb, toward), air_amount(world, dist));
+}
+
+// Soft cloud shadows drifting over the land.
+fn clouds(xz: vec2<f32>) -> f32 {
+    if g.ground_ambient.a <= 0.0 {
+        return 1.0;
+    }
+    let p = xz * 0.018 + vec2<f32>(0.9, 0.35) * g.misc.y * 0.02;
+    let n = vnoise(p) * 0.6 + vnoise(p * 2.3 + vec2<f32>(5.0, 1.0)) * 0.3 + vnoise(p * 5.1) * 0.1;
+    return 1.0 - g.ground_ambient.a * smoothstep(0.45, 0.68, n);
+}
+
+// A back-light rim that lifts figures off the ground: strongest where the
+// sun is behind the figure.
+fn rim(n: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
+    let v = normalize(g.camera_pos.xyz - world);
+    let edge = 1.0 - max(dot(n, v), 0.0);
+    let f = edge * edge * edge;
+    let back = 0.35 + 0.65 * max(dot(-v, g.sun_dir.xyz), 0.0);
+    return (g.sun_color.rgb * back * 0.6 + g.sky_ambient.rgb) * f * g.sky_ambient.a;
 }
 
 // How much sunlight reaches a surface: 0 in shadow, 1 in full sun. Four
@@ -126,12 +180,12 @@ fn finish(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
 // shadow fades out at the edge of the area the map covers.
 fn sunlight(world: vec3<f32>, n: vec3<f32>) -> f32 {
     if g.shadow.y < 0.5 {
-        return 1.0;
+        return clouds(world.xz);
     }
     let c = g.sun_view_proj * vec4<f32>(world + n * g.shadow.x, 1.0);
     let edge = max(abs(c.x), abs(c.y));
     if edge >= 1.0 || c.z >= 1.0 {
-        return 1.0;
+        return clouds(world.xz);
     }
     let uv = c.xy * vec2<f32>(0.5, -0.5) + 0.5;
     let t = 0.5 / f32(textureDimensions(shadow_map).x);
@@ -140,7 +194,7 @@ fn sunlight(world: vec3<f32>, n: vec3<f32>) -> f32 {
         let o = vec2<f32>(select(-t, t, (i & 1u) == 1u), select(-t, t, i >= 2u));
         lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + o, c.z);
     }
-    return mix(lit * 0.25, 1.0, smoothstep(g.shadow.z, 1.0, edge));
+    return mix(lit * 0.25, 1.0, smoothstep(g.shadow.z, 1.0, edge)) * clouds(world.xz);
 }
 
 // Direct sunlight on a surface facing `n`: the cosine term, shadowed.
@@ -154,7 +208,7 @@ fn sun_ndl(n: vec3<f32>, world: vec3<f32>) -> f32 {
 
 fn shade(albedo: vec3<f32>, n: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
     let ndl = sun_ndl(n, world);
-    return finish(albedo * (SUN_COLOR * ndl + ambient_light(n)), world);
+    return finish(albedo * (g.sun_color.rgb * ndl + ambient_light(n)), world);
 }
 
 // Textured surfaces: diffuse plus a normalised Blinn-Phong highlight whose
@@ -179,7 +233,7 @@ fn shade_material(
     let spec = fresnel * pow(max(dot(n, h), 0.0), power) * (power + 8.0) / 25.13;
     let ambient = ambient_light(n) * ao;
     let diffuse = albedo * (1.0 - metal);
-    let c = diffuse * (SUN_COLOR * ndl + ambient) + spec * SUN_COLOR * ndl + f0 * ambient * 0.6;
+    let c = diffuse * (g.sun_color.rgb * ndl + ambient) + spec * g.sun_color.rgb * ndl + f0 * ambient * 0.6;
     return finish(c + emit, world);
 }
 
@@ -508,6 +562,12 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     } else {
         c = shade(albedo, n, in.world);
     }
+
+    // Valleys and the feet of slopes get less light.
+    let skyward = textureSampleLevel(ground_occlusion, soft_sampler, xz / f32(textureDimensions(ground_occlusion).x), 0.0).r;
+    // (Fogged ground is the air's colour, not lit ground: it keeps less of this.)
+    let unfogged = 1.0 - air_amount(in.world, distance(in.world, g.camera_pos.xyz));
+    c = c * mix(1.0, skyward, g.air.y * unfogged);
 
     // Water below the water level: deep teal with a soft shoreline.
     let depth = g.misc.x - ground;
@@ -885,7 +945,7 @@ fn fs_soldier(in: SoldierOut, @builtin(front_facing) front: bool) -> @location(0
     let albedo = srgb_to_linear(in.color);
     // Thin double-sided parts (cloaks, blades) light from whichever side shows.
     let n = select(-in.normal, in.normal, front);
-    let c = shade(albedo, n, in.world);
+    let c = shade(albedo, n, in.world) + albedo * rim(n, in.world);
     return vec4<f32>(c + albedo * in.highlight * HIGHLIGHT, 1.0);
 }
 
@@ -924,6 +984,39 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     let nxy = b.xy * 2.0 - 1.0;
     let nt = vec3<f32>(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
     let n = normalize(t * nt.x + bt * nt.y + n0 * nt.z);
-    let c = shade_material(albedo, n, in.world, b.w, e.a, b.z, e.rgb);
+    let c = shade_material(albedo, n, in.world, b.w, e.a, b.z, e.rgb) + albedo * rim(n, in.world);
     return vec4<f32>(c + albedo * in.highlight * HIGHLIGHT, 1.0);
+}
+
+// ---------------------------------------------------------------- sky
+//
+// One triangle over the screen at the far plane, drawn after everything else
+// (the depth test keeps it off every pixel something covers, so it shades
+// only the pixels it shows). Where nothing is drawn over it (the horizon in a low camera, the void past the map's
+// edge) the sky shows: from the horizon colour up to the colour overhead,
+// with a glow and a disc round the sun.
+
+struct SkyOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) ndc: vec2<f32>,
+};
+
+@vertex
+fn vs_sky(@builtin(vertex_index) vi: u32) -> SkyOut {
+    let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
+    var out: SkyOut;
+    out.ndc = uv * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
+    // At the far plane, so only what nothing was drawn over shows it.
+    out.clip = vec4<f32>(out.ndc, 1.0, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
+    let far = g.inv_view_proj * vec4<f32>(in.ndc, 1.0, 1.0);
+    let d = normalize(far.xyz / far.w - g.camera_pos.xyz);
+    var c = mix(g.sky_horizon.rgb, g.sky_top.rgb, pow(clamp(d.y, 0.0, 1.0), 0.45));
+    let s = max(dot(d, g.sun_dir.xyz), 0.0);
+    c += g.sun_color.rgb * (pow(s, 12.0) * 0.25 + pow(s, 200.0) * 0.8 + smoothstep(0.9993, 0.9997, s) * 8.0);
+    return vec4<f32>(c, 1.0);
 }

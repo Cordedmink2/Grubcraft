@@ -114,22 +114,29 @@ mod tests {
 
     #[test]
     fn the_shadow_map_covers_the_view_and_the_map_depth() {
-        let sun = crate::SUN.normalize();
         let focus = Vec3::new(200.0, 0.0, 200.0);
-        let (m, _) = sun_view_proj(camera(focus), sun, 512.0, 40.0, SHADOW_RANGE);
-        for p in [
-            focus,
-            focus + Vec3::new(30.0, 0.0, 10.0),
-            focus + Vec3::new(-30.0, 20.0, -20.0),
-        ] {
-            let c = m.project_point3(p);
-            assert!(c.x.abs() < 1.0 && c.y.abs() < 1.0, "{p} → {c}");
-            assert!((0.0..1.0).contains(&c.z), "{p} → {c}");
+        // Under every look, the low suns included.
+        for preset in crate::LookPreset::ALL {
+            let sun = preset.look().sun_dir();
+            let (m, _) = sun_view_proj(camera(focus), sun, 512.0, 40.0, SHADOW_RANGE);
+            for p in [
+                focus,
+                focus + Vec3::new(30.0, 0.0, 10.0),
+                focus + Vec3::new(-30.0, 20.0, -20.0),
+            ] {
+                let c = m.project_point3(p);
+                assert!(
+                    c.x.abs() < 1.0 && c.y.abs() < 1.0,
+                    "{} {p} → {c}",
+                    preset.name()
+                );
+                assert!((0.0..1.0).contains(&c.z), "{} {p} → {c}", preset.name());
+            }
+            // Higher points are nearer the sun.
+            let low = m.project_point3(focus).z;
+            let high = m.project_point3(focus + Vec3::Y * 10.0).z;
+            assert!(high < low, "{}", preset.name());
         }
-        // Higher points are nearer the sun.
-        let low = m.project_point3(focus).z;
-        let high = m.project_point3(focus + Vec3::Y * 10.0).z;
-        assert!(high < low);
     }
 
     #[test]
@@ -140,7 +147,13 @@ mod tests {
         let eye = focus + Vec3::new(0.0, pitch.sin(), pitch.cos()) * 260.0;
         let view_proj =
             perspective(fov, 16.0 / 9.0, 1.0, 1080.0) * look_at_mat4(eye, focus, Vec3::Y);
-        let (m, _) = sun_view_proj(view_proj, crate::SUN.normalize(), 512.0, 40.0, SHADOW_RANGE);
+        let (m, _) = sun_view_proj(
+            view_proj,
+            crate::Look::default().sun_dir(),
+            512.0,
+            40.0,
+            SHADOW_RANGE,
+        );
         let inv = view_proj.inverse();
         for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
             // Where the corner's ray meets the ground, and the highest ground.
@@ -156,7 +169,7 @@ mod tests {
 
     #[test]
     fn panning_moves_the_map_by_whole_texels() {
-        let sun = crate::SUN.normalize();
+        let sun = crate::Look::default().sun_dir();
         let a = Vec3::new(200.0, 0.0, 200.0);
         let b = a + Vec3::new(3.37, 0.0, 1.91);
         let (ma, ta) = sun_view_proj(camera(a), sun, 512.0, 40.0, SHADOW_RANGE);

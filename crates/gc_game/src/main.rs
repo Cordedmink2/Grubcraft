@@ -364,6 +364,8 @@ struct Options {
     /// Open the unit viewer at start (`--viewer`): on this unit, or the
     /// first one for "start".
     viewer: Option<String>,
+    /// The light and grade to open with (`--look golden-hour`); F9 cycles it.
+    look: gc_render::LookPreset,
     render: RendererOptions,
 }
 
@@ -386,6 +388,7 @@ fn parse_args() -> Options {
         showroom: None,
         showroom_clip: None,
         viewer: None,
+        look: gc_render::LookPreset::default(),
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -482,6 +485,9 @@ fn parse_args() -> Options {
                 opts.viewer = Some(value.trim().to_string());
                 true
             }
+            "--look" => gc_render::LookPreset::from_name(&value)
+                .map(|p| opts.look = p)
+                .is_some(),
             "--showroom-clip" => showroom::Clip::parse(&value)
                 .map(|c| opts.showroom_clip = Some(c))
                 .is_some(),
@@ -560,7 +566,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start]"
     );
     std::process::exit(2);
 }
@@ -569,6 +575,8 @@ fn usage() -> ! {
 struct Running {
     window: Arc<Window>,
     renderer: Renderer,
+    /// The light the renderer is set to (F9 steps through them).
+    look: gc_render::LookPreset,
     camera: RtsCamera,
     /// Set while riding with a regiment; that camera is then the one in use.
     ride: Option<Ride>,
@@ -1115,6 +1123,7 @@ impl App {
                 opts.render,
             ))
         })?;
+        renderer.set_look(opts.look.look());
         self.memory_timeline.mark("gpu device + pipelines");
         // The game opens on the map a two-player battle from a new lobby
         // would be on, or on one opened with `--map`.
@@ -1314,6 +1323,7 @@ impl App {
         self.running = Some(Running {
             window,
             renderer,
+            look: opts.look,
             camera,
             ride: None,
             heightmap,
@@ -1709,6 +1719,10 @@ impl ApplicationHandler for App {
                         // F1 finds an idle worker while there is one to find,
                         // and otherwise opens the Marshal's Scroll (like H).
                         KeyCode::F1 if down && !event.repeat => r.f1_key(),
+                        KeyCode::F9 if down && !event.repeat => {
+                            r.look = r.look.next();
+                            r.renderer.set_look(r.look.look());
+                        }
                         KeyCode::KeyC if down && !event.repeat => {
                             r.sandbox.credits = !r.sandbox.credits;
                             r.sandbox.dirty = true;
@@ -4073,7 +4087,7 @@ impl Running {
         let focus = set.my_start + set.my_forward * 18.0;
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
-        self.camera.distance = 120.0;
+        self.camera.set_distance(120.0);
         // A joiner who starts in the north looks south, towards the enemy.
         if self.online.is_some() && set.my_forward.y > 0.0 {
             self.camera.face(Vec2::Y);
@@ -4146,7 +4160,7 @@ impl Running {
             });
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
-        self.camera.distance = 80.0;
+        self.camera.set_distance(80.0);
     }
 
     /// Set up watching `replay`: everyone's regiments in view, the sides
@@ -4180,7 +4194,7 @@ impl Running {
         };
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
-        self.camera.distance = 120.0;
+        self.camera.set_distance(120.0);
         self.watching = Some(Watching {
             title: replays::title(&replay.info()),
             replay,

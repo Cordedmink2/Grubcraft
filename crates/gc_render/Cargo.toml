@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 bytemuck.workspace = true
 gc_assets.workspace = true
+gc_platform.workspace = true
 glam.workspace = true
 # Decodes the rock textures compiled into the binary (see rock.rs).
 png = "0.17"
