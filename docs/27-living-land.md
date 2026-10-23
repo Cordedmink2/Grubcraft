@@ -86,6 +86,14 @@ Every patch of ground is decided by the same few things nature uses: **height**,
 
 **Living touches (later polish, render only):** mist pooling on fen and valley floors, fireflies over fens at dusk, butterflies in flower meadows, dust devils in the waste, birds lifting from woods when an army passes, and an ambient sound bed per habitat.
 
+### Clearing land for bases (idea 22)
+
+Mario (2026-10-23): clearing trees and scrub should be part of growing a base. On grown maps the woods are denser and more ragged, so room to build near a start often has to be cut. This is planned and built as its own piece of work, **idea 22** (the mechanics, workers felling and grubbing, animations, stumps and cleared ground), not as a Living Land stage. What Living Land owes it:
+
+- Woods, scrub and thicket stay a **tile cover layer** the game can change at runtime, never baked into the ground mesh or the scenery placement, so a cleared tile can drop back to open ground and the dressing on it can be removed.
+- Each tile keeps its **habitat** after clearing, so a felled old-growth tile becomes a glade-like clearing with stumps and loam, and cut scrub becomes rough grass.
+- In Measured fairness (stage 3), the **equal clearing** each start gets is the open room before any cutting. If clearing is cheap, `gc_mapcheck` should also count the cuttable woods near each start, so no player starts boxed in by old growth while another has light scrub.
+
 ## Stages
 
 Each stage is playable on its own.
