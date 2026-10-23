@@ -1,12 +1,16 @@
-//! What a siege looks like on screen (docs/21-buildings.md, "On screen"):
-//! the blows the simulation tells (`Event::Struck`) shake the building and
-//! knock chips and dust off where they land; archers' arrows and siege
-//! engines' shots fly to it; a damaged building smokes, then burns; a
-//! building brought down sinks in a cloud of dust and leaves rubble.
+//! What a siege looks like on screen (docs/21-buildings.md, "Sieges on
+//! screen"): the blows the simulation tells (`Event::Struck`) shake the
+//! building and knock chips and dust off where they land; archers' arrows
+//! and siege engines' shots fly to it; a damaged building smokes, then
+//! burns; a building brought down sinks in a cloud of dust and leaves
+//! rubble.
 //!
 //! Only a picture. Every blow drawn is one the simulation struck, but where
 //! the chips fly, how a building shakes and how long rubble lies is chosen
-//! here and changes nothing in the match.
+//! here and changes nothing in the match. Smoke, dust and flames are boxes
+//! that cast no shadow (a negative height, see `gc_render::BoxInstance`).
+
+use std::f32::consts::{PI, TAU};
 
 use gc_data::Faction;
 use gc_render::BoxInstance;
@@ -14,8 +18,10 @@ use gc_sim::structures::{Armour, Breaker};
 use gc_sim::{RegimentHandle, StructureHandle};
 use glam::Vec2;
 
-/// Chips, dust puffs and shots in the air at once, at most: the oldest
-/// make way.
+use crate::field::{ARROW_COLOR, ARROW_SIZE, ARROWS_PER_VOLLEY};
+
+/// Chips, dust puffs and shots in the air at once, at most: when full, a
+/// new one takes the place of one at random.
 const MAX_CHIPS: usize = 1536;
 const MAX_PUFFS: usize = 1024;
 const MAX_SHOTS: usize = 256;
@@ -47,9 +53,11 @@ const RUBBLE_SINK: f32 = 6.0;
 /// A regiment that loosed at a building this recently is still shooting.
 const SHOOTING_SECONDS: f32 = 1.2;
 /// How fast soldiers close up to the wall once at a siege, as a share a
-/// second, and how near it they stand to swing.
+/// second; how near it they stand to swing, and how far at most they step
+/// up to it on screen.
 const LEAN_RATE: f32 = 2.5;
-pub const WALL_GAP: f32 = 0.5;
+const WALL_GAP: f32 = 0.5;
+const WALL_STEP: f32 = 2.4;
 /// Below these shares of its hit points a building smokes, and burns.
 const SMOKES_BELOW: f32 = 0.7;
 const BURNS_BELOW: f32 = 0.35;
@@ -60,14 +68,8 @@ const SMOKE_LIFE: f32 = 3.2;
 const FLAMES: usize = 4;
 /// A smoke column's lean with the wind, in tiles a second.
 const WIND: Vec2 = Vec2::new(0.35, 0.18);
-/// Arrows drawn per volley at a building.
-const ARROWS: usize = 6;
-/// How fast shots fly, in tiles a second, and how high they arc for the
-/// length of their flight.
-const ARROW_SPEED: f32 = 22.0;
-const ARROW_ARC: f32 = 0.12;
-const BOULDER_SPEED: f32 = 13.0;
-const BOULDER_ARC: f32 = 0.32;
+/// Arrows leave the bow this high (as `ARROW_HEIGHT` in the field).
+const RELEASE_HEIGHT: f32 = crate::ARROW_HEIGHT;
 
 /// What a blow on a building is, from the unit that struck it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,6 +84,16 @@ pub enum Kind {
     Boulder,
     /// Rockets and fire-pots: a burning shot.
     Fire,
+}
+
+/// How hard a blow lands.
+struct Force {
+    chips: usize,
+    puffs: usize,
+    /// How far it jolts the building, in tiles.
+    jolt: f32,
+    /// Heavy: bigger chips and dust.
+    big: bool,
 }
 
 impl Kind {
@@ -102,14 +114,47 @@ impl Kind {
         matches!(self, Kind::Arrows | Kind::Boulder | Kind::Fire)
     }
 
-    /// How hard it lands: chips knocked off, dust raised, the jolt in tiles.
-    fn force(self) -> (usize, usize, f32) {
-        match self {
+    fn force(self) -> Force {
+        let (chips, puffs, jolt) = match self {
             Kind::Blade => (2, 1, 0.025),
             Kind::Arrows => (1, 0, 0.012),
             Kind::Ram => (9, 3, 0.11),
             Kind::Fire => (8, 3, 0.1),
             Kind::Boulder => (14, 5, 0.17),
+        };
+        Force {
+            chips,
+            puffs,
+            jolt,
+            big: !matches!(self, Kind::Blade | Kind::Arrows),
+        }
+    }
+
+    /// How fast its shot flies, in tiles a second, and how high it arcs
+    /// for the length of its flight (arrows at a wall fly flatter than a
+    /// volley dropped on a regiment).
+    fn flight(self) -> (f32, f32) {
+        match self {
+            Kind::Arrows => (22.0, 0.12),
+            _ => (13.0, 0.32),
+        }
+    }
+
+    /// Shots drawn per blow.
+    fn count(self) -> usize {
+        if self == Kind::Arrows {
+            ARROWS_PER_VOLLEY
+        } else {
+            1
+        }
+    }
+
+    /// What it sounds like landing.
+    fn sound(self) -> Sound {
+        match self {
+            Kind::Blade => Sound::WallHit,
+            Kind::Arrows => Sound::Arrows,
+            _ => Sound::Impact,
         }
     }
 }
@@ -117,45 +162,37 @@ impl Kind {
 /// What a building is made of, for its chips, dust and rubble.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stuff {
-    /// Chip and rubble colours, picked among.
-    pub colours: [[u8; 3]; 3],
-    /// Dust colour.
-    pub dust: [u8; 3],
-    /// Glow of its chips (the Choir's crystal shines).
-    pub glow: u8,
+    /// Chip and rubble colours, picked among, with their glow (the Choir's
+    /// crystal shines).
+    pub colours: [[u8; 4]; 3],
+    pub dust: [u8; 4],
 }
 
 /// What a building of `faction` with `armour` is made of.
 pub fn stuff(faction: Option<Faction>, armour: Armour) -> Stuff {
-    let wood = [116, 82, 52];
-    let stone = [128, 124, 116];
-    let plaster = [176, 160, 132];
-    let dust = [168, 156, 136];
+    let wood = [116, 82, 52, 0];
+    let stone = [128, 124, 116, 0];
+    let dust = [168, 156, 136, 0];
     match (faction, armour) {
         (Some(Faction::Brood), _) | (_, Armour::Living) => Stuff {
-            colours: [[92, 58, 70], [128, 96, 64], [70, 48, 60]],
-            dust: [120, 104, 84],
-            glow: 0,
+            colours: [[92, 58, 70, 0], [128, 96, 64, 0], [70, 48, 60, 0]],
+            dust: [120, 104, 84, 0],
         },
         (Some(Faction::Choir), _) => Stuff {
-            colours: [[150, 190, 214], [196, 216, 230], stone],
-            dust: [190, 200, 206],
-            glow: 70,
+            colours: [[150, 190, 214, 70], [196, 216, 230, 70], stone],
+            dust: [190, 200, 206, 0],
         },
         (Some(Faction::CarrionConcord), _) => Stuff {
-            colours: [[214, 204, 178], [96, 92, 86], wood],
-            dust: [150, 146, 136],
-            glow: 0,
+            colours: [[214, 204, 178, 0], [96, 92, 86, 0], wood],
+            dust: [150, 146, 136, 0],
         },
         (_, Armour::Fortified) => Stuff {
-            colours: [stone, [104, 100, 94], [150, 146, 136]],
+            colours: [stone, [104, 100, 94, 0], [150, 146, 136, 0]],
             dust,
-            glow: 0,
         },
         _ => Stuff {
-            colours: [wood, stone, plaster],
+            colours: [wood, stone, [176, 160, 132, 0]],
             dust,
-            glow: 0,
         },
     }
 }
@@ -165,7 +202,7 @@ pub fn stuff(faction: Option<Faction>, armour: Armour) -> Stuff {
 #[derive(Clone, Copy, Debug)]
 pub struct Look {
     pub handle: StructureHandle,
-    /// The footprint's corners on the map, in tiles.
+    /// The corners of its walls on the map, in tiles.
     pub min: Vec2,
     pub max: Vec2,
     /// The height of the ground its model stands on, and the model's top
@@ -173,16 +210,14 @@ pub struct Look {
     pub base: f32,
     pub top: f32,
     /// Its model, if it has one, drawn this high over the ground at the
-    /// footprint's centre.
+    /// middle.
     pub model: Option<usize>,
     pub lift: f32,
     pub colour: [u8; 3],
     pub stuff: Stuff,
-    /// Share of its hit points left.
+    /// Share of its hit points left, as the damage shows (1 while it goes
+    /// up: it has few hit points yet, and doesn't smoke for it).
     pub hp: f32,
-    /// Finished, not still going up (one going up has few hit points yet,
-    /// and doesn't smoke for it).
-    pub finished: bool,
 }
 
 impl Look {
@@ -190,12 +225,12 @@ impl Look {
         (self.min + self.max) / 2.0
     }
 
-    /// The nearest point of the footprint's edge to `p` (from outside).
+    /// The nearest point of the walls to `p` (from outside).
     pub fn nearest(&self, p: Vec2) -> Vec2 {
         p.clamp(self.min, self.max)
     }
 
-    /// How far `p` is from the footprint (0 inside).
+    /// How far `p` is from the walls (0 inside).
     pub fn gap(&self, p: Vec2) -> f32 {
         p.distance(self.nearest(p))
     }
@@ -222,8 +257,6 @@ pub struct Attacker {
 pub struct Noise {
     pub sound: Sound,
     pub at: Vec2,
-    /// 0 to 1.
-    pub gain: f32,
 }
 
 /// The siege's sounds.
@@ -241,6 +274,36 @@ pub enum Sound {
     Collapse,
 }
 
+/// A soldier at a building's wall on screen: where he stands, the way he
+/// faces, and the point of the wall he swings at, if he can reach it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stand {
+    pub pos: Vec2,
+    pub facing: Vec2,
+    pub swing: Option<Vec2>,
+}
+
+/// A soldier of a melee regiment at `wall`, standing at `pos` as his
+/// regiment places him: he steps up to the wall as far as `lean` (0 to 1)
+/// has his rank closed, less `draw_back` (a ram between blows), and faces
+/// it. The front rank reaches it and swings; those behind wait.
+pub fn stand_at(wall: &Look, pos: Vec2, facing: Vec2, lean: f32, draw_back: f32) -> Stand {
+    let near = wall.nearest(pos);
+    let to = (near - pos).normalize_or(facing);
+    let gap = pos.distance(near);
+    let step = (gap - WALL_GAP).clamp(0.0, WALL_STEP) * lean;
+    Stand {
+        pos: pos + to * (step - draw_back),
+        facing: to,
+        swing: (gap - step <= WALL_GAP + 0.4).then_some(near),
+    }
+}
+
+/// A box that casts no shadow: smoke, dust and flames.
+fn shadowless([w, h, d]: [f32; 3]) -> [f32; 3] {
+    [w, -h.abs(), d]
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Chip {
     pos: Vec2,
@@ -251,7 +314,6 @@ struct Chip {
     colour: [u8; 4],
     facing: Vec2,
     spin: f32,
-    born: f32,
     /// When it came to rest, once it has.
     rest: Option<f32>,
 }
@@ -277,8 +339,8 @@ struct Shot {
     from_y: f32,
     to: Vec2,
     to_y: f32,
-    /// Across the wall, for spreading a volley's arrows.
-    across: Vec2,
+    /// From `from` to `to`, and across it, for spreading a volley.
+    dir: Vec2,
     born: f32,
     flight: f32,
     seed: u32,
@@ -288,31 +350,20 @@ impl Shot {
     /// Where arrow (or stone) `k` is at `t` (0 to 1) of its flight, and how
     /// high.
     fn at(&self, k: usize, t: f32) -> (Vec2, f32) {
-        let spread = if self.kind == Kind::Arrows {
-            self.across * hash(self.seed, k as u32, 0) * 1.2
+        let (spread, rise) = if self.kind == Kind::Arrows {
+            let across = Vec2::new(-self.dir.y, self.dir.x);
+            (
+                across * hash(self.seed, k as u32, 0) * 1.2,
+                hash(self.seed, k as u32, 1) * 0.45,
+            )
         } else {
-            Vec2::ZERO
-        };
-        let rise = if self.kind == Kind::Arrows {
-            hash(self.seed, k as u32, 1) * 0.45
-        } else {
-            0.0
+            (Vec2::ZERO, 0.0)
         };
         let length = self.from.distance(self.to);
-        let arc = if self.kind == Kind::Arrows {
-            ARROW_ARC
-        } else {
-            BOULDER_ARC
-        };
+        let (_, arc) = self.kind.flight();
         let pos = self.from.lerp(self.to + spread, t);
-        let y = self.from_y
-            + (self.to_y + rise - self.from_y) * t
-            + (t * std::f32::consts::PI).sin() * length * arc;
+        let y = self.from_y + (self.to_y + rise - self.from_y) * t + (t * PI).sin() * length * arc;
         (pos, y)
-    }
-
-    fn count(&self) -> usize {
-        if self.kind == Kind::Arrows { ARROWS } else { 1 }
     }
 }
 
@@ -349,13 +400,10 @@ pub struct Siege {
     looks: Vec<Option<Look>>,
     jolts: Vec<Jolt>,
     chips: Vec<Chip>,
-    next_chip: usize,
     puffs: Vec<Puff>,
-    next_puff: usize,
     shots: Vec<Shot>,
     falls: Vec<Fall>,
-    /// By regiment slot: when it last struck a building, and the kind of
-    /// its blows.
+    /// By regiment slot: when it last struck a building.
     struck: Vec<Option<(RegimentHandle, f32)>>,
     /// By regiment slot: how far its front rank has closed to the wall.
     lean: Vec<f32>,
@@ -372,9 +420,7 @@ impl Siege {
             looks: Vec::new(),
             jolts: Vec::new(),
             chips: Vec::with_capacity(MAX_CHIPS),
-            next_chip: 0,
             puffs: Vec::with_capacity(MAX_PUFFS),
-            next_puff: 0,
             shots: Vec::with_capacity(MAX_SHOTS),
             falls: Vec::with_capacity(MAX_FALLS),
             struck: vec![None; regiments],
@@ -400,18 +446,17 @@ impl Siege {
     }
 
     /// Building `h` as last drawn, if it is still there.
-    pub fn look(&self, h: StructureHandle) -> Option<Look> {
+    pub fn look(&self, h: StructureHandle) -> Option<&Look> {
         self.looks
-            .get(h.index as usize)
-            .copied()
-            .flatten()
+            .get(h.index as usize)?
+            .as_ref()
             .filter(|l| l.handle == h)
     }
 
     /// Regiment `a` struck building `structure` (an `Event::Struck`). Shots
     /// set off for it; other blows land at once.
     pub fn struck(&mut self, structure: StructureHandle, a: Attacker) {
-        let Some(look) = self.look(structure) else {
+        let Some(look) = self.look(structure).copied() else {
             return;
         };
         let r = a.handle.index as usize;
@@ -420,42 +465,32 @@ impl Siege {
         }
         let wall = look.nearest(a.at);
         let toward = (wall - a.at).normalize_or(Vec2::X);
-        let across = Vec2::new(-toward.y, toward.x);
         if a.kind.shot() {
             if !a.seen {
                 // Unseen archers: their shots land unannounced.
                 self.land(&look, a.kind, wall, 0.8, toward);
                 return;
             }
-            let to_y = look.base + (look.top * 0.45).clamp(0.6, 2.5);
-            let from_y = look.base.max(0.0) + 0.9;
-            let speed = if a.kind == Kind::Arrows {
-                ARROW_SPEED
-            } else {
-                BOULDER_SPEED
-            };
-            let length = a.at.distance(wall);
+            let (speed, _) = a.kind.flight();
             self.seed = self.seed.wrapping_add(0x9E37_79B9);
-            if self.shots.len() >= MAX_SHOTS {
-                self.shots.remove(0);
-            }
-            self.shots.push(Shot {
+            let shot = Shot {
                 structure,
                 kind: a.kind,
                 from: a.at,
-                from_y,
+                from_y: look.base.max(0.0) + RELEASE_HEIGHT,
                 to: wall - toward * 0.1,
-                to_y,
-                across,
+                to_y: look.base + (look.top * 0.45).clamp(0.6, 2.5),
+                dir: toward,
                 born: self.time,
-                flight: (length / speed).clamp(0.25, 2.5),
+                flight: (a.at.distance(wall) / speed).clamp(0.25, 2.5),
                 seed: self.seed,
-            });
+            };
+            let k = self.pick(MAX_SHOTS);
+            push_capped(&mut self.shots, MAX_SHOTS, k, shot);
             if a.kind != Kind::Arrows {
                 self.noises.push(Noise {
                     sound: Sound::Launch,
                     at: a.at,
-                    gain: 0.9,
                 });
             }
             return;
@@ -464,8 +499,11 @@ impl Siege {
         // to, or along its front.
         let touches = self.touches.get(r).copied().flatten();
         let point = match touches.filter(|t| t.0 == a.handle && t.2 > 0) {
-            Some((_, points, n)) => points[self.roll_index(usize::from(n))],
-            None => look.nearest(wall + across * (self.roll() * a.frontage * 0.5)),
+            Some((_, points, n)) => points[self.pick(usize::from(n))],
+            None => {
+                let across = Vec2::new(-toward.y, toward.x);
+                look.nearest(wall + across * (self.roll() * a.frontage * 0.5))
+            }
         };
         let height = if a.kind == Kind::Ram {
             0.55
@@ -473,99 +511,66 @@ impl Siege {
             0.5 + self.roll().abs() * 0.5
         };
         self.land(&look, a.kind, point, height, toward);
-        let sound = if a.kind == Kind::Ram {
-            Sound::Impact
-        } else {
-            Sound::WallHit
-        };
         self.noises.push(Noise {
-            sound,
+            sound: a.kind.sound(),
             at: point,
-            gain: 1.0,
         });
     }
 
     /// A blow of `kind` lands on building `look` at `at`, `height` over the
     /// ground, travelling along `dir`: it jolts, and chips and dust fly.
     fn land(&mut self, look: &Look, kind: Kind, at: Vec2, height: f32, dir: Vec2) {
-        let (chips, puffs, jolt) = kind.force();
-        match self.jolts.iter_mut().find(|j| j.handle == look.handle) {
-            Some(j) => {
-                // A fresh blow restarts the shake, as hard as the harder.
-                let left = j.strength * (1.0 - (self.time - j.at) / JOLT_SECONDS).max(0.0);
-                *j = Jolt {
-                    handle: look.handle,
-                    dir,
-                    strength: jolt.max(left),
-                    at: self.time,
-                };
-            }
-            None => self.jolts.push(Jolt {
-                handle: look.handle,
-                dir,
-                strength: jolt,
-                at: self.time,
-            }),
+        let force = kind.force();
+        // A fresh blow restarts the shake, as hard as the harder.
+        let old = self.jolts.iter().position(|j| j.handle == look.handle);
+        let left = old.map_or(0.0, |k| {
+            let j = self.jolts[k];
+            j.strength * (1.0 - (self.time - j.at) / JOLT_SECONDS).max(0.0)
+        });
+        let jolt = Jolt {
+            handle: look.handle,
+            dir,
+            strength: force.jolt.max(left),
+            at: self.time,
+        };
+        match old {
+            Some(k) => self.jolts[k] = jolt,
+            None => self.jolts.push(jolt),
         }
         let y = look.base + height;
-        let big = matches!(kind, Kind::Boulder | Kind::Ram | Kind::Fire);
-        for _ in 0..chips {
-            let out = -dir * (1.0 + self.roll().abs() * 2.5)
-                + Vec2::new(-dir.y, dir.x) * (self.roll() * 2.0);
-            let size = if big {
+        let side = Vec2::new(-dir.y, dir.x);
+        for _ in 0..force.chips {
+            let vel = -dir * (1.0 + self.roll().abs() * 2.5) + side * (self.roll() * 2.0);
+            let vy = 1.5 + self.roll().abs() * 3.0;
+            let size = if force.big {
                 0.12 + self.roll().abs() * 0.22
             } else {
                 0.06 + self.roll().abs() * 0.08
             };
-            let colour = look.stuff.colours[self.roll_index(3)];
-            let made = Chip {
-                pos: at - dir * 0.15,
-                y,
-                vel: out,
-                vy: 1.5 + self.roll().abs() * 3.0,
-                size,
-                colour: [colour[0], colour[1], colour[2], look.stuff.glow],
-                facing: Vec2::from_angle(self.roll() * 3.2),
-                spin: self.roll() * 12.0,
-                born: self.time,
-                rest: None,
-            };
-            self.chip(made);
+            let colour = look.stuff.colours[self.pick(3)];
+            let spin = self.roll() * 12.0;
+            self.chip(at - dir * 0.15, y, vel, vy, size, colour, spin);
         }
-        for _ in 0..puffs {
-            let d = look.stuff.dust;
-            let drift = -dir * (0.4 + self.roll().abs() * 0.6)
-                + Vec2::new(-dir.y, dir.x) * (self.roll() * 0.6);
-            let made = Puff {
-                pos: at - dir * 0.3,
-                y: y - 0.2,
-                vel: drift,
-                rise: 0.35,
-                size: if big { 0.8 } else { 0.45 },
-                colour: [d[0], d[1], d[2], 0],
-                facing: Vec2::from_angle(self.roll() * 3.2),
-                born: self.time,
-                life: PUFF_LIFE * (0.8 + self.roll().abs() * 0.4),
-            };
-            self.puff(made);
+        for _ in 0..force.puffs {
+            let drift = -dir * (0.4 + self.roll().abs() * 0.6) + side * (self.roll() * 0.6);
+            let size = if force.big { 0.8 } else { 0.45 };
+            let life = PUFF_LIFE * (0.8 + self.roll().abs() * 0.4);
+            self.puff(
+                at - dir * 0.3,
+                y - 0.2,
+                drift,
+                0.35,
+                size,
+                look.stuff.dust,
+                life,
+            );
         }
         if kind == Kind::Fire {
             // The shot bursts in flame.
             for _ in 0..4 {
                 let drift = Vec2::new(self.roll(), self.roll()) * 0.5;
                 let glow = [255, 150 + (self.roll().abs() * 70.0) as u8, 40, 230];
-                let made = Puff {
-                    pos: at - dir * 0.2,
-                    y,
-                    vel: drift,
-                    rise: 0.9,
-                    size: 0.5,
-                    colour: glow,
-                    facing: Vec2::from_angle(self.roll() * 3.2),
-                    born: self.time,
-                    life: 0.6,
-                };
-                self.puff(made);
+                self.puff(at - dir * 0.2, y, drift, 0.9, 0.5, glow, 0.6);
             }
         }
     }
@@ -573,45 +578,35 @@ impl Siege {
     /// Building `structure` was brought down (an `Event::Fallen`): it
     /// sinks into a cloud of dust and leaves rubble.
     pub fn fallen(&mut self, structure: StructureHandle) {
-        let Some(look) = self.look(structure) else {
+        let Some(look) = self.look(structure).copied() else {
             return;
         };
         self.looks[structure.index as usize] = None;
         self.jolts.retain(|j| j.handle != structure);
-        if self.falls.len() >= MAX_FALLS {
-            self.falls.remove(0);
-        }
         self.seed = self.seed.wrapping_add(0x9E37_79B9);
-        self.falls.push(Fall {
+        let fall = Fall {
             look,
             born: self.time,
             seed: self.seed,
-        });
+        };
+        let k = self.pick(MAX_FALLS);
+        push_capped(&mut self.falls, MAX_FALLS, k, fall);
         // A burst of chips from every side.
         let centre = look.centre();
         let n = (12.0 + look.size().x * look.size().y).min(40.0) as usize;
         for k in 0..n {
             let dir = Vec2::from_angle(k as f32 * 2.4 + self.roll());
+            let y = look.base + look.top * (0.3 + self.roll().abs() * 0.5);
+            let vel = dir * (1.0 + self.roll().abs() * 3.0);
+            let vy = 1.0 + self.roll().abs() * 3.0;
+            let size = 0.14 + self.roll().abs() * 0.26;
+            let spin = self.roll() * 8.0;
             let edge = look.nearest(centre + dir * 100.0);
-            let colour = look.stuff.colours[k % 3];
-            let made = Chip {
-                pos: edge,
-                y: look.base + look.top * (0.3 + self.roll().abs() * 0.5),
-                vel: dir * (1.0 + self.roll().abs() * 3.0),
-                vy: 1.0 + self.roll().abs() * 3.0,
-                size: 0.14 + self.roll().abs() * 0.26,
-                colour: [colour[0], colour[1], colour[2], look.stuff.glow],
-                facing: Vec2::from_angle(self.roll() * 3.2),
-                spin: self.roll() * 8.0,
-                born: self.time,
-                rest: None,
-            };
-            self.chip(made);
+            self.chip(edge, y, vel, vy, size, look.stuff.colours[k % 3], spin);
         }
         self.noises.push(Noise {
             sound: Sound::Collapse,
             at: centre,
-            gain: 1.0,
         });
     }
 
@@ -620,9 +615,9 @@ impl Siege {
     pub fn advance(&mut self, dt: f32, ground: impl Fn(Vec2) -> f32) {
         self.time += dt;
         let now = self.time;
-        for c in &mut self.chips {
-            if c.rest.is_some() {
-                continue;
+        self.chips.retain_mut(|c| {
+            if let Some(rest) = c.rest {
+                return now - rest < CHIP_LIFE;
             }
             c.vy -= GRAVITY * dt;
             c.pos += c.vel * dt;
@@ -640,90 +635,48 @@ impl Siege {
                     c.rest = Some(now);
                 }
             }
-        }
-        self.chips
-            .retain(|c| now - c.rest.unwrap_or(now) < CHIP_LIFE && now - c.born < CHIP_LIFE * 2.0);
-        if self.next_chip > self.chips.len() {
-            self.next_chip = 0;
-        }
+            true
+        });
         self.puffs.retain(|p| now - p.born < p.life);
-        if self.next_puff > self.puffs.len() {
-            self.next_puff = 0;
-        }
         // Shots that came down land; fire-pots trail smoke.
         let mut k = 0;
         while k < self.shots.len() {
             let s = self.shots[k];
             let t = (now - s.born) / s.flight;
             if t < 1.0 {
-                if s.kind == Kind::Fire && self.roll() > 0.2 {
+                if s.kind == Kind::Fire && self.roll() > -0.6 {
                     let (pos, y) = s.at(0, t);
-                    let made = Puff {
-                        pos,
-                        y,
-                        vel: Vec2::ZERO,
-                        rise: 0.3,
-                        size: 0.3,
-                        colour: [70, 66, 62, 0],
-                        facing: Vec2::from_angle(self.roll() * 3.2),
-                        born: now,
-                        life: 0.9,
-                    };
-                    self.puff(made);
+                    self.puff(pos, y, Vec2::ZERO, 0.3, 0.3, [70, 66, 62, 0], 0.9);
                 }
                 k += 1;
                 continue;
             }
             self.shots.swap_remove(k);
-            let Some(look) = self.look(s.structure) else {
+            let Some(look) = self.look(s.structure).copied() else {
                 continue;
             };
-            let dir = (s.to - s.from).normalize_or(Vec2::X);
-            for a in 0..s.count() {
+            for a in 0..s.kind.count() {
                 let (pos, y) = s.at(a, 1.0);
-                self.land(
-                    &look,
-                    s.kind,
-                    look.nearest(pos),
-                    (y - look.base).max(0.3),
-                    dir,
-                );
+                let height = (y - look.base).max(0.3);
+                self.land(&look, s.kind, look.nearest(pos), height, s.dir);
             }
-            let sound = if s.kind == Kind::Arrows {
-                Sound::Arrows
-            } else {
-                Sound::Impact
-            };
             self.noises.push(Noise {
-                sound,
+                sound: s.kind.sound(),
                 at: s.to,
-                gain: 1.0,
             });
         }
         // Collapsing buildings throw up dust as they go down.
-        let n = self.falls.len();
-        for f in 0..n {
-            let fall = self.falls[f];
-            let age = now - fall.born;
-            if age >= COLLAPSE_SECONDS || self.roll() < 0.4 {
+        for f in 0..self.falls.len() {
+            let Fall { look, born, .. } = self.falls[f];
+            if now - born >= COLLAPSE_SECONDS || self.roll() < -0.2 {
                 continue;
             }
-            let look = fall.look;
-            let around = Vec2::from_angle(self.roll() * 3.2);
+            let around = Vec2::from_angle(self.roll() * PI);
             let edge = look.nearest(look.centre() + around * 100.0);
-            let d = look.stuff.dust;
-            let made = Puff {
-                pos: edge + around * 0.3,
-                y: look.base + self.roll().abs() * look.top * 0.4,
-                vel: around * (0.6 + self.roll().abs()),
-                rise: 0.5,
-                size: 0.9 + self.roll().abs() * 0.8,
-                colour: [d[0], d[1], d[2], 0],
-                facing: Vec2::from_angle(self.roll() * 3.2),
-                born: now,
-                life: 2.2,
-            };
-            self.puff(made);
+            let y = look.base + self.roll().abs() * look.top * 0.4;
+            let vel = around * (0.6 + self.roll().abs());
+            let size = 0.9 + self.roll().abs() * 0.8;
+            self.puff(edge + around * 0.3, y, vel, 0.5, size, look.stuff.dust, 2.2);
         }
         self.falls
             .retain(|f| now - f.born < COLLAPSE_SECONDS + RUBBLE_SECONDS);
@@ -735,26 +688,25 @@ impl Siege {
         self.noises.drain(..)
     }
 
+    fn jolt_of(&self, h: StructureHandle) -> Option<&Jolt> {
+        self.jolts.iter().find(|j| j.handle == h)
+    }
+
     /// How far building `h` is shaken off its place now, along the ground
     /// and up.
     pub fn jolt(&self, h: StructureHandle) -> (Vec2, f32) {
-        let Some(j) = self.jolts.iter().find(|j| j.handle == h) else {
+        let Some(j) = self.jolt_of(h) else {
             return (Vec2::ZERO, 0.0);
         };
-        let t = (self.time - j.at) / JOLT_SECONDS;
-        if t >= 1.0 {
-            return (Vec2::ZERO, 0.0);
-        }
+        let t = ((self.time - j.at) / JOLT_SECONDS).min(1.0);
         // Pushed along the blow, then rocking back and settling.
-        let rock = (t * 3.0 * std::f32::consts::TAU).cos() * (1.0 - t) * (1.0 - t);
+        let rock = (t * 3.0 * TAU).cos() * (1.0 - t) * (1.0 - t);
         (j.dir * (j.strength * rock), -j.strength * 0.3 * rock.abs())
     }
 
     /// How white building `h`'s health bar shows from a fresh blow, 0 to 1.
     pub fn flash(&self, h: StructureHandle) -> f32 {
-        self.jolts
-            .iter()
-            .find(|j| j.handle == h)
+        self.jolt_of(h)
             .map_or(0.0, |j| (1.0 - (self.time - j.at) / FLASH_SECONDS).max(0.0))
     }
 
@@ -767,11 +719,7 @@ impl Siege {
     /// Whether regiment `h` loosed at a building lately: its archers keep
     /// shooting.
     pub fn shooting(&self, h: RegimentHandle) -> bool {
-        self.struck
-            .get(h.index as usize)
-            .copied()
-            .flatten()
-            .is_some_and(|(s, at)| s == h && self.time - at < SHOOTING_SECONDS)
+        self.since_struck(h).is_some_and(|t| t < SHOOTING_SECONDS)
     }
 
     /// How far regiment `h`'s front rank has closed to the wall (0 to 1),
@@ -832,7 +780,7 @@ impl Siege {
 
     /// Draw the chips, dust, shots, rubble and the smoke and fire of the
     /// damaged buildings among `shown`, as boxes; `ground` is the height
-    /// of the ground at a point. Stops at `limit` boxes.
+    /// of the ground at a point. Leaves `out` no longer than `limit`.
     pub fn push(
         &self,
         shown: impl Iterator<Item = StructureHandle>,
@@ -841,158 +789,129 @@ impl Siege {
         out: &mut Vec<BoxInstance>,
     ) {
         let now = self.time;
-        let room = |out: &Vec<BoxInstance>| out.len() < limit;
         for s in &self.shots {
             let t = ((now - s.born) / s.flight).clamp(0.0, 1.0);
-            let dir = (s.to - s.from).normalize_or(Vec2::X);
-            for k in 0..s.count() {
-                if !room(out) {
-                    return;
-                }
+            let (size, color, facing) = match s.kind {
+                Kind::Arrows => (ARROW_SIZE, ARROW_COLOR, s.dir),
+                Kind::Fire => ([0.3, 0.3, 0.45], [255, 140, 40, 255], s.dir),
+                _ => (
+                    [0.42, 0.38, 0.42],
+                    [96, 92, 86, 0],
+                    Vec2::from_angle(now * 9.0),
+                ),
+            };
+            for k in 0..s.kind.count() {
                 let (pos, y) = s.at(k, t);
-                let (size, colour, facing) = match s.kind {
-                    Kind::Arrows => ([0.05, 0.05, 0.7], [70, 52, 36, 0], dir),
-                    Kind::Fire => ([0.3, 0.3, 0.45], [255, 140, 40, 255], dir),
-                    _ => (
-                        [0.42, 0.38, 0.42],
-                        [96, 92, 86, 0],
-                        Vec2::from_angle(now * 9.0),
-                    ),
-                };
                 out.push(BoxInstance {
                     pos: pos.to_array(),
                     facing: facing.to_array(),
                     size,
-                    color: colour,
+                    color,
                     lift: y - ground(pos),
                 });
             }
         }
         for c in &self.chips {
-            if !room(out) {
-                return;
-            }
-            let sink = c.rest.map_or(0.0, |r| {
-                ((now - r - (CHIP_LIFE - CHIP_SINK)) / CHIP_SINK).max(0.0)
-            });
+            // One lying still is on the ground already.
+            let lift = match c.rest {
+                Some(rest) => {
+                    -c.size * ((now - rest - (CHIP_LIFE - CHIP_SINK)) / CHIP_SINK).max(0.0)
+                }
+                None => c.y - ground(c.pos),
+            };
             out.push(BoxInstance {
                 pos: c.pos.to_array(),
                 facing: c.facing.to_array(),
                 size: [c.size, c.size * 0.7, c.size * 0.9],
                 color: c.colour,
-                lift: c.y - ground(c.pos) - c.size * sink,
+                lift,
             });
         }
         for p in &self.puffs {
-            if !room(out) {
-                return;
-            }
-            let t = (now - p.born) / p.life;
+            let age = now - p.born;
+            let t = age / p.life;
             // Swells, then thins away.
             let size = p.size * (0.5 + t * 1.2) * (1.0 - t * t * t);
-            let pos = p.pos + p.vel * (now - p.born);
+            let pos = p.pos + p.vel * age;
             out.push(BoxInstance {
                 pos: pos.to_array(),
                 facing: p.facing.to_array(),
-                size: [size, -size * 0.8, size],
+                size: shadowless([size, size * 0.8, size]),
                 color: p.colour,
-                lift: p.y + p.rise * (now - p.born) - ground(pos),
+                lift: p.y + p.rise * age - ground(pos),
             });
         }
         for f in &self.falls {
-            let age = now - f.born;
-            if age < COLLAPSE_SECONDS * 0.5 {
-                continue;
-            }
-            let rubble = age - COLLAPSE_SECONDS * 0.5;
-            let sink = ((rubble - (RUBBLE_SECONDS - RUBBLE_SINK)) / RUBBLE_SINK).clamp(0.0, 1.0);
-            let look = f.look;
-            let size = look.size();
-            let n = (size.x * size.y * 1.2).clamp(8.0, 30.0) as usize;
-            for k in 0..n {
-                if !room(out) {
-                    return;
-                }
-                let at = look.min
-                    + Vec2::new(
-                        (hash(f.seed, k as u32, 0) * 0.5 + 0.5) * size.x,
-                        (hash(f.seed, k as u32, 1) * 0.5 + 0.5) * size.y,
-                    );
-                // A heap: higher in the middle.
-                let middle = 1.0
-                    - ((at - look.centre()) / (size * 0.5).max(Vec2::ONE))
-                        .length()
-                        .min(1.0);
-                let w = 0.35 + (hash(f.seed, k as u32, 2) * 0.5 + 0.5) * 0.7;
-                let h = (0.2 + middle * (look.top * 0.18).min(1.2)) * (1.0 - sink);
-                let colour = look.stuff.colours[k % 3];
-                out.push(BoxInstance {
-                    pos: at.to_array(),
-                    facing: Vec2::from_angle(hash(f.seed, k as u32, 3) * 3.2).to_array(),
-                    size: [w, h.max(0.02), w * 0.8],
-                    color: [colour[0], colour[1], colour[2], 0],
-                    lift: -0.05 - 0.3 * sink,
-                });
-            }
-            if rubble < SMOULDER_SECONDS {
-                let thin = 1.0 - rubble / SMOULDER_SECONDS;
-                self.smoke(
-                    f.seed,
-                    look.centre(),
-                    look.base + 0.4,
-                    0.7 * thin,
-                    1,
-                    &ground,
-                    out,
-                    limit,
-                );
-            }
+            self.rubble(f, &ground, out);
         }
         for h in shown {
-            let Some(look) = self.look(h) else { continue };
-            // A building going up has few hit points yet: it doesn't burn.
-            if look.hp >= SMOKES_BELOW || !look.finished {
-                continue;
+            if let Some(look) = self.look(h).filter(|l| l.hp < SMOKES_BELOW) {
+                self.burn(look, &ground, out);
             }
-            let area = look.size().x * look.size().y;
-            let spots = if area >= 12.0 {
-                3
-            } else if area >= 4.0 {
-                2
-            } else {
-                1
-            };
-            let fire = look.hp < BURNS_BELOW;
-            let damage = (SMOKES_BELOW - look.hp) / SMOKES_BELOW;
-            for spot in 0..spots {
-                let seed = h.index.wrapping_mul(0x2545_F491) ^ u32::from(h.generation);
-                let off = Vec2::new(hash(seed, spot, 4), hash(seed, spot, 5)) * look.size() * 0.3;
-                let at = look.centre() + off;
-                let roof = look.base + look.top * 0.8;
-                // The second and third column only once badly hurt.
-                if spot > 0 && damage < 0.25 * spot as f32 {
-                    continue;
-                }
-                let thick = 0.35 + damage * if fire { 0.55 } else { 0.3 };
-                self.smoke(
-                    seed ^ spot,
-                    at,
-                    roof,
-                    thick,
-                    if fire { 2 } else { 1 },
-                    &ground,
-                    out,
-                    limit,
-                );
-                if fire {
-                    self.flames(seed ^ spot, at, roof, &ground, out, limit);
-                }
+        }
+        out.truncate(limit);
+    }
+
+    /// A fallen building's rubble, once its model is half sunk: a heap,
+    /// smouldering at first, that sinks away in the end.
+    fn rubble(&self, f: &Fall, ground: &impl Fn(Vec2) -> f32, out: &mut Vec<BoxInstance>) {
+        let age = self.time - f.born - COLLAPSE_SECONDS * 0.5;
+        if age < 0.0 {
+            return;
+        }
+        let sink = ((age - (RUBBLE_SECONDS - RUBBLE_SINK)) / RUBBLE_SINK).clamp(0.0, 1.0);
+        let look = &f.look;
+        let size = look.size();
+        let n = (size.x * size.y * 1.2).clamp(8.0, 30.0) as usize;
+        for k in 0..n {
+            let r = |axis| hash(f.seed, k as u32, axis) * 0.5 + 0.5;
+            let at = look.min + Vec2::new(r(0), r(1)) * size;
+            // Higher in the middle.
+            let middle = 1.0
+                - ((at - look.centre()) / (size * 0.5).max(Vec2::ONE))
+                    .length()
+                    .min(1.0);
+            let w = 0.35 + r(2) * 0.7;
+            let h = (0.2 + middle * (look.top * 0.18).min(1.2)) * (1.0 - sink);
+            out.push(BoxInstance {
+                pos: at.to_array(),
+                facing: Vec2::from_angle(r(3) * TAU).to_array(),
+                size: [w, h.max(0.02), w * 0.8],
+                color: look.stuff.colours[k % 3],
+                lift: -0.05 - 0.3 * sink,
+            });
+        }
+        if age < SMOULDER_SECONDS {
+            let thick = 0.7 * (1.0 - age / SMOULDER_SECONDS);
+            let at = look.centre();
+            self.smoke(f.seed, at, look.base + 0.4, thick, false, ground, out);
+        }
+    }
+
+    /// The smoke from a damaged building's roof, and its fire once it is
+    /// badly damaged: more columns as it gets worse.
+    fn burn(&self, look: &Look, ground: &impl Fn(Vec2) -> f32, out: &mut Vec<BoxInstance>) {
+        let h = look.handle;
+        let area = look.size().x * look.size().y;
+        let spots = 1 + u32::from(area >= 4.0) + u32::from(area >= 12.0);
+        let fire = look.hp < BURNS_BELOW;
+        let damage = (SMOKES_BELOW - look.hp) / SMOKES_BELOW;
+        let seed = h.index.wrapping_mul(0x2545_F491) ^ u32::from(h.generation);
+        let roof = look.base + look.top * 0.8;
+        let thick = 0.35 + damage * if fire { 0.55 } else { 0.3 };
+        // The second and third column only once worse hurt.
+        for spot in (0..spots).filter(|&k| damage >= 0.25 * k as f32) {
+            let off = Vec2::new(hash(seed, spot, 4), hash(seed, spot, 5)) * look.size() * 0.3;
+            let at = look.centre() + off;
+            self.smoke(seed ^ spot, at, roof, thick, fire, ground, out);
+            if fire {
+                self.flames(seed ^ spot, at, roof, ground, out);
             }
         }
     }
 
     /// A column of smoke from `at`, `y` high: `thick` sizes its puffs, and
-    /// `dark` (1 or 2) darkens them (a fire's smoke is black).
+    /// a fire's is darker.
     #[allow(clippy::too_many_arguments)]
     fn smoke(
         &self,
@@ -1000,27 +919,22 @@ impl Siege {
         at: Vec2,
         y: f32,
         thick: f32,
-        dark: u8,
+        fire: bool,
         ground: &impl Fn(Vec2) -> f32,
         out: &mut Vec<BoxInstance>,
-        limit: usize,
     ) {
-        let grey: u8 = if dark > 1 { 64 } else { 110 };
+        let grey: u8 = if fire { 64 } else { 110 };
         for k in 0..SMOKE_PUFFS {
-            if out.len() >= limit {
-                return;
-            }
-            let offset = k as f32 / SMOKE_PUFFS as f32 + hash(seed, k as u32, 6) * 0.05;
+            let r = |axis| hash(seed, k as u32, axis);
+            let offset = k as f32 / SMOKE_PUFFS as f32 + r(6) * 0.05;
             let t = (self.time / SMOKE_LIFE + offset).fract();
             let size = thick * (0.45 + t * 1.3) * (1.0 - t * t);
-            let pos = at
-                + WIND * (t * SMOKE_LIFE)
-                + Vec2::new(hash(seed, k as u32, 7), hash(seed, k as u32, 8)) * 0.2;
+            let pos = at + WIND * (t * SMOKE_LIFE) + Vec2::new(r(7), r(8)) * 0.2;
             let shade = grey.saturating_add((t * 60.0) as u8);
             out.push(BoxInstance {
                 pos: pos.to_array(),
                 facing: Vec2::from_angle(t * 2.0 + k as f32).to_array(),
-                size: [size, -size * 0.85, size],
+                size: shadowless([size, size * 0.85, size]),
                 color: [shade, shade, shade.saturating_add(4), 0],
                 lift: y + t * SMOKE_LIFE * 0.8 - ground(pos),
             });
@@ -1035,48 +949,79 @@ impl Siege {
         y: f32,
         ground: &impl Fn(Vec2) -> f32,
         out: &mut Vec<BoxInstance>,
-        limit: usize,
     ) {
+        let now = self.time;
         for k in 0..FLAMES {
-            if out.len() >= limit {
-                return;
-            }
-            let phase = hash(seed, k as u32, 9) * 6.0;
-            let flicker =
-                0.75 + 0.25 * (self.time * 11.0 + phase).sin() * (self.time * 7.3 + phase).cos();
+            let r = |axis| hash(seed, k as u32, axis);
+            let phase = r(9) * 6.0;
+            let flicker = 0.75 + 0.25 * (now * 11.0 + phase).sin() * (now * 7.3 + phase).cos();
             let size = (0.3 + 0.15 * k as f32 % 0.45) * flicker;
-            let pos = at + Vec2::new(hash(seed, k as u32, 10), hash(seed, k as u32, 11)) * 0.35;
-            let colour = if k % 2 == 0 {
+            let pos = at + Vec2::new(r(10), r(11)) * 0.35;
+            let color = if k % 2 == 0 {
                 [255, 150, 40, 255]
             } else {
                 [255, 206, 90, 255]
             };
             out.push(BoxInstance {
                 pos: pos.to_array(),
-                facing: Vec2::from_angle(self.time * 2.0 + phase).to_array(),
-                size: [size, -size * 1.6, size],
-                color: colour,
-                lift: y - 0.15 + 0.1 * (self.time * 5.0 + phase).sin() - ground(pos),
+                facing: Vec2::from_angle(now * 2.0 + phase).to_array(),
+                size: shadowless([size, size * 1.6, size]),
+                color,
+                lift: y - 0.15 + 0.1 * (now * 5.0 + phase).sin() - ground(pos),
             });
         }
     }
 
-    fn chip(&mut self, c: Chip) {
-        if self.chips.len() < MAX_CHIPS {
-            self.chips.push(c);
-        } else {
-            self.chips[self.next_chip] = c;
-            self.next_chip = (self.next_chip + 1) % MAX_CHIPS;
-        }
+    #[allow(clippy::too_many_arguments)]
+    fn chip(
+        &mut self,
+        pos: Vec2,
+        y: f32,
+        vel: Vec2,
+        vy: f32,
+        size: f32,
+        colour: [u8; 4],
+        spin: f32,
+    ) {
+        let chip = Chip {
+            pos,
+            y,
+            vel,
+            vy,
+            size,
+            colour,
+            facing: Vec2::from_angle(self.roll() * PI),
+            spin,
+            rest: None,
+        };
+        let k = self.pick(MAX_CHIPS);
+        push_capped(&mut self.chips, MAX_CHIPS, k, chip);
     }
 
-    fn puff(&mut self, p: Puff) {
-        if self.puffs.len() < MAX_PUFFS {
-            self.puffs.push(p);
-        } else {
-            self.puffs[self.next_puff] = p;
-            self.next_puff = (self.next_puff + 1) % MAX_PUFFS;
-        }
+    #[allow(clippy::too_many_arguments)]
+    fn puff(
+        &mut self,
+        pos: Vec2,
+        y: f32,
+        vel: Vec2,
+        rise: f32,
+        size: f32,
+        colour: [u8; 4],
+        life: f32,
+    ) {
+        let puff = Puff {
+            pos,
+            y,
+            vel,
+            rise,
+            size,
+            colour,
+            facing: Vec2::from_angle(self.roll() * PI),
+            born: self.time,
+            life,
+        };
+        let k = self.pick(MAX_PUFFS);
+        push_capped(&mut self.puffs, MAX_PUFFS, k, puff);
     }
 
     /// A value in [-1, 1), different each call.
@@ -1088,8 +1033,18 @@ impl Siege {
     }
 
     /// One of `0..n`, different each call.
-    fn roll_index(&mut self, n: usize) -> usize {
+    fn pick(&mut self, n: usize) -> usize {
         (((self.roll() + 1.0) * 0.5 * n as f32) as usize).min(n.saturating_sub(1))
+    }
+}
+
+/// Add `item` to `pool`, or once it holds `cap`, put it in place of item
+/// `k` (one chosen at random).
+fn push_capped<T>(pool: &mut Vec<T>, cap: usize, k: usize, item: T) {
+    if pool.len() < cap {
+        pool.push(item);
+    } else {
+        pool[k] = item;
     }
 }
 
@@ -1128,7 +1083,6 @@ mod tests {
             colour: [200, 0, 0],
             stuff: stuff(Some(Faction::EmberClans), Armour::Structure),
             hp,
-            finished: true,
         }
     }
 
@@ -1207,12 +1161,12 @@ mod tests {
         assert!(s.chips.is_empty(), "not there yet");
         let mut out = Vec::new();
         s.push(core::iter::empty(), flat, 1000, &mut out);
-        assert_eq!(out.len(), ARROWS);
+        assert_eq!(out.len(), ARROWS_PER_VOLLEY);
         for _ in 0..30 {
             s.advance(0.05, flat);
         }
         assert!(s.shots.is_empty());
-        assert_eq!(s.chips.len(), ARROWS);
+        assert_eq!(s.chips.len(), ARROWS_PER_VOLLEY);
         assert!(s.drain_noises().any(|n| n.sound == Sound::Arrows));
         for _ in 0..30 {
             s.advance(0.05, flat);

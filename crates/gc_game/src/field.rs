@@ -22,6 +22,9 @@ pub const ARROW_SPREAD: f32 = 1.6;
 pub const ARROW_CAUGHT_TILES: f32 = 1.0;
 /// Peak of an arrow's arc as a fraction of the distance it flies.
 const ARROW_ARC: f32 = 0.22;
+/// An arrow in flight: its box, and colour.
+pub const ARROW_SIZE: [f32; 3] = [0.05, 0.05, 0.7];
+pub const ARROW_COLOR: [u8; 4] = [70, 52, 36, 0];
 /// Spent arrows kept on the field at once; when it is full the oldest
 /// vanish first. 24 bytes each, so 576 KB, and two boxes to draw.
 pub const MAX_STUCK: usize = 24_576;

@@ -307,9 +307,8 @@ const BLOCKED_MARK: [f32; 3] = [0.3, 0.04, 0.3];
 const BLOCKED_LIFT: f32 = 0.1;
 /// How near a building a regiment's centre stands, past half its depth, to
 /// be at the wall (the simulation lets its front rank reach about two tiles
-/// from it), and how far its ranks step up to it on screen.
+/// from it).
 const WALL_REACH: f32 = 3.4;
-const WALL_STEP: f32 = 2.4;
 /// A building `--siege` puts up: its name, where (from the camera's focus),
 /// and its attackers: unit, and how far across and south of it they start.
 type SceneBuilding = (&'static str, Vec2, &'static [(&'static str, f32, f32)]);
@@ -769,7 +768,7 @@ struct UnitTable {
     roles: Vec<gc_sim::arrange::Role>,
     /// Each type's blows on buildings, from its class; empty for the Field
     /// types, which are all plain regiments.
-    breakers: Vec<gc_sim::structures::Breaker>,
+    breakers: Vec<Breaker>,
 }
 
 impl UnitTable {
@@ -3042,24 +3041,24 @@ impl Running {
                 // up to the wall and swing at it, archers shoot.
                 let siege = &mut self.siege;
                 let wall = (self.world.siege_target(r.handle))
-                    .and_then(|h| siege.look(h))
+                    .and_then(|h| siege.look(h).copied())
                     .filter(|_| !block.routing && !r.engaged);
                 let melee = stats.range.raw() == 0;
                 let at_wall = wall
                     .is_some_and(|w| melee && !r.moving && w.gap(pos) <= depth / 2.0 + WALL_REACH);
                 let lean = siege.lean(r.handle, at_wall, game_dt.as_secs_f32());
                 // A ram draws back between blows and swings in to land each.
-                let ram = matches!(
-                    self.units.breakers.get(usize::from(r.unit)),
-                    Some(Breaker::Siege | Breaker::Artillery)
-                );
+                let breaker = self.units.breakers.get(usize::from(r.unit)).copied();
+                let ram = siege::Kind::of(!melee, breaker.unwrap_or_default()) == siege::Kind::Ram;
                 let draw_back = siege
                     .since_struck(r.handle)
-                    .filter(|_| ram && melee && at_wall)
+                    .filter(|_| ram && at_wall)
                     .map_or(0.0, |t| {
                         RAM_DRAW * (t.min(1.0) * std::f32::consts::PI).sin()
                     });
-                siege.untouch(r.handle);
+                if wall.is_some() {
+                    siege.untouch(r.handle);
+                }
                 let shooting = self.shooting[r.handle.index as usize]
                     || (wall.is_some() && siege.shooting(r.handle));
                 // Builders at a building going up (or being mended) turn
@@ -3078,14 +3077,10 @@ impl Running {
                         // one swings.
                         let mut battering = None;
                         if let Some(w) = wall.filter(|_| s.fight.is_none() && s.speed <= 0.6) {
-                            let near = w.nearest(s.pos);
-                            let to = (near - s.pos).normalize_or(s.facing);
                             if melee && lean > 0.0 {
-                                let gap = s.pos.distance(near);
-                                let step = (gap - siege::WALL_GAP).clamp(0.0, WALL_STEP) * lean;
-                                s.pos += to * (step - draw_back);
-                                s.facing = to;
-                                if gap - step <= siege::WALL_GAP + 0.4 {
+                                let stand = siege::stand_at(&w, s.pos, s.facing, lean, draw_back);
+                                (s.pos, s.facing) = (stand.pos, stand.facing);
+                                if let Some(near) = stand.swing {
                                     battering = Some(near);
                                     siege.touch(r.handle, near);
                                 }
@@ -4761,8 +4756,8 @@ impl Running {
                 self.instances.push(BoxInstance {
                     pos: flight.at(k, t).to_array(),
                     facing: flight.dir.to_array(),
-                    size: [0.05, 0.05, 0.7],
-                    color: [70, 52, 36, 0],
+                    size: field::ARROW_SIZE,
+                    color: field::ARROW_COLOR,
                     lift: start.map_or(ARROW_HEIGHT, |top| top + (ARROW_HEIGHT - top) * t)
                         + flight.arc(t),
                 });
@@ -5396,7 +5391,12 @@ impl Running {
             }
             1 if self.world.structures().is_some_and(|s| !s.is_empty()) => {
                 let mut orders = Vec::new();
-                for s in self.world.structures().into_iter().flat_map(gc_sim::Structures::iter) {
+                for s in self
+                    .world
+                    .structures()
+                    .into_iter()
+                    .flat_map(gc_sim::Structures::iter)
+                {
                     let name = self.buildings.name(s.building);
                     let Some((_, _, attackers)) = SCENE.iter().find(|(n, ..)| *n == name) else {
                         continue;
@@ -5457,8 +5457,11 @@ impl Running {
                 lift,
                 colour: color_of(&self.parties, s.owner),
                 stuff: siege::stuff(self.buildings.faction(s.building), stats.armour),
-                hp: s.hp as f32 / s.max_hp.max(1) as f32,
-                finished: s.finished(),
+                hp: if s.finished() {
+                    s.hp as f32 / s.max_hp.max(1) as f32
+                } else {
+                    1.0
+                },
             });
         }
     }

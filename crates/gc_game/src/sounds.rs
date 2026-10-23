@@ -985,7 +985,7 @@ impl Sounds {
             Sound::Impact => (SoundId::SiegeImpact, 1.0, 1.5, PRI_MORALE),
             Sound::Collapse => (SoundId::Collapse, 1.0, 2.2, PRI_MORALE),
         };
-        self.play_at(sound, noise.at, gain * noise.gain, reach, priority);
+        self.play_at(sound, noise.at, gain, reach, priority);
     }
 
     /// An ambush sprung on or by the side you command: a war-drum roll and
