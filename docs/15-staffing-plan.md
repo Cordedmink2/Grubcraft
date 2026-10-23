@@ -9,7 +9,7 @@ This is a plan, not a switch. Nothing here changes which model a running thread 
 - **Opus owns anything that can silently break a multiplayer game.** That is the deterministic sim (`gc_sim`, `gc_fixed`), netcode (`gc_net`), combat and economy math, save/replay formats, architecture, and review of every PR that touches them.
 - **Sonnet owns well-scoped features behind a stable interface.** UI screens, renderer features, audio, the asset pipeline, tools, maps, packaging and platform fixes.
 - **Haiku does mechanical work to a clear spec, always under a lead.** CI log triage, tests written from a spec, RON data entry, docs sync, benchmark runs, screenshots, licence checks.
-- **3D models go to Opus at medium effort.** Blender builds, rigs, clips and bakes for units, heroes and anything else modelled in-house. Mario's call (2026-10-16) after comparing the Ember Clans (Opus) and Carrion Concord (Sonnet) rosters built side by side under the same rules.
+- **3D models go to Sonnet 5.5 alone.** Blender builds, rigs, clips, bakes and re-bakes for units, heroes, buildings and anything else modelled in-house, with no Opus supervisor and no Haiku builders. Mario's call (2026-10-23), after the tower model bake-off compared Opus, Sonnet and Haiku alone with Haiku builds reviewed by Opus or Sonnet. It replaces the earlier rules: Opus at medium effort (2026-10-16), then Opus supervising Haiku helpers (2026-10-17).
 - **One Opus engine thread through M1 and M2**, because almost every step changes the sim and two threads editing it would fight. **Parallel threads from M3**, once the sim's interfaces settle and the work splits along crate lines.
 
 ## The roster
@@ -58,7 +58,7 @@ Subagents that write code in parallel run with **worktree isolation**, so two of
 
 Effort is set per thread, separately from the model. Default to the model's normal effort; ask for high or max effort only for desync hunts, the lockstep protocol, combat-formula tuning and performance investigations where the first answer is rarely right.
 
-3D modelling is the exception the other way: Opus at medium effort, not high (Mario, 2026-10-16).
+3D modelling runs on Sonnet 5.5 alone (Mario, 2026-10-23); medium effort unless a model needs more.
 
 The AI is the other place where effort pays: its design ran at extra-high effort (2026-10-12), and the battle tactics and estimator should too. Keep max effort for the diplomacy logic (the relations ledger and the rule that answers offers), where a subtle mistake makes every faction behave strangely.
 
@@ -189,7 +189,7 @@ A and B both live in `gc_sim` but in separate faction modules; shared hooks they
 | Docs progress notes, roadmap updates | Haiku `docs-sync` | After each merge |
 | Dependency and licence audit (`cargo deny`, `cargo bloat`, asset licences) | Haiku | Weekly, and before each milestone exit |
 | Architecture decisions (ADRs) | Opus | When a choice is hard to reverse |
-| 3D models (Blender build, rig, clips, bake) | Opus, medium effort | Whenever a unit, hero or prop needs a model |
+| 3D models (Blender build, rig, clips, bake) | Sonnet 5.5 alone, medium effort | Whenever a unit, hero or prop needs a model |
 | Coordination: starting threads, checking crate ownership, relaying to Mario | Coordinator | Ongoing |
 
 ## What only Mario (and friends) can do

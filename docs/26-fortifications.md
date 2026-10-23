@@ -120,7 +120,7 @@ Eight stages, one pull request each. Each stage is playable on its own and lands
 7. **Sieges you can see.** Particle system, hit effects, attackers along the face, damage looks, collapses, rubble and breaches. This stage is drawing work and can run in a second thread alongside the others.
 8. **Walled towns and smarter sieges.** The town bonus, town life, and computer players that wall, man walls and assault properly.
 
-**Who builds it** (per [15 · Staffing Plan](15-staffing-plan.md) and the project rules): the simulation stages are led by Opus, with Sonnet helpers for the placing tool, interface and drawing. The wall, tower and collapse art is design and modelling work, so Opus plans and reviews it and Haiku helpers make as much of it as they can. Haiku helpers do the doc updates.
+**Who builds it** (per [15 · Staffing Plan](15-staffing-plan.md) and the project rules): the simulation stages are led by Opus, with Sonnet helpers for the placing tool, interface and drawing. The wall, tower and collapse art is 3D modelling, which runs on Sonnet 5.5 alone (Mario, 2026-10-23). Haiku helpers do the doc updates.
 
 **Costs to watch:** door checks in route search (stage 2), tower targeting and manned walls in every tick (stages 1 and 4), particles and collapse chunks against the 6 GB budget (stage 7). Every stage that changes the rules bumps `SIM_VERSION` and re-records the golden replays.
 
