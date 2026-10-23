@@ -34,11 +34,11 @@ pub struct TextureConfig {
 /// Roughness of a material without an `orm` map.
 const DEFAULT_ROUGHNESS: f32 = 0.7;
 
-type Px = [f32; 4];
+pub(crate) type Px = [f32; 4];
 
 /// How a map's channels are stored and filtered.
 #[derive(Clone, Copy, PartialEq)]
-enum Encoding {
+pub(crate) enum Encoding {
     /// Red, green and blue in sRGB; alpha linear.
     Srgb,
     Linear,
@@ -48,9 +48,9 @@ enum Encoding {
 }
 
 /// A square image in linear values (sRGB channels already decoded).
-struct Layer {
-    side: usize,
-    px: Vec<Px>,
+pub(crate) struct Layer {
+    pub(crate) side: usize,
+    pub(crate) px: Vec<Px>,
 }
 
 impl Layer {
@@ -121,20 +121,9 @@ pub fn load_png(path: &Path) -> Result<Image, String> {
     crate::decode_png(&data).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Shrink a map to [`TEXTURE_SIZE`], decoding sRGB channels to linear.
-fn shrink(img: &Image, path: &Path, enc: Encoding) -> Result<Layer, String> {
-    let side = img.width as usize;
-    let target = TEXTURE_SIZE as usize;
-    if img.width != img.height || side < target || !side.is_power_of_two() {
-        return Err(format!(
-            "{}: {} × {} texels; maps must be square, {target} or a power of two larger",
-            path.display(),
-            img.width,
-            img.height
-        ));
-    }
-    let px = img
-        .rgba
+/// An image's texels in linear values, sRGB channels decoded when `enc` says so.
+pub(crate) fn pixels(img: &Image, enc: Encoding) -> Vec<Px> {
+    img.rgba
         .as_chunks::<4>()
         .0
         .iter()
@@ -149,7 +138,22 @@ fn shrink(img: &Image, path: &Path, enc: Encoding) -> Result<Layer, String> {
             };
             [col(0), col(1), col(2), f(3)]
         })
-        .collect();
+        .collect()
+}
+
+/// Shrink a map to [`TEXTURE_SIZE`], decoding sRGB channels to linear.
+fn shrink(img: &Image, path: &Path, enc: Encoding) -> Result<Layer, String> {
+    let side = img.width as usize;
+    let target = TEXTURE_SIZE as usize;
+    if img.width != img.height || side < target || !side.is_power_of_two() {
+        return Err(format!(
+            "{}: {} × {} texels; maps must be square, {target} or a power of two larger",
+            path.display(),
+            img.width,
+            img.height
+        ));
+    }
+    let px = pixels(img, enc);
     let mut layer = Layer { side, px };
     while layer.side > target {
         layer = layer.half(enc);
@@ -170,7 +174,7 @@ pub fn bake(
 }
 
 /// BC7-compress mips from [`levels`], back to back.
-fn compress(levels: &[(u32, Vec<u8>)]) -> Vec<Block> {
+pub(crate) fn compress(levels: &[(u32, Vec<u8>)]) -> Vec<Block> {
     let settings = intel_tex_2::bc7::alpha_slow_settings();
     let mut out = Vec::new();
     for (side, rgba) in levels {
@@ -182,6 +186,37 @@ fn compress(levels: &[(u32, Vec<u8>)]) -> Vec<Block> {
         };
         let blocks = intel_tex_2::bc7::compress_blocks(&settings, &surface);
         out.extend(blocks.as_chunks::<16>().0);
+    }
+    out
+}
+
+/// A layer and its `mips` levels (each half the one before, the first being
+/// `level` itself) as their side and RGBA8 texels.
+pub(crate) fn mip_chain(mut level: Layer, enc: Encoding, mips: u32) -> Vec<(u32, Vec<u8>)> {
+    let mut out = Vec::new();
+    for mip in 0..mips {
+        if mip > 0 {
+            level = level.half(enc);
+        }
+        debug_assert!(level.side >= BLOCK_SIDE as usize);
+        out.push((
+            level.side as u32,
+            level
+                .px
+                .iter()
+                .flat_map(|p| {
+                    let byte = |c: usize| {
+                        let v = if enc == Encoding::Srgb && c < 3 {
+                            linear_to_srgb(p[c])
+                        } else {
+                            p[c]
+                        };
+                        (v.clamp(0.0, 1.0) * 255.0).round() as u8
+                    };
+                    [byte(0), byte(1), byte(2), byte(3)]
+                })
+                .collect(),
+        ));
     }
     out
 }
@@ -245,31 +280,8 @@ fn levels(
         ),
     ];
     let mut out = Vec::new();
-    for (mut level, enc) in layers {
-        for mip in 0..TEXTURE_MIPS {
-            if mip > 0 {
-                level = level.half(enc);
-            }
-            debug_assert!(level.side >= BLOCK_SIDE as usize);
-            out.push((
-                level.side as u32,
-                level
-                    .px
-                    .iter()
-                    .flat_map(|p| {
-                        let byte = |c: usize| {
-                            let v = if enc == Encoding::Srgb && c < 3 {
-                                linear_to_srgb(p[c])
-                            } else {
-                                p[c]
-                            };
-                            (v.clamp(0.0, 1.0) * 255.0).round() as u8
-                        };
-                        [byte(0), byte(1), byte(2), byte(3)]
-                    })
-                    .collect(),
-            ));
-        }
+    for (level, enc) in layers {
+        out.extend(mip_chain(level, enc, TEXTURE_MIPS));
     }
     Ok(out)
 }

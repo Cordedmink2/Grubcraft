@@ -771,6 +771,10 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
 @group(1) @binding(3) var material_sampler: sampler;
 @group(1) @binding(4) var<storage, read> skin_shade: array<u32>;
 @group(1) @binding(5) var<storage, read> skin_origin: array<u32>;
+// The shared surface detail: two layers (albedo and cavity, relief) per
+// class, repeating (`DetailClass` in gc_assets/src/detail.rs).
+@group(1) @binding(6) var detail_array: texture_2d_array<f32>;
+@group(1) @binding(7) var detail_sampler: sampler;
 
 // The skinning pass's own bindings, in the same group of its own pipeline.
 @group(1) @binding(8) var bones: texture_2d<f32>;
@@ -830,6 +834,8 @@ struct SoldierIn {
     // y: selection highlight
     @location(4) flags: vec4<f32>,
     @location(5) team_color: vec4<f32>,
+    // The normal's z byte, then the detail classes (four bits each).
+    @location(6) detail_classes: vec2<u32>,
 };
 
 struct SoldierOut {
@@ -853,6 +859,9 @@ struct TexturedOut {
     @location(6) @interpolate(flat) team_color: vec3<f32>,
     // The soldier's tone, from -1 to 1 (0 leaves the model as painted).
     @location(7) @interpolate(flat) tone: f32,
+    // The surface detail: two classes (bits 0 to 3 and 4 to 7), the share of
+    // the second (8 to 11) and how finely it repeats (12 to 15).
+    @location(8) @interpolate(flat) detail: u32,
 };
 
 // The soldier's tone byte (128 neutral) as -1 to 1.
@@ -1061,8 +1070,34 @@ fn vs_soldier_textured(v: SoldierIn) -> TexturedOut {
     out.layer = (i32(v.team_material.y) - 1) * 3;
     out.team_color = srgb_to_linear(v.team_color.rgb);
     out.tone = tone_of(v.team_color.a);
+    out.detail = v.detail_classes.y | (u32(round(v.vcolor.a * 255.0)) << 8u);
     out.highlight = v.flags.y;
     return out;
+}
+
+// Repeats across the texture atlas for each repeat code, 1 to 15 (`TILES` in
+// gc_assets/src/detail.rs: 2, then half again more each step).
+const DETAIL_TILES = array<f32, 15>(
+    2.0, 3.0, 4.5, 6.8, 10.1, 15.2, 22.8, 34.2, 51.3, 76.9, 115.4, 173.1, 259.7, 389.6, 584.4,
+);
+
+// The detail fades out between half this many detail repeats under one pixel
+// (32 texels of the 256, a little over mip 5) and all of it: past it the grain
+// is averaged to grey, so it is skipped.
+const DETAIL_FOOTPRINT: f32 = 32.0 / 256.0;
+
+// The two layers of a detail class (albedo and cavity, relief) at `duv`.
+struct DetailSample {
+    albedo: vec4<f32>,
+    relief: vec4<f32>,
+};
+
+fn detail_sample(cls: u32, duv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> DetailSample {
+    let layer = i32(cls - 1u) * 2;
+    return DetailSample(
+        textureSampleGrad(detail_array, detail_sampler, duv, layer, ddx, ddy),
+        textureSampleGrad(detail_array, detail_sampler, duv, layer + 1, ddx, ddy),
+    );
 }
 
 @fragment
@@ -1073,18 +1108,48 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     // Team parts are painted in greys, light grey (0.8 linear) taking the
     // whole team colour and darker greys (folds, occlusion) less of it.
     let grey = dot(a.rgb, vec3<f32>(0.3, 0.59, 0.11));
-    let albedo = mix(
+    var albedo = mix(
         a.rgb * tone_mul(in.tone),
         in.team_color * min(grey * 1.25, 1.2) * tone_mul(in.tone / 3.0),
         a.a,
     );
+    // Surface detail over the baked atlas: the class's grain at its own
+    // repeat, which shades the colour, leans the normal, shifts the roughness
+    // and darkens the cavities. Mips fade it to nothing with distance.
+    var nxy = b.xy * 2.0 - 1.0;
+    var rough = b.w;
+    var ao = b.z;
+    let class_a = in.detail & 15u;
+    let class_b = (in.detail >> 4u) & 15u;
+    let share_b = f32((in.detail >> 8u) & 15u) / 15.0;
+    let repeat = (in.detail >> 12u) & 15u;
+    let duv = in.uv * DETAIL_TILES[max(repeat, 1u) - 1u];
+    let ddx = dpdx(duv);
+    let ddy = dpdy(duv);
+    // Full strength up close, fading to nothing as a pixel covers more detail.
+    let footprint = sqrt(max(dot(ddx, ddx), dot(ddy, ddy)));
+    let fade = 1.0 - smoothstep(0.5 * DETAIL_FOOTPRINT, DETAIL_FOOTPRINT, footprint);
+    if class_a != 0u && repeat != 0u && fade > 0.0 {
+        var d = detail_sample(class_a, duv, ddx, ddy);
+        if class_b != 0u && share_b > 0.0 {
+            let second = detail_sample(class_b, duv, ddx, ddy);
+            d = DetailSample(
+                mix(d.albedo, second.albedo, share_b),
+                mix(d.relief, second.relief, share_b),
+            );
+        }
+        albedo = albedo * mix(vec3<f32>(1.0), d.albedo.rgb * 2.0, fade);
+        ao = ao * mix(1.0, d.albedo.a, fade);
+        nxy = nxy + (d.relief.xy * 2.0 - 1.0) * fade;
+        rough = clamp(rough + (d.relief.z - 0.5) * fade, 0.04, 1.0);
+        nxy = nxy * min(1.0, 0.95 / max(length(nxy), 1e-5));
+    }
     let n0 = in.normal;
     let t = normalize(in.tangent.xyz - n0 * dot(n0, in.tangent.xyz) + vec3<f32>(1e-5, 0.0, 0.0));
     let bt = cross(n0, t) * select(-1.0, 1.0, in.tangent.w >= 0.0);
-    let nxy = b.xy * 2.0 - 1.0;
     let nt = vec3<f32>(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
     let n = normalize(t * nt.x + bt * nt.y + n0 * nt.z);
-    let c = shade_material(albedo, n, in.world, b.w, e.a, b.z, e.rgb) + albedo * rim(n, in.world);
+    let c = shade_material(albedo, n, in.world, rough, e.a, ao, e.rgb) + albedo * rim(n, in.world);
     return vec4<f32>(c + albedo * in.highlight * HIGHLIGHT, 1.0);
 }
 

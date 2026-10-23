@@ -9,10 +9,10 @@
 
 use std::mem::offset_of;
 
+use crate::detail::{DetailGpu, upload_bc7_layers};
 use bytemuck::{Pod, Zeroable};
 use gc_assets::model::{
-    BLOCK_SIDE, BLOCKS_PER_LAYER, BONE_TEXELS_PER_ROW, Block, LAYERS_PER_MATERIAL, LODS,
-    ModelVertex, Models, TEXTURE_MIPS, TEXTURE_SIZE,
+    BONE_TEXELS_PER_ROW, LAYERS_PER_MATERIAL, LODS, ModelVertex, Models, TEXTURE_MIPS, TEXTURE_SIZE,
 };
 
 /// The finest level of detail the shadow pass draws.
@@ -43,7 +43,7 @@ const _: () = assert!(SKIN_VERTICES.div_ceil(SKIN_GROUP as usize) <= 65_535);
 /// the rest: the team weight and material, the last two bytes of the
 /// tangent (the second is the bitangent's handedness), colour and texture
 /// coordinate.
-const MODEL_ATTRIBUTES: [wgpu::VertexAttribute; 4] = [
+const MODEL_ATTRIBUTES: [wgpu::VertexAttribute; 5] = [
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Uint8x2,
         offset: offset_of!(ModelVertex, team) as u64,
@@ -63,6 +63,12 @@ const MODEL_ATTRIBUTES: [wgpu::VertexAttribute; 4] = [
         format: wgpu::VertexFormat::Unorm16x2,
         offset: offset_of!(ModelVertex, uv) as u64,
         shader_location: 3,
+    },
+    // The normal's last two bytes: its z, then the surface detail classes.
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Uint8x2,
+        offset: offset_of!(ModelVertex, normal) as u64 + 2,
+        shader_location: 6,
     },
 ];
 
@@ -225,6 +231,7 @@ pub(crate) struct ModelGpu {
     srgb: wgpu::TextureView,
     linear: wgpu::TextureView,
     sampler: wgpu::Sampler,
+    detail: DetailGpu,
     /// For the shadow and world passes.
     pub bind_group: wgpu::BindGroup,
     /// For the skinning pass.
@@ -240,7 +247,7 @@ pub(crate) struct ModelGpu {
 
 impl ModelGpu {
     pub fn gpu_bytes(&self) -> u64 {
-        self.fixed_bytes + self.skin_pos.size() + self.skin_shade.size()
+        self.fixed_bytes + self.detail.gpu_bytes() + self.skin_pos.size() + self.skin_shade.size()
     }
 
     fn parts(&self) -> Parts<'_> {
@@ -255,6 +262,8 @@ impl ModelGpu {
             srgb: &self.srgb,
             linear: &self.linear,
             sampler: &self.sampler,
+            detail: &self.detail.view,
+            detail_sampler: &self.detail.sampler,
         }
     }
 
@@ -341,6 +350,8 @@ struct Parts<'a> {
     srgb: &'a wgpu::TextureView,
     linear: &'a wgpu::TextureView,
     sampler: &'a wgpu::Sampler,
+    detail: &'a wgpu::TextureView,
+    detail_sampler: &'a wgpu::Sampler,
 }
 
 /// The bind groups of the passes that draw and of the skinning pass.
@@ -368,6 +379,14 @@ fn bind_groups(
             },
             entry(4, m.skin_shade),
             entry(5, m.origins),
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: wgpu::BindingResource::TextureView(m.detail),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::Sampler(m.detail_sampler),
+            },
         ],
     });
     let [lo, hi] = vertex_entries(m.vertices, m.split);
@@ -457,6 +476,14 @@ pub(crate) fn make(
             },
             storage(4, vertex, true),
             storage(5, vertex, true),
+            // The shared surface detail array and its repeating sampler.
+            materials(6),
+            wgpu::BindGroupLayoutEntry {
+                binding: 7,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
         ],
     });
     let skin_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -791,6 +818,7 @@ pub(crate) fn upload(
     queue: &wgpu::Queue,
     soldiers: &SoldiersGpu,
     m: &Models<'_>,
+    detail: Option<&gc_assets::detail::Detail<'_>>,
 ) -> Result<ModelGpu, String> {
     let buffer = |label, bytes: &[u8], usage| {
         let b = device.create_buffer(&wgpu::BufferDescriptor {
@@ -908,6 +936,7 @@ pub(crate) fn upload(
         anisotropy_clamp: 4,
         ..Default::default()
     });
+    let detail = DetailGpu::new(device, queue, detail);
     let levels_of = levels.models.iter().zip(m.models).map(|(levels, r)| {
         let textured = textures
             && m.vertices
@@ -930,6 +959,8 @@ pub(crate) fn upload(
             srgb: &srgb_view,
             linear: &linear_view,
             sampler: &sampler,
+            detail: &detail.view,
+            detail_sampler: &detail.sampler,
         },
     );
     Ok(ModelGpu {
@@ -950,6 +981,7 @@ pub(crate) fn upload(
         srgb: srgb_view,
         linear: linear_view,
         sampler,
+        detail,
         bind_group,
         skin_group,
         levels: levels_of.collect(),
@@ -989,44 +1021,7 @@ fn upload_materials(
     if !textures {
         return texture;
     }
-    for (layer, blocks) in m
-        .textures
-        .as_chunks::<BLOCKS_PER_LAYER>()
-        .0
-        .iter()
-        .enumerate()
-    {
-        let mut offset = 0;
-        for mip in 0..TEXTURE_MIPS {
-            let side = TEXTURE_SIZE >> mip;
-            let across = side / BLOCK_SIDE;
-            let count = (across * across) as usize;
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: mip,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: layer as u32,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                bytemuck::cast_slice(&blocks[offset..offset + count]),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(across * size_of::<Block>() as u32),
-                    rows_per_image: Some(across),
-                },
-                wgpu::Extent3d {
-                    width: side,
-                    height: side,
-                    depth_or_array_layers: 1,
-                },
-            );
-            offset += count;
-        }
-    }
+    upload_bc7_layers(queue, &texture, m.textures, TEXTURE_SIZE, TEXTURE_MIPS);
     texture
 }
 

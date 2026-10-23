@@ -170,14 +170,18 @@ pub struct ModelVertex {
     pub bones: [u8; BONES_PER_VERTEX],
     /// Each bone's share of the vertex, summing to 255. Unused slots are 0.
     pub weights: [u8; BONES_PER_VERTEX],
-    /// Unit normal scaled to ±127; the fourth byte is padding.
+    /// Unit normal scaled to ±127; the fourth byte holds the two detail
+    /// classes the surface wears, four bits each (see
+    /// [`DetailTag`](crate::detail::DetailTag)). Zero means none.
     pub normal: [i8; 4],
     /// Unit tangent (along the texture's u) scaled to ±127; the fourth byte
     /// is ±127, the handedness of the bitangent. Copied from the source
     /// model; all zero when it has none (generating them comes with normal
     /// maps).
     pub tangent: [i8; 4],
-    /// sRGB colour; alpha is padding.
+    /// sRGB colour; alpha holds the detail mix (low four bits) and how
+    /// finely it repeats (high four), see [`DetailTag`](crate::detail::DetailTag).
+    /// Packs baked before detail existed hold 255, which has no classes.
     pub color: [u8; 4],
     /// Texture coordinate, 0 to 65,535 across the texture (coordinates
     /// outside it, for a repeating texture, are clamped for now).

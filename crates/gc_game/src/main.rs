@@ -1155,7 +1155,12 @@ impl App {
         self.memory_timeline.mark("map generated + uploaded");
 
         let game_data = data::load();
-        let models = match models::load().and_then(|m| renderer.set_models(&m).map(|()| m)) {
+        let detail = models::load_detail()
+            .map_err(|e| logln!("grubcraft: surface detail off: {e}"))
+            .ok();
+        let models = match models::load()
+            .and_then(|m| renderer.set_models(&m, detail.as_ref()).map(|()| m))
+        {
             Ok(m) => Some(m),
             Err(e) => {
                 logln!("grubcraft: soldier models off: {e}");

@@ -11,6 +11,7 @@
 //! surface target and per-frame camera and instance data.
 
 mod debug_font;
+mod detail;
 mod ground;
 mod look;
 mod overlay;
@@ -977,7 +978,12 @@ impl Renderer {
     }
 
     /// Upload the soldier models and their bone animation texture.
-    pub fn set_models(&mut self, models: &gc_assets::model::Models<'_>) -> Result<(), String> {
+    /// `detail` is the shared surface detail layered over their textures.
+    pub fn set_models(
+        &mut self,
+        models: &gc_assets::model::Models<'_>,
+        detail: Option<&gc_assets::detail::Detail<'_>>,
+    ) -> Result<(), String> {
         let limit = self.device.limits().max_texture_dimension_2d;
         if models.bone_rows() > limit {
             return Err(format!(
@@ -990,6 +996,7 @@ impl Renderer {
             &self.queue,
             &self.soldiers,
             models,
+            detail,
         )?);
         Ok(())
     }
