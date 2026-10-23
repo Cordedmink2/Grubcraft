@@ -525,6 +525,7 @@ fn conquest_six(opts: &Options) -> bool {
                 command: Command::SpawnStructure {
                     building,
                     tile: (tile.0 as i16, tile.1 as i16),
+                    turn: 0,
                 },
             });
         }

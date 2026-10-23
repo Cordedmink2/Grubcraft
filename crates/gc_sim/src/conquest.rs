@@ -318,32 +318,41 @@ impl Conquest {
     }
 
     /// Whether a building of type `building` may go up with its north-west
-    /// tile at `tile` (see `Structures::check`).
+    /// tile at `tile`, turned `turn` quarter turns (see `Structures::check`).
     pub(crate) fn check(
         &self,
         building: BuildingId,
         tile: (i32, i32),
+        turn: u8,
         nav: &Nav,
         regs: &Regiments,
     ) -> Result<(), Refusal> {
-        self.structures
-            .check(building, tile, nav, regs, self.economy.node_positions())
+        self.structures.check(
+            building,
+            tile,
+            turn,
+            nav,
+            regs,
+            self.economy.node_positions(),
+        )
     }
 
     /// Whether `player` could have a worker lay a building of type
-    /// `building` at `tile` now: placement, tier and price.
+    /// `building` at `tile`, turned `turn` quarter turns, now: placement,
+    /// tier and price.
     pub(crate) fn can_lay(
         &self,
         player: PlayerId,
         building: BuildingId,
         tile: (i32, i32),
+        turn: u8,
         nav: &Nav,
         regs: &Regiments,
     ) -> Result<(), Refusal> {
-        self.check(building, tile, nav, regs)?;
+        self.check(building, tile, turn, nav, regs)?;
         self.may_lay(player, building)?;
         let b = self.structures.buildings()[usize::from(building)];
-        let foot = [tile.0, tile.1, i32::from(b.width), i32::from(b.depth)];
+        let foot = b.footprint(tile, turn);
         if b.flags & NEEDS_POWER != 0 && !self.structures.power_reaches(player, foot) {
             return Err(Refusal::Unpowered);
         }
@@ -375,22 +384,29 @@ impl Conquest {
     }
 
     /// Worker slot `r`, `player`'s, lays a building of type `building` at
-    /// `tile`, pays for it and goes to build it.
+    /// `tile`, turned `turn` quarter turns, pays for it and goes to build it.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn lay(
         &mut self,
         player: PlayerId,
         r: usize,
         building: BuildingId,
         tile: (i32, i32),
+        turn: u8,
         nav: &mut Nav,
         regs: &mut Regiments,
     ) -> bool {
         if !self.unit(regs.unit[r]).worker
-            || self.can_lay(player, building, tile, nav, regs).is_err()
+            || self
+                .can_lay(player, building, tile, turn, nav, regs)
+                .is_err()
         {
             return false;
         }
-        let Some(h) = self.structures.found(player, building, tile, nav, regs) else {
+        let Some(h) = self
+            .structures
+            .found(player, building, tile, turn, nav, regs)
+        else {
             return false;
         };
         let b = self.structures.buildings()[usize::from(building)];

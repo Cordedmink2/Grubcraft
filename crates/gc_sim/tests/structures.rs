@@ -16,6 +16,8 @@ const ARCHERS: u16 = 2;
 const FARMSTEAD: u16 = 0;
 const HALL: u16 = 1;
 const WALL: u16 = 2;
+/// A stretch of palisade a tile thick and four long, north to south.
+const PALISADE: u16 = 3;
 
 fn building(hp: u16, armour: Armour, width: u8, depth: u8) -> BuildingStats {
     BuildingStats {
@@ -38,8 +40,8 @@ fn building(hp: u16, armour: Armour, width: u8, depth: u8) -> BuildingStats {
     }
 }
 
-/// A Farmstead, a Clan Hall (Fortified) and a long wall.
-fn buildings() -> [BuildingStats; 3] {
+/// A Farmstead, a Clan Hall (Fortified), a long wall and a palisade.
+fn buildings() -> [BuildingStats; 4] {
     [
         building(600, Armour::Structure, 3, 3),
         BuildingStats {
@@ -49,6 +51,10 @@ fn buildings() -> [BuildingStats; 3] {
         BuildingStats {
             role: Role::Wall,
             ..building(5000, Armour::Fortified, 5, 5)
+        },
+        BuildingStats {
+            role: Role::Wall,
+            ..building(800, Armour::Fortified, 1, 4)
         },
     ]
 }
@@ -96,7 +102,8 @@ fn put_up(w: &mut World, player: u8, building: u16, x: i16, y: i16) -> Structure
             player,
             Command::SpawnStructure {
                 building,
-                tile: (x, y)
+                tile: (x, y),
+                turn: 0,
             }
         ),
         "building {building} at ({x}, {y}) refused"
@@ -378,8 +385,17 @@ fn a_fallen_building_frees_its_ground() {
 fn buildings_go_up_only_where_they_fit() {
     let mut w = conquest(64, &[]);
     put_up(&mut w, 0, HALL, 10, 10);
-    let refused =
-        |w: &mut World, building, tile| !order(w, 0, Command::SpawnStructure { building, tile });
+    let refused = |w: &mut World, building, tile| {
+        !order(
+            w,
+            0,
+            Command::SpawnStructure {
+                building,
+                tile,
+                turn: 0,
+            },
+        )
+    };
     // On another, off the map, half off it, on a regiment.
     assert!(refused(&mut w, FARMSTEAD, (12, 12)));
     assert!(refused(&mut w, FARMSTEAD, (-1, 5)));
@@ -454,7 +470,8 @@ fn only_conquest_has_buildings() {
         0,
         Command::SpawnStructure {
             building: 0,
-            tile: (5, 5)
+            tile: (5, 5),
+            turn: 0,
         }
     ));
     assert!(w.structures().is_none());
@@ -463,4 +480,41 @@ fn only_conquest_has_buildings() {
         buildings: &buildings(),
         ..ConquestSetup::default()
     }));
+}
+
+#[test]
+fn a_building_turns_in_quarter_turns() {
+    let mut w = conquest(64, &[]);
+    let spawn = |building, tile: (i16, i16), turn| Command::SpawnStructure {
+        building,
+        tile,
+        turn,
+    };
+    // A fifth of a turn round is none at all.
+    assert!(w.can_build(PALISADE, (20, 20), 4).is_err());
+    assert!(!order(&mut w, 0, spawn(PALISADE, (20, 20), 4)));
+    // Turned a quarter, the palisade runs east to west: four tiles wide
+    // and one deep.
+    assert!(order(&mut w, 0, spawn(PALISADE, (20, 20), 1)));
+    let v = w.structures().unwrap().iter().next().unwrap();
+    assert_eq!((v.width, v.depth, v.turn), (4, 1, 1));
+    assert_eq!(
+        v.centre(),
+        FxVec2::new(Fx::from_int(22), Fx::from_ratio(41, 2))
+    );
+    // It stands on the four tiles east of its corner, and not on the ones
+    // it would cover unturned.
+    assert!(w.can_build(FARMSTEAD, (20, 21), 0).is_ok());
+    assert!(w.can_build(FARMSTEAD, (21, 18), 0).is_err());
+    assert!(w.can_build(FARMSTEAD, (24, 18), 0).is_ok());
+    // A half turn lies as drawn, a three-quarter turn as a quarter turn.
+    assert!(order(&mut w, 0, spawn(PALISADE, (40, 20), 2)));
+    assert!(order(&mut w, 0, spawn(PALISADE, (40, 40), 3)));
+    let size = |w: &World, tile| {
+        let s = w.structures().unwrap();
+        let v = s.iter().find(|v| v.tile == tile).unwrap();
+        (v.width, v.depth)
+    };
+    assert_eq!(size(&w, (40, 20)), (1, 4));
+    assert_eq!(size(&w, (40, 40)), (4, 1));
 }

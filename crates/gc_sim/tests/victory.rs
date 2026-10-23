@@ -92,6 +92,7 @@ fn put_up(w: &mut World, player: u8, building: u16, x: i16, y: i16) -> Structure
         Command::SpawnStructure {
             building,
             tile: (x, y),
+            turn: 0,
         },
     );
     let s = w.structures().unwrap();
@@ -208,6 +209,7 @@ fn a_main_building_going_up_holds_the_countdown() {
             regiment: worker,
             building: HALL,
             tile: (40, 53),
+            turn: 0,
         },
     );
     let site = (w.structures().unwrap().iter())

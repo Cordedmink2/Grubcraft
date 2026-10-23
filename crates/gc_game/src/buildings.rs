@@ -369,6 +369,14 @@ fn ground_range(ground: &impl Fn(f32, f32) -> f32, s: &StructureView) -> (f32, f
         .fold((f32::MAX, f32::MIN), |(lo, hi), g| (lo.min(g), hi.max(g)))
 }
 
+/// The way a building's door faces when turned `turn` quarter turns: south
+/// as drawn, then west, north and east (clockwise seen from above, with x
+/// east and y south), as the facing a model instance takes.
+pub fn facing_of(turn: u8) -> Vec2 {
+    let (x, y) = gc_sim::structures::front(turn);
+    Vec2::new(x as f32, y as f32)
+}
+
 /// Where a building's model stands: the middle of its footprint, the
 /// height of its floor, and how far that is above the ground there. It stands on the highest ground
 /// under it; the plinth every model has below its floor hides the slope.
@@ -389,7 +397,6 @@ pub fn covers(world: &World, shown: impl Fn(&StructureView) -> bool, p: Vec2) ->
     })
 }
 
-/// The middle of a footprint, in tiles.
 /// The middle of a `width` by `depth` footprint whose north-west tile is
 /// `tile`: the inverse of [`tile_for`].
 pub fn centre_of(tile: (i32, i32), width: u8, depth: u8) -> Vec2 {
@@ -1116,15 +1123,18 @@ fn bar_colour(frac: f32) -> [u8; 4] {
 }
 
 /// The ghost of a building about to be placed with its north-west tile at
-/// `tile`: its full size in the side's colour, or red where it won't go.
+/// `tile`, turned `turn` quarter turns: its full size in the side's colour,
+/// or red where it won't go, with a step out of its front.
 pub fn push_ghost(
     stats: &BuildingStats,
     tile: (i32, i32),
+    turn: u8,
     fits: bool,
     colour: [u8; 3],
     ground: impl Fn(f32, f32) -> f32,
     out: &mut Vec<BoxInstance>,
 ) {
+    let (width, depth) = stats.size(turn);
     let view = StructureView {
         handle: StructureHandle {
             index: 0,
@@ -1133,8 +1143,9 @@ pub fn push_ghost(
         owner: 0,
         building: 0,
         tile,
-        width: stats.width,
-        depth: stats.depth,
+        width,
+        depth,
+        turn,
         hp: 1,
         max_hp: 1,
         built_percent: 100,
@@ -1145,6 +1156,17 @@ pub fn push_ghost(
     let [r, g, b] = colour;
     let colour = if fits { [r, g, b, GHOST_GLOW] } else { REFUSED };
     out.push(block(&view, height_of(stats.role), colour, &ground));
+    // A low step out of its front, so the player sees which way it faces.
+    let facing = facing_of(turn);
+    let reach = if facing.x == 0.0 { depth } else { width };
+    let centre = centre_of(tile, width, depth) + facing * (f32::from(reach) / 2.0 + 0.5);
+    out.push(BoxInstance {
+        pos: centre.to_array(),
+        facing: facing.to_array(),
+        size: [1.0, 0.3, 1.0],
+        color: colour,
+        lift: 0.0,
+    });
 }
 
 /// The nearest building `accept` allows that the ray from `origin` along
@@ -1190,7 +1212,7 @@ pub(crate) fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f
 }
 
 /// The north-west tile of a `width` × `depth` footprint centred on `at` as
-/// near as whole tiles allow.
+/// near as whole tiles allow (pass the turned size for a turned building).
 pub fn tile_for(at: Vec2, width: u8, depth: u8) -> (i32, i32) {
     (
         (at.x - f32::from(width) / 2.0).round() as i32,
@@ -1344,6 +1366,7 @@ mod tests {
             tile: (0, 0),
             width: 5,
             depth: 5,
+            turn: 0,
             hp: 10,
             max_hp: 100,
             built_percent: 30,
@@ -1409,6 +1432,41 @@ mod tests {
     }
 
     #[test]
+    fn a_turned_ghost_swaps_its_sides_and_keeps_its_middle() {
+        let table = Table::new(&crate::data::load());
+        let stats = *table
+            .stats
+            .iter()
+            .find(|s| s.width != s.depth)
+            .expect("a building that is not square");
+        let at = Vec2::new(20.0, 20.0);
+        for turn in 0..gc_sim::structures::TURNS {
+            let (w, d) = stats.size(turn);
+            assert_eq!((w, d) == (stats.depth, stats.width), turn % 2 == 1);
+            let tile = tile_for(at, w, d);
+            let mut out = Vec::new();
+            push_ghost(&stats, tile, turn, true, [1, 2, 3], |_, _| 0.0, &mut out);
+            let [ghost, step] = out[..] else {
+                panic!("the building and its front step");
+            };
+            assert_eq!(ghost.size[0], f32::from(w));
+            assert_eq!(ghost.size[2], f32::from(d));
+            assert!((Vec2::from(ghost.pos) - at).length() <= 0.5 + 1e-3);
+            // The step sits just outside its front edge.
+            let out_of = (Vec2::from(step.pos) - Vec2::from(ghost.pos)).dot(facing_of(turn));
+            let half = if turn % 2 == 0 { d } else { w };
+            assert!((out_of - (f32::from(half) / 2.0 + 0.5)).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn a_door_turns_clockwise_from_south() {
+        // Clockwise seen from above, y south: south, west, north, east.
+        let turns: Vec<Vec2> = (0..4).map(facing_of).collect();
+        assert_eq!(turns, [Vec2::Y, Vec2::NEG_X, Vec2::NEG_Y, Vec2::X]);
+    }
+
+    #[test]
     fn rays_find_the_box_they_cross() {
         let (min, max) = (Vec3::new(10.0, 0.0, 10.0), Vec3::new(13.0, 3.0, 13.0));
         let down = Vec3::new(0.0, -1.0, 0.0);
@@ -1451,17 +1509,18 @@ mod tests {
             .position(|s| s.role == Role::Housing)
             .unwrap();
         let farm = farm as BuildingId;
-        assert_eq!(world.can_build(farm, (8, 8)), Ok(()));
-        assert!(world.can_build(farm, (-1, 8)).is_err());
-        assert!(world.can_build(farm, (tiles as i32 - 1, 8)).is_err());
+        assert_eq!(world.can_build(farm, (8, 8), 0), Ok(()));
+        assert!(world.can_build(farm, (-1, 8), 0).is_err());
+        assert!(world.can_build(farm, (tiles as i32 - 1, 8), 0).is_err());
         // Cell (20, 6) is tile (10, 3).
-        assert!(world.can_build(farm, (9, 2)).is_err());
+        assert!(world.can_build(farm, (9, 2), 0).is_err());
         // What the check allows, the simulation accepts, and then the
         // spot is taken.
         let place = |world: &mut World, tile: (i32, i32)| {
             let command = gc_sim::Command::SpawnStructure {
                 building: farm,
                 tile: (tile.0 as i16, tile.1 as i16),
+                turn: 0,
             };
             world
                 .tick(&[gc_sim::PlayerCommand { player: 0, command }])
@@ -1470,7 +1529,7 @@ mod tests {
         };
         assert!(place(&mut world, (8, 8)));
         assert_eq!(world.structures().unwrap().len(), 1);
-        assert!(world.can_build(farm, (9, 9)).is_err());
+        assert!(world.can_build(farm, (9, 9), 0).is_err());
         assert!(!place(&mut world, (9, 9)));
         let standing = world.structures().unwrap().iter().next().unwrap();
         assert_eq!(standing.tile, (8, 8));

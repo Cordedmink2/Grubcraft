@@ -11,6 +11,9 @@
 //! sandbox again on the Conquest table) and sides to click
 //! (docs/08-ui-ux.md#the-place-panel). K does the same for buildings (the sandbox only): click puts the
 //! chosen building down, centred on the cursor, and [ and ] choose which.
+//! While a building is being placed (K, or a worker's build menu in Conquest)
+//! R, or the mouse wheel instead of zooming, turns it a quarter turn clockwise
+//! (Shift+R back), and the ghost and the order carry the turn.
 //! Delete (or Backspace) takes the building under the cursor, else the
 //! selected regiments, off the field; Shift + Delete clears it. Right-click
 //! an enemy building to send the selected regiments against it. In Conquest, with one of your
@@ -682,6 +685,8 @@ struct Running {
     guide: Option<gc_ui::guide::Guide>,
     /// Wheel movement over the Guide not yet worth a whole row.
     guide_scroll: f32,
+    /// Wheel fractions not yet a whole quarter turn of a building.
+    turn_scroll: f32,
     /// Each building's tips, for the HUD's tips card.
     tip_book: guide_data::TipBook,
     /// Sandbox: draw regiments hidden from the side you command too (Shift+V).
@@ -863,6 +868,7 @@ impl Sandbox {
             placing,
             unit: 0,
             building_tool: false,
+            building_turn: 0,
             building: 0,
             tuning: false,
             row: 0,
@@ -949,6 +955,9 @@ struct Sandbox {
     /// Left-click places buildings of `building` instead of selecting (K);
     /// [ and ] then choose the building.
     building_tool: bool,
+    /// Quarter turns clockwise the building being placed is turned (kept
+    /// from one placing to the next).
+    building_turn: u8,
     building: BuildingId,
     /// The stats panel is open (T), with this row chosen.
     tuning: bool,
@@ -1399,6 +1408,7 @@ impl App {
             viewer_scroll: 0.0,
             guide: None,
             guide_scroll: 0.0,
+            turn_scroll: 0.0,
             tip_book: guide_data::tip_book(),
             reveal_all: false,
             fog: Default::default(),
@@ -1549,6 +1559,15 @@ impl ApplicationHandler for App {
             }
             // Over the bar the wheel is not the camera's.
             WindowEvent::MouseWheel { .. } if r.hud_wants_mouse() => {}
+            // While a building is being placed a mouse wheel turns it
+            // instead; a trackpad still pans.
+            WindowEvent::MouseWheel {
+                delta: delta @ MouseScrollDelta::LineDelta(..),
+                ..
+            } if r.laying().is_some() => {
+                let steps = wheel_rows(&mut r.turn_scroll, &delta);
+                r.turn_building(-steps);
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 match delta {
                     MouseScrollDelta::LineDelta(_, y) => r.camera_mut().zoom(0.88f32.powf(y)),
@@ -1577,6 +1596,18 @@ impl ApplicationHandler for App {
                         return;
                     }
                     let reload_key = code == KeyCode::KeyR && r.input.shift;
+                    // R turns the building being placed (Shift+R the other
+                    // way), ahead of the grid's R and the dev reload.
+                    if code == KeyCode::KeyR
+                        && down
+                        && !event.repeat
+                        && !r.input.command
+                        && !r.input.alt
+                        && r.laying().is_some()
+                    {
+                        r.turn_building(if r.input.shift { -1 } else { 1 });
+                        return;
+                    }
                     let grid_key =
                         down && !event.repeat && !r.input.shift && !r.input.command && !r.input.alt;
                     // The sandbox's clock and side keys would change this
@@ -4990,12 +5021,14 @@ impl Running {
     ) -> Option<(BuildingStats, (i32, i32), Option<&'static str>)> {
         let at = self.ground_under_cursor()?;
         let stats = *self.buildings.stats.get(usize::from(id))?;
-        let tile = buildings::tile_for(at, stats.width, stats.depth);
+        let turn = self.sandbox.building_turn;
+        let (width, depth) = stats.size(turn);
+        let tile = buildings::tile_for(at, width, depth);
         // Conquest asks what a worker may lay; the sandbox only the ground.
         let why = if self.conquest_match() {
-            self.world.can_lay(self.sandbox.side, id, tile)
+            self.world.can_lay(self.sandbox.side, id, tile, turn)
         } else {
-            self.world.can_build(id, tile)
+            self.world.can_build(id, tile, turn)
         }
         .err()
         .map(buildings::why);
@@ -5015,9 +5048,22 @@ impl Running {
             command: gc_sim::Command::SpawnStructure {
                 building: self.sandbox.building,
                 tile: (tile.0 as i16, tile.1 as i16),
+                turn: self.sandbox.building_turn,
             },
         });
         self.ui_sound(sounds::UiSound::Move);
+    }
+
+    /// Turn the building being placed `quarter_turns` clockwise (negative
+    /// the other way).
+    fn turn_building(&mut self, quarter_turns: i32) {
+        if quarter_turns == 0 {
+            return;
+        }
+        let turns = i32::from(gc_sim::structures::TURNS);
+        let turn = i32::from(self.sandbox.building_turn) + quarter_turns;
+        self.sandbox.building_turn = turn.rem_euclid(turns) as u8;
+        self.sandbox.dirty = true;
     }
 
     /// The building being placed (one K would place, or a worker lay), if
@@ -5042,6 +5088,7 @@ impl Running {
         buildings::push_ghost(
             &stats,
             tile,
+            self.sandbox.building_turn,
             why.is_none(),
             colour,
             |x, z| hm.height_at(x, z).max(hm.water_level()),
@@ -5196,8 +5243,8 @@ impl Running {
                     let highlight = if picked == Some(s.handle) { 40 } else { 0 };
                     art.buckets[model * LODS + lod].push(SoldierInstance {
                         pos: centre.to_array(),
-                        // The door, on the model's +z, faces south.
-                        facing: [0.0, 1.0],
+                        // The door, on the model's +z, faces south unturned.
+                        facing: buildings::facing_of(s.turn).to_array(),
                         frames: pose.rows,
                         flags: models::pose_flags(pose, highlight, false),
                         color: [r, g, b, gc_render::TONE_NEUTRAL],
@@ -5536,7 +5583,7 @@ impl Running {
         });
         lines.push(if sb.building_tool {
             format!(
-                "Placing {}: [ ] choose, click to place, K stops",
+                "Placing {}: [ ] choose, R turns, click to place, K stops",
                 self.buildings.describe(sb.building)
             )
         } else if sb.placing {

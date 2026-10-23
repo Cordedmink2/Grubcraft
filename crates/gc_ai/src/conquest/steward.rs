@@ -179,8 +179,7 @@ impl Mine {
     /// Whether it tunes (or will, once finished) a node of `r` at `p`.
     fn reaches(&self, r: Resource, p: Vec2) -> bool {
         self.stats.tunes.is_some_and(|(t, tiles)| {
-            t == r
-                && gap(self.view.tile, (self.stats.width, self.stats.depth), p) <= f32::from(tiles)
+            t == r && gap(self.view.tile, (self.view.width, self.view.depth), p) <= f32::from(tiles)
         })
     }
 }
@@ -995,6 +994,7 @@ impl Steward {
             regiment: w,
             building: b.id,
             tile: (tile.0 as i16, tile.1 as i16),
+            turn: 0,
         };
         if clicks.give(s.now, order) {
             self.sent.push((w, s.now));

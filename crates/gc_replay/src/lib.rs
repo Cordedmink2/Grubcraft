@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 26: turned buildings (their own tags for the build and spawn commands);
 /// - 25: the tower focus command;
 /// - 24: the buildings' 16-bit flags (read as the 8 bits they had), the
 ///   Conquest units' trade pay, the map's neutral trade posts (read as
@@ -79,7 +80,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 25;
+pub const FORMAT: u16 = 26;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -1517,6 +1518,7 @@ mod tests {
                             Command::SpawnStructure {
                                 building: 0,
                                 tile: (hx, if p == 0 { 8 } else { 52 }),
+                                turn: 0,
                             },
                         ));
                     }
@@ -1561,6 +1563,7 @@ mod tests {
                             regiment: worker(&world, p).unwrap(),
                             building: 1,
                             tile: (hx + 8, wy),
+                            turn: 0,
                         },
                     )),
                     401 => {

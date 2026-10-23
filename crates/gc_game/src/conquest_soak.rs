@@ -290,6 +290,7 @@ impl Soak {
                     regiment: w,
                     building,
                     tile,
+                    turn: 0,
                 }));
             }
         }

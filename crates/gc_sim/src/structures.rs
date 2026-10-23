@@ -257,7 +257,34 @@ pub struct BuildingStats {
 /// Largest footprint side, in tiles.
 pub const MAX_FOOTPRINT: u8 = 5;
 
+/// Ways a building can be turned: quarter turns clockwise, 0 as drawn.
+pub const TURNS: u8 = 4;
+
+/// The way a building turned `turn` quarter turns faces, as a step in
+/// tiles (x east, y south): south as drawn, then west, north and east,
+/// clockwise seen from above. Its front, where what it trains comes out.
+pub fn front(turn: u8) -> (i32, i32) {
+    [(0, 1), (-1, 0), (0, -1), (1, 0)][usize::from(turn % TURNS)]
+}
+
 impl BuildingStats {
+    /// Its footprint, `(width, depth)` in tiles, turned `turn` quarter
+    /// turns: an odd turn swaps the sides.
+    pub fn size(&self, turn: u8) -> (u8, u8) {
+        if turn % 2 == 1 {
+            (self.depth, self.width)
+        } else {
+            (self.width, self.depth)
+        }
+    }
+
+    /// Its footprint `[x, y, width, depth]` in tiles with its north-west
+    /// tile at `tile`, turned `turn` quarter turns.
+    pub fn footprint(&self, tile: (i32, i32), turn: u8) -> [i32; 4] {
+        let (w, d) = self.size(turn);
+        [tile.0, tile.1, i32::from(w), i32::from(d)]
+    }
+
     /// The same stats forced into the ranges the simulation relies on.
     pub fn sanitized(self) -> BuildingStats {
         BuildingStats {
@@ -323,8 +350,11 @@ pub struct StructureView {
     pub building: BuildingId,
     /// The footprint's north-west tile.
     pub tile: (i32, i32),
+    /// The footprint's sides in tiles, as it stands (turned).
     pub width: u8,
     pub depth: u8,
+    /// Quarter turns clockwise from as drawn (below [`TURNS`]).
+    pub turn: u8,
     /// Hit points left (rounded up: a building with any left shows 1).
     pub hp: u32,
     pub max_hp: u32,
@@ -478,6 +508,8 @@ pub struct Structures {
     owner: Vec<PlayerId>,
     building: Vec<BuildingId>,
     tile: Vec<(i32, i32)>,
+    /// Quarter turns clockwise from as drawn (below [`TURNS`]).
+    turn: Vec<u8>,
     /// Hit points left, in hundredths; 0 for a free slot.
     hp: Vec<u32>,
     free: Vec<u32>,
@@ -602,6 +634,7 @@ impl Structures {
             owner: vec![0; n],
             building: vec![0; n],
             tile: vec![(0, 0); n],
+            turn: vec![0; n],
             hp: vec![0; n],
             free: (0..capacity).rev().collect(),
             work_left: vec![0; n],
@@ -691,13 +724,15 @@ impl Structures {
 
     fn view(&self, i: usize) -> StructureView {
         let b = &self.buildings[self.building[i] as usize];
+        let (width, depth) = b.size(self.turn[i]);
         StructureView {
             handle: self.handle(i),
             owner: self.owner[i],
             building: self.building[i],
             tile: self.tile[i],
-            width: b.width,
-            depth: b.depth,
+            width,
+            depth,
+            turn: self.turn[i],
             hp: self.hp[i].div_ceil(HP_SCALE),
             max_hp: u32::from(b.hp),
             built_percent: if self.finished(i) {
@@ -803,25 +838,38 @@ impl Structures {
         self.growing[i] && !self.finished(i)
     }
 
+    /// The way building slot `i`'s front faces, as an angle: what it
+    /// trains comes out facing this way.
+    pub(crate) fn facing(&self, i: usize) -> Angle {
+        Angle(
+            Angle::QUARTER
+                .0
+                .wrapping_mul(u16::from(self.turn[i] % TURNS) + 1),
+        )
+    }
+
     /// Where what building slot `i` trains comes out: two tiles off the
-    /// middle of its south side, or of its east, west or north side where
-    /// that is blocked.
+    /// middle of its front, or of its other sides where that is blocked
+    /// (the one on its left, its right, then its back). Its front is its
+    /// south side as drawn, turned with it: a quarter turn puts it west.
     pub(crate) fn door(&self, i: usize, nav: &Nav) -> FxVec2 {
         let [x, y, w, d] = self.footprint(i);
         let (mid_x, mid_y) = (
             Fx::from_int(x) + Fx::from_ratio(w, 2),
             Fx::from_int(y) + Fx::from_ratio(d, 2),
         );
-        let off = Fx::from_int(2);
-        let south = FxVec2::new(mid_x, Fx::from_int(y + d) + off);
-        [
-            FxVec2::new(Fx::from_int(x + w) + off, mid_y),
-            FxVec2::new(Fx::from_int(x) - off, mid_y),
-            FxVec2::new(mid_x, Fx::from_int(y) - off),
-        ]
-        .into_iter()
-        .find(|&p| !nav.walkable(south) && nav.walkable(p))
-        .unwrap_or(south)
+        // Two tiles out from the middle of the side `k` quarter turns on
+        // from its front.
+        let side = |k: u8| {
+            let (dx, dy) = front(self.turn[i] + k);
+            let out = |dv: i32, half: i32| Fx::from_ratio(dv * half, 2) + Fx::from_int(2 * dv);
+            FxVec2::new(mid_x + out(dx, w), mid_y + out(dy, d))
+        };
+        let front = side(0);
+        [side(3), side(1), side(2)]
+            .into_iter()
+            .find(|&p| !nav.walkable(front) && nav.walkable(p))
+            .unwrap_or(front)
     }
 
     /// Live buildings in index order.
@@ -905,9 +953,7 @@ impl Structures {
 
     /// The footprint of building slot `i`: x, y, width, depth in tiles.
     pub(crate) fn footprint(&self, i: usize) -> [i32; 4] {
-        let b = &self.buildings[self.building[i] as usize];
-        let (x, y) = self.tile[i];
-        [x, y, i32::from(b.width), i32::from(b.depth)]
+        self.stats_of(i).footprint(self.tile[i], self.turn[i])
     }
 
     /// The footprint of the finished building of `owner`'s nearest `here`
@@ -978,13 +1024,15 @@ impl Structures {
     }
 
     /// Whether a building of type `building` may stand with its north-west
-    /// tile at `tile`: on the map, on ground regiments can walk, clear of
-    /// other buildings (see `Nav::footing`), and with no regiment standing
-    /// on it or node (`nodes`) within it.
+    /// tile at `tile`, turned `turn` quarter turns: on the map, on ground
+    /// regiments can walk, clear of other buildings (see `Nav::footing`),
+    /// and with no regiment standing on it or node (`nodes`) within it.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn check(
         &self,
         building: BuildingId,
         tile: (i32, i32),
+        turn: u8,
         nav: &Nav,
         regs: &Regiments,
         nodes: &[FxVec2],
@@ -993,8 +1041,11 @@ impl Structures {
             .buildings
             .get(building as usize)
             .ok_or(Refusal::Unknown)?;
-        let (w, d) = (i32::from(b.width), i32::from(b.depth));
-        nav.footing([tile.0, tile.1, w, d])?;
+        if turn >= TURNS {
+            return Err(Refusal::Unknown);
+        }
+        let foot @ [_, _, w, d] = b.footprint(tile, turn);
+        nav.footing(foot)?;
         // No regiment's centre on ground it couldn't stand on once the
         // building is up.
         let margin = Fx::from_ratio(i32::from(CLEARANCE), CELLS_PER_TILE);
@@ -1013,13 +1064,14 @@ impl Structures {
         }
     }
 
-    /// Put up a finished building for `owner`. `None` when the pool is
+    /// Put up a finished building for `owner`, turned `turn` quarter turns. `None` when the pool is
     /// full; the caller has checked [`Structures::check`].
     pub(crate) fn spawn(
         &mut self,
         owner: PlayerId,
         building: BuildingId,
         tile: (i32, i32),
+        turn: u8,
         nav: &mut Nav,
         regs: &Regiments,
     ) -> Option<StructureHandle> {
@@ -1028,6 +1080,7 @@ impl Structures {
         self.owner[i] = owner;
         self.building[i] = building;
         self.tile[i] = tile;
+        self.turn[i] = turn;
         self.hp[i] = u32::from(self.buildings[building as usize].hp) * HP_SCALE;
         self.work_left[i] = 0;
         self.upgrade_to[i] = None;
@@ -1054,10 +1107,11 @@ impl Structures {
         owner: PlayerId,
         building: BuildingId,
         tile: (i32, i32),
+        turn: u8,
         nav: &mut Nav,
         regs: &Regiments,
     ) -> Option<StructureHandle> {
-        let h = self.spawn(owner, building, tile, nav, regs)?;
+        let h = self.spawn(owner, building, tile, turn, nav, regs)?;
         let i = h.index as usize;
         let b = self.buildings[building as usize];
         self.hp[i] = (u32::from(b.hp) * HP_SCALE * FOUNDATION_PERCENT / 100).max(1);
@@ -1389,6 +1443,7 @@ impl Structures {
             h.u16(self.building[i]);
             h.i32(self.tile[i].0);
             h.i32(self.tile[i].1);
+            h.u8(self.turn[i]);
             h.u32(self.work_left[i]);
             if self.work_left[i] > 0 {
                 h.u32(self.work_full[i]);

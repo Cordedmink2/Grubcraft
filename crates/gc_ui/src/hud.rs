@@ -270,6 +270,7 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("Ctrl+1-9", "Save a group"),
             ("1-9", "Recall a group"),
             ("Space", "Jump to alert"),
+            ("R, Wheel", "Turn a building you place"),
             ("Esc", "Cancel, or menu"),
         ],
     ),

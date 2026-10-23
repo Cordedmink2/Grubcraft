@@ -240,7 +240,8 @@ fn put_up(w: &mut World, player: u8, building: u16, x: i16, y: i16) -> Structure
         player,
         Command::SpawnStructure {
             building,
-            tile: (x, y)
+            tile: (x, y),
+            turn: 0,
         }
     ));
     at(w, i32::from(x), i32::from(y)).unwrap()
@@ -737,6 +738,7 @@ fn two_shrines_earn_twice_as_fast() {
             command: Command::SpawnStructure {
                 building: SHRINE,
                 tile: (6, 58),
+                turn: 0,
             },
         },
         PlayerCommand {
@@ -744,6 +746,7 @@ fn two_shrines_earn_twice_as_fast() {
             command: Command::SpawnStructure {
                 building: SHRINE,
                 tile: (10, 58),
+                turn: 0,
             },
         },
     ]);
@@ -772,6 +775,7 @@ fn an_unfinished_shrine_earns_no_honor() {
             regiment: worker,
             building: SHRINE,
             tile: (24, 30),
+            turn: 0,
         }
     ));
     let foundation = at(&w, 24, 30).unwrap();
@@ -1023,6 +1027,7 @@ fn a_summons_is_refused_for_anything_but_an_own_finished_shrine() {
             regiment: worker,
             building: SHRINE,
             tile: (24, 30),
+            turn: 0,
         }
     ));
     let foundation = at(&w, 24, 30).unwrap();

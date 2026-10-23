@@ -78,7 +78,7 @@ pub fn spot_for(
         open.sort_by(|a, b| a.1.total_cmp(&b.1));
         if let Some(&(t, _)) = open
             .iter()
-            .find(|(t, _)| world.can_lay(party, building, *t).is_ok())
+            .find(|(t, _)| world.can_lay(party, building, *t, 0).is_ok())
         {
             return Some(t);
         }

@@ -367,7 +367,7 @@ pub fn opening(
                 let fits = |t: (i32, i32)| {
                     let foot = [t.0, t.1, w, d];
                     !taken.iter().any(|&f| overlaps(f, foot, 1))
-                        && world.can_build(i as u16, t).is_ok()
+                        && world.can_build(i as u16, t, 0).is_ok()
                 };
                 let tuning = s.tunes.zip(first).and_then(|((resource, tiles), main)| {
                     let tile = tuning_spot(map, main, (resource, tiles), (w, d), &tuned, &fits)?;
@@ -395,6 +395,7 @@ pub fn opening(
                 out.push(order(Command::SpawnStructure {
                     building: i as u16,
                     tile: (tile.0 as i16, tile.1 as i16),
+                    turn: 0,
                 }));
             }
         }
@@ -1143,6 +1144,7 @@ mod tests {
                     command: Command::SpawnStructure {
                         building,
                         tile: (tile.0 as i16, tile.1 as i16),
+                        turn: 0,
                     },
                 }
             })
@@ -1172,7 +1174,7 @@ mod tests {
         let id = resonator_id(table);
         let free = |c: Vec2| {
             let t = buildings::tile_for(c, 2, 2);
-            world.can_build(id, t).is_ok()
+            world.can_build(id, t, 0).is_ok()
         };
         for seep in tuned_seeps(world, owner) {
             for radius in [7.0f32, 6.0, 5.0, 8.0] {
@@ -1206,7 +1208,7 @@ mod tests {
         let (x0, y0) = (from.x as i32, from.y as i32);
         let spots: Vec<Vec2> = (y0 - 45..=y0 + 45)
             .flat_map(|y| (x0 - 45..=x0 + 45).map(move |x| (x, y)))
-            .filter(|&t| world.can_build(id, t).is_ok())
+            .filter(|&t| world.can_build(id, t, 0).is_ok())
             .map(|t| buildings::centre_of(t, 2, 2))
             .filter(|c| linkers.iter().all(|l| (*l - *c).length() >= 15.0))
             .collect();

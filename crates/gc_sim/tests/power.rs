@@ -187,7 +187,8 @@ fn put_up(w: &mut World, player: u8, building: u16, x: i16, y: i16) -> Structure
         player,
         Command::SpawnStructure {
             building,
-            tile: (x, y)
+            tile: (x, y),
+            turn: 0,
         }
     ));
     at(w, i32::from(x), i32::from(y)).unwrap()
@@ -261,7 +262,7 @@ fn a_powered_building_can_be_laid_only_where_one_of_its_owners_fields_reaches() 
     put_up(&mut w, 1, HALL, 50, 50);
     let spot = (30, 30);
     assert_eq!(
-        w.can_lay(0, CHOIR_HALL, spot),
+        w.can_lay(0, CHOIR_HALL, spot, 0),
         Err(Refusal::Unpowered),
         "no field stands at all"
     );
@@ -270,12 +271,12 @@ fn a_powered_building_can_be_laid_only_where_one_of_its_owners_fields_reaches() 
     put_up(&mut w, 1, SPIRE, 30, 37);
     run(&mut w, 2);
     assert_eq!(
-        w.can_lay(0, CHOIR_HALL, spot),
+        w.can_lay(0, CHOIR_HALL, spot, 0),
         Err(Refusal::Unpowered),
         "an enemy's field does not power it for player 0"
     );
     assert_eq!(
-        w.can_lay(1, CHOIR_HALL, spot),
+        w.can_lay(1, CHOIR_HALL, spot, 0),
         Ok(()),
         "player 1's own field does"
     );
@@ -284,11 +285,11 @@ fn a_powered_building_can_be_laid_only_where_one_of_its_owners_fields_reaches() 
     let far = put_up(&mut w, 0, SPIRE, 42, 30);
     run(&mut w, 2);
     assert_eq!(
-        w.can_lay(0, CHOIR_HALL, spot),
+        w.can_lay(0, CHOIR_HALL, spot, 0),
         Err(Refusal::Unpowered),
         "9 tiles from the Spire's edge is out of its field"
     );
-    assert!(!w.power_reaches(0, CHOIR_HALL, spot));
+    assert!(!w.power_reaches(0, CHOIR_HALL, spot, 0));
 
     // 8 tiles off is in reach.
     assert!(order(
@@ -299,11 +300,11 @@ fn a_powered_building_can_be_laid_only_where_one_of_its_owners_fields_reaches() 
     put_up(&mut w, 0, SPIRE, 41, 30);
     run(&mut w, 2);
     assert_eq!(
-        w.can_lay(0, CHOIR_HALL, spot),
+        w.can_lay(0, CHOIR_HALL, spot, 0),
         Ok(()),
         "8 tiles from the Spire's edge is in its field"
     );
-    assert!(w.power_reaches(0, CHOIR_HALL, spot));
+    assert!(w.power_reaches(0, CHOIR_HALL, spot, 0));
 }
 
 /// A building that needs power and has a regiment queued makes no progress

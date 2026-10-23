@@ -163,7 +163,8 @@ fn put_up(w: &mut World, player: u8, building: u16, x: i16, y: i16) -> Structure
         player,
         Command::SpawnStructure {
             building,
-            tile: (x, y)
+            tile: (x, y),
+            turn: 0,
         }
     ));
     at(w, i32::from(x), i32::from(y)).unwrap()

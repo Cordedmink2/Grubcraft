@@ -11,15 +11,16 @@
 //!   hatch all at once: every one in the queue starts as soon as there is
 //!   supply for it, not only the front one. They start in queue order: one
 //!   waiting for supply holds up those behind it.
-//! - A finished regiment comes out at the building's south side (or another
-//!   where that is blocked) and marches to its rally point, if it has one.
+//! - A finished regiment comes out at the building's front, its south side
+//!   as drawn and turned with it (or another where that is blocked), and
+//!   marches to its rally point, if it has one.
 //! - Calling off the last in a queue gives back all it cost. A building
 //!   that falls takes its queue with it, and gives back nothing.
 
 use alloc::vec;
 use alloc::vec::Vec;
 
-use gc_fixed::FxVec2;
+use gc_fixed::{Angle, FxVec2};
 
 use crate::conquest::ConquestUnit;
 use crate::nav::Nav;
@@ -35,6 +36,8 @@ pub(crate) struct Trained {
     pub(crate) owner: PlayerId,
     pub(crate) unit: UnitId,
     pub(crate) at: FxVec2,
+    /// The way it faces when it comes out: out of the building's front.
+    pub(crate) facing: Angle,
     pub(crate) rally: Option<FxVec2>,
 }
 
@@ -263,6 +266,7 @@ impl Production {
                     owner,
                     unit,
                     at: structures.door(i, nav),
+                    facing: structures.facing(i),
                     rally: self.rally[i],
                 });
                 self.queue[i].copy_within(k + 1.., k);
