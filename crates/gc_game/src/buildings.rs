@@ -688,25 +688,17 @@ pub fn node_look(n: &gc_sim::NodeView, ground: impl Fn(Vec2) -> f32) -> Extra {
     }
 }
 
-/// Root-veins lie as a flat ribbon this thick (tiles), in segments this
-/// long so each follows the ground it crosses, a hair above it.
-const VEIN_THICK: f32 = 0.06;
-const VEIN_SEGMENT: f32 = 3.0;
-const VEIN_LIFT: f32 = 0.05;
-/// The links between buildings, the spokes round each, and the flow home
-/// from a node, as widths in tiles.
-const VEIN_LINK_WIDTH: f32 = 0.9;
-const VEIN_SPOKE_WIDTH: (f32, f32) = (0.7, 0.15);
+/// Ribbons (the flow along root-veins, beams, auras) lie flat this thick
+/// (tiles), in segments this long so each follows the ground it crosses, a
+/// hair above it.
+const RIBBON_THICK: f32 = 0.06;
+const RIBBON_SEGMENT: f32 = 3.0;
+const RIBBON_LIFT: f32 = 0.05;
+/// The flow home from a node, as a width in tiles.
 const VEIN_FLOW_WIDTH: f32 = 0.5;
-/// Spokes a veins building sends out (a main building one more), ending
-/// this share of its reach out.
-const VEIN_SPOKES: usize = 5;
-const VEIN_SPOKE_REACH: f32 = 0.85;
-/// Veins are this flesh-violet, a quarter of the way to their owner's
-/// colour; the flow of Grub is lighter.
-const VEIN_COLOR: [u8; 3] = [84, 30, 78];
+/// The flow of Grub is this violet, a quarter of the way to its owner's
+/// colour.
 const VEIN_FLOW_COLOR: [u8; 3] = [200, 80, 170];
-const VEIN_GLOW: u8 = 45;
 /// Flow pulses along its ribbon, a pulse every this many ticks per
 /// segment (and so every few seconds along the whole ribbon).
 const FLOW_PULSE_TICKS: u32 = 12;
@@ -745,7 +737,7 @@ fn push_ribbon(
         return;
     }
     let dir = d / len;
-    let n = ((len / VEIN_SEGMENT).ceil() as usize).max(1);
+    let n = ((len / RIBBON_SEGMENT).ceil() as usize).max(1);
     for i in 0..n {
         if out.len() >= MAX_BOX_INSTANCES {
             return;
@@ -758,7 +750,7 @@ fn push_ribbon(
             // A little longer than its share, so segments meet.
             size: [
                 widths.0 + (widths.1 - widths.0) * mid,
-                VEIN_THICK,
+                RIBBON_THICK,
                 len / n as f32 + 0.1,
             ],
             color: [r, g, b, glow(i)],
@@ -767,14 +759,12 @@ fn push_ribbon(
     }
 }
 
-/// Draw the Brood's root-veins (Conquest): from each linked veins building
-/// that `side` is shown, a ribbon along the ground to the building it
-/// links through (if that is shown too) and spokes out to the edge of its
-/// veins. Where `side`'s burrowed workers work a node on the veins, a
-/// brighter ribbon pulses from the node to the building that carries the
-/// load home; a node off the veins gets a dull stub and a red cross, so
-/// the break shows. `reveal_all` shows everything, every side's workers
-/// too.
+/// Draw what moves along the Brood's root-veins (Conquest); the veins
+/// themselves are the ground's (`land.rs`). Where `side`'s burrowed workers
+/// work a node on the veins, a bright ribbon pulses from the node to the
+/// building that carries the load home; a node off the veins gets a dull
+/// stub and a red cross, so the break shows. `reveal_all` shows every
+/// side's workers too.
 pub fn push_veins(
     world: &World,
     side: PlayerId,
@@ -782,57 +772,9 @@ pub fn push_veins(
     team: impl Fn(PlayerId) -> [u8; 3],
     out: &mut Vec<BoxInstance>,
 ) {
-    let (Some(structures), Some(economy)) = (world.structures(), world.economy()) else {
+    let Some(economy) = world.economy() else {
         return;
     };
-    let shown = shown_to(side, reveal_all);
-    // Only the veins whose building is shown.
-    let veins = world.veins().filter_map(|v| {
-        let s = structures.get(v.building).filter(|s| shown(s))?;
-        Some((v, s))
-    });
-    for (v, s) in veins {
-        if out.len() >= MAX_BOX_INSTANCES {
-            return;
-        }
-        let colour = tint(VEIN_COLOR, team(v.owner), 25);
-        let at = crate::from_fx_vec(v.at);
-        let from = crate::from_fx_vec(v.from);
-        // The link: a thicker ribbon between buildings, when both are
-        // shown (a link must not give away a building in the fog).
-        if structures.get(v.parent).is_some_and(|p| shown(&p)) {
-            push_ribbon(
-                at,
-                from,
-                (VEIN_LINK_WIDTH, VEIN_LINK_WIDTH),
-                colour,
-                VEIN_LIFT,
-                |_| VEIN_GLOW,
-                out,
-            );
-        }
-        // Spokes at angles of their own: spread evenly, turned by where
-        // the building is, so neighbours do not mirror each other.
-        let spokes = VEIN_SPOKES + usize::from(v.at == v.from);
-        let turn = (s.handle.index.wrapping_mul(2_654_435_761) >> 8) as f32 * 1e-3;
-        let start = f32::from(s.width.max(s.depth)) / 2.0;
-        let length = start + v.reach as f32 * VEIN_SPOKE_REACH;
-        for k in 0..spokes {
-            let wobble = ((k as f32 * 7.31 + turn).sin()) * 0.25;
-            let angle = turn + (k as f32 + wobble) * std::f32::consts::TAU / spokes as f32;
-            let end = at + Vec2::new(angle.cos(), angle.sin()) * length;
-            push_ribbon(
-                at,
-                end,
-                VEIN_SPOKE_WIDTH,
-                colour,
-                VEIN_LIFT - 0.01,
-                |_| VEIN_GLOW,
-                out,
-            );
-        }
-    }
-
     // The nodes burrowed workers are at, each once, with who works it:
     // `side`'s own only, unless everything is shown (an enemy's workers
     // can be in the fog).
@@ -863,7 +805,7 @@ pub fn push_veins(
                 crate::from_fx_vec(v.at),
                 (VEIN_FLOW_WIDTH, VEIN_FLOW_WIDTH),
                 tint(VEIN_FLOW_COLOR, team(owner), 25),
-                VEIN_LIFT + 0.01,
+                RIBBON_LIFT + 0.01,
                 |i| {
                     let phase = (tick / FLOW_PULSE_TICKS) as usize % 4;
                     if (i + 4 - phase).is_multiple_of(4) {
@@ -890,7 +832,7 @@ pub fn push_veins(
                 at + stub,
                 (VEIN_FLOW_WIDTH, VEIN_FLOW_WIDTH * 0.5),
                 CUT_COLOR,
-                VEIN_LIFT + 0.01,
+                RIBBON_LIFT + 0.01,
                 |_| 0,
                 out,
             );
@@ -916,7 +858,7 @@ pub fn push_veins(
 const BEAM_WIDTH: f32 = 0.16;
 const BEAM_COLOR: [u8; 3] = [140, 210, 255];
 const BEAM_GLOW: u8 = 150;
-const BEAM_LIFT: f32 = VEIN_LIFT + 0.02;
+const BEAM_LIFT: f32 = RIBBON_LIFT + 0.02;
 /// A field of power's edge is a faint ring on the ground, brighter and
 /// wider while a building that needs power is being placed.
 const RING_COLOR: [u8; 3] = [70, 115, 160];

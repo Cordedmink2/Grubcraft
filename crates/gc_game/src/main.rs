@@ -147,6 +147,7 @@ mod fog;
 mod fx_demo;
 #[cfg(test)]
 mod goldens;
+mod land;
 // The Guide's data (docs/08-ui-ux.md#guide).
 mod guide_data;
 mod hud;
@@ -741,6 +742,7 @@ struct Running {
     reveal_all: bool,
     /// The fog of war on the ground, when the match has it.
     fog: fog::FogView,
+    land: land::LandView,
     /// Data hash and size, for the overlay.
     data_label: String,
     seed: u64,
@@ -1504,6 +1506,7 @@ impl App {
             tip_book: guide_data::tip_book(),
             reveal_all: false,
             fog: Default::default(),
+            land: Default::default(),
             data_label: format!(
                 "{:016x}   {} unit types",
                 game_data.short_hash(),
@@ -3317,6 +3320,14 @@ impl Running {
             self.heightmap.tiles,
             !self.reveal_all,
         );
+        self.land.update(
+            self.last_frame,
+            &mut self.renderer,
+            &self.world,
+            self.sandbox.side,
+            self.reveal_all,
+            self.heightmap.tiles,
+        );
         // Dust and sparks age with game time: still while paused or behind
         // the menu, slow in slow motion.
         let live = !self.paused && !(self.menu_open && self.online.is_none());
@@ -4176,6 +4187,7 @@ impl Running {
         // Seeing through the woods stays in the sandbox.
         self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
+        self.land.reset();
         self.parties = sandbox_parties();
         self.battle = None;
         self.speed = NORMAL_SPEED;
@@ -4290,6 +4302,8 @@ impl Running {
         tagged_alloc::scope(Tag::Render, || {
             set_terrain(&mut self.renderer, hm);
         });
+        // The renderer's land is bare again.
+        self.land.reset();
         self.hud.set_terrain(hm);
         self.camera.map_size = hm.tiles as f32;
         let nav = hm.sim_nav_costs();

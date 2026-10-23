@@ -87,6 +87,11 @@ const HIGHLIGHT: f32 = 1.6;
 // Moss002 (2).
 @group(0) @binding(14) var scenery_color: texture_2d_array<f32>;
 @group(0) @binding(15) var scenery_normal: texture_2d_array<f32>;
+// Where a faction's land has spread over the ground (Renderer::set_land), one
+// texel a tile: r how much of it is covered, g whose (reserved: the Brood's
+// land is drawn for all), b the distance to its nearest source in quarter
+// tiles.
+@group(0) @binding(16) var land_map: texture_2d<f32>;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -547,6 +552,71 @@ fn ground_layer(layer: i32, mean: vec3<f32>, p: vec2<f32>, dx: vec2<f32>, dy: ve
     return r;
 }
 
+// ---------------------------------------------------------------- faction lands
+//
+// Where a faction's land has spread, the ground is that faction's: the Brood's
+// is living flesh. Everything here is worked out from the position, so there
+// are no textures to tile: a ragged edge (the land creeps in tongues and
+// islands, not a disc), mottled skin, a network of veins that is thickest by
+// its source and fine at its edges, and a glow that pulses inwards along the
+// veins, the way the Grub flows home. The simulation's veins decide where the
+// land is; this only draws it.
+
+struct Land {
+    albedo: vec3<f32>,
+    // 0 bare ground, 1 fully covered.
+    cover: f32,
+    // Added to the surface normal's x and z.
+    tilt: vec2<f32>,
+    // Emitted light (HDR).
+    glow: vec3<f32>,
+    rough: f32,
+};
+
+// 1 along a vein at `p`, 0 off it: the creases of two scales of noise, the
+// fine ones half as thick.
+fn vein_mask(p: vec2<f32>, width: f32) -> f32 {
+    let major = 1.0 - smoothstep(0.0, width, abs(nz(p) - 0.5));
+    let fine = 1.0 - smoothstep(0.0, width * 0.5, abs(nz(p * 2.7 + vec2<f32>(3.1, 8.7)) - 0.5));
+    return max(major, fine * 0.7);
+}
+
+fn brood_land(xz: vec2<f32>, spread: f32, dist: f32) -> Land {
+    var l = Land(vec3<f32>(0.0), 0.0, vec2<f32>(0.0), vec3<f32>(0.0), 1.0);
+    l.cover = smoothstep(0.2, 0.45, spread + (fbm(xz * 0.3) - 0.5) * 0.5);
+    if l.cover <= 0.0 {
+        return l;
+    }
+    // Veins, their lines wandering with a warp; thick near the source.
+    let warp = vec2<f32>(vnoise(xz * 0.45), vnoise(xz * 0.45 + vec2<f32>(5.2, 1.3))) - 0.5;
+    let p = xz * 0.2 + warp * 0.9;
+    let width = mix(0.07, 0.035, smoothstep(0.0, 20.0, dist));
+    let e = 0.12;
+    let vein = vein_mask(p, width);
+    let vx = vein_mask(p + vec2<f32>(e * 0.2, 0.0), width);
+    let vz = vein_mask(p + vec2<f32>(0.0, e * 0.2), width);
+    // Skin: mottled, with soft swellings between the veins.
+    let blotch = nz(xz * 0.23);
+    var skin = mix(
+        srgb_to_linear(vec3<f32>(0.27, 0.12, 0.12)),
+        srgb_to_linear(vec3<f32>(0.4, 0.22, 0.19)),
+        blotch,
+    );
+    skin = skin * (0.55 + 0.9 * nz(xz * 0.9));
+    l.albedo = mix(skin, srgb_to_linear(vec3<f32>(0.16, 0.05, 0.09)), vein * 0.85);
+    let swell = vnoise(xz * 2.2);
+    let swell_x = vnoise((xz + vec2<f32>(e, 0.0)) * 2.2);
+    let swell_z = vnoise((xz + vec2<f32>(0.0, e)) * 2.2);
+    l.tilt = (vec2<f32>(vein - vx, vein - vz) * 1.6 + vec2<f32>(swell - swell_x, swell - swell_z) * 0.5) * l.cover;
+    // The pulses run inwards (towards smaller distances), each a little off
+    // the others' time by place.
+    let pulse = 0.5 + 0.5 * sin(dist * 0.7 + g.misc.y * 2.2 + vnoise(xz * 0.35) * 5.0);
+    l.glow = vec3<f32>(1.0, 0.16, 0.26) * vein * (0.2 + 0.8 * pulse * pulse) * 1.1 * l.cover;
+    // Wet.
+    l.rough = 0.45;
+    return l;
+}
+
 @fragment
 fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     // Derivatives first, while control flow is uniform.
@@ -652,6 +722,25 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         nd = normalize(vec3<f32>(n.x + detail.tilt.x * n.y, n.y, n.z + detail.tilt.y * n.y));
     }
 
+    // A faction's land over the ground, where it has spread (and the ground
+    // is not rock).
+    var land_glow = vec3<f32>(0.0);
+    var land_rough = 1.0;
+    var landed = false;
+    let land = textureSampleLevel(land_map, soft_sampler, xz / f32(textureDimensions(land_map).x), 0.0);
+    // The noise moves the edge by at most a quarter, so under 0.05 of cover
+    // is bare for certain.
+    if land.r > 0.05 && rock < 1.0 {
+        let keep = 1.0 - rock;
+        let l = brood_land(xz, land.r, land.b * 255.0 / 4.0);
+        let k = l.cover * keep;
+        albedo = mix(albedo, l.albedo, k);
+        nd = normalize(nd + vec3<f32>(l.tilt.x, 0.0, l.tilt.y) * keep);
+        land_glow = l.glow * keep;
+        land_rough = mix(1.0, l.rough, k);
+        landed = k > 0.0;
+    }
+
     var c: vec3<f32>;
     if rock > 0.0 {
         let r = rock_surface(in.world, n, dpx, dpy);
@@ -677,7 +766,9 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let ns = normalize(mix(nd, r.n, rock));
         let rough = mix(1.0, max(r.rough, 0.75), rock);
         let ao = mix(1.0, cavity * tall, rock);
-        c = shade_material(mix(albedo, rc, rock), ns, in.world, rough, 0.0, ao, vec3<f32>(0.0));
+        c = shade_material(mix(albedo, rc, rock), ns, in.world, rough, 0.0, ao, land_glow);
+    } else if landed {
+        c = shade_material(albedo, nd, in.world, land_rough, 0.0, 1.0, land_glow);
     } else {
         c = shade(albedo, nd, in.world);
     }

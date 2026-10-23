@@ -280,6 +280,11 @@ struct TerrainGpu {
     fog_map: wgpu::Texture,
     /// Whether the fog map holds anything but all-clear.
     fogged: bool,
+    /// One RGBA texel per tile: where a faction's land has spread over the
+    /// ground (see [`Renderer::set_land`]).
+    land_map: wgpu::Texture,
+    /// Whether the creep map holds anything but bare ground.
+    landed: bool,
 }
 
 pub struct Renderer {
@@ -696,6 +701,16 @@ impl Renderer {
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 16,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
@@ -1238,27 +1253,18 @@ impl Renderer {
         );
         // All clear until `set_fog` says otherwise.
         let tiles = (t.size - 1) / t.samples_per_tile;
-        let fog_map = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("fog of war"),
-            size: wgpu::Extent3d {
-                width: tiles,
-                height: tiles,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        Self::write_fog(
+        let fog_map = self.tile_map("fog of war", wgpu::TextureFormat::R8Unorm, tiles);
+        Self::write_tile_map(
             &self.queue,
             &fog_map,
             tiles,
+            1,
             &vec![255; (tiles * tiles) as usize],
         );
         let fog_view = fog_map.create_view(&wgpu::TextureViewDescriptor::default());
+        // Bare ground (all zero, as a new texture is) until `set_land`.
+        let land_map = self.tile_map("faction land", wgpu::TextureFormat::Rgba8Unorm, tiles);
+        let land_view = land_map.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = |globals: &wgpu::Buffer, shadow_map| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("world"),
@@ -1328,6 +1334,10 @@ impl Renderer {
                         binding: 15,
                         resource: wgpu::BindingResource::TextureView(&self.scenery_detail.normal),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 16,
+                        resource: wgpu::BindingResource::TextureView(&land_view),
+                    },
                 ],
             })
         };
@@ -1351,7 +1361,7 @@ impl Renderer {
         self.chunk_levels = vec![0; chunk_count as usize];
         self.terrain_gpu_bytes = t.heights.len() as u64 * 2
             + u64::from(tint_side * tint_side) * 4
-            + u64::from(tiles * tiles)
+            + u64::from(tiles * tiles) * (1 + 4)
             + u64::from(mask_side * mask_side)
             + u64::from(occlusion_side * occlusion_side);
         self.terrain = Some(TerrainGpu {
@@ -1364,10 +1374,38 @@ impl Renderer {
             water_level: t.water_level,
             fog_map,
             fogged: false,
+            land_map,
+            landed: false,
         });
     }
 
-    fn write_fog(queue: &wgpu::Queue, texture: &wgpu::Texture, tiles: u32, values: &[u8]) {
+    /// A texture with a texel for each map tile, to be filled by
+    /// `write_tile_map`.
+    fn tile_map(&self, label: &str, format: wgpu::TextureFormat, tiles: u32) -> wgpu::Texture {
+        self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: tiles,
+                height: tiles,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        })
+    }
+
+    /// Fill a `tile_map` of `bytes` a texel from `values`, row by row.
+    fn write_tile_map(
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+        tiles: u32,
+        bytes: u32,
+        values: &[u8],
+    ) {
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture,
@@ -1378,7 +1416,7 @@ impl Renderer {
             values,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(tiles),
+                bytes_per_row: Some(tiles * bytes),
                 rows_per_image: Some(tiles),
             },
             wgpu::Extent3d {
@@ -1403,13 +1441,42 @@ impl Renderer {
         let tiles = terrain.tiles;
         let n = (tiles * tiles) as usize;
         match values {
-            Some(v) if v.len() == n => Self::write_fog(&self.queue, &terrain.fog_map, tiles, v),
+            Some(v) if v.len() == n => {
+                Self::write_tile_map(&self.queue, &terrain.fog_map, tiles, 1, v);
+            }
             None if terrain.fogged => {
-                Self::write_fog(&self.queue, &terrain.fog_map, tiles, &vec![255; n]);
+                Self::write_tile_map(&self.queue, &terrain.fog_map, tiles, 1, &vec![255; n]);
             }
             _ => return,
         }
         terrain.fogged = values.is_some();
+    }
+
+    /// Draw a faction's land over the ground: four bytes per map tile (red,
+    /// green, blue, alpha), row by row from the north-west corner. Red is
+    /// how much of the tile the land covers (0 bare, 255 fully), green is
+    /// whose it is (reserved: every land draws as the Brood's for now), blue is its distance from
+    /// the nearest source in quarter tiles (the pulses run along it), alpha
+    /// is spare. Edges are blurred over about a tile. `None` is bare ground
+    /// again, as after `set_terrain`; it costs nothing when the ground is
+    /// already bare. Does nothing before `set_terrain`, or when `values` is
+    /// not `tiles × tiles × 4` long.
+    pub fn set_land(&mut self, values: Option<&[u8]>) {
+        let Some(terrain) = &mut self.terrain else {
+            return;
+        };
+        let tiles = terrain.tiles;
+        let n = (tiles * tiles) as usize * 4;
+        match values {
+            Some(v) if v.len() == n => {
+                Self::write_tile_map(&self.queue, &terrain.land_map, tiles, 4, v);
+            }
+            None if terrain.landed => {
+                Self::write_tile_map(&self.queue, &terrain.land_map, tiles, 4, &vec![0; n]);
+            }
+            _ => return,
+        }
+        terrain.landed = values.is_some();
     }
 
     /// Draw a frame: the terrain, `soldiers` drawn by `batches` (each names

@@ -17,7 +17,7 @@ Stylized low-poly with rich lighting, as if the battlefield were a hand-painted 
 | Faction | Shapes | Palette | Signature visual |
 |---|---|---|---|
 | Ember Clans | Rectangular, layered roofs, banners | Lacquer red, black, gold, rice-paper cream | Banners (sashimono) on every regiment, ember-lit rockets |
-| Brood | Round, segmented, organic | Bruise purple, chitin amber, Grub-glow green | Pulsing veins across the ground, cocoons |
+| Brood | Round, segmented, organic | Bruise purple, chitin amber, Grub-glow green | Pulsing veins across the ground (built: a living-flesh land, docs/33), cocoons |
 | Choir | Triangular, faceted, floating parts | Pale glass, cyan and violet light | Light triangles over territory, refracting beams |
 | Carrion Concord | Tall, narrow, ornate, hanging lanterns | Bone white, verdigris, ledger-ink blue, lantern orange | Long caravans, ghost-lights over battlefields |
 

@@ -909,11 +909,10 @@ mod tests {
         }
     }
 
-    /// The Brood's root-veins are drawn for the buildings a side is shown
-    /// (all of them with `reveal_all`), with flow along a worked node on
-    /// the veins and a cut-off mark on one off them.
+    /// What moves on the Brood's root-veins is drawn: flow along a worked
+    /// node on the veins and a cut-off mark on one off them.
     #[test]
-    fn root_veins_are_drawn_for_the_buildings_a_side_is_shown() {
+    fn flow_and_cuts_are_drawn_on_the_root_veins() {
         let data = data();
         let map = make_map(0, 0);
         let factions = [Faction::Brood, Faction::Brood];
@@ -921,9 +920,9 @@ mod tests {
         let opening = opening(&data, &table, &map, &world, &factions);
         world.tick(&opening);
         let team = |p: PlayerId| if p == 0 { [200, 50, 50] } else { [50, 50, 200] };
-        let draw = |world: &World, side: PlayerId, reveal_all: bool| {
+        let draw = |world: &World| {
             let mut out = Vec::new();
-            buildings::push_veins(world, side, reveal_all, team, &mut out);
+            buildings::push_veins(world, 0, false, team, &mut out);
             out
         };
         // Boxes lying within `r` tiles of `at`.
@@ -934,29 +933,9 @@ mod tests {
                 .count()
         };
 
-        let hive = |p: PlayerId| world.veins().find(|v| v.owner == p).expect("a Hive");
-        let (mine, theirs) = (hive(0), hive(1));
-        let seen = |p: PlayerId| {
-            let s = world.structures().unwrap().get(hive(p).building).unwrap();
-            s.seen_by(0)
-        };
-        assert!(seen(0), "you see your own Hive");
-        let plain = draw(&world, 0, false);
-        assert!(near(&plain, mine.at, 2.0) >= 6, "spokes leave your Hive");
-        // Ribbons stay flat on the ground and within the Hive's reach.
-        let far = (mine.reach + 8) as f32;
-        assert!(plain.iter().all(|b| b.size[1] < 0.2 && b.lift < 0.5));
-        assert_eq!(
-            near(&plain, mine.at, far),
-            plain.len() - near(&plain, theirs.at, far)
-        );
-        // The enemy's veins show only once its Hive has been seen.
-        let all = draw(&world, 0, true);
-        assert!(all.len() > near(&all, mine.at, far));
-        if !seen(1) {
-            assert_eq!(near(&plain, theirs.at, 2.0), 0, "no veins in the fog");
-            assert!(all.len() > plain.len());
-        }
+        // The veins themselves are the ground's, so nothing is drawn until
+        // workers work a node.
+        assert!(draw(&world).is_empty());
 
         // A Gnawer burrowed at a seep on the veins sends flow home (none
         // while it walks there); at one off them, the seep is marked cut
@@ -994,17 +973,46 @@ mod tests {
             panic!("the Gnawer never reached node {node}");
         };
         work(&mut world, on.index);
-        let flowing = draw(&world, 0, false);
-        assert!(flowing.len() > plain.len());
-        assert!(near(&flowing, on.at, 2.0) > near(&plain, on.at, 2.0));
+        let flowing = draw(&world);
+        assert!(near(&flowing, on.at, 2.0) > 0);
         work(&mut world, off.index);
-        let cut = draw(&world, 0, false);
+        let cut = draw(&world);
         let marks = |out: &[gc_render::BoxInstance]| {
             out.iter().filter(|b| b.size == [0.25, 0.1, 1.5]).count()
         };
-        assert_eq!(marks(&plain) + marks(&flowing), 0);
+        assert_eq!(marks(&flowing), 0);
         assert_eq!(marks(&cut), 2, "a cross on the cut-off seep");
         assert!(near(&cut, off.at, 0.1) >= 2);
+    }
+
+    /// The Brood's land is drawn from the buildings a side is shown (all of
+    /// them with `reveal_all`): none of an enemy's before its Hive is seen.
+    #[test]
+    fn land_comes_only_from_the_buildings_a_side_is_shown() {
+        let data = data();
+        let map = make_map(0, 0);
+        let factions = [Faction::Brood, Faction::Brood];
+        let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
+        let opening = opening(&data, &table, &map, &world, &factions);
+        world.tick(&opening);
+        let hive = |p: PlayerId| world.veins().find(|v| v.owner == p).expect("a Hive");
+        let (mine, theirs) = (hive(0), hive(1));
+        let at = |v: &gc_sim::veins::VeinView| crate::from_fx_vec(v.at);
+        let seen = |p: PlayerId| {
+            let s = world.structures().unwrap().get(hive(p).building).unwrap();
+            s.seen_by(0)
+        };
+        assert!(seen(0), "you see your own Hive");
+        let plain = crate::land::sources(&world, 0, false);
+        assert!(plain.iter().any(|s| s.centre == at(&mine)));
+        assert_eq!(
+            plain.iter().any(|s| s.centre == at(&theirs)),
+            seen(1),
+            "no land in the fog"
+        );
+        let all = crate::land::sources(&world, 0, true);
+        assert!(all.iter().any(|s| s.centre == at(&theirs)));
+        assert!(all.len() > plain.len() || seen(1));
     }
 
     /// A Choir opening tunes the two nearest seeps with its two starting
