@@ -305,15 +305,16 @@ impl Looks {
                 .map(|m| {
                     let first = m.first_vertex as usize;
                     let vertices = &models.vertices[first..first + m.vertex_count as usize];
-                    let scale = gc_assets::model::POSITION_SCALE;
-                    let top = vertices.iter().map(|v| v.pos[1]).max().unwrap_or(0);
-                    // The walls: what stands in the lowest part of it.
-                    let low = (f32::from(top.max(0)) * WALL_SHARE) as i16;
-                    let half = (vertices.iter().filter(|v| v.pos[1] <= low))
-                        .fold(Vec2::ZERO, |h, v| {
-                            h.max(Vec2::new(f32::from(v.pos[0]), f32::from(v.pos[2])).abs())
-                        });
-                    m.is_still().then_some(half / scale)
+                    m.is_still().then(|| {
+                        let top = vertices.iter().map(|v| v.pos[1]).max().unwrap_or(0);
+                        // The walls: what stands in the lowest part of it.
+                        let low = (f32::from(top.max(0)) * WALL_SHARE) as i16;
+                        let half = (vertices.iter().filter(|v| v.pos[1] <= low))
+                            .fold(Vec2::ZERO, |h, v| {
+                                h.max(Vec2::new(f32::from(v.pos[0]), f32::from(v.pos[2])).abs())
+                            });
+                        half / gc_assets::model::POSITION_SCALE
+                    })
                 })
                 .collect(),
         }

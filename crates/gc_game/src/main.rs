@@ -949,20 +949,24 @@ fn swing(first: bool) -> Action {
 }
 
 /// Regiment `by` as the siege draws its blow on a building; `seen` says
-/// whether the viewer can see it.
+/// whether the viewer can see it, `ground` the height of the ground at a
+/// point.
 fn attacker_of(
     world: &World,
     units: &UnitTable,
     by: RegimentHandle,
     seen: bool,
+    ground: impl Fn(Vec2) -> f32,
 ) -> Option<siege::Attacker> {
     let r = world.regiments.get(by)?;
     let stats = units.stats.get(usize::from(r.unit))?;
     let breaker = units.breakers.get(usize::from(r.unit)).copied();
     let (frontage, _) = stats.block_size_in(r.formation, r.files, r.models);
+    let at = from_fx_vec(r.position);
     Some(siege::Attacker {
         handle: by,
-        at: from_fx_vec(r.position),
+        at,
+        ground: ground(at),
         kind: siege::Kind::of(stats.range.raw() > 0, breaker.unwrap_or_default()),
         frontage: fx_to_f32(frontage),
         seen,
@@ -2813,7 +2817,9 @@ impl Running {
             self.push_building_ghost();
             self.push_power_aim();
             let hm = &self.heightmap;
-            (self.siege).advance(game_dt.as_secs_f32(), |p| hm.height_at(p.x, p.y));
+            (self.siege).advance(game_dt.as_secs_f32(), |p| {
+                hm.height_at(p.x, p.y).max(hm.water_level() - 0.05)
+            });
             self.note_building_looks();
             self.push_buildings();
         }
@@ -3060,7 +3066,7 @@ impl Running {
                     siege.untouch(r.handle);
                 }
                 let shooting = self.shooting[r.handle.index as usize]
-                    || (wall.is_some() && siege.shooting(r.handle));
+                    || (wall.is_some() && !melee && siege.shooting(r.handle));
                 // Builders at a building going up (or being mended) turn
                 // to it and swing their tools.
                 let site = (self.world.building_target(r.handle))
@@ -4683,8 +4689,16 @@ impl Running {
                     self.puppets.wiped(regiment);
                 }
                 Event::Struck { structure, by } => {
-                    let seen = self.reveal_all || self.world.sees(self.sandbox.side, by);
-                    if let Some(a) = attacker_of(&self.world, &self.units, by, seen) {
+                    let side = self.sandbox.side;
+                    let seen = self.reveal_all || self.world.sees(side, by);
+                    // A blow under fog on a building not your side's is
+                    // neither seen nor heard.
+                    let friendly = (self.world.structures().and_then(|all| all.get(structure)))
+                        .is_some_and(|b| !self.world.hostile(side, b.owner));
+                    let hm = &self.heightmap;
+                    let ground = |p: Vec2| hm.height_at(p.x, p.y).max(hm.water_level() - 0.05);
+                    let a = attacker_of(&self.world, &self.units, by, seen, ground);
+                    if let Some(a) = a.filter(|_| seen || friendly) {
                         self.siege.struck(structure, a);
                     }
                 }
@@ -4709,7 +4723,7 @@ impl Running {
         let hm = &self.heightmap;
         self.siege.push(
             standing,
-            |p| hm.height_at(p.x, p.y),
+            |p| hm.height_at(p.x, p.y).max(hm.water_level() - 0.05),
             gc_render::MAX_BOX_INSTANCES - BOX_ROOM_AFTER_CORPSES,
             &mut self.instances,
         );

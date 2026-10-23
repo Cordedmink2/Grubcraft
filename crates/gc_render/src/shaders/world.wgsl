@@ -661,7 +661,8 @@ fn vs_block_shadow(
 ) -> BlockOut {
     var out = block_vertex(vi, pos, facing, size, color, lift);
     if size.y < 0.0 {
-        out.clip = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        // Outside the clip volume (a w of 0 would divide by zero).
+        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
     }
     return out;
 }

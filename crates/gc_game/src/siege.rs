@@ -245,6 +245,8 @@ impl Look {
 pub struct Attacker {
     pub handle: RegimentHandle,
     pub at: Vec2,
+    /// The height of the ground it stands on.
+    pub ground: f32,
     pub kind: Kind,
     /// Width of its front, in tiles.
     pub frontage: f32,
@@ -477,7 +479,7 @@ impl Siege {
                 structure,
                 kind: a.kind,
                 from: a.at,
-                from_y: look.base.max(0.0) + RELEASE_HEIGHT,
+                from_y: a.ground + RELEASE_HEIGHT,
                 to: wall - toward * 0.1,
                 to_y: look.base + (look.top * 0.45).clamp(0.6, 2.5),
                 dir: toward,
@@ -780,7 +782,8 @@ impl Siege {
 
     /// Draw the chips, dust, shots, rubble and the smoke and fire of the
     /// damaged buildings among `shown`, as boxes; `ground` is the height
-    /// of the ground at a point. Leaves `out` no longer than `limit`.
+    /// of the ground at a point. Adds nothing past `limit` boxes in `out`;
+    /// smoke and fire first, as they show the damage from afar.
     pub fn push(
         &self,
         shown: impl Iterator<Item = StructureHandle>,
@@ -788,6 +791,12 @@ impl Siege {
         limit: usize,
         out: &mut Vec<BoxInstance>,
     ) {
+        let limit = limit.max(out.len());
+        for h in shown {
+            if let Some(look) = self.look(h).filter(|l| l.hp < SMOKES_BELOW) {
+                self.burn(look, &ground, out);
+            }
+        }
         let now = self.time;
         for s in &self.shots {
             let t = ((now - s.born) / s.flight).clamp(0.0, 1.0);
@@ -843,11 +852,6 @@ impl Siege {
         }
         for f in &self.falls {
             self.rubble(f, &ground, out);
-        }
-        for h in shown {
-            if let Some(look) = self.look(h).filter(|l| l.hp < SMOKES_BELOW) {
-                self.burn(look, &ground, out);
-            }
         }
         out.truncate(limit);
     }
@@ -1090,6 +1094,7 @@ mod tests {
         Attacker {
             handle: regiment(3),
             at,
+            ground: 0.0,
             kind: Kind::Blade,
             frontage: 4.0,
             seen: true,
