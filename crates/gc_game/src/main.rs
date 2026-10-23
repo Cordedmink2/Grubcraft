@@ -893,6 +893,7 @@ fn fighter_of(stats: &UnitStats, r: &gc_sim::RegimentView) -> Fighter {
         shield: stats.shield,
         mass: stats.mass,
         heavy_blade: stats.swing_room,
+        reach: stats.reach,
     }
 }
 
@@ -909,6 +910,8 @@ fn swing(first: bool) -> Action {
 fn soldier_action(s: &Soldier, block: &Block, shooting: bool) -> Action {
     if block.routing {
         Action::Run
+    } else if s.shouting.is_some() {
+        Action::Cheer
     } else if s.striking && s.phase > 0.6 {
         // Behind the fighting line, some wait their turn.
         Action::Idle
@@ -2957,7 +2960,10 @@ impl Running {
                         let Some(lod) = view.place(height, at) else {
                             return;
                         };
-                        let seconds = time + s.phase * 4.0;
+                        let look = models::look(s.look);
+                        // The rate keeps loops out of step; blows are timed by
+                        // their own progress, so it leaves fights alone.
+                        let seconds = time * look.rate + s.phase * 4.0;
                         // At the site and still: off on the way, they walk.
                         let working = site
                             .filter(|&(c, reach)| {
@@ -2973,8 +2979,11 @@ impl Running {
                                 .map(|p| (p, false)),
                             None => {
                                 let action = soldier_action(&s, &block, shooting);
-                                // Giving ground: the walk played backwards.
-                                let seconds = if s.backing && action == Action::Walk {
+                                // Giving ground: the walk played backwards; a
+                                // shout plays from its start.
+                                let seconds = if let Some(shout) = s.shouting {
+                                    shout
+                                } else if s.backing && action == Action::Walk {
                                     -seconds
                                 } else {
                                     seconds
@@ -2990,9 +2999,9 @@ impl Running {
                             facing: facing.to_array(),
                             frames: pose.rows,
                             flags: models::pose_flags(pose, highlight, flat),
-                            color: [cr, cg, cb, 255],
+                            color: [cr, cg, cb, look.tone],
                             lift: 0.0,
-                            scale: 1.0,
+                            scale: look.scale,
                         });
                     });
                 continue;
@@ -4439,14 +4448,15 @@ impl Running {
                     // Out of soldier room, he is drawn as a box instead.
                     if lod < LODS && room > 0 {
                         room -= 1;
+                        let look = models::look(c.look);
                         art.buckets[model * LODS + lod].push(SoldierInstance {
                             pos: c.pos.to_array(),
                             facing: c.facing.to_array(),
                             frames: pose.rows,
                             flags: models::pose_flags(pose, 0, flat),
-                            color: [r, g, b, 255],
+                            color: [r, g, b, look.tone],
                             lift: -0.5 * c.sink,
-                            scale: 1.0,
+                            scale: look.scale,
                         });
                         continue;
                     }
@@ -5136,7 +5146,7 @@ impl Running {
                         facing: [0.0, 1.0],
                         frames: pose.rows,
                         flags: models::pose_flags(pose, highlight, false),
-                        color: [r, g, b, 255],
+                        color: [r, g, b, gc_render::TONE_NEUTRAL],
                         lift,
                         scale: 1.0,
                     });
@@ -5165,7 +5175,7 @@ impl Running {
                     facing: facing.to_array(),
                     frames: pose.rows,
                     flags: models::pose_flags(pose, 0, false),
-                    color: [r, g, b, 255],
+                    color: [r, g, b, gc_render::TONE_NEUTRAL],
                     lift: 0.0,
                     scale: 1.0,
                 });

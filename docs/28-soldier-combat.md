@@ -2,7 +2,7 @@
 
 When two regiments clash, every soldier picks a man and fights him: guard, swing, block, stagger, kill, as in Total War and Mount & Blade, instead of two blocks of bodies leaning into each other. This is idea 20 on Mario's list (2026-10-23).
 
-**Decided (Mario, 2026-10-23):** option B, **duels in the simulation**, is the official plan and is built first when the project resumes. Option C, **every soldier simulated**, is a later stage on top of it. **Nothing in this document is built yet**; the project is paused. The concept page with sketches, a playable before-and-after toy and the sources is [Every Soldier Fights](https://claude.ai/artifact/3faYPzf1Njf69cHa4fWyUc); its files are in the project files under `design/soldier-combat/`.
+**Decided (Mario, 2026-10-23):** option B, **duels in the simulation**, is the official plan and is built first when the project resumes. Option C, **every soldier simulated**, is a later stage on top of it. Stage 1, the scrum, is built (2026-10-24); stage 2 is next. The concept page with sketches, a playable before-and-after toy and the sources is [Every Soldier Fights](https://claude.ai/artifact/3faYPzf1Njf69cHa4fWyUc); its files are in the project files under `design/soldier-combat/`.
 
 Numbers here are first-pass and move in balance passes, like everywhere else in these docs.
 
@@ -76,7 +76,7 @@ A human weapon type (sword and shield, spear, two-hander, polearm, axe or mace) 
 
 Each stage is one or two pull requests. Stages marked *sim* change the battle maths and run the full golden-replay and balance checks.
 
-1. **The scrum** (screen only). The band, partners for every man in reach, two-on-ones, rear ranks stepping into gaps, weapon spacing, waiting men alive. Uses today's ten clips, so it shows quickly. Opus lead with a Sonnet helper.
+1. **The scrum** (screen only). **Built 2026-10-24** (see [10 · Architecture](10-architecture.md#the-two-tier-simulation)); per-soldier tone, height and animation speed came with it. The band, partners for every man in reach, two-on-ones, rear ranks stepping into gaps, weapon spacing, waiting men alive. Uses today's ten clips, so it shows quickly. Opus lead with a Sonnet helper.
 2. **Duels in the sim** (*sim*, option B). Pairing, per-pair blows, per-man deaths, blow events, balance tables re-run, goldens re-blessed, replay format bumped, benchmark checked. Opus (battle maths stays with the lead), Haiku for benchmark runs. Two pull requests.
 3. **The animation engine**. Many tagged moves per skeleton, layers, additive flinches, smooth blends, foot IK, look-at, and a picker that chooses moves by weapon, direction and result; a new model format. Sonnet 5.5 at high effort, in the materials and animation thread of the [restart plan](29-restart-plan.md). Can run beside stage 2.
 4. **The fight library**. About 50 moves per human weapon type and 30 per Brood and Choir body, one faction at a time, starting with the Ember Clans. Sonnet 5.5 alone (Mario's 3D modelling rule, 2026-10-23). Needs Mario's call on where moves come from.
