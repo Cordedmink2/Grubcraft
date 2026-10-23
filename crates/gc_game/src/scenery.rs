@@ -34,8 +34,8 @@ pub fn load(renderer: &mut gc_render::Renderer) -> Result<SceneryModels, String>
     Ok(SceneryModels::from_pack(&scenery))
 }
 
-/// At most this many extra models (gathering spots, morale banners) are
-/// drawn a frame, so they never crowd the scenery out of the buffer.
+/// At most this many extra models (gathering spots, morale banners, trees
+/// coming down) are drawn a frame, so they never crowd the scenery out of the buffer.
 const MAX_EXTRAS: usize = 4096;
 
 /// Tiles per chunk side.
@@ -213,6 +213,11 @@ impl SceneryModels {
 
     fn id(&self, m: Model) -> Option<u16> {
         self.ids[m as usize]
+    }
+
+    /// The named model at `id` in the pack, if it has a name here.
+    fn model_of(&self, id: u16) -> Option<Model> {
+        Model::ALL.into_iter().find(|&m| self.id(m) == Some(id))
     }
 
     /// Whether the pack has any model of `list`.
@@ -451,7 +456,10 @@ type Rect = (i32, i32, u8, u8);
 /// Conquest gathering spot or a morale banner, at `at` (x, ground height,
 /// y), turned by `turn` (256ths of a circle), at `scale` and tinted by
 /// `tint` (128 as baked, so 255 doubles and a team colour halved shows as
-/// itself on white).
+/// itself on white). `lean` tips it over about its base, 0 (upright) to 255
+/// (lying down), toward `fall` (a turn from the way it faces, in 256ths,
+/// counted as [`fall_of`] does): a tree coming down. `phase` is its wind
+/// phase, so neighbours sway apart.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Extra {
     pub model: Model,
@@ -459,6 +467,44 @@ pub struct Extra {
     pub turn: u8,
     pub scale: f32,
     pub tint: [u8; 3],
+    pub phase: u8,
+    pub lean: u8,
+    pub fall: u8,
+}
+
+/// The turn (256ths of a circle) of the direction `dir` on the map, as the
+/// scenery's facings read it.
+pub fn turn_of(dir: Vec2) -> u8 {
+    (dir.y.atan2(dir.x) / std::f32::consts::TAU * 256.0).round() as i32 as u8
+}
+
+/// The unit direction on the map of a turn of `turn` 256ths.
+pub fn facing_of(turn: u8) -> Vec2 {
+    Vec2::from_angle(f32::from(turn) / 256.0 * std::f32::consts::TAU)
+}
+
+/// How a model turned `turn` falls toward the map direction `dir`, as an
+/// [`Extra`]'s `fall`: the direction in the model's own space, as a turn
+/// from its front, as the scenery shader reads it.
+pub fn fall_of(turn: u8, dir: Vec2) -> u8 {
+    let front = facing_of(turn);
+    let left = Vec2::new(front.y, -front.x);
+    let (x, z) = (dir.dot(left), dir.dot(front));
+    (x.atan2(z) / std::f32::consts::TAU * 256.0).round() as i32 as u8
+}
+
+/// A tree or bush that stood on a tile, as [`Scenery::standing`] finds it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stood {
+    pub model: Model,
+    /// Its base on the map, in tiles.
+    pub at: Vec2,
+    pub turn: u8,
+    pub scale: f32,
+    /// As placed: the tint with the wind phase in the last byte.
+    pub tint: [u8; 4],
+    /// A tree, not a bush.
+    pub tree: bool,
 }
 
 /// A chunk picked for this frame.
@@ -608,6 +654,58 @@ impl Scenery {
         }
     }
 
+    /// The trees and bushes that stand on `tile` now: not yet felled, and
+    /// not hidden under a building. Ask before [`Scenery::fell`] takes
+    /// them off, to show them coming down.
+    pub fn standing(&self, tile: (i32, i32)) -> impl Iterator<Item = Stood> + '_ {
+        let n = self.tiles as i32;
+        let (x, y) = tile;
+        let on = (0..n).contains(&x) && (0..n).contains(&y) && !self.chunks.is_empty();
+        let bit = |bits: &[u64]| {
+            let i = y as usize * n as usize + x as usize;
+            bits[i / 64] >> (i % 64) & 1 != 0
+        };
+        let gone = !on || bit(&self.felled) || bit(&self.occupied);
+        let (cx, cy) = (x.max(0) as u32 / CHUNK, y.max(0) as u32 / CHUNK);
+        let origin = [(cx * CHUNK) as f32, (cy * CHUNK) as f32];
+        let chunk = (!gone)
+            .then(|| self.chunks.get((cy * self.side + cx) as usize))
+            .flatten();
+        chunk
+            .into_iter()
+            .flat_map(|c| c.classes[..2].iter().flat_map(|s| s.iter()))
+            .filter_map(move |p| {
+                let at = Vec2::new(
+                    origin[0] + f32::from(p.x) / STEPS,
+                    origin[1] + f32::from(p.y) / STEPS,
+                );
+                let info = &self.models.info[usize::from(p.model)];
+                let here = at.x.floor() as i32 == x && at.y.floor() as i32 == y;
+                if !here || info.rock {
+                    return None;
+                }
+                Some(Stood {
+                    model: self.models.model_of(p.model)?,
+                    at,
+                    turn: p.angle,
+                    scale: f32::from(p.scale) / 100.0,
+                    tint: p.tint,
+                    tree: info.class == 0,
+                })
+            })
+    }
+
+    /// Whether a building (or the margin round one) covers `tile`.
+    pub fn occupied_at(&self, tile: (i32, i32)) -> bool {
+        let n = self.tiles as i32;
+        let (x, y) = tile;
+        if !(0..n).contains(&x) || !(0..n).contains(&y) {
+            return false;
+        }
+        let i = y as usize * n as usize + x as usize;
+        self.occupied[i / 64] >> (i % 64) & 1 != 0
+    }
+
     /// Put every felled tree and bush back (a new match on the same map).
     pub fn regrow(&mut self) {
         self.felled.fill(0);
@@ -624,6 +722,13 @@ impl Scenery {
                 .filter(|e| models.id(e.model).is_some())
                 .take(MAX_EXTRAS),
         );
+    }
+
+    /// How tall `model` is as baked, in tiles (0 if the pack lacks it).
+    pub fn height_of(&self, model: Model) -> f32 {
+        self.models
+            .id(model)
+            .map_or(0.0, |id| self.models.info[usize::from(id)].height)
     }
 
     /// Whether [`Scenery::frame`] draws `model` as an extra: the pack has
@@ -744,14 +849,26 @@ impl Scenery {
             let Some(id) = models.id(n.model).map(usize::from) else {
                 continue;
             };
-            // A sphere round the whole model, from its base to its top.
-            let (radius, half) = (models.info[id].radius, models.info[id].height / 2.0);
-            let centre = n.at + Vec3::Y * half * n.scale;
-            if !cull.sees(centre, (radius + half) * n.scale) {
+            let info = &models.info[id];
+            let d = Vec2::new(n.at.x, n.at.z).distance(focus);
+            // A tree is only drawn within the scenery's reach, as the
+            // static ones are, so one felled far off does not pop in.
+            if info.class == 0 && d > reach[0] {
                 continue;
             }
-            let d = Vec2::new(n.at.x, n.at.z).distance(focus);
-            let bin = id * LODS + usize::from(lod_for(1, d.hypot(distance)));
+            // A sphere round the whole model, from its base to its top;
+            // tipped over, it reaches as far sideways as it was tall.
+            let (radius, half) = (info.radius, info.height / 2.0);
+            let centre = n.at + Vec3::Y * half * n.scale;
+            let round = if n.lean > 0 {
+                radius + 2.0 * half
+            } else {
+                radius + half
+            };
+            if !cull.sees(centre, round * n.scale) {
+                continue;
+            }
+            let bin = id * LODS + usize::from(lod_for(usize::from(info.class), d.hypot(distance)));
             counts[bin] += 1;
             total += 1;
             extra_bins.push((bin, k));
@@ -798,9 +915,10 @@ impl Scenery {
                 pos: [n.at.x, n.at.z],
                 facing: facings[usize::from(n.turn)],
                 scale: n.scale,
-                // Wind phase from the turn, so neighbours sway apart.
-                tint: [r, g, b, n.turn],
-                kind: models.info[bin / LODS].detail,
+                tint: [r, g, b, n.phase],
+                kind: models.info[bin / LODS].detail
+                    | u32::from(n.lean) << 8
+                    | u32::from(n.fall) << 16,
             };
         }
         for n in &near[..taken] {
@@ -1515,6 +1633,9 @@ mod tests {
             turn: 9,
             scale,
             tint: [140; 3],
+            phase: 9,
+            lean: 0,
+            fall: 0,
         };
         s.set_extras(
             [
@@ -1637,6 +1758,68 @@ mod tests {
             s.frame(focus, 10.0, true, &Cull::EVERYTHING).0.len(),
             before.len()
         );
+    }
+
+    #[test]
+    fn standing_finds_the_trees_on_a_tile_until_it_is_felled() {
+        let mut w = World::new();
+        w.cover = vec![2; w.cover.len()];
+        let mut s = w.build(7, &models());
+        let tiles = (14..20).flat_map(|y| (14..20).map(move |x| (x, y)));
+        let found: Vec<_> = tiles
+            .clone()
+            .flat_map(|t| s.standing(t).map(move |st| (t, st)))
+            .collect();
+        assert!(found.iter().any(|(_, st)| st.tree), "no trees in a wood");
+        for &(t, st) in &found {
+            assert_eq!((st.at.x.floor() as i32, st.at.y.floor() as i32), t);
+            assert!(s.height_of(st.model) > 0.0);
+        }
+        s.fell(tiles.clone());
+        assert!(
+            tiles
+                .flat_map(|t| s.standing(t).collect::<Vec<_>>())
+                .next()
+                .is_none()
+        );
+        // Off the map, nothing stands.
+        assert_eq!(
+            s.standing((-1, 3)).count() + s.standing((9999, 3)).count(),
+            0
+        );
+    }
+
+    #[test]
+    fn a_tipped_extra_carries_its_lean_in_the_kind() {
+        let w = World::new();
+        let models = models();
+        let mut s = w.build(7, &models);
+        let focus = Vec2::new(20.0, 20.0);
+        let tip = |lean| Extra {
+            model: Model::OakA,
+            at: Vec3::new(20.0, 0.0, 20.0),
+            turn: 0,
+            scale: 1.0,
+            tint: [128; 3],
+            phase: 0,
+            lean,
+            fall: 64,
+        };
+        let kind_of = |s: &mut Scenery| {
+            let (i, _) = s.frame(focus, 10.0, true, &Cull::EVERYTHING);
+            i.iter()
+                .find(|i| i.pos == [20.0, 20.0])
+                .map(|i| i.kind)
+                .unwrap()
+        };
+        s.set_extras([tip(0)].into_iter());
+        let upright = kind_of(&mut s);
+        s.set_extras([tip(200)].into_iter());
+        let down = kind_of(&mut s);
+        assert_eq!(upright >> 8 & 255, 0);
+        assert_eq!(down >> 8 & 255, 200);
+        assert_eq!(down >> 16, 64);
+        assert_eq!(down & 255, upright & 255);
     }
 
     /// A 512-tile Wild Wilds map: the instances stay modest, and a 896-tile

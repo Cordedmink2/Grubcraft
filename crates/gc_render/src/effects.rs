@@ -13,6 +13,8 @@
 
 use glam::{Vec2, Vec3};
 
+mod ambient;
+
 use crate::particles::{Particle, Shape, flags};
 
 /// A small, fast pseudo-random generator for effects (xorshift32).

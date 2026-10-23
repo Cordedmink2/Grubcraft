@@ -22,6 +22,11 @@ const MOTES_RATE: f32 = 0.04;
 const MOTES_MOST: f32 = 40.0;
 /// The colour of clods thrown up from the ground.
 const CLOD: [u8; 3] = [92, 74, 52];
+/// Fresh-cut wood, and leaves and torn scrub.
+const CHIP: [u8; 3] = [208, 170, 112];
+const LEAF: [u8; 3] = [74, 112, 52];
+/// How often a worker at his tool throws chips, a second.
+const CHOP_RATE: f32 = 1.6;
 
 pub struct Field {
     fx: Effects,
@@ -74,6 +79,41 @@ impl Field {
     /// Two regiments met at `pos` with a charge.
     pub fn charge_hit(&mut self, pos: Vec3) {
         self.impact(pos, 2.2, 16.0, 8.0, 1.0);
+    }
+
+    /// A worker at `pos` bites into what he is clearing with his tool,
+    /// toward `dir`, for `dt` seconds of game time: chips of wood from a
+    /// tree, leaves and turf from scrub.
+    pub fn chop(&mut self, dt: f32, pos: Vec3, dir: Vec2, wood: bool) {
+        if self.fx.chance(dt * CHOP_RATE) {
+            if wood {
+                self.fx.cut_chips(pos, dir, CHIP, 2.0);
+            } else {
+                self.fx.cut_chips(pos, dir, LEAF, 1.5);
+                self.fx.leaves(pos, 0.3, LEAF, 1.0);
+            }
+        }
+    }
+
+    /// A tree of height `tall` came down with its crown at `crown`: a
+    /// ring of dust and a shower of leaves and broken twigs.
+    pub fn tree_down(&mut self, crown: Vec3, tall: f32) {
+        self.fx
+            .dust_burst(crown, 0.8 + 0.2 * tall, 6.0 + 2.0 * tall, DUST);
+        self.fx.leaves(
+            crown + Vec3::Y * 0.4,
+            0.7 + 0.15 * tall,
+            LEAF,
+            10.0 + 3.0 * tall,
+        );
+        self.fx.debris(crown, CHIP, 3.0, 0.6);
+    }
+
+    /// A bush torn up at `pos`.
+    pub fn bush_up(&mut self, pos: Vec3) {
+        self.fx.dust_burst(pos, 0.5, 2.0, DUST);
+        self.fx.leaves(pos + Vec3::Y * 0.2, 0.4, LEAF, 5.0);
+        self.fx.debris(pos, CLOD, 2.0, 0.4);
     }
 
     /// Dust rolling out to `radius` from `puffs`, and `clods` thrown up with

@@ -49,6 +49,19 @@ impl FogView {
         self.last = None;
     }
 
+    /// Whether the viewer sees `tile` now: always when there is no fog (or
+    /// it has not been drawn yet), else when the tile's centre is inside one
+    /// of its sight circles as of the last redraw.
+    pub fn sees_tile(&self, tile: (i32, i32)) -> bool {
+        if self.last.is_none() {
+            return true;
+        }
+        let centre = Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5);
+        self.sight
+            .iter()
+            .any(|&(c, r)| crate::from_fx_vec(c).distance(centre) <= crate::fx_to_f32(r))
+    }
+
     /// Draw the ground for `side` if the match is in fog and it is
     /// `viewing` through its eyes, else without fog. Call it every frame;
     /// it only redraws a few times a second.

@@ -12,6 +12,7 @@ use glam::Vec2;
 
 use crate::buildings::{self, Fit};
 use crate::hud::Armed;
+use crate::scenery::Stood;
 use crate::{Running, color_of};
 
 /// Overgrown ground that will be cleared: amber.
@@ -202,7 +203,20 @@ impl Running {
     /// played. Replays and network games tick a world too, so they come
     /// here the same way.
     pub fn fell_scenery(&mut self) {
-        self.scenery.fell(cleared(self.world.events()));
+        // Trees come down for the viewer only where it can see, and not
+        // for a rejoining player catching up on ticks long past.
+        let catching_up = self.online.is_some() && self.menu.net().catching_up();
+        let watch = !catching_up;
+        for tile in cleared(self.world.events()) {
+            let scenery = &self.scenery;
+            if watch && (self.reveal_all || self.fog.sees_tile(tile)) {
+                let tall = |s: &Stood| scenery.height_of(s.model);
+                self.ambient
+                    .felling
+                    .clear(tile, scenery.standing(tile), tall);
+            }
+            self.scenery.fell(std::iter::once(tile));
+        }
     }
 }
 

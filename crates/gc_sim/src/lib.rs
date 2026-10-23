@@ -1086,6 +1086,17 @@ impl World {
         })
     }
 
+    /// The tile worker `h` is clearing, once work has begun on it and
+    /// unless the worker is fighting (Conquest only). The game shows the
+    /// felling with it, and checks the worker is at the tile; nothing in
+    /// the simulation reads it.
+    pub fn clearing_tile_of(&self, h: RegimentHandle) -> Option<(i32, i32)> {
+        let c = self.conquest.as_ref()?;
+        let side = self.terrain.growth_side();
+        c.clearing
+            .working_tile(&self.regiments, self.regiments.resolve(h)?, side)
+    }
+
     /// Every building paid for and waiting on its ground being cleared:
     /// its owner, type, north-west tile and quarter turns (Conquest only).
     pub fn pledged(&self) -> impl Iterator<Item = (PlayerId, BuildingId, (i32, i32), u8)> + '_ {

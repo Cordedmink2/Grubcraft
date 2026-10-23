@@ -41,6 +41,11 @@ struct SceneryOut {
     @location(8) @interpolate(perspective, centroid) leaf: f32,
     // Close-range occlusion baked into the vertex, 0 (open) to 1 (shut).
     @location(9) @interpolate(perspective, centroid) occ: f32,
+    // How far the instance is tipped over (radians), and the way it falls
+    // in the model's own space as (x, z): see `tip_of`.
+    @location(10) @interpolate(flat) tip: vec3<f32>,
+    // The instance's base on the map, for colour that stays put as it tips.
+    @location(11) @interpolate(flat) at: vec2<f32>,
 };
 
 // How the wind pushes things at `xz` right now: a unit-ish vector along the
@@ -58,17 +63,49 @@ fn gust(xz: vec2<f32>, phase: f32) -> vec2<f32> {
     return WIND_DIR * (lean + flutter) + across * (flutter * 0.8);
 }
 
+// How far an instance is tipped over about its base (radians) and the way
+// it falls, for trees coming down: `kind`'s second byte is the tip, 0
+// (upright) to 255 (lying down), and its third is the direction of the fall
+// in the model's own space, as a turn from the way the model faces (256ths).
+// Returned as (tip, x, z) with (x, z) a unit vector.
+fn tip_of(kind: u32) -> vec3<f32> {
+    let tip = f32((kind >> 8u) & 255u) * (1.5707964 / 255.0);
+    let way = f32((kind >> 16u) & 255u) * (6.2831855 / 256.0);
+    return vec3<f32>(tip, sin(way), cos(way));
+}
+
+// A point (or normal) of the model's own space, tipped over by `t.x`
+// toward the direction (`t.y`, `t.z`) in the xz plane.
+fn tipped(p: vec3<f32>, t: vec3<f32>) -> vec3<f32> {
+    let u = t.yz;
+    let along = dot(p.xz, u);
+    let s = sin(t.x);
+    let c = cos(t.x);
+    let moved = along * c + p.y * s;
+    let flat_xz = p.xz + u * (moved - along);
+    return vec3<f32>(flat_xz.x, p.y * c - along * s, flat_xz.y);
+}
+
 // Where one vertex of one instance stands, and its normal.
 fn place(v: SceneryIn) -> vec3<f32> {
     let left = vec2<f32>(v.facing.y, -v.facing.x);
-    let local = vec3<f32>(v.pos.xyz) * (v.scale / POSITION_SCALE);
+    var local = vec3<f32>(v.pos.xyz) * (v.scale / POSITION_SCALE);
+    let t = tip_of(v.kind);
+    if t.x > 0.0 {
+        local = tipped(local, t);
+    }
     let flat_xz = v.at + left * local.x + v.facing * local.z;
     // The whole model stands at the height under its base; it is not draped.
     let ground = max(surface_height(v.at), g.misc.x - 0.05);
+    if t.x > 0.0 {
+        // A crown lying down rests on the ground under it, not in it.
+        local.y = max(local.y, max(surface_height(flat_xz), g.misc.x - 0.05) - ground);
+    }
     var sway = vec2<f32>(0.0);
-    // Rocks and bases do not move: skip the wind for them.
+    // Rocks and bases do not move: skip the wind for them. A tree lying
+    // down does not either.
     if v.color.a > 0.0 {
-        sway = gust(v.at, v.tint.a) * (v.color.a * SWAY_MAX * v.scale);
+        sway = gust(v.at, v.tint.a) * (v.color.a * SWAY_MAX * v.scale * cos(t.x));
     }
     return vec3<f32>(flat_xz.x + sway.x, ground + local.y, flat_xz.y + sway.y);
 }
@@ -77,17 +114,24 @@ fn place(v: SceneryIn) -> vec3<f32> {
 fn vs_scenery(v: SceneryIn) -> SceneryOut {
     let world = place(v);
     let left = vec2<f32>(v.facing.y, -v.facing.x);
-    let n_xz = left * v.normal.x + v.facing * v.normal.z;
+    var nl = v.normal.xyz;
+    let t = tip_of(v.kind);
+    if t.x > 0.0 {
+        nl = tipped(nl, t);
+    }
+    let n_xz = left * nl.x + v.facing * nl.z;
     var out: SceneryOut;
     out.clip = g.view_proj * vec4<f32>(world, 1.0);
     out.world = world;
-    out.normal = normalize(vec3<f32>(n_xz.x, v.normal.y, n_xz.y) + vec3<f32>(0.0, 1e-4, 0.0));
+    out.normal = normalize(vec3<f32>(n_xz.x, nl.y, n_xz.y) + vec3<f32>(0.0, 1e-4, 0.0));
     out.color = min(v.color.rgb * v.tint.rgb * 2.0, vec3<f32>(1.0));
     out.leafy = select(0.0, 1.0, v.color.a > 0.0);
     out.local = vec3<f32>(v.pos.xyz) * (v.scale / POSITION_SCALE);
     out.normal_local = v.normal.xyz;
     out.facing = v.facing;
-    out.kind = v.kind;
+    out.kind = v.kind & 255u;
+    out.tip = t;
+    out.at = v.at;
     out.occ = max(v.normal.w, 0.0);
     out.leaf = smoothstep(0.0, 0.06, v.color.g - max(v.color.r, v.color.b) * 0.95);
     return out;
@@ -230,7 +274,7 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
     let dpx = dpdx(in.local);
     let dpy = dpdy(in.local);
     // A little colour noise by place, so a wood is not one flat green.
-    let wobble = vnoise(in.world.xz * 1.7 + vec2<f32>(in.world.y * 0.9, 0.0));
+    let wobble = vnoise((in.at + in.local.xz) * 1.7 + vec2<f32>(in.local.y * 0.9, 0.0));
     var albedo = srgb_to_linear(in.color) * (0.91 + 0.18 * wobble);
     // Leaves and blades may be single planes: light them from the side shown.
     var n = select(-in.normal, in.normal, front);
@@ -281,6 +325,9 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
             albedo = albedo * ratio;
         }
         // Back to the world: the model is turned about the vertical.
+        if in.tip.x > 0.0 {
+            detailed = tipped(detailed, in.tip);
+        }
         let left = vec2<f32>(in.facing.y, -in.facing.x);
         let xz = left * detailed.x + in.facing * detailed.z;
         n = normalize(vec3<f32>(xz.x, detailed.y, xz.y));

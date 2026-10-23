@@ -37,6 +37,7 @@ Read in order the first time; afterwards each document stands alone.
 | 31 | [Surface detail](31-surface-detail.md) | Shared repeating detail textures by material (stone, wood, cloth, chitin...) layered over every building and soldier, and the stronger bake with crevice darkening, per-part tint and stronger normals (idea 21 parts 1 and 4) |
 | 32 | [Changing land](32-changing-land.md) | Ground that changes mid-match: clearing scrub, woods and thicket to grow a base (idea 22, built), the one ground-change path that burning woods, floods and rubble reuse, and later weather, night, terrain tactics and seasons |
 | 33 | [Faction lands](33-faction-lands.md) | Ground that shows whose it is: the Brood's living skin and glowing veins (idea 19, built) drawn by the terrain shader from a per-tile grid, and the Clans, Choir and Concord lands that reuse it (idea 15) |
+| 34 | [Ambient life and busy bases](34-ambient-life.md) | The living world as a picture, never a match rule: clearing land on screen (workers cutting, trees tipping over, built), then living touches, busy bases, wildlife and villagers (ideas 3, 10, 22) |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |

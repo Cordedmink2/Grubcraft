@@ -50,7 +50,10 @@ pub struct SceneryInstance {
     /// in `a` the instance's wind phase (0 to 255 for one full cycle), so
     /// neighbours don't sway in step.
     pub tint: [u8; 4],
-    /// Which surface detail to paint: one of [`detail`].
+    /// Which surface detail to paint: one of [`surface_kind`] in the low
+    /// byte, and in the next how far the model is tipped over about its
+    /// base toward the way it faces (0 upright, 255 lying down), for a
+    /// tree coming down.
     pub kind: u32,
 }
 

@@ -192,6 +192,33 @@ fn a_worker_clears_an_area_of_scrub() {
 }
 
 #[test]
+fn the_tile_a_worker_is_working_shows_only_while_it_works() {
+    let mut w = world();
+    let worker = spawn(&mut w, WORKER, 10, 20);
+    assert_eq!(w.clearing_tile_of(worker), None);
+    assert!(clear(&mut w, worker, (20, 20), (1, 1)));
+    // Walking up to the tile: not working yet.
+    w.tick(&[]);
+    assert_eq!(w.clearing_tile_of(worker), None);
+    let mut worked = 0;
+    for _ in 0..4000 {
+        w.tick(&[]);
+        match w.clearing_tile_of(worker) {
+            Some(tile) => {
+                assert_eq!(tile, (20, 20));
+                worked += 1;
+            }
+            None if worked > 0 => break,
+            None => {}
+        }
+    }
+    // It worked most of the time the woods took, then the tile was clear.
+    assert!(worked * 10 > clear_ticks(Growth::Woods) * 8, "{worked}");
+    assert_eq!(w.terrain().growth(20, 20), Growth::Open);
+    assert_eq!(w.clearing_tile_of(worker), None);
+}
+
+#[test]
 fn two_workers_share_the_work() {
     let one = {
         let mut w = world();

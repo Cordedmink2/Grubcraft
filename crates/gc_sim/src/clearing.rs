@@ -180,6 +180,19 @@ impl Clearing {
         (regs.alive[r] && regs.generation[r] == job.generation).then_some(job)
     }
 
+    /// The tile worker slot `r` has on its order and work has begun on
+    /// (some worker has reached it), unless the worker is fighting. The
+    /// game shows the work with it, and checks the worker is up at the
+    /// tile itself. Read only: nothing is changed or hashed.
+    pub(crate) fn working_tile(&self, regs: &Regiments, r: usize, side: u32) -> Option<(i32, i32)> {
+        let t = self.live(regs, r)?.at?;
+        if regs.engaged[r].is_some() {
+            return None;
+        }
+        self.worked.binary_search_by_key(&t, |w| w.0).ok()?;
+        Some(((t % side) as i32, (t / side) as i32))
+    }
+
     /// Every building paid for and waiting on its footprint being cleared.
     pub(crate) fn pledges(&self) -> impl Iterator<Item = Pledge> + '_ {
         self.job.iter().flatten().filter_map(|j| j.then)
