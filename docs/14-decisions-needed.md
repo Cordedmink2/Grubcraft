@@ -58,6 +58,17 @@ From the Mount & Blade study (MB-1 to MB-11, in the project's research notes). M
 | 27 | **Champions before battle** (MB-4) | Yes, as a chance event in battles with computer players, switched on or off in the lobby (on by default): two champions duel between the lines, the result decided by their stats, and the winner's army gains morale while the loser's loses some. Regiment champions stand in until heroes reach the simulation (M3). **Built 2026-10-15** | [05 · Champions before battle](05-combat.md#champions-before-battle), [06](06-game-modes.md#field-battle-extras) |
 | 28 | **Brace and Fall back** (next Mount & Blade batch) | Yes (Mario, 2026-10-17): spears braced against a charge turn it back on the charger, and a regiment can pull out of a melee in good order. **Built 2026-10-16** | [05 · Brace and Fall back](05-combat.md#brace-and-fall-back) |
 
+## Every soldier fights (decided 2026-10-23)
+
+From the Every Soldier Fights study ([28](28-soldier-combat.md), concept page [Every Soldier Fights](https://claude.ai/artifact/3faYPzf1Njf69cHa4fWyUc)).
+
+| # | Decision | What was decided | Where it lands |
+|---|---|---|---|
+| 29 | **How to build individual soldier combat** | Option B, duels in the simulation, is the official plan and is built when the project resumes; option C, every soldier simulated, is a later stage (Mario, 2026-10-23). Option A, look only, was not chosen | [28 · The three ways](28-soldier-combat.md#the-three-ways-and-the-decision) |
+| 30 | **Where the fighting moves come from** | Open. Recommended: Mixamo (Mario downloads) plus Blender, a bought melee pack later if swordplay still looks stiff; never moves from other games | [28 · The fight library](28-soldier-combat.md#the-fight-library-and-where-moves-come-from) |
+| 31 | **Blood** | Open. Recommended: stylised, tapestry-like splashes by default, full as a setting | [28 · Build stages](28-soldier-combat.md#build-stages) |
+| 32 | **What first when the project resumes** | Open. Recommended: the scrum (stage 1, on screen) and then duels in the sim (stage 2) straight after | [28 · Build stages](28-soldier-combat.md#build-stages) |
+
 ## Smaller questions for later
 - Should allied players share supply or resources by default in team games?
 - Should Field Battle have a campaign-lite "ladder" among friends (persistent army veterancy across battles)? *Recommended: fold it into the campaign; a Short campaign with only Field Battles covers it ([19](19-campaign.md#open-questions)).*

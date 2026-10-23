@@ -234,6 +234,8 @@ Abilities are composed in data files from a fixed vocabulary of deterministic ef
 
 *Built so far:* the sim sends no volley results or death events to presentation, and `gc_present` does not exist (the code is in `gc_game`). Presentation reads `RegimentView`s, infers deaths by diffing a regiment's model count between ticks (`puppets.rs`), and guesses each volley's shooter in the glue; an event stream is a target.
 
+**Planned (2026-10-23):** [28 · Every Soldier Fights](28-soldier-combat.md) adds a small per-soldier record to the simulation (slot, hit points, partner, blow clock) so that inside a locked melee the sim pairs soldiers and reports every blow; presentation then plays those blows instead of choosing them. Later, option C adds position, velocity and mass to the same record.
+
 The **presentation layer** turns regiment state into believable soldiers:
 - Each soldier is a ~36-byte puppet that steers toward its formation slot with a little lag and separation, so blocks ripple and jostle rather than sliding rigidly. The front two ranks of a fighting regiment lunge at the enemy. When the simulation removes soldiers from the back slots, the puppets show a front-rank soldier falling (anyone, for a block under arrows) and the soldier from the emptied slot stepping up into the gap; the fallen lie where they fell for the whole battle (see "the field remembers the fight" below).
 - Melee pairs, sword swings, arrows arcing to individual soldiers: all chosen by presentation to match the sim's numbers.
