@@ -28,6 +28,16 @@ impl GraphicsPreset {
             GraphicsPreset::High => "High",
         }
     }
+
+    /// How much of the battlefield's dust, sparks and smoke to make: all of
+    /// it on High, a third on Battery.
+    pub fn effects_density(self) -> f32 {
+        match self {
+            GraphicsPreset::Battery => 0.35,
+            GraphicsPreset::Balanced => 0.75,
+            GraphicsPreset::High => 1.0,
+        }
+    }
 }
 
 /// UI scale steps in percent, as docs/08-ui-ux.md#settings asks (75 to 150).
@@ -181,6 +191,16 @@ pub fn settings_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lower_graphics_presets_make_fewer_effects() {
+        let d: Vec<f32> = GraphicsPreset::ALL
+            .iter()
+            .map(|g| g.effects_density())
+            .collect();
+        assert!(d.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(d[2], 1.0);
+    }
 
     fn temp(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("gc_ui_{name}_{}", std::process::id()))

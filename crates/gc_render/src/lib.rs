@@ -12,8 +12,10 @@
 
 mod debug_font;
 mod detail;
+mod effects;
 mod look;
 mod overlay;
+mod particles;
 mod post;
 mod rock;
 mod scenery;
@@ -60,9 +62,11 @@ const LOD_DISTANCES: [f32; TERRAIN_LEVELS - 1] = [128.0, 256.0, 384.0];
 const CHUNK_INSTANCE_BYTES: u64 = 12;
 /// Fixed capacity of the box instance buffer (soldiers and markers); never reallocated.
 pub const MAX_BOX_INSTANCES: usize = 65_536;
+pub use effects::{DUST, Effects, HitStyle};
 use look::rgba;
 pub use look::{Look, LookPreset};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
+pub use particles::{MAX_PARTICLES, Particle, Shape, flags as particle_flags};
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
 pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
@@ -341,6 +345,12 @@ pub struct Renderer {
     overlay: OverlayGpu,
     soldiers: soldiers::SoldiersGpu,
     scenery: scenery::SceneryGpu,
+    particles: particles::ParticlesGpu,
+    /// The effects clock, in seconds: the frame clock, less the time the
+    /// effects were paused or slowed for (see [`Renderer::set_effects_speed`]).
+    fx_time: f32,
+    fx_speed: f32,
+    last_frame_time: Option<f32>,
     /// Menu and lobby screens, drawn under the dev overlay.
     ui: OverlayGpu,
 }
@@ -536,6 +546,9 @@ impl Renderer {
 
         // The skinning pass stands soldiers on the terrain too.
         let world_stages = wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE;
+        // The shadow map, its sampler and the fog map: read by the particle
+        // vertex shader (lighting at a particle's centre) as well as fragments.
+        let lit_stages = wgpu::ShaderStages::VERTEX_FRAGMENT;
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("world"),
             entries: &[
@@ -561,7 +574,7 @@ impl Renderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: lit_stages,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -571,13 +584,13 @@ impl Renderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: lit_stages,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: lit_stages,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -776,6 +789,7 @@ impl Renderer {
 
         let soldiers = soldiers::make(&device, &bind_group_layout, &shader, hdr_format);
         let scenery = scenery::make(&device, &layout, hdr_format);
+        let particles = particles::make(&device, &queue, &bind_group_layout, hdr_format);
         let shadow_texture = |label, side| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
@@ -874,6 +888,7 @@ impl Renderer {
             + box_instances.size()
             + soldiers.instances.size()
             + scenery.instance_bytes()
+            + particles.gpu_bytes()
             + chunk_instances.size();
 
         Ok(Renderer {
@@ -920,6 +935,10 @@ impl Renderer {
             overlay,
             soldiers,
             scenery,
+            particles,
+            fx_time: 0.0,
+            fx_speed: 1.0,
+            last_frame_time: None,
             ui,
         })
     }
@@ -947,6 +966,24 @@ impl Renderer {
     /// Light and grade the world as `look` says, from the next frame on.
     pub fn set_look(&mut self, look: Look) {
         self.look = look;
+    }
+
+    /// Start particles at the next frame (see [`Particle`], and the recipes
+    /// in [`Effects`]). More than [`MAX_PARTICLES`] at once overwrite the
+    /// oldest.
+    pub fn spawn_particles(&mut self, particles: &[Particle]) {
+        self.particles.spawn(particles);
+    }
+
+    /// Remove every particle: a new match starts with a clear sky.
+    pub fn clear_particles(&mut self) {
+        self.particles.clear();
+    }
+
+    /// How fast particles age against the frame clock: 1 normally, 0 to
+    /// freeze them while the game is paused, between for slow motion.
+    pub fn set_effects_speed(&mut self, speed: f32) {
+        self.fx_speed = speed.clamp(0.0, 4.0);
     }
 
     pub fn stats(&self) -> RenderStats {
@@ -1384,6 +1421,17 @@ impl Renderer {
         soldiers: &[SoldierInstance],
         batches: &[SoldierBatch],
     ) -> FrameOutcome {
+        // The effects clock runs with the frame clock; a long stall (a
+        // dragged window, a breakpoint) does not age particles by more than
+        // a few frames. Particles are written even when the frame is skipped,
+        // so a backlog does not arrive all at once.
+        let dt = self
+            .last_frame_time
+            .map_or(0.0, |t| (frame.time_seconds - t).clamp(0.0, 0.25));
+        self.last_frame_time = Some(frame.time_seconds);
+        self.fx_time += dt * self.fx_speed;
+        self.particles.flush(&self.queue, self.fx_time);
+
         let Some(terrain) = &self.terrain else {
             return FrameOutcome::Skipped;
         };
@@ -1424,7 +1472,7 @@ impl Renderer {
                 CHUNK_QUADS as f32,
             ],
             fog: [fog_color[0], fog_color[1], fog_color[2], look.fog_density],
-            misc: [terrain.water_level, frame.time_seconds, 0.0, 0.0],
+            misc: [terrain.water_level, frame.time_seconds, self.fx_time, 0.0],
             sun_view_proj: sun_view_proj.to_cols_array_2d(),
             shadow: [
                 texel * 1.5,
@@ -1685,6 +1733,8 @@ impl Renderer {
             pass.set_pipeline(&self.sky_pipeline);
             pass.draw(0..3, 0..1);
             draw_calls += 1;
+            // Particles over the finished world and sky.
+            draw_calls += self.particles.draw(&mut pass);
             drop(pass);
             draw_calls += self.post.glow(&mut encoder, &self.post_targets);
         }
@@ -2294,6 +2344,7 @@ mod tests {
             include_str!("shaders/overlay.wgsl"),
             include_str!("shaders/post.wgsl"),
             scenery::shader_source().as_str(),
+            particles::shader_source().as_str(),
         ] {
             let module = naga::front::wgsl::parse_str(src)
                 .unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));

@@ -7,8 +7,6 @@
 // is 1, in tiles; the baker has already multiplied the model's own sway into
 // the weight) and `POSITION_SCALE` (positions are stored in 1/POSITION_SCALE
 // tiles) are prepended by `shader_source()` from gc_assets::scenery.
-// The prevailing wind blows toward this direction (x east, y south).
-const WIND_DIR = vec2<f32>(0.8, 0.6);
 
 struct SceneryIn {
     // x, y, z in 1/POSITION_SCALE tiles (the fourth is padding).

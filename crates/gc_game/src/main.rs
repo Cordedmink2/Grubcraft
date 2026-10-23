@@ -123,7 +123,9 @@
 //! cycling through idle, walk, attack and death, and `--showroom-clip
 //! idle|walk|attack|shoot|cheer|die` holds one clip instead;
 //! `--viewer NAME|start` opens the Unit viewer (main menu) on the named unit,
-//! or on the first unit with a model.
+//! or on the first unit with a model; `--fx-demo` sets off every particle
+//! effect at the camera's focus in slow motion, and `--fx-still` freezes them
+//! at several ages, to look at them.
 
 mod army_shape;
 mod buildings;
@@ -138,9 +140,11 @@ mod conquest_golden;
 mod conquest_soak;
 mod credits;
 mod data;
+mod effects;
 mod faction_powers;
 mod field;
 mod fog;
+mod fx_demo;
 #[cfg(test)]
 mod goldens;
 // The Guide's data (docs/08-ui-ux.md#guide).
@@ -387,6 +391,9 @@ struct Options {
     viewer: Option<String>,
     /// The light and grade to open with (`--look golden-hour`); F9 cycles it.
     look: gc_render::LookPreset,
+    /// Set off every effect at the camera's focus (`--fx-demo`, or
+    /// `--fx-still` to stop time).
+    fx: Option<fx_demo::Mode>,
     /// Open on a siege staged in the sandbox, to look at (`--siege`).
     siege: bool,
     render: RendererOptions,
@@ -412,6 +419,7 @@ fn parse_args() -> Options {
         showroom_clip: None,
         viewer: None,
         look: gc_render::LookPreset::default(),
+        fx: None,
         siege: false,
         render: RendererOptions::default(),
     };
@@ -436,6 +444,14 @@ fn parse_args() -> Options {
         }
         if flag == "--host" {
             opts.host = true;
+            continue;
+        }
+        if flag == "--fx-demo" || flag == "--fx-still" {
+            opts.fx = Some(if flag == "--fx-demo" {
+                fx_demo::Mode::Live
+            } else {
+                fx_demo::Mode::Still
+            });
             continue;
         }
         if flag == "--crash-test" {
@@ -595,7 +611,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -636,6 +652,9 @@ struct Running {
     alpha: f32,
     instances: Vec<BoxInstance>,
     puppets: Puppets,
+    /// Particles collected this frame (dust, sparks, smoke), handed to the
+    /// renderer just before it draws.
+    effects: effects::Field,
     /// Spent arrows stuck in the ground and the fallen.
     arrows: field::Arrows,
     /// Blows on buildings, shots at them, and buildings coming down.
@@ -1421,6 +1440,7 @@ impl App {
             alpha: 1.0,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
+            effects: effects::Field::new(opts.fx),
             arrows: field::Arrows::new(field::MAX_STUCK),
             siege: siege::Siege::new(capacities.regiments as usize),
             siege_scene: None,
@@ -3085,6 +3105,14 @@ impl Running {
                 let clips = &art.clips;
                 let time = self.puppets.time();
                 let highlight = if selected { 70 } else { 0 };
+                let effects = &mut self.effects;
+                // Footsteps follow the effects clock: none behind the menu or
+                // while it stands still.
+                let dt = if self.menu_open && self.online.is_none() {
+                    0.0
+                } else {
+                    game_dt.as_secs_f32() * effects.time_scale()
+                };
                 // Soldiers at a building they attack face it: blades close
                 // up to the wall and swing at it, archers shoot.
                 let siege = &mut self.siege;
@@ -3141,6 +3169,8 @@ impl Running {
                         let Some(lod) = view.place(height, at) else {
                             return;
                         };
+                        let toward = if s.backing { -s.facing } else { s.facing };
+                        effects.footstep(dt, at, toward, s.speed);
                         let look = models::look(s.look);
                         // The rate keeps loops out of step; blows are timed by
                         // their own progress, so it leaves fights alone.
@@ -3271,6 +3301,23 @@ impl Running {
             self.heightmap.tiles,
             !self.reveal_all,
         );
+        // Dust and sparks age with game time: still while paused or behind
+        // the menu, slow in slow motion.
+        let live = !self.paused && !(self.menu_open && self.online.is_none());
+        let fx_speed = if live { SPEEDS[self.speed] } else { 0.0 } * self.effects.time_scale();
+        self.renderer.set_effects_speed(fx_speed);
+        let density = self.menu.settings().graphics.effects_density();
+        let heightmap = &self.heightmap;
+        let particles = self.effects.frame(
+            dt.as_secs_f32() * fx_speed,
+            density,
+            self.camera.focus,
+            |p| heightmap.height_at(p.x, p.y),
+        );
+        if self.effects.still() {
+            self.renderer.clear_particles();
+        }
+        self.renderer.spawn_particles(&particles);
         let frame = FrameParams {
             view_proj,
             camera_pos: eye,
@@ -4137,6 +4184,8 @@ impl Running {
         self.attack_mark = None;
         self.sim_clock = Duration::ZERO;
         self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
+        self.effects.clear();
+        self.renderer.clear_particles();
         self.arrows = field::Arrows::new(field::MAX_STUCK);
         self.siege.clear();
         match kind {
@@ -4731,10 +4780,32 @@ impl Running {
                 } => {
                     if let Some(flight) = self.arrows.landed(volley, at, in_wood, dry) {
                         self.puppets.shot_down(target, flight.dir, lost);
+                        if self.reveal_all || self.world.sees(self.sandbox.side, target) {
+                            let p = from_fx_vec(at);
+                            let ground = self.heightmap.height_at(p.x, p.y);
+                            self.effects
+                                .arrows_landed(glam::Vec3::new(p.x, ground, p.y), lost.max(2));
+                        }
                     }
                 }
                 Event::Losses { regiment, .. } if self.world.regiments.get(regiment).is_none() => {
                     self.puppets.wiped(regiment);
+                }
+                Event::Contact { regiment, foe } => {
+                    let seen = self.reveal_all || self.world.sees(self.sandbox.side, regiment);
+                    if let (true, Some(r), Some(f)) = (
+                        seen,
+                        self.world.regiments.get(regiment),
+                        self.world.regiments.get(foe),
+                    ) && r.charge > 0
+                        // Two regiments charging each other both report it:
+                        // one burst.
+                        && !(f.charge > 0 && foe.index < regiment.index)
+                    {
+                        let p = from_fx_vec(r.position).lerp(from_fx_vec(f.position), 0.5);
+                        let ground = self.heightmap.height_at(p.x, p.y);
+                        self.effects.charge_hit(glam::Vec3::new(p.x, ground, p.y));
+                    }
                 }
                 Event::Struck { structure, by } => {
                     let side = self.sandbox.side;

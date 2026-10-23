@@ -45,6 +45,9 @@ struct Globals {
     sky_horizon: vec4<f32>,
 };
 
+// The prevailing wind blows toward this direction (x east, y south).
+const WIND_DIR = vec2<f32>(0.8, 0.6);
+
 // The selection highlight's strength. It is added before tone mapping,
 // which flattens it, so it is twice what it was when added after.
 const HIGHLIGHT: f32 = 1.6;
