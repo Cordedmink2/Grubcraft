@@ -247,8 +247,9 @@ impl Terrain {
         Some(was)
     }
 
-    /// The digest of every change made to the ground so far.
-    pub(crate) fn changes(&self) -> u64 {
+    /// The digest of every change made to the ground so far: it differs
+    /// whenever the ground has changed since it was last read.
+    pub fn changes(&self) -> u64 {
         self.changes
     }
 

@@ -7,17 +7,20 @@
 //! of those (flank anchors, high ground, fords) is worked out in
 //! [`crate::ground`]; where to hide, in the Captain's ambush plans.
 
-use gc_sim::Cover;
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE, CLEARANCE};
+use gc_sim::{Cover, Growth};
 use glam::Vec2;
 
+#[derive(Clone)]
 pub struct Terrain {
     map_tiles: u32,
     /// Cells per side; zero on an open plane.
     side: i32,
     cost: Vec<u8>,
     /// Chessboard distance from each cell to blocked ground, as the sim
-    /// measures it: a regiment's centre needs [`CLEARANCE`].
+    /// measures it: a regiment's centre needs [`CLEARANCE`]. Only whether
+    /// it reaches [`CLEARANCE`] is read, so near cleared thicket it is kept
+    /// only that far (see [`Terrain::follow`]).
     clear: Vec<u8>,
     /// Ground height at each tile's centre, tiles, row by row; empty when
     /// the map has no heights (tests' open planes).
@@ -28,6 +31,15 @@ pub struct Terrain {
     /// Woods and tall grass per tile, row by row, as `gc_sim::Ground::cover`;
     /// empty when the map has none.
     cover: Vec<u8>,
+    /// What grows on each tile, row by row, as `gc_sim::Ground::growth`;
+    /// empty when the map has none. Thicket is blocked in `cost`.
+    growth: Vec<u8>,
+    /// The ground's costs as they are under the thicket, for when it is
+    /// cleared; empty when the map has none.
+    under: Vec<u8>,
+    /// The simulation's ground digest when the minds last looked
+    /// (`gc_sim::Terrain::changes`).
+    seen: u64,
 }
 
 impl Terrain {
@@ -41,6 +53,9 @@ impl Terrain {
             height: Vec::new(),
             water_level: f32::MIN,
             cover: Vec::new(),
+            growth: Vec::new(),
+            under: Vec::new(),
+            seen: 0,
         }
     }
 
@@ -58,6 +73,9 @@ impl Terrain {
             height: Vec::new(),
             water_level: f32::MIN,
             cover: Vec::new(),
+            growth: Vec::new(),
+            under: Vec::new(),
+            seen: 0,
         };
         t.measure_clearance();
         t
@@ -81,9 +99,140 @@ impl Terrain {
     pub fn with_cover(mut self, cover: Vec<u8>) -> Terrain {
         let n = self.map_tiles as usize;
         if cover.len() == n * n && n > 0 {
+            // Until told otherwise, woods grow where the cover is woods, as
+            // the simulation has it (so clearing them is followed too).
+            if self.growth.is_empty() {
+                self.growth = (cover.iter())
+                    .map(|&c| match Cover::from_u8(c) {
+                        Cover::Wood => Growth::Woods as u8,
+                        _ => Growth::Open as u8,
+                    })
+                    .collect();
+            }
             self.cover = cover;
         }
         self
+    }
+
+    /// Add what grows on each tile, one byte per tile as the simulation has
+    /// it (`gc_sim::Ground::growth`): thicket is blocked, as no regiment
+    /// marches through it, until it is cleared (see [`Terrain::follow`]).
+    /// Ignored if there isn't one per tile, or on an open plane.
+    pub fn with_growth(mut self, growth: Vec<u8>) -> Terrain {
+        let n = self.map_tiles as usize;
+        if growth.len() != n * n || n == 0 || self.side == 0 {
+            return self;
+        }
+        // Read as the simulation reads it: anything unknown grows nothing.
+        let growth: Vec<u8> = growth.iter().map(|&g| Growth::from_u8(g) as u8).collect();
+        let thicket = |g: &u8| *g == Growth::Thicket as u8;
+        if growth.iter().any(thicket) {
+            self.under.clone_from(&self.cost);
+            for (t, _) in growth.iter().enumerate().filter(|(_, g)| thicket(g)) {
+                self.set_tile(t, BLOCKED);
+            }
+            self.remeasure();
+        }
+        self.growth = growth;
+        self
+    }
+
+    /// Catch up with the simulation's ground, if it has changed since the
+    /// last look: cleared tiles lose their cover, and cleared thicket can
+    /// be walked again.
+    pub fn follow(&mut self, ground: &gc_sim::Terrain) {
+        if self.seen == ground.changes() {
+            return;
+        }
+        self.seen = ground.changes();
+        let n = self.map_tiles as i32;
+        for t in 0..self.growth.len() {
+            let was = self.growth[t];
+            if was == Growth::Open as u8 {
+                continue;
+            }
+            let now = ground.growth(t as i32 % n, t as i32 / n) as u8;
+            if now == was {
+                continue;
+            }
+            self.growth[t] = now;
+            if let Some(c) = self.cover.get_mut(t) {
+                *c = Cover::Open as u8;
+            }
+            if was == Growth::Thicket as u8 && !self.under.is_empty() {
+                self.restore_tile(t);
+            }
+        }
+    }
+
+    /// Whether the minds' ground lags the simulation's.
+    pub fn stale(&self, ground: &gc_sim::Terrain) -> bool {
+        !self.growth.is_empty() && self.seen != ground.changes()
+    }
+
+    /// The first cell of tile `t`, as (column, row).
+    fn tile_cell(&self, t: usize) -> (i32, i32) {
+        let n = self.map_tiles as usize;
+        (
+            (t % n) as i32 * CELLS_PER_TILE,
+            (t / n) as i32 * CELLS_PER_TILE,
+        )
+    }
+
+    fn set_tile(&mut self, t: usize, cost: u8) {
+        let ((x, y), side) = (self.tile_cell(t), self.side);
+        for cy in y..y + CELLS_PER_TILE {
+            let row = (cy * side + x) as usize;
+            self.cost[row..row + CELLS_PER_TILE as usize].fill(cost);
+        }
+    }
+
+    /// Tile `t`'s ground as it is under the thicket, and the clearance
+    /// [`CLEARANCE`] cells round it, which is all that can change.
+    fn restore_tile(&mut self, t: usize) {
+        let ((x, y), side) = (self.tile_cell(t), self.side);
+        for cy in y..y + CELLS_PER_TILE {
+            let row = (cy * side + x) as usize..(cy * side + x + CELLS_PER_TILE) as usize;
+            self.cost[row.clone()].copy_from_slice(&self.under[row]);
+        }
+        let reach = i32::from(CLEARANCE);
+        for cy in (y - reach).max(0)..(y + CELLS_PER_TILE + reach).min(side) {
+            for cx in (x - reach).max(0)..(x + CELLS_PER_TILE + reach).min(side) {
+                self.clear[(cy * side + cx) as usize] = self.clearance_at(cx, cy);
+            }
+        }
+    }
+
+    /// The clearance of cell `(x, y)`, up to [`CLEARANCE`]: 0 on blocked
+    /// ground, else how far blocked ground or the map's edge is.
+    fn clearance_at(&self, x: i32, y: i32) -> u8 {
+        let side = self.side;
+        let blocked = |cx: i32, cy: i32| {
+            cx < 0
+                || cy < 0
+                || cx >= side
+                || cy >= side
+                || self.cost[(cy * side + cx) as usize] == BLOCKED
+        };
+        if blocked(x, y) {
+            return 0;
+        }
+        (1..=i32::from(CLEARANCE))
+            .find(|&r| {
+                (-r..=r).any(|d| {
+                    blocked(x + d, y - r)
+                        || blocked(x + d, y + r)
+                        || blocked(x - r, y + d)
+                        || blocked(x + r, y + d)
+                })
+            })
+            .map_or(CLEARANCE, |r| r as u8)
+    }
+
+    /// Measure every cell's clearance afresh.
+    fn remeasure(&mut self) {
+        self.clear.fill(0);
+        self.measure_clearance();
     }
 
     /// Whether the map has woods or tall grass anywhere.

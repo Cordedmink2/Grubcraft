@@ -477,6 +477,10 @@ impl Minds {
         if self.minds.is_empty() || world.deploying() {
             return;
         }
+        // Ground cleared since the last look is seen at once.
+        if self.terrain.stale(world.terrain()) {
+            Arc::make_mut(&mut self.terrain).follow(world.terrain());
+        }
         self.view.capture(world);
         // Regiments hidden in cover or fog of war are hidden from the
         // computer players too (docs/20-ambushes.md).
