@@ -88,6 +88,18 @@ A locked melee is not a standing trade of blows: the side winning it drives the 
 
 **Built so far (2026-10-15):** as described. Soldiers on screen keep facing their man as their block gives ground, so a pushed line steps backwards; a pinned one breaks ranks under the amber disorder outline. Computer players don't yet read a bending line to send reserves.
 
+## Charges that plough in
+
+A regiment is a mass of bodies, not a wall (idea 11, physical formations, in the [restart plan](29-restart-plan.md)). A charge that is heavy enough for the ranks it hits ploughs into them and drives them back; one that isn't stops on the front rank.
+
+- **Weight of the charge:** the charger's heft (light 1, medium 2, heavy 4, as in [Lines that push](#lines-that-push)) times 2 for the run.
+- **Weight that holds it:** the heft of the regiment it hits, times how many ranks stand behind the point of impact: up to 4 on its front, but only 1 on its flank or rear. On its front, Tight ranks and a shield wall hold half again as well and Loose ranks a third less (67%); nobody braces a side, so any order holds a flank or rear alike.
+- **Ploughing in:** when the charge outweighs the ranks, the regiment hit is driven straight away from the charger at full pace (0.4 tiles a second) for a quarter of a second per point of weight the charge has over it (at most 1.75 s, heavy horse into one loose rank of light foot), whatever the exchange of blows says, as long as the charger keeps fighting it. That holds even when it is already locked with someone else: a flank charge drives a fighting line sideways off its foe, who doesn't follow. The chargers follow it in and strike the men they knocked aside at once. Hit on its front, it also falls into disorder (20% less damage dealt, 20% more taken, fading over 3 s); hit on a flank or rear it doesn't, since the blows there already land 1.4 or 1.8 times as hard. Driven back onto something it can't back into, it is [pinned](#lines-that-push) as well. A regiment that breaks, or is no longer in a fight, stops being driven; routers are only run down, never ploughed.
+- **Examples:** heavy horse ploughs through three ranks of medium foot or four of light foot, but stalls on four ranks of medium foot or two of heavy foot. Medium foot ploughs a front of its own weight only when it stands one rank deep (two if Loose), but bowls over the flank of anything medium or light.
+- **On screen:** the line dents in where the charge went in, up to one and a half ranks deep nearest the charger, and springs back over the last half second as the regiment holds again. Each man the chargers hit goes down whatever his weight, and the men either side of him stagger, or fall three times in ten.
+
+**Built (2026-10-24):** as described. `SIM_VERSION` 27; tests in `crates/gc_sim/tests/plough.rs`. It moved the faction table, so Skitterlings defence and Shardlings morale were retuned ([17](17-unit-rosters.md#plough-balance)).
+
 ## Brace and Fall back
 
 Two orders for the fight itself (adapted from Mount & Blade, [decision 28](14-decisions-needed.md#battle-feel-from-mount--blade-decided-2026-10-15)).
@@ -230,6 +242,7 @@ The simulation models each regiment as a formation (position, facing, width, dep
 - **Fighting:** melee with flank, rear and charge multipliers, locked melee, casualties from the back, and arrow volleys that hit dense blocks harder. The orders are move, move-and-face (right-drag), attack and formation.
 - **Weapons and formations (2026-10-15):** reach, swing room, shields and mass work as in [Weapons and formations](#weapons-and-formations). The formation key is `R`, as in the command grid (the sandbox's unit-data reload moved to `Shift`+`R`; `F` still cycles formation too until the Ultimate slot has an ability). Of today's five Field Battle regiments the Yari Ashigaru and Bone Pikes have reach, the Shardlings have swing room and the Skitterlings are light; none carries shields yet, so the Shield wall needs a roster unit with shields (Chitin Guard, Shellbacks, Gravewardens) or the sandbox's stats panel. Computer players don't change formation yet.
 - **Lines that push (2026-10-15):** as in [Lines that push](#lines-that-push).
+- **Charges that plough in (2026-10-24):** as in [Charges that plough in](#charges-that-plough-in).
 - **Morale:** Steady, Wavering, Routing and Shattered work as described above, driven by casualties, flank and rear hits, being outnumbered nearby, being pinned, and nearby routs. Winning a fight lifts morale. Routers are slower than their pursuers and rally after 10 s with no enemy within 20 tiles. A second rout within 2 minutes shatters a regiment; with no structures yet, a shattered regiment runs, then stands for good. Concord undead (the Bone Pikes) never rout. A battered regiment never recovers its full morale.
 - **Not yet:** heroes, terror and veterancy as morale sources, the other faction exceptions, and Conquest's gentler rules. The Hold, Charge, Skirmish and Run orders, the full Retreat toward a structure (with Conquest), the Column and Wedge formations, terrain beyond high ground and fords (see [Terrain](#terrain)), air, heroes, counters and veterancy also come later.
 

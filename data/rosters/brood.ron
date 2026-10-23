@@ -250,7 +250,7 @@
                 file_spacing: 0.8,
                 rank_spacing: 0.8,
                 melee_attack: 50,
-                melee_defence: 26,
+                melee_defence: 28,
                 melee_damage: 3,
                 charge_bonus: 40,
                 morale: 64,

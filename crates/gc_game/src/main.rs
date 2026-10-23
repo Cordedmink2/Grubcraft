@@ -3004,6 +3004,8 @@ impl Running {
                 routing: r.morale.broken(),
                 disorder: f32::from(r.disorder) / f32::from(gc_sim::combat::DISORDER_TICKS),
                 charge: r.charge,
+                ploughed: (f32::from(r.ploughed) / puppets::DENT_EASE_TICKS).min(1.0),
+                ploughed_by: r.ploughed_by,
                 fighter: fighter_of(stats, &r),
             };
             if !seen {

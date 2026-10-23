@@ -85,7 +85,7 @@ impl Difficulty {
                 rehearse: false,
             },
             Difficulty::General => Knobs {
-                reaction_ticks: 8,
+                reaction_ticks: 16,
                 orders_per_minute: 90,
                 think_ticks: 4,
                 doctrines: &Doctrine::ALL,
@@ -129,7 +129,7 @@ impl Difficulty {
 /// What a difficulty level changes.
 #[derive(Clone, Copy, Debug)]
 pub struct Knobs {
-    /// Ticks between deciding an order and sending it (1.5 s to 0.4 s).
+    /// Ticks between deciding an order and sending it (1.5 s to 0.25 s).
     pub reaction_ticks: u32,
     /// Orders it can give in a minute. One group order (a line moving
     /// together) counts once, like a player's right-drag.

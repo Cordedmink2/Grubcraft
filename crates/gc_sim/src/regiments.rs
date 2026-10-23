@@ -262,6 +262,11 @@ regiment_fields! {
     /// [`GIVE_GROUND`](crate::combat::GIVE_GROUND), from the exchange as it
     /// stood at its last blow.
     giving: u8 = 0,
+    /// Ticks left of being driven back at full pace by a charge that
+    /// ploughed into it (see `combat::ploughs`), whatever the exchange says.
+    ploughed: u8 = 0,
+    /// The charger that ploughed into it.
+    ploughed_by: Option<RegimentHandle> = None,
     /// Spears or pikes set against a charge (see [`Regiments::brace`]):
     /// standing until given another order.
     braced: bool = false,
@@ -718,6 +723,31 @@ impl Regiments {
         self.pressing[i] = 0;
         self.pressed[i] = 0;
         self.giving[i] = 0;
+        self.ploughed[i] = 0;
+        self.ploughed_by[i] = None;
+    }
+
+    /// The charger driving slot `i` back after ploughing into it: only
+    /// while that lasts, `i` is in a fight and holding together, and the
+    /// charger is still fighting it.
+    pub(crate) fn plougher(&self, i: usize) -> Option<usize> {
+        if self.ploughed[i] == 0 || self.engaged[i].is_none() || self.morale_state[i].broken() {
+            return None;
+        }
+        self.ploughed_by[i]
+            .and_then(|h| self.resolve(h))
+            .filter(|&k| self.foe(k) == Some(i))
+    }
+
+    /// How fast slot `i` is being driven back, in percent of
+    /// [`GIVE_GROUND`](crate::combat::GIVE_GROUND): at full pace while a
+    /// charge that ploughed into it lasts, else as the exchange says.
+    pub(crate) fn driven_pace(&self, i: usize) -> u8 {
+        if self.plougher(i).is_some() {
+            100
+        } else {
+            self.giving[i]
+        }
     }
 
     /// Slot `i` is gone from its fight altogether: out of it, and nobody
@@ -898,7 +928,13 @@ impl Regiments {
             morale: self.morale_state[i],
             morale_points: (self.morale[i].max(0) / morale::SCALE) as u8,
             disorder: self.disorder[i],
-            giving_ground: self.giving[i] > 0 && self.engaged[i].is_some(),
+            giving_ground: self.driven_pace(i) > 0 && self.engaged[i].is_some(),
+            ploughed: if self.plougher(i).is_some() {
+                self.ploughed[i]
+            } else {
+                0
+            },
+            ploughed_by: self.plougher(i).map(|k| self.handle(k)),
             braced: self.braced[i],
             falling_back: self.falling_back[i] > 0,
         }
@@ -1137,6 +1173,11 @@ pub struct RegimentView {
     pub braced: bool,
     /// Pulling out of a fight in good order (see [`Regiments::fall_back`]).
     pub falling_back: bool,
+    /// Ticks left of being driven back by a charge that ploughed into its
+    /// ranks, up to [`PLOUGH_TICKS`](crate::combat::PLOUGH_TICKS).
+    pub ploughed: u8,
+    /// The charger that ploughed in, while it does.
+    pub ploughed_by: Option<RegimentHandle>,
 }
 
 impl RegimentView {

@@ -134,6 +134,18 @@ const LOOK_AHEAD: Fx = Fx::from_int(2);
 /// exchange gives ground at up to this many tiles a tick (0.4 a second),
 /// and the enemies fighting it follow.
 pub const GIVE_GROUND: Fx = Fx::from_ratio(1, 50);
+/// Charges that plough in (docs/05-combat.md): a charger at the run
+/// weighs its mass's heft this many times over...
+pub const PLOUGH_SPEED: u64 = 2;
+/// ...against the heft of the ranks it hits: up to this many deep on its
+/// front, one on its flank or rear (nobody braces a side), weighed by how
+/// closely they stand (see [`ploughs`], [`Formation::hold_percent`]).
+const PLOUGH_DEPTH: u16 = 4;
+/// Ticks a ploughed regiment is driven back, per unit of weight the charge
+/// has over it, and at most.
+const PLOUGH_TICKS_PER: u64 = 5;
+pub const PLOUGH_TICKS: u8 = 40;
+
 /// A regiment losing the exchange by up to this share of the blows
 /// traded, in percent (weighted by mass), holds its ground; losing by
 /// [`DRIVEN_AT`] or more it gives ground at full pace.
@@ -154,6 +166,25 @@ fn driven(regs: &Regiments, i: usize) -> u8 {
     }
     let losing_by = 100 * (taken - dealt) / (taken + dealt);
     ((losing_by - HOLDS_WITHIN) * 100 / (DRIVEN_AT - HOLDS_WITHIN)).clamp(0, 100) as u8
+}
+
+/// How many ticks regiment `i`, charging home on regiment `j`'s `front`
+/// or not, drives `j` back (0: it doesn't plough in): its weight at the run
+/// against the weight of the ranks it hits, so cavalry ploughs through thin
+/// or loose infantry but stalls on a deep, close block, and anyone hit on
+/// the flank or rear is easily bowled over.
+fn ploughs(regs: &Regiments, units: &[UnitStats], i: usize, j: usize, front: bool) -> u8 {
+    let weight = units[regs.unit[i] as usize].mass.heft() * PLOUGH_SPEED;
+    let depth = if front {
+        formation::ranks(regs.files[j], regs.models[j]).min(PLOUGH_DEPTH)
+    } else {
+        1
+    };
+    let hold = units[regs.unit[j] as usize].mass.heft()
+        * u64::from(depth)
+        * regs.formation[j].hold_percent(front);
+    let over = (weight * 100).saturating_sub(hold) / 100;
+    (over * PLOUGH_TICKS_PER).min(u64::from(PLOUGH_TICKS)) as u8
 }
 
 /// Spatial hash cell edge, in tiles, and bucket count (a power of two).
@@ -1120,10 +1151,8 @@ impl Combat {
                         && !terrain.wet(regs.position[i])
                         && regs.formation[i].can_charge()
                         && regs.crowd[i] <= CROWDING;
-                    if charging
-                        && regs.braced[j]
-                        && self.blocks[j].side_facing(me.centre) == Side::Front
-                    {
+                    let front = || self.blocks[j].side_facing(me.centre) == Side::Front;
+                    if charging && regs.braced[j] && front() {
                         // Onto braced points: the charge is spent on them,
                         // its weight turned back on the charger, and the
                         // charger, stopped dead, loses its next blow and
@@ -1141,6 +1170,27 @@ impl Combat {
                     } else if charging {
                         regs.charge[i] = CHARGE_TICKS;
                         regs.charge_bonus[i] = units[regs.unit[i] as usize].charge_bonus;
+                        // Heavy enough, it ploughs into the ranks: they are
+                        // driven back from it, and the charger strikes the
+                        // men it knocks aside at once. (Routers are only
+                        // run down.)
+                        let ploughed = if regs.morale_state[j].broken() {
+                            0
+                        } else {
+                            ploughs(regs, units, i, j, front())
+                        };
+                        if ploughed > 0 {
+                            regs.ploughed[j] = ploughed;
+                            regs.ploughed_by[j] = Some(regs.handle(i));
+                            // Bowled over from a flank or rear, it is hit
+                            // hard enough already (see `Side::damage_percent`).
+                            if front() {
+                                regs.disorder(j);
+                            }
+                            if regs.strike[i] == Strike::Turn {
+                                regs.strike[i] = Strike::Early;
+                            }
+                        }
                     }
                     // Caught from the flank or rear while falling back.
                     regs.falling_back[i] = 0;
@@ -1248,14 +1298,20 @@ impl Combat {
         self.give.fill(FxVec2::ZERO);
         let mut anyone = false;
         for i in 0..regs.alive.len() {
-            if !regs.alive[i] || regs.giving[i] == 0 {
+            if !regs.alive[i] {
+                continue;
+            }
+            let giving = regs.driven_pace(i);
+            if giving == 0 {
                 continue;
             }
             // Only a foe fighting it back, and not losing a fight of its own,
-            // drives it; in a scrum of three or more it holds.
+            // drives it (the charge that ploughed into it, while that lasts);
+            // in a scrum of three or more it holds.
             let Some(j) = regs
-                .foe(i)
-                .filter(|&j| regs.foe(j) == Some(i) && regs.giving[j] == 0)
+                .plougher(i)
+                .or_else(|| regs.foe(i))
+                .filter(|&j| regs.foe(j) == Some(i) && regs.driven_pace(j) == 0)
             else {
                 continue;
             };
@@ -1271,7 +1327,7 @@ impl Combat {
             } else {
                 axis
             };
-            let pace = Fx::from_raw((GIVE_GROUND.raw() * i32::from(regs.giving[i]) / 100).max(1));
+            let pace = Fx::from_raw((GIVE_GROUND.raw() * i32::from(giving) / 100).max(1));
             let mass = units[regs.unit[i] as usize].mass;
             let give = away * terrain.going(pace, me.centre, mass);
             if nav.blocks(regs.owner[j], foe, foe + give) {
@@ -1329,7 +1385,7 @@ impl Combat {
     /// onto blocked ground. Reads only where everyone stood at the start of
     /// the tick, so the order regiments move in changes nothing.
     fn follow(&self, regs: &Regiments, nav: &Nav, i: usize) -> Option<FxVec2> {
-        if regs.giving[i] > 0 {
+        if regs.driven_pace(i) > 0 {
             // Losing too, and not driven back: it stays where it is.
             return None;
         }
@@ -1341,6 +1397,11 @@ impl Combat {
             }
             chain[hop] = k;
             let step = self.give[k];
+            // A regiment a charge ploughed into is followed only by its
+            // charger: the foe it was fighting doesn't slide along with it.
+            if step != FxVec2::ZERO && regs.plougher(k).is_some_and(|p| p != chain[hop - 1]) {
+                return None;
+            }
             if step != FxVec2::ZERO {
                 // Only if the step draws each foe down the chain away from
                 // the one fighting it, and everyone following can take it.
@@ -1355,7 +1416,7 @@ impl Combat {
                     && chain[..hop].iter().all(can_step))
                 .then_some(step);
             }
-            if regs.giving[k] > 0 {
+            if regs.driven_pace(k) > 0 {
                 // Losing but not driven back: nobody behind it moves.
                 return None;
             }
@@ -1380,8 +1441,8 @@ impl Combat {
     ) -> Option<FxVec2> {
         let j = regs.foe(i)?;
         let (me, them) = (self.blocks[i], self.blocks[j]);
-        if regs.giving[i] > 0
-            || regs.giving[j] > 0
+        if regs.driven_pace(i) > 0
+            || regs.driven_pace(j) > 0
             || regs.morale_state[i].broken()
             || me.touches(&them, REACH)
         {
@@ -1445,6 +1506,7 @@ impl Combat {
                 continue;
             }
             regs.charge[i] = regs.charge[i].saturating_sub(1);
+            regs.ploughed[i] = regs.ploughed[i].saturating_sub(1);
             // A hasted regiment reloads faster and has extra turns (see
             // [`crate::powers`]).
             regs.reload[i] = regs.reload[i].saturating_sub(regs.steps(i));

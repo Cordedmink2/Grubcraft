@@ -110,6 +110,15 @@ const CRUSH_PER_CLASS: f32 = 0.25;
 /// staggers this often.
 const KNOCKDOWN_PER_CLASS: f32 = 0.4;
 const CHARGE_STAGGER: f32 = 0.5;
+/// A charge that ploughs into the ranks knocks the men it hits off their
+/// feet, whatever their weight, and this share of the men either side of
+/// them (the rest stagger); the line dents back by up to this many rank
+/// spacings where it went in, the front rank most.
+const PLOUGH_KNOCKDOWN: f32 = 0.3;
+const DENT_RANKS: f32 = 1.5;
+/// The dent is full while this many ticks of the plough are left, then
+/// springs back as the line holds again.
+pub const DENT_EASE_TICKS: f32 = 10.0;
 /// Soldiers who pair off while their regiment has more than this many ticks
 /// of charge bonus left (within 0.6 s of the charge hitting home) deliver
 /// its impact.
@@ -186,6 +195,12 @@ pub struct Block {
     /// Ticks of charge bonus left (`RegimentView::charge`), counting down
     /// from `CHARGE_TICKS` as a charge hits home.
     pub charge: u16,
+    /// How hard a charge that ploughed into its ranks still drives it
+    /// back: 1 while more than [`DENT_EASE_TICKS`] of it are left, falling
+    /// to 0 as the regiment holds again (`RegimentView::ploughed`), and
+    /// which regiment charged: the line dents where that charge went in.
+    pub ploughed: f32,
+    pub ploughed_by: Option<RegimentHandle>,
     pub fighter: Fighter,
 }
 
@@ -253,6 +268,19 @@ impl Fighter {
         }
         (self.mass as i32 + i32::from(blade) - them.mass as i32).max(0) as f32
     }
+}
+
+/// A charge's dent in a line (see [`Puppets::dent`]), in the line's own
+/// frame: where the charger stands and the way it drives, how far either
+/// side of it the line gives, where the line starts along that way and how
+/// deep it is, and how far it dents at most, in tiles.
+struct Dent {
+    from: Vec2,
+    push: Vec2,
+    half: f32,
+    near: f32,
+    span: f32,
+    depth: f32,
 }
 
 /// One soldier ready to draw.
@@ -466,6 +494,7 @@ pub struct Puppets {
     files: Vec<u16>,
     fighter: Vec<Fighter>,
     charge: Vec<u16>,
+    ploughed_by: Vec<Option<RegimentHandle>>,
     /// Each regiment's facing, and half its width and depth, to tell which
     /// side a blow falls on.
     heading: Vec<Vec2>,
@@ -537,6 +566,7 @@ impl Puppets {
             files: vec![1; regiment_capacity],
             fighter: vec![Fighter::default(); regiment_capacity],
             charge: vec![0; regiment_capacity],
+            ploughed_by: vec![None; regiment_capacity],
             heading: vec![Vec2::NEG_Y; regiment_capacity],
             half: vec![Vec2::ONE; regiment_capacity],
             seen: vec![f32::NEG_INFINITY; regiment_capacity],
@@ -969,10 +999,58 @@ impl Puppets {
         along >= 0.0 && along * self.half[r].x >= across.abs() * self.half[r].y
     }
 
+    /// How regiment `r`'s ranks dent in from the charge that ploughed into
+    /// it, in its own frame (x along its right, y toward its rear): None
+    /// when nothing ploughs it or the charger isn't on screen.
+    fn dent(&self, r: usize, block: &Block, right: Vec2) -> Option<Dent> {
+        let by = block
+            .ploughed_by
+            .filter(|_| block.ploughed > 0.0 && !block.routing)?;
+        let b = by.index as usize;
+        if self.owner.get(b) != Some(&Some(by)) || !self.live(b) {
+            return None;
+        }
+        let to = self.centre[b] - block.centre;
+        let from = Vec2::new(to.dot(right), -to.dot(block.facing));
+        let push = (-from).normalize_or(Vec2::Y);
+        let half = self.half[r];
+        let extent = (half.x * push.x).abs() + (half.y * push.y).abs();
+        Some(Dent {
+            from,
+            push,
+            half: self.half[b].x + block.file_spacing,
+            near: from.length() - extent,
+            span: 2.0 * extent.max(0.1),
+            depth: DENT_RANKS * block.rank_spacing * block.ploughed,
+        })
+    }
+
     /// Puppet `i`'s charge hits home on `j`: a heavier charger may knock him
     /// off his feet, and may stagger him if not.
     fn charge_home(&mut self, i: usize, j: usize) {
         let (me, them) = (self.fighter[i / SLOTS], self.fighter[j / SLOTS]);
+        let b = j / SLOTS;
+        if self.ploughed_by[b].is_some() && self.ploughed_by[b] == self.owner[i / SLOTS] {
+            // Driven through by this charge: he goes down whatever his
+            // weight, and the men either side of him in his rank stagger or
+            // fall too.
+            self.suffer(j, i, Act::Down);
+            let (k, files) = (j % SLOTS, usize::from(self.files[b]));
+            let left = (k % files > 0).then(|| k - 1);
+            let right = (k % files + 1 < files).then_some(k + 1);
+            for n in [left, right].into_iter().flatten() {
+                if n < usize::from(self.models[b]) {
+                    let n = b * SLOTS + n;
+                    let act = if roll(i, n, 0, 4) < PLOUGH_KNOCKDOWN {
+                        Act::Down
+                    } else {
+                        Act::Stagger
+                    };
+                    self.suffer(n, i, act);
+                }
+            }
+            return;
+        }
         let knock = KNOCKDOWN_PER_CLASS * me.outweighs(&them, false);
         let r = roll(i, j, 0, 3);
         if r < knock {
@@ -1071,6 +1149,7 @@ impl Puppets {
         self.shot[r] = 0;
         self.unit[r] = block.unit;
         self.charge[r] = block.charge;
+        self.ploughed_by[r] = block.ploughed_by.filter(|_| block.ploughed > 0.0);
         self.fighter[r] = block.fighter;
         self.models[r] = models as u16;
         self.drift[r] = if fresh || dt <= 0.0 {
@@ -1107,6 +1186,7 @@ impl Puppets {
         let champion_here = self.champion_of(r);
         let band = self.band(r);
         let pressing = block.engaged && !block.routing;
+        let dent = self.dent(r, block, right);
         for k in 0..models {
             let i = r * SLOTS + k;
             let rank = f32::from(k as u16 / files);
@@ -1121,6 +1201,14 @@ impl Puppets {
             if pressing {
                 // The ranks behind press in on the fighting ones.
                 local.y -= rank * PRESS * block.rank_spacing;
+            }
+            if let Some(d) = &dent {
+                // Driven in where the charge hit, the men further from it
+                // giving way less.
+                let rel = local - d.from;
+                let off = rel.perp_dot(d.push) / d.half;
+                let fade = 1.0 - 0.5 * ((rel.dot(d.push) - d.near) / d.span).clamp(0.0, 1.0);
+                local += d.push * (d.depth * (1.0 - off * off).max(0.0) * fade);
             }
             let mut slot = block.centre + right * local.x + back * local.y;
             if mess > 0.0 {
@@ -1568,6 +1656,8 @@ mod tests {
             routing: false,
             disorder: 0.0,
             charge: 0,
+            ploughed: 0.0,
+            ploughed_by: None,
             fighter: Fighter::default(),
         };
         let mut first = Vec::new();
@@ -1645,6 +1735,8 @@ mod tests {
             routing: false,
             disorder: 0.0,
             charge: 0,
+            ploughed: 0.0,
+            ploughed_by: None,
             fighter: Fighter::default(),
         }
     }
@@ -1747,6 +1839,8 @@ mod tests {
             routing: false,
             disorder: 0.0,
             charge: 0,
+            ploughed: 0.0,
+            ploughed_by: None,
             fighter: Fighter::default(),
         };
         let mut soldiers = Vec::new();
@@ -1809,6 +1903,8 @@ mod tests {
             routing: false,
             disorder: 0.0,
             charge: 0,
+            ploughed: 0.0,
+            ploughed_by: None,
             fighter: Fighter::default(),
         };
         p.update(&block, 2, 0.016, |_| {});
@@ -1842,6 +1938,8 @@ mod tests {
             routing: false,
             disorder: 0.0,
             charge: 0,
+            ploughed: 0.0,
+            ploughed_by: None,
             fighter: Fighter::default(),
         };
         p.update(&block, 1, 0.016, |_| {});
@@ -2259,6 +2357,50 @@ mod tests {
         assert_eq!(downed(Medium, Medium), 0);
         assert_eq!(downed(Medium, Light), 0);
         assert_eq!(downed(Heavy, Heavy), 0);
+    }
+
+    #[test]
+    fn a_charge_that_ploughs_in_dents_the_line_and_bowls_men_over() {
+        // Narrow chargers into the middle of a wide line: where the front
+        // rank stands after settling, along the line's facing, and how many
+        // of them were knocked down.
+        let line = |ploughed: f32| {
+            let mut p = Puppets::new(2, 64);
+            let mut a = block(0, Vec2::ZERO, Vec2::NEG_Y, true);
+            (a.files, a.models) = (2, 4);
+            let mut b = block(1, Vec2::new(0.0, -3.2), Vec2::Y, true);
+            (b.files, b.models) = (8, 16);
+            (a.engaged, b.engaged) = (false, false);
+            frame(&mut p, &a, &b);
+            // The charge hits home, ploughing in or not.
+            (a.engaged, b.engaged, a.charge) = (true, true, 60);
+            (b.ploughed, b.ploughed_by) = (ploughed, Some(a.handle));
+            for _ in 0..3 {
+                frame(&mut p, &a, &b);
+            }
+            let downed = (SLOTS..SLOTS + 8)
+                .filter(|&i| p.act[i].0 == Act::Down)
+                .count();
+            for _ in 0..120 {
+                frame(&mut p, &a, &b);
+            }
+            let mut front = Vec::new();
+            p.update(&b, 1, 0.0, |s| front.push(s.pos.y));
+            front.truncate(8);
+            (front, downed)
+        };
+        let ((held, none), (dented, downed)) = (line(0.0), line(1.0));
+        let back: Vec<f32> = held.iter().zip(&dented).map(|(h, d)| h - d).collect();
+        // Driven in where the charge hit, and not at the ends of the line.
+        for k in [3, 4] {
+            assert!(back[k] > 1.0, "file {k} gave {back:?}");
+        }
+        for k in [0, 7] {
+            assert!(back[k].abs() < 0.3, "file {k} gave {back:?}");
+        }
+        // Men of a weight are knocked down only when the charge ploughs in.
+        assert_eq!(none, 0);
+        assert!(downed >= 2, "{downed}");
     }
 
     /// Two regiments 30 tiles apart whose champions fight: champion 0

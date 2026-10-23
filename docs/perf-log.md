@@ -157,3 +157,7 @@ Buildings coming down together are now grouped by where they stand (any that fit
 **Big-map gates:** `conquest-6p` is now gated in CI with budgets of its own: tick p99 ≤ 5 ms and no allocations outside the ticks a building goes up in (2.7 to 3.7 ms here), each such tick ≤ 40 ms (18 ms at worst here), sim heap ≤ 48 MB (22.4 MB).
 
 **Left for later:** many buildings destroyed by hand in one tick (several `RemoveStructure` orders) still update the grid one by one; only a side going out is batched.
+
+## Charges that plough in (2026-10-24)
+
+The instruction-count baseline was re-blessed: drill +3.5%, pathing storm +0.4%, field-8000pt-2v2 +5.0% (just over the 5% gate). Part of it is the plough's own work (a few integer operations on the tick a charge lands, and a `Regiments::plougher` check per regiment per tick in `push_lines`, `follow` and `close_up`); the rest is the battles playing differently, with ploughed regiments driven back and their chargers following, so more blocks move and look for routes (route search, `nav::Grid::sector_costs`, is a quarter of the 8000-point run). Tick budgets in `gc_bench` are unchanged and still met.

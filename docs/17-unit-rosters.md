@@ -180,7 +180,7 @@ A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Gnawer | 1 | Worker | 50 / 0 | 1 | 12 | Hive | 1 × 18 | 1 | 3.25 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 15 | |
-| Skitterlings | 1 | Light | 100 / 0 | 3 | 18 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 50 / 26 / 3 | 40 | 64 | |
+| Skitterlings | 1 | Light | 100 / 0 | 3 | 18 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 50 / 28 / 3 | 40 | 64 | |
 | Chitin Guard | 1 | Heavy | 130 / 0 | 4 | 22 | Hive | 12 × 16 | 6 | 2.75 | 70 | 0.9 / 1.0 | 30 / 55 / 4 | 15 | 60 | |
 | Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hive | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
 | Spitters | 2 | Ranged | 60 / 20 | 3 | 15 | Skitterlings | 16 × 7 | 8 | 3.5 | 100 | 0.8 / 0.9 | 20 / 15 / 2 | 5 | 45 | 22, 3, 3.0 s, 35% |
@@ -281,7 +281,7 @@ Few, costly crystal soldiers who blink across the map and bend light through eac
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Tuner | 1 | Worker | 60 / 0 | 1 | 14 | Spire | 1 × 30 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 10 / 2 | 0 | 30 | |
-| Shardlings | 1 | Light | 110 / 0 | 3 | 20 | Forge of Facets | 14 × 12 | 6 | 3.25 | 80 | 0.6 / 0.9 | 40 / 40 / 4 | 30 | 56 | |
+| Shardlings | 1 | Light | 110 / 0 | 3 | 20 | Forge of Facets | 14 × 12 | 6 | 3.25 | 80 | 0.6 / 0.9 | 40 / 40 / 4 | 30 | 55 | |
 | Prism Lancers | 1 | Ranged | 140 / 0 | 4 | 24 | Forge of Facets | 10 × 8 | 5 | 3.0 | 70 | 0.9 / 1.0 | 15 / 25 / 2 | 0 | 55 | 26, 6, 4.5 s, 45% |
 | Harmonic Walkers | 2 | Heavy | 170 / 50 | 5 | 32 | Forge of Facets | 6 × 32 | 3 | 2.75 | 50 | 1.6 / 1.8 | 40 / 50 / 7 | 20 | 70 | |
 | Glass Striders (new) | 2 | Cavalry | 175 / 45 | 5 | 32 | Forge of Facets | 6 × 26 | 3 | 7.0 | 150 | 1.4 / 2.0 | 45 / 30 / 6 | 70 | 60 | |
@@ -534,6 +534,8 @@ Average fight length (first contact to the end), seeds 1 / seeds 2001, baseline 
 | **Choir** | | | 104 / 106 (95 / 94) |
 
 Fights went from about 95-120 s to 105-140 s, whole battles from about 175 s to 170-200 s. The `faction_table` test in `gc_match` prints the average battle and fight length with each pair. Why 70 and not 50: at 50 the faction balance was fine but holding a ford stopped paying off, because defenders killed foes trickling out of a ford too slowly (the `holding_the_ford_pays_off` drill failed); 70 passes every drill. Volleys are slowed half as much because the approach, where most arrows fly, does not get longer; slowing them as much as melee dropped the Clans to about 28%, and not slowing them pushed the Clans to 60-75%. No unit stats changed.
+
+<a id="plough-balance"></a>**Charges that plough in (2026-10-24).** Charges heavy enough for the ranks they hit now drive them back ([05](05-combat.md#charges-that-plough-in)). None of the five Field Battle regiments is heavy, so in these battles it is mostly flank and rear charges that plough in, and the Brood's light Skitterlings, who are bowled over most easily and can plough nobody, fell about 10 points against everyone (96 battles a pair on seeds 1 and on seeds 2001, averaged: Brood 34.5 to 38 against the Concord and the Choir with the first version, which also cost a regiment ploughed on a flank its order and 4 morale; dropping those helped only a little). Two moves even it out: Skitterlings defence 26 to 28 and Shardlings morale 56 to 55. Main against this change, first faction's wins averaged over both sets: Clans v Brood 48.5 to 46, Clans v Choir 43 to 52.5, Clans v Concord 56.5 to 50.5, Brood v Choir 47.5 to 46.5, Brood v Concord 47 to 46, Choir v Concord 52 to 51.5, so every pair is within 4 points of even (main's widest was 7). Tried and dropped: Bone Pikes defence 53 (Clans v Concord 41.5, Brood v Concord 38.5). Units are stored in replays, so these stats don't move the goldens; the plough itself does.
 
 ### Weapon flags and mass
 

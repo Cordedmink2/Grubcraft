@@ -13,27 +13,27 @@ const TICKS: u32 = 2_400; // two minutes of game time
 
 /// Expected state hash every 600 ticks (30 s of game time).
 const GOLDEN: [(u32, u64); 4] = [
-    (600, 0x072b_e607_8a72_e5f5),
-    (1200, 0x2586_6912_4d8f_5e7e),
-    (1800, 0x69de_dff3_34a1_8630),
-    (2400, 0xb43d_bc20_2b44_1590),
+    (600, 0x02f2_bdf1_e932_2f3b),
+    (1200, 0xe5e9_d303_8df6_c67e),
+    (1800, 0x17f3_9ffc_4948_10be),
+    (2400, 0x95dc_6e9a_250c_989c),
 ];
 
 /// The same drill on the ridged test map, where most orders need routes.
 const GOLDEN_RIBS: [(u32, u64); 4] = [
-    (600, 0x37af_5193_29c6_0b72),
-    (1200, 0xf6da_1447_95f8_0789),
-    (1800, 0xce4a_76e9_4380_e217),
-    (2400, 0x130f_5a17_d113_b4aa),
+    (600, 0xda29_0d49_5948_a270),
+    (1200, 0x9238_7377_ae00_cd95),
+    (1800, 0xc619_6f73_da99_1ea2),
+    (2400, 0x1334_d139_b2b5_9780),
 ];
 
 /// The same drill on terraced, river-cut ground, where high ground and
 /// fords change the fighting.
 const GOLDEN_GROUND: [(u32, u64); 4] = [
-    (600, 0xe710_81c9_511f_de08),
-    (1200, 0x5950_6936_edf8_3d1b),
-    (1800, 0xd521_49ff_53dc_830b),
-    (2400, 0x6cbe_6b79_0afb_9939),
+    (600, 0x9eec_3489_2834_23bc),
+    (1200, 0xe7d5_9877_bb0c_889c),
+    (1800, 0x6844_bf9c_2261_3715),
+    (2400, 0x3da7_bddd_2c94_dc75),
 ];
 
 /// Terraces a little under a tile high, every 16 tiles, crossed by shallow
