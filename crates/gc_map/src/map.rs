@@ -92,6 +92,10 @@ pub struct Map {
     /// What grows on each tile, one [`crate::grown::Habitat`] byte per
     /// tile, row by row (empty on a map that wasn't grown).
     pub habitat: Vec<u8>,
+    /// What a growing base must clear, one `gc_sim::Growth` byte per tile,
+    /// row by row, worked out from the cover, thicket and habitat by
+    /// [`Map::settle_growth`] (empty with no cover).
+    pub growth: Vec<u8>,
     /// Starts, seeps, veins, hamlets and the rest. A generated map has its
     /// four starts and nothing else.
     pub objects: Vec<Placed>,
@@ -141,6 +145,7 @@ impl Map {
             thicket: Vec::new(),
             land: Vec::new(),
             habitat: Vec::new(),
+            growth: Vec::new(),
             objects: Vec::new(),
             set_pieces: Vec::new(),
         }
@@ -151,13 +156,43 @@ impl Map {
         self.tiles * SAMPLES_PER_TILE + 1
     }
 
+    /// Work out [`Map::growth`] again from the cover, thicket and habitat:
+    /// call it whenever they change. Thicket is thicket; scrub habitats
+    /// are scrub whatever their cover; other woods are woods; the rest
+    /// (tall grass in a meadow too) is open.
+    pub fn settle_growth(&mut self) {
+        let scrub = crate::grown::Habitat::ScrubEdge as u8;
+        self.growth = (0..self.cover.len())
+            .map(|i| {
+                let growth = if self.is_thicket(i) {
+                    gc_sim::Growth::Thicket
+                } else if self.habitat.get(i) == Some(&scrub) {
+                    gc_sim::Growth::Scrub
+                } else if self.cover[i] == gc_sim::Cover::Wood as u8 {
+                    gc_sim::Growth::Woods
+                } else {
+                    gc_sim::Growth::Open
+                };
+                growth as u8
+            })
+            .collect();
+    }
+
     /// The ground the simulation plays on: tile heights, the water line,
-    /// and the woods and tall grass.
+    /// the woods and tall grass, and what grows there. Pair it with
+    /// [`Map::sim_nav_costs`], whose thicket the simulation blocks itself
+    /// from the growth.
     pub fn ground(&self) -> gc_sim::Ground<'_> {
+        debug_assert_eq!(
+            self.growth.len(),
+            self.cover.len(),
+            "settle_growth after changing cover"
+        );
         gc_sim::Ground {
             heights: &self.heights,
             water_level: self.water,
             cover: &self.cover,
+            growth: &self.growth,
         }
     }
 
@@ -166,6 +201,17 @@ impl Map {
     /// blocked, steep slopes and fords cost more. Integer rules over the samples, so the
     /// same samples give the same grid everywhere.
     pub fn nav_costs(&self) -> Vec<u8> {
+        self.costs(true)
+    }
+
+    /// [`Map::nav_costs`] without blocking thicket: what the simulation is
+    /// given with [`Map::ground`]. It blocks thicket itself from the
+    /// growth layer until the thicket is cleared (docs/32-changing-land.md).
+    pub fn sim_nav_costs(&self) -> Vec<u8> {
+        self.costs(false)
+    }
+
+    fn costs(&self, thicket_blocks: bool) -> Vec<u8> {
         let cells_per_tile = gc_sim::nav::CELLS_PER_TILE as u32;
         let step = SAMPLES_PER_TILE / cells_per_tile; // samples per cell
         let size = self.side();
@@ -193,7 +239,7 @@ impl Map {
                 let mean = sum / n;
                 let rise = hi - lo;
                 let tile = (cy / cells_per_tile) * self.tiles + cx / cells_per_tile;
-                let thicket = self.is_thicket(tile as usize);
+                let thicket = thicket_blocks && self.is_thicket(tile as usize);
                 cells.push(if mean < deep || rise > cliff || thicket {
                     gc_sim::nav::BLOCKED
                 } else if mean < water {
@@ -348,20 +394,21 @@ impl Map {
     }
 
     /// The fingerprint machines compare before a network match
-    /// ([`map_hash`] over this map's grid and ground).
+    /// ([`map_hash`] over the grid and ground the simulation is given).
     pub fn hash(&self) -> u64 {
-        map_hash(&self.nav_costs(), &self.ground())
+        map_hash(&self.sim_nav_costs(), &self.ground())
     }
 }
 
-/// A fingerprint of a map's walkable ground, hills, water and cover
-/// (FNV-1a), so a joiner whose map came out differently finds out before
+/// A fingerprint of a map's walkable ground, hills, water, cover and
+/// growth (FNV-1a), so a joiner whose map came out differently finds out before
 /// the battle starts.
 pub fn map_hash(nav: &[u8], ground: &gc_sim::Ground) -> u64 {
     let heights = ground.heights.iter().chain([&ground.water_level]);
     let bytes = (nav.iter().copied())
         .chain(heights.flat_map(|v| v.to_le_bytes()))
-        .chain(ground.cover.iter().copied());
+        .chain(ground.cover.iter().copied())
+        .chain(ground.growth.iter().copied());
     fnv1a(bytes) ^ nav.len() as u64
 }
 

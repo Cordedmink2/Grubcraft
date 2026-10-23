@@ -28,7 +28,7 @@ const STEPS: [Step; 5] = [
     Step {
         title: "Build",
         scene: build,
-        text: "Select a worker, press B, pick a building and click the ground. Add housing before supply runs out.",
+        text: "Press B, pick a building, click the ground. Woods get cleared first (S, then drag, clears ground).",
     },
     Step {
         title: "Train",

@@ -4,7 +4,7 @@
     buildings: [
         (
             name: "Spire",
-            summary: "Your starting base. It builds Tuners and Conductors and powers buildings within 8 tiles; almost every other Choir building needs power, so build around it. Upgrade through the Cathedral and Grand Organ for walkers, cavalry, flyers and monsters.",
+            summary: "Your starting base. It builds Tuners and Conductors and powers buildings within 8 tiles; almost every other Choir building needs power, so build around it. Upgrade through the Cathedral and Grand Organ for walkers, cavalry, flyers and monsters. Workers clear woods and scrub (S) to make room; cleared ground is open.",
             notes: [
                 ("Cathedral", "The mid game: Harmonic Walkers, Glass Striders, the Skyglass Loom's Skyglass, the Conductor and a second hero. It costs Marrow, so build a Siphon first."),
             ],
@@ -112,7 +112,7 @@
         (
             name: "Tuner",
             tagline: "Builder: raises and mends structures, does not gather.",
-            summary: "The Choir's worker. It builds Choir structures inside a Resonator's field and repairs them, but does not gather: Resonators and Siphons make your income. Train a few to build and mend, not a swarm.",
+            summary: "The Choir's worker. It builds Choir structures inside a Resonator's field and repairs them, but does not gather: Resonators and Siphons make your income. Train a few to build and mend, not a swarm. They can also clear woods and scrub (S), which pays a little Grub.",
         ),
         (
             name: "Shardlings",

@@ -8,6 +8,10 @@
 //! simulation makes when the order lands; the ground may still change in
 //! the reaction time between (someone stands there), and then the Steward
 //! simply tries again.
+//!
+//! Open ground comes first: a spot on scrub, woods or thicket is taken only
+//! when no open one is found within [`OPEN_FIRST`] more rings, and then the
+//! worker clears it before building (docs/32-changing-land.md).
 
 use gc_sim::structures::{BuildingStats, Role};
 use gc_sim::{BuildingId, PlayerId, World};
@@ -24,6 +28,9 @@ pub const WIDE_GAP: i32 = 3;
 pub const LANE: f32 = 2.5;
 /// How far out from `near` a spot is looked for, in tiles.
 pub const REACH: i32 = 18;
+/// How many rings further out than the nearest overgrown spot an open one
+/// is still preferred.
+pub const OPEN_FIRST: i32 = 6;
 
 /// Footprint `[x, y, width, depth]` in tiles.
 pub type Foot = [i32; 4];
@@ -59,11 +66,33 @@ pub fn spot_for(
                 gap,
             )
         }));
+        // Buildings paid for and waiting on their ground being cleared.
+        taken.extend(
+            world
+                .pledged()
+                .filter(|p| p.0 == party)
+                .filter_map(|(_, b, tile, turn)| {
+                    let b = table.get(usize::from(b))?;
+                    let gap = if small && is_small(b.role) {
+                        GAP
+                    } else {
+                        WIDE_GAP
+                    };
+                    Some((b.footprint(tile, turn), gap))
+                }),
+        );
     }
     let cx = (near.x - w as f32 / 2.0).round() as i32;
     let cy = (near.y - d as f32 / 2.0).round() as i32;
     let mid = |t: (i32, i32)| Vec2::new(t.0 as f32 + w as f32 / 2.0, t.1 as f32 + d as f32 / 2.0);
+    // The nearest spot on overgrown ground, and the ring it was found on.
+    let mut overgrown: Option<((i32, i32), i32)> = None;
     for r in 0..=REACH {
+        if let Some((t, at)) = overgrown
+            && r > at + OPEN_FIRST
+        {
+            return Some(t);
+        }
         // The cheap checks first, then the ground (which looks at every
         // regiment) only until the nearest spot that passes.
         let mut open: Vec<((i32, i32), f32)> = ring(cx, cy, r)
@@ -76,14 +105,19 @@ pub fn spot_for(
             .map(|t| (t, mid(t).distance(near)))
             .collect();
         open.sort_by(|a, b| a.1.total_cmp(&b.1));
-        if let Some(&(t, _)) = open
-            .iter()
-            .find(|(t, _)| world.can_lay(party, building, *t, 0).is_ok())
-        {
-            return Some(t);
+        for &(t, _) in &open {
+            let grown = world.overgrown([t.0, t.1, w, d]);
+            // Only the nearest overgrown spot is wanted.
+            if grown && overgrown.is_some() || world.can_lay(party, building, t, 0).is_err() {
+                continue;
+            }
+            if !grown {
+                return Some(t);
+            }
+            overgrown = Some((t, r));
         }
     }
-    None
+    overgrown.map(|(t, _)| t)
 }
 
 /// Tiles on the square ring `r` steps out from `(x, y)`.

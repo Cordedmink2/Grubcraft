@@ -117,6 +117,7 @@ fn matches_golden_hashes_on_terrain() {
         heights: &heights,
         water_level: 256,
         cover: &[],
+        growth: &[],
     };
     let got = run_on(&[], ground);
     assert_eq!(got, run_on(&[], ground));

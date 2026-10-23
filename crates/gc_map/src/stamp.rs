@@ -241,6 +241,7 @@ impl Map {
         map.thicket = thicket;
         map.land = land;
         map.habitat = habitat;
+        map.settle_growth();
         map.name.clone_from(&def.name);
         map.size = Some(def.size);
         map.players = def.players;

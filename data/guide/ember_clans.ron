@@ -12,7 +12,7 @@
     buildings: [
         (
             name: "Clan Hall",
-            summary: "Your starting base: Hands drop Grub and Marrow here, it trains new Hands, and regiments reinforce beside it. It is Fortified, so rams hit it for triple damage. Upgrade it to the Castle Keep once income allows; that opens samurai, cavalry, rocket carts and a second hero.",
+            summary: "Your starting base: Hands drop Grub and Marrow here, it trains new Hands, and regiments reinforce beside it. It is Fortified, so rams hit it for triple damage. Upgrade it to the Castle Keep once income allows; that opens samurai, cavalry, rocket carts and a second hero. Workers clear woods and scrub (S) to make room; cleared ground is open.",
             notes: [
                 ("Castle Keep", "The gate to the mid game: samurai, cavalry, rocket carts, War Kites and a second hero. It costs Marrow, so claim a Marrow vein first."),
             ],
@@ -46,7 +46,7 @@
         ),
         (
             name: "Outpost Hall",
-            summary: "A cheaper hall for expansions: a drop-off for Grub and Marrow and a reinforcement point beside a far seep or vein. It trains nothing and cannot be upgraded, so it is a forward base rather than a second home. Build it when home seeps run low or to claim Marrow.",
+            summary: "A cheaper hall for expansions: a drop-off for Grub and Marrow and a reinforcement point beside a far seep or vein. It trains nothing and cannot be upgraded, so it is a forward base rather than a second home. Build it when home seeps run low or to claim Marrow. Woods and scrub are cleared first, which takes the worker longer.",
             notes: [],
             tips: [
                 (icon: Flag, text: "Place it beside a far seep or Marrow vein to make a forward drop-off and reinforcement point."),
@@ -172,7 +172,7 @@
         (
             name: "Hands",
             tagline: "Worker: gathers Grub and Marrow, builds and repairs.",
-            summary: "The Clans' worker. Carries 10 Grub or 5 Marrow a trip to a Clan Hall or Granary, and builds and repairs every Clan structure. Poor fighters, so keep them out of raids. Train a steady stream early and put them on every seep.",
+            summary: "The Clans' worker. Carries 10 Grub or 5 Marrow a trip to a Clan Hall or Granary, and builds and repairs every Clan structure. Poor fighters, so keep them out of raids. Train a steady stream early and put them on every seep. They can also clear woods and scrub (S), which pays a little Grub.",
         ),
         (
             name: "Yari Ashigaru",

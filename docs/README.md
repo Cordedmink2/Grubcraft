@@ -35,6 +35,7 @@ Read in order the first time; afterwards each document stands alone.
 | 29 | [Restart plan](29-restart-plan.md) | How the work after the pause is split: eleven threads by area of code over five waves (Living Land, cinematic lighting, every soldier fights, fortifications and ideas 1 to 19), with models, effort, helpers, cost tiers, shared-file rules and the six wave 1 threads |
 | 30 | [Cinematic lighting](30-cinematic-lighting.md) | Light, air and colour as the way to a cinematic look (stage 1 built): a `Look` with five presets, sky, height fog, film curve and grade, cloud shadows, rim light, backlit foliage, baked ground occlusion and a zoom-linked camera tilt; the stages after it (clean edges, particles, camera craft, weather and night) |
 | 31 | [Surface detail](31-surface-detail.md) | Shared repeating detail textures by material (stone, wood, cloth, chitin...) layered over every building and soldier, and the stronger bake with crevice darkening, per-part tint and stronger normals (idea 21 parts 1 and 4) |
+| 32 | [Changing land](32-changing-land.md) | Ground that changes mid-match: clearing scrub, woods and thicket to grow a base (idea 22, built), the one ground-change path that burning woods, floods and rubble reuse, and later weather, night, terrain tactics and seasons |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |

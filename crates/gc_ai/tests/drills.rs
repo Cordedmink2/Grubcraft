@@ -225,6 +225,7 @@ fn run_seeded(
             heights: &sim_heights,
             water_level: (WATER_LEVEL * per_tile) as u16,
             cover: &[],
+            growth: &[],
         },
         champions: false,
     });

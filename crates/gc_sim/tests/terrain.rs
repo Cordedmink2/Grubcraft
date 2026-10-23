@@ -67,6 +67,7 @@ fn world_with(seed: u64, units: &[UnitStats], heights: &[u16], cover: &[u8]) -> 
             heights,
             water_level: WATER_LEVEL,
             cover,
+            growth: &[],
         },
         champions: false,
     })

@@ -15,7 +15,9 @@
 //! they earn on its Edicts: Rice Tax, Forced March for its soldiers, and
 //! the Banner of the Ancestors over them. The Concord side's Grub comes by
 //! trade: its caravan runs to the nearest trade post (a Trade order) and
-//! its Clerks mine only Marrow.
+//! its Clerks mine only Marrow. Its third worker, once the spare building
+//! is called off, clears the overgrown ground nearest its main building (a
+//! Clear order, docs/32-changing-land.md).
 //!
 //! The test below plays it through a recorder and checks it plays back
 //! alike after a trip through the file format. To record the golden again
@@ -51,6 +53,8 @@ const UNTRAIN_AT: u32 = 41;
 const LAY_FROM: u32 = 20 * TICKS_PER_SECOND;
 const SPARE_FROM: u32 = 80 * TICKS_PER_SECOND;
 const UPGRADE_FROM: u32 = 120 * TICKS_PER_SECOND;
+/// When the third worker clears ground near its main building.
+const CLEAR_AT: u32 = 100 * TICKS_PER_SECOND;
 /// Early enough that the soldiers fight through and see the other side's
 /// main building before the six minutes are up (moved from 150 s when
 /// battles were slowed, `gc_sim::combat::BATTLE_PACE_PERCENT`).
@@ -281,7 +285,7 @@ impl Match {
         let table = Table::new(&data);
         let map = conquest::make_map(0, 0);
         let units = conquest::unit_stats(&data);
-        let nav = map.nav_costs();
+        let nav = map.sim_nav_costs();
         let setup = MatchSetup {
             seed: SEED,
             capacities: Capacities::default(),
@@ -368,6 +372,19 @@ impl Match {
 
     fn site(&self, p: PlayerId, b: BuildingId) -> Option<(i16, i16)> {
         site(&self.world, &self.kits[usize::from(p)], p, b)
+    }
+
+    /// The north-west tile of a 3 by 3 area round the overgrown tile
+    /// nearest side `p`'s main building (`None` on a map with none).
+    fn overgrown_near(&self, p: PlayerId) -> Option<(i16, i16)> {
+        let main = self.main_of(p)?;
+        let (cx, cy) = (main.tile.0, main.tile.1);
+        let side = self.world.terrain().growth_side() as i32;
+        (0..side * side)
+            .map(|i| (i % side, i / side))
+            .filter(|&(x, y)| self.world.overgrown([x, y, 1, 1]))
+            .min_by_key(|&(x, y)| ((x - cx).pow(2) + (y - cy).pow(2), y, x))
+            .map(|(x, y)| ((x - 1) as i16, (y - 1) as i16))
     }
 
     fn nodes_near(&self, p: PlayerId, resource: Resource) -> Vec<u16> {
@@ -560,6 +577,15 @@ impl Match {
                 self.sides[usize::from(p)].called_off = true;
             }
             _ => {}
+        }
+        if t == CLEAR_AT
+            && let (Some(&w), Some(tile)) = (workers.get(builders), self.overgrown_near(p))
+        {
+            out.push(order(Command::Clear {
+                regiment: w,
+                tile,
+                size: (3, 3),
+            }));
         }
         // The soldiers march on the other side's main building (each idle
         // one, once a second), and once they have seen it through the fog,

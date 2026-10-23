@@ -149,7 +149,7 @@ mod tests {
             .map(|u| gc_match::stats_of(&u.stats))
             .collect();
         let map = gc_map::Map::generate(7, 128);
-        let nav = map.nav_costs();
+        let nav = map.sim_nav_costs();
         let setup = gc_sim::MatchSetup {
             seed: 7,
             capacities: gc_sim::Capacities::default(),

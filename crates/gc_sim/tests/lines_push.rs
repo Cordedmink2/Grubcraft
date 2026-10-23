@@ -105,6 +105,7 @@ fn world(behind: Behind) -> World {
             // Ignored on flat maps.
             water_level: HEIGHT_UNITS as u16,
             cover: &[],
+            growth: &[],
         },
         champions: false,
     })

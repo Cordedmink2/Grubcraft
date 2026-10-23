@@ -648,7 +648,7 @@ pub(crate) mod tests {
         let (yumi, _) = data.unit_by_name("Yumi Ashigaru").unwrap();
         let (pikes, _) = data.unit_by_name("Bone Pikes").unwrap();
         let heightmap = Heightmap::generate(1, MAP);
-        let nav = heightmap.nav_costs();
+        let nav = heightmap.sim_nav_costs();
         let fielded = |setup: &MatchStart| {
             let mut minds = Minds::new(ai_terrain(&heightmap, &nav));
             let mut out = Vec::new();
@@ -705,7 +705,7 @@ pub(crate) mod tests {
             points,
         } = crate::Tables::new(data);
         let heightmap = Heightmap::generate(3, MAP);
-        let nav = heightmap.nav_costs();
+        let nav = heightmap.sim_nav_costs();
         let start = |setup: &MatchStart| {
             let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
             let mut world = World::new(&MatchSetup {
@@ -798,7 +798,7 @@ pub(crate) mod tests {
             points,
         } = crate::Tables::new(data);
         let heightmap = Heightmap::generate(3, MAP);
-        let nav = heightmap.nav_costs();
+        let nav = heightmap.sim_nav_costs();
         let ai = Some(Difficulty::Recruit);
         // Grand Battle armies are wider than the room between neighbours on
         // this map: their zones only hold the deployment, and may touch.
@@ -862,6 +862,7 @@ pub(crate) mod tests {
         if std::env::var("AI_COVER").as_deref() == Ok("off") {
             map.cover.clear();
             map.thicket.clear();
+            map.settle_growth();
         }
         // `AI_LIVE` thinks as in a real game (for measuring what the minds
         // cost the game's thread): the battle may not play out the same way

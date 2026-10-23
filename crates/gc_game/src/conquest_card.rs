@@ -2,7 +2,7 @@
 //! grid offers for a selected building, for workers and in their build
 //! menu, and carrying it out. The orders themselves are the simulation's
 //! (`Command::Build`, `Train`, `Upgrade`, `CallOff`, `Untrain`, `Rally`,
-//! `Gather`, `Construct` and `Trade`).
+//! `Gather`, `Construct`, `Trade` and `Clear`).
 
 use std::fmt::Write;
 
@@ -21,6 +21,8 @@ use crate::{Running, buildings, from_fx_vec, fx_vec, sounds};
 
 /// A worker's Build button: F, the special slot.
 pub const SLOT_BUILD: usize = 7;
+/// A worker's Clear button (S): fell the woods and grub out scrub.
+const SLOT_CLEAR: usize = 5;
 /// A worker's Expand button (D): lay a new main building.
 const SLOT_EXPAND: usize = 6;
 /// A building's last slot (V): its tier upgrade, or calling it off.
@@ -36,6 +38,8 @@ const POST_REACH: f32 = 3.0;
 pub enum Action {
     /// Open the workers' build menu.
     OpenBuild,
+    /// Choose ground for the workers to clear.
+    Clear,
     /// Choose where a worker lays this building.
     Lay(BuildingId),
     /// Queue this regiment at the selected building.
@@ -87,6 +91,7 @@ impl Running {
         })?;
         if !self.hud.build_menu {
             slots[SLOT_BUILD] = Some(Action::OpenBuild);
+            slots[SLOT_CLEAR] = Some(Action::Clear);
             slots[SLOT_EXPAND] = self.buildings.expansion(faction).map(Action::Lay);
             return Some(Card {
                 slots,
@@ -136,7 +141,7 @@ impl Running {
             Action::Lay(b) => self.world.may_lay(side, b).err(),
             Action::Train(u) => structure.and_then(|h| self.world.can_train(side, h, u).err()),
             Action::Upgrade(_) => structure.and_then(|h| self.world.can_upgrade(side, h).err()),
-            Action::OpenBuild | Action::CallOff => None,
+            Action::OpenBuild | Action::Clear | Action::CallOff => None,
         }
         .map(buildings::why)
     }
@@ -161,6 +166,10 @@ impl Running {
                 Action::OpenBuild => {
                     label.push_str("Build");
                     detail.push('B');
+                }
+                Action::Clear => {
+                    label.push_str("Clear");
+                    detail.push('S');
                 }
                 Action::Lay(b) => {
                     if let Some(s) = self.buildings.stats.get(usize::from(b)) {
@@ -190,7 +199,11 @@ impl Running {
                     let _ = write!(detail, "{CANCEL_REFUND_PERCENT}%");
                 }
             }
-            let armed = matches!(action, Action::Lay(b) if self.hud.armed == Some(Armed::Lay(b)));
+            let armed = match action {
+                Action::Lay(b) => self.hud.armed == Some(Armed::Lay(b)),
+                Action::Clear => self.hud.armed == Some(Armed::Clear),
+                _ => false,
+            };
             states[i] = if armed {
                 SlotState::Armed
             } else if self.blocked(action).is_some() {
@@ -218,6 +231,16 @@ impl Running {
         match action {
             Action::OpenBuild => {
                 self.set_build_menu(true);
+                return true;
+            }
+            Action::Clear => {
+                // Pressing it again puts it down.
+                if self.hud.armed == Some(Armed::Clear) {
+                    self.hud.armed = None;
+                } else {
+                    self.hud.armed = Some(Armed::Clear);
+                    self.say("Drag over the ground to clear.".into());
+                }
                 return true;
             }
             Action::Lay(b) => {

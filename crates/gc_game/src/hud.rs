@@ -49,6 +49,8 @@ pub enum Armed {
     Attack,
     /// Conquest: where a worker lays this building.
     Lay(gc_sim::BuildingId),
+    /// Conquest: the ground a worker clears, chosen by a left-drag.
+    Clear,
     /// Conquest: the target of this faction power (its place in the
     /// powers table).
     Power(u8),
@@ -628,6 +630,9 @@ impl Running {
         let picked_structure = self.picked_structure();
         if self.selected_workers().next().is_none() {
             self.set_build_menu(false);
+            if self.hud.armed == Some(Armed::Clear) {
+                self.hud.armed = None;
+            }
         }
         let mut card_labels = std::mem::take(&mut self.hud.card_labels);
         let mut card_details = std::mem::take(&mut self.hud.card_details);
@@ -835,7 +840,7 @@ impl Running {
         match hud.armed {
             Some(Armed::Move) => grid[SLOT_MOVE].state = SlotState::Armed,
             Some(Armed::Attack) => grid[SLOT_ATTACK].state = SlotState::Armed,
-            Some(Armed::Lay(_) | Armed::Power(_)) | None => {}
+            Some(Armed::Lay(_) | Armed::Clear | Armed::Power(_)) | None => {}
         }
         if let Some(Some(f)) = self.shown_formation {
             grid[SLOT_FORMATION].detail = f.name();
@@ -1026,6 +1031,7 @@ impl Running {
         if let Some(text) = (self.power_hint())
             .or_else(|| self.ride_hint())
             .or_else(|| self.place_hint())
+            .or_else(|| self.clearing_hint())
         {
             draw_hint(&mut self.hud.draw, screen, &text);
         }
@@ -1213,6 +1219,7 @@ impl Running {
         // A click that finds nothing to attack keeps the order armed.
         match armed {
             Armed::Lay(b) => return self.finish_laying(b),
+            Armed::Clear => return self.finish_clearing(),
             Armed::Power(power) => return self.finish_power(power),
             Armed::Move => match self.ground_under_cursor() {
                 Some(p) => self.issue_group_order(move_order(p)),
@@ -1716,9 +1723,13 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
 fn card_look(action: Option<Action>) -> (Icon, &'static str) {
     match action {
         Some(Action::OpenBuild) => (Icon::Hammer, "Open the build menu for your workers."),
+        Some(Action::Clear) => (
+            Icon::Hammer,
+            "Workers fell woods and grub out scrub; timber pays a little Grub. Drag over the ground, or click one tile. Cleared ground no longer hides troops or slows them.",
+        ),
         Some(Action::Lay(_)) => (
             Icon::Hammer,
-            "A worker lays this building. Then click where.",
+            "A worker lays this building. Then click where. Woods and scrub are cleared first, which takes longer.",
         ),
         Some(Action::Train(_)) => (Icon::Flag, "Train this regiment at the building."),
         Some(Action::Upgrade(_)) => (Icon::Ultimate, "Raise the building to its next tier."),

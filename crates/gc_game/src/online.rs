@@ -119,6 +119,7 @@ mod tests {
             heights,
             water_level,
             cover: &[],
+            growth: &[],
         };
         let base = map_hash(&a, &ground(&heights, 2));
         assert_ne!(base, map_hash(&a, &ground(&raised, 2)));
@@ -130,6 +131,7 @@ mod tests {
         grass[500] = 1;
         let covered = |cover| gc_sim::Ground {
             cover,
+            growth: &[],
             ..ground(&heights, 2)
         };
         assert_ne!(base, map_hash(&a, &covered(&wood)));

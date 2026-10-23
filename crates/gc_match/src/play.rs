@@ -76,7 +76,7 @@ impl Match {
         deploy: bool,
         record: Option<String>,
     ) -> (Match, Vec<PlayerCommand>) {
-        let nav = map.nav_costs();
+        let nav = map.sim_nav_costs();
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
         let match_setup = MatchSetup {
             seed,

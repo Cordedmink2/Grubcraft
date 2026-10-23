@@ -482,6 +482,10 @@ pub struct Scenery {
     /// Tiles under a building, one bit each, and the chunks holding any.
     occupied: Vec<u64>,
     occupied_chunks: Vec<bool>,
+    /// Tiles cleared of trees and bushes during the match, one bit each,
+    /// and the chunks holding any ([`Scenery::fell`]).
+    felled: Vec<u64>,
+    felled_chunks: Vec<bool>,
     rects: Vec<Rect>,
     spare: Vec<Rect>,
     /// The extra models, set each frame ([`Scenery::set_extras`]), and
@@ -518,6 +522,8 @@ impl Scenery {
             chunks: Vec::new(),
             occupied: vec![0; (n as usize * n as usize).div_ceil(64)],
             occupied_chunks: vec![false; (side * side) as usize],
+            felled: vec![0; (n as usize * n as usize).div_ceil(64)],
+            felled_chunks: vec![false; (side * side) as usize],
             rects: Vec::new(),
             spare: Vec::new(),
             extras: Vec::new(),
@@ -585,6 +591,27 @@ impl Scenery {
                 }
             }
         }
+    }
+
+    /// Take the trees and bushes off these tiles, which were cleared (the
+    /// simulation's `Event::Cleared`). Rocks and grass stay. Cheap: it only
+    /// marks the tiles, and the frame skips what stands on them.
+    pub fn fell(&mut self, tiles: impl Iterator<Item = (i32, i32)>) {
+        let n = self.tiles as i32;
+        for (x, y) in tiles {
+            if !(0..n).contains(&x) || !(0..n).contains(&y) {
+                continue;
+            }
+            let i = y as usize * n as usize + x as usize;
+            self.felled[i / 64] |= 1 << (i % 64);
+            self.felled_chunks[((y as u32 / CHUNK) * self.side + x as u32 / CHUNK) as usize] = true;
+        }
+    }
+
+    /// Put every felled tree and bush back (a new match on the same map).
+    pub fn regrow(&mut self) {
+        self.felled.fill(0);
+        self.felled_chunks.fill(false);
     }
 
     /// The extra models to draw with the next frames, replacing the last
@@ -658,6 +685,8 @@ impl Scenery {
             chunks,
             occupied,
             occupied_chunks,
+            felled,
+            felled_chunks,
             extras,
             extra_bins,
             facings,
@@ -672,6 +701,7 @@ impl Scenery {
             let chunk = &chunks[n.chunk as usize];
             let (ox, oy) = ((n.chunk % *side) * CHUNK, (n.chunk / *side) * CHUNK);
             let blocked = occupied_chunks[n.chunk as usize];
+            let felling = felled_chunks[n.chunk as usize];
             for (class, lod) in n.lods.iter().enumerate() {
                 let Some(lod) = *lod else { continue };
                 for p in &chunk.classes[class] {
@@ -683,6 +713,15 @@ impl Scenery {
                         let ty = oy + u32::from(p.y) / STEPS as u32;
                         let i = ty as usize * *tiles as usize + tx as usize;
                         if occupied[i / 64] >> (i % 64) & 1 != 0 {
+                            continue;
+                        }
+                    }
+                    // Cleared ground keeps its rocks and grass only.
+                    if felling && class < 2 && !models.info[usize::from(p.model)].rock {
+                        let tx = ox + u32::from(p.x) / STEPS as u32;
+                        let ty = oy + u32::from(p.y) / STEPS as u32;
+                        let i = ty as usize * *tiles as usize + tx as usize;
+                        if felled[i / 64] >> (i % 64) & 1 != 0 {
                             continue;
                         }
                     }
@@ -1544,6 +1583,7 @@ mod tests {
         }
         s.side = reps as u32;
         s.occupied_chunks = vec![false; reps];
+        s.felled_chunks = vec![false; reps];
         let (i, b) = s.frame(Vec2::new(8.0, 8.0), 0.0, true, &Cull::EVERYTHING);
         assert!(i.len() <= MAX_SCENERY_INSTANCES && !i.is_empty());
         let (i, b) = (i.to_vec(), b.to_vec());
@@ -1568,6 +1608,34 @@ mod tests {
         assert_eq!(
             s.frame(focus, 10.0, true, &Cull::EVERYTHING).0.len(),
             before
+        );
+    }
+
+    #[test]
+    fn felled_tiles_lose_their_trees_and_come_back_with_a_new_match() {
+        let mut w = World::new();
+        w.cover = vec![2; w.cover.len()];
+        let mut s = w.build(7, &models());
+        let focus = Vec2::new(20.0, 20.0);
+        let inside = |i: &SceneryInstance| {
+            (14.0..20.0).contains(&i.pos[0]) && (14.0..20.0).contains(&i.pos[1])
+        };
+        let before = s.frame(focus, 10.0, true, &Cull::EVERYTHING).0.to_vec();
+        assert!(before.iter().any(inside));
+        let tiles = (14..20).flat_map(|y| (14..20).map(move |x| (x, y)));
+        s.fell(tiles.chain([(-3, 4), (9999, 2)]));
+        let after = s.frame(focus, 10.0, true, &Cull::EVERYTHING).0.to_vec();
+        assert!(after.len() < before.len());
+        // Only the trees and bushes went: what stands elsewhere is untouched.
+        assert_eq!(
+            after.len(),
+            before.len() - before.iter().filter(|i| inside(i)).count()
+                + after.iter().filter(|i| inside(i)).count()
+        );
+        s.regrow();
+        assert_eq!(
+            s.frame(focus, 10.0, true, &Cull::EVERYTHING).0.len(),
+            before.len()
         );
     }
 

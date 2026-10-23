@@ -4,7 +4,7 @@
     buildings: [
         (
             name: "Hive",
-            summary: "Your starting base. It holds 3 larvae and spawns one every 12 seconds, and every regiment hatches from a larva, so larvae often limit your army before Grub does. Its root-veins carry Grub from your seeps. Upgrade to the Great Hive for evolutions, flyers and artillery.",
+            summary: "Your starting base. It holds 3 larvae and spawns one every 12 seconds, and every regiment hatches from a larva, so larvae often limit your army before Grub does. Its root-veins carry Grub from your seeps. Upgrade to the Great Hive for evolutions, flyers and artillery. Workers clear woods and scrub (S) to make room; cleared ground is open.",
             notes: [
                 ("Great Hive", "The gate to the mid game: the Chrysalis Chamber's evolutions, Drone-Moths, the Broodmother Bulk and a second hero. Upgrading uses no Gnawer, but it costs Marrow."),
             ],
@@ -111,7 +111,7 @@
         (
             name: "Gnawer",
             tagline: "Worker: burrows into seeps, or is spent to grow a building.",
-            summary: "The Brood's worker. Burrow In sends it into a seep (5 at most), hidden and safe, delivering Grub down the vein network. Grow Structure uses it up to start a building, so every building costs a Gnawer as well as Grub. Hatch plenty early.",
+            summary: "The Brood's worker. Burrow In sends it into a seep (5 at most), hidden and safe, delivering Grub down the vein network. Grow Structure uses it up to start a building, so every building costs a Gnawer as well as Grub. Hatch plenty early. They can also clear woods and scrub (S), which pays a little Grub.",
         ),
         (
             name: "Skitterlings",

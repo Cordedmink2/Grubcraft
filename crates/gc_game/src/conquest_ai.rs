@@ -301,7 +301,7 @@ mod tests {
         let table = Table::new(&data);
         let map = conquest::make_map(choice, seed);
         let units = conquest::unit_stats(&data);
-        let nav = map.nav_costs();
+        let nav = map.sim_nav_costs();
         let teams: Vec<u8> = (0..factions.len() as u8).collect();
         let sides: Vec<(Faction, u8)> = factions.iter().copied().zip(teams.clone()).collect();
         let setup = MatchSetup {

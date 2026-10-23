@@ -4,7 +4,7 @@
     buildings: [
         (
             name: "Counting House",
-            summary: "Your starting base. It trains Ledger Clerks and Caravans, receives the Marrow your Clerks mine, and is where caravan routes start. It is Fortified. Upgrade it to the Exchange for undead heavies, cavalry, wraiths and a second hero.",
+            summary: "Your starting base. It trains Ledger Clerks and Caravans, receives the Marrow your Clerks mine, and is where caravan routes start. It is Fortified. Upgrade it to the Exchange for undead heavies, cavalry, wraiths and a second hero. Workers clear woods and scrub (S) to make room; cleared ground is open.",
             notes: [
                 ("Exchange", "The mid game: Gravewardens, Debt Collectors, Lantern Wraiths and a second hero. It costs Marrow, so put Clerks on a vein first."),
             ],
@@ -121,7 +121,7 @@
         (
             name: "Ledger Clerk",
             tagline: "Worker: mines Marrow, builds and repairs.",
-            summary: "The Concord's worker. Carries 5 Marrow per trip to a Counting House (your Grub comes from caravans, Tithe and trade), and builds and repairs Concord structures. Weak fighters, so keep them out of raids.",
+            summary: "The Concord's worker. Carries 5 Marrow per trip to a Counting House (your Grub comes from caravans, Tithe and trade), and builds and repairs Concord structures. Weak fighters, so keep them out of raids. They can also clear woods and scrub (S), which pays a little Grub.",
         ),
         (
             name: "Caravan",

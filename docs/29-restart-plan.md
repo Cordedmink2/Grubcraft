@@ -22,6 +22,7 @@ Mario (2026-10-23): "Make it so that tree/scrub etc clearance is a thing for exp
 - **Cleared ground changes the battlefield.** It becomes open ground with stumps: nobody hides there any more, troops no longer slow down in it, and cleared thicket stops blocking the way. Felled timber pays a little Grub.
 - **Each faction clears its own way**, to confirm with Mario in the design note. For example, the Clans fell and haul timber, the Concord burns it (fast, leaving scorched ground), the Choir shatters it with resonance, and Brood Gnawers eat it.
 - **Maps and computer players.** Living Land grows woods and scrub round every start, with equal open and clearable room for each player (T2's fairness work). Computer players clear ground as they expand.
+- **Settled (2026-10-24, T9's design note, [32](32-changing-land.md)):** scrub 3 s, woods 8 s, thicket 15 s a tile for one worker; woods pay 3 Grub, thicket 5. Shared rules built first; Mario chose all four faction twists as proposed, built next.
 - **On screen.** Workers chop with their own moves, trees shake and fall, logs pile up, and stumps and bare earth stay behind. The moves and models are Sonnet 3D work.
 - **How it works.** One runtime ground-change command updates a tile's cover and, for thicket, the walking grid through T1's reopen hook. It goes through the lockstep like every other order, and burning woods, flooded fords and siege rubble reuse it later.
 

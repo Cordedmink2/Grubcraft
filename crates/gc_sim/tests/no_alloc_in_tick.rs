@@ -63,6 +63,7 @@ fn ticking_never_allocates() {
             heights: &[],
             water_level: 0,
             cover: &cover,
+            growth: &[],
         },
         champions: true,
     });

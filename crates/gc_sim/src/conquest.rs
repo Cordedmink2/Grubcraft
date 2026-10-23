@@ -11,6 +11,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::FxVec2;
 
+use crate::clearing::{Clearing, Pledge};
 use crate::economy::{Bank, Economy, NodeSetup, TradePost};
 use crate::honor::Honor;
 use crate::nav::Nav;
@@ -22,6 +23,7 @@ use crate::structures::{
     Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, NEEDS_POWER, Refusal, Role,
     StructureHandle, Structures, Work,
 };
+use crate::terrain::{Growth, Terrain};
 use crate::verdict::Victories;
 use crate::{MAX_PARTIES, PlayerId, StateHasher, UnitId, UnitStats};
 
@@ -181,6 +183,19 @@ pub(crate) struct Conquest {
     pub(crate) powers: Powers,
     pub(crate) meters: [Meter; MAX_PARTIES],
     pub(crate) honor: Honor,
+    /// Workers clearing land (see [`crate::clearing`]).
+    pub(crate) clearing: Clearing,
+}
+
+/// Whether the footprints `a` and `b` (`[x, y, w, d]`) share a tile.
+fn overlaps(a: [i32; 4], b: [i32; 4]) -> bool {
+    a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]
+}
+
+/// Whether anything grows on the footprint `[x, y, w, d]` that must be
+/// cleared before a building goes up there.
+pub(crate) fn overgrown(terrain: &Terrain, [x, y, w, d]: [i32; 4]) -> bool {
+    (y..y + d).any(|ty| (x..x + w).any(|tx| terrain.growth(tx, ty) != Growth::Open))
 }
 
 impl Conquest {
@@ -198,6 +213,7 @@ impl Conquest {
             powers: Powers::new(setup.powers),
             meters: setup.meters,
             honor: Honor::default(),
+            clearing: Clearing::new(regiments, setup.build_percent),
         }
     }
 
@@ -326,7 +342,9 @@ impl Conquest {
         turn: u8,
         nav: &Nav,
         regs: &Regiments,
+        terrain: &Terrain,
     ) -> Result<(), Refusal> {
+        let thicket = |x, y| terrain.growth(x, y) == Growth::Thicket;
         self.structures.check(
             building,
             tile,
@@ -334,12 +352,30 @@ impl Conquest {
             nav,
             regs,
             self.economy.node_positions(),
-        )
+            thicket,
+        )?;
+        // Ground paid for and still being cleared is spoken for.
+        let foot = self.footprint(building, tile, turn);
+        if self
+            .clearing
+            .pledges()
+            .any(|p| overlaps(foot, self.footprint(p.building, p.tile, p.turn)))
+        {
+            return Err(Refusal::Built);
+        }
+        Ok(())
+    }
+
+    /// The tiles a building of type `building` covers with its north-west
+    /// tile at `tile`, turned `turn` quarter turns, as `[x, y, width, depth]`.
+    fn footprint(&self, building: BuildingId, tile: (i32, i32), turn: u8) -> [i32; 4] {
+        self.structures.buildings()[usize::from(building)].footprint(tile, turn)
     }
 
     /// Whether `player` could have a worker lay a building of type
     /// `building` at `tile`, turned `turn` quarter turns, now: placement,
     /// tier and price.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn can_lay(
         &self,
         player: PlayerId,
@@ -348,8 +384,9 @@ impl Conquest {
         turn: u8,
         nav: &Nav,
         regs: &Regiments,
+        terrain: &Terrain,
     ) -> Result<(), Refusal> {
-        self.check(building, tile, turn, nav, regs)?;
+        self.check(building, tile, turn, nav, regs, terrain)?;
         self.may_lay(player, building)?;
         let b = self.structures.buildings()[usize::from(building)];
         let foot = b.footprint(tile, turn);
@@ -385,6 +422,8 @@ impl Conquest {
 
     /// Worker slot `r`, `player`'s, lays a building of type `building` at
     /// `tile`, turned `turn` quarter turns, pays for it and goes to build it.
+    /// On overgrown ground it pays now and clears the footprint first (see
+    /// [`crate::clearing`]).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn lay(
         &mut self,
@@ -395,13 +434,31 @@ impl Conquest {
         turn: u8,
         nav: &mut Nav,
         regs: &mut Regiments,
+        terrain: &Terrain,
     ) -> bool {
         if !self.unit(regs.unit[r]).worker
             || self
-                .can_lay(player, building, tile, turn, nav, regs)
+                .can_lay(player, building, tile, turn, nav, regs, terrain)
                 .is_err()
         {
             return false;
+        }
+        let b = self.structures.buildings()[usize::from(building)];
+        let foot = b.footprint(tile, turn);
+        let (grub, marrow) = (u32::from(b.cost_grub), u32::from(b.cost_marrow));
+        if overgrown(terrain, foot) {
+            self.stop_work(r);
+            self.economy.spend(player, grub, marrow);
+            let pledge = Pledge {
+                owner: player,
+                building,
+                tile,
+                turn,
+                grub,
+                marrow,
+            };
+            self.clearing.start(regs, r, foot, Some(pledge));
+            return true;
         }
         let Some(h) = self
             .structures
@@ -409,11 +466,65 @@ impl Conquest {
         else {
             return false;
         };
-        let b = self.structures.buildings()[usize::from(building)];
-        self.economy
-            .spend(player, u32::from(b.cost_grub), u32::from(b.cost_marrow));
+        self.economy.spend(player, grub, marrow);
         self.stop_work(r);
         self.structures.send(regs, r, h, Work::Build);
+        true
+    }
+
+    /// Worker slot `r` has cleared the footprint of `pledge`, paid for when
+    /// it was ordered: it lays the foundation and goes to build it, or, if
+    /// the ground was taken meanwhile, the price goes back.
+    pub(crate) fn lay_pledged(
+        &mut self,
+        r: usize,
+        pledge: Pledge,
+        nav: &mut Nav,
+        regs: &mut Regiments,
+        terrain: &Terrain,
+    ) {
+        let Pledge {
+            owner,
+            building,
+            tile,
+            turn,
+            ..
+        } = pledge;
+        let b = self.structures.buildings()[usize::from(building)];
+        let foot = b.footprint(tile, turn);
+        let powered = b.flags & NEEDS_POWER == 0 || self.structures.power_reaches(owner, foot);
+        let laid = (powered
+            && !overgrown(terrain, foot)
+            && self.check(building, tile, turn, nav, regs, terrain).is_ok())
+        .then(|| {
+            self.structures
+                .found(owner, building, tile, turn, nav, regs)
+        })
+        .flatten();
+        match laid {
+            Some(h) => {
+                self.stop_work(r);
+                self.structures.send(regs, r, h, Work::Build);
+            }
+            None => self.economy.refund(owner, pledge.grub, pledge.marrow),
+        }
+    }
+
+    /// Worker slot `r` clears what grows on `area` (see
+    /// [`crate::clearing`]). Refused for a unit that isn't a worker, and
+    /// for an area with nothing to clear.
+    pub(crate) fn clear(
+        &mut self,
+        regs: &mut Regiments,
+        r: usize,
+        area: [i32; 4],
+        terrain: &Terrain,
+    ) -> bool {
+        if !self.unit(regs.unit[r]).worker || !overgrown(terrain, area) {
+            return false;
+        }
+        self.stop_work(r);
+        self.clearing.start(regs, r, area, None);
         true
     }
 
@@ -595,6 +706,10 @@ impl Conquest {
     pub(crate) fn stop_work(&mut self, r: usize) {
         self.structures.stop(r);
         self.economy.stop(r);
+        // A building paid for but not yet laid is called off in full.
+        if let Some(p) = self.clearing.stop(r) {
+            self.economy.refund(p.owner, p.grub, p.marrow);
+        }
     }
 
     /// The parties in `out` leave the field: their regiments, then their

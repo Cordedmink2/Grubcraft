@@ -494,7 +494,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         units, factions, ..
     } = gc_match::Tables::new(&data);
     let heightmap = gc_map::Map::generate(golden.seed, golden.map_tiles);
-    let nav = heightmap.nav_costs();
+    let nav = heightmap.sim_nav_costs();
     let teams: Vec<u8> = golden.sides.iter().map(|s| s.team).collect();
     let setup = MatchSetup {
         seed: golden.seed,

@@ -47,7 +47,7 @@ impl Field {
             seed,
         }
         .make();
-        let nav = map.nav_costs();
+        let nav = map.sim_nav_costs();
         let side = map.tiles as i32 * CELLS_PER_TILE;
         Field { map, nav, side }
     }

@@ -12,6 +12,7 @@ Every faction's buildings with first-pass numbers for Conquest (M3): cost, build
 
 - **Times** are seconds at Standard tempo. The lobby's tempo setting scales them like research ([04 · Economy](04-economy.md#tempo-setting)).
 - **Size** is the footprint in tiles, across and deep. Buildings are 2×2 to 5×5. Walls are one tile thick.
+- **Ground** must be clear: a building can't rise on scrub, woods or thicket. Laying one there is allowed; the worker pays, clears the footprint first, then lays the foundation (see [31 · Changing land](32-changing-land.md)).
 - **Supply** is what a building adds to the cap. Only the buildings that docs/04 lists add any. For a main building's upgrades it is the total for that tier: each tier adds 10. Every faction starts on 12; the Choir's Spire gives 4 and its two starting Resonators give the rest.
 - **Tier** is the main-building tier needed to place the building. A building's tier is never above the tier of the units it trains, so nothing has to wait for a building to train a unit its tier already allows.
 - **Tier 1 costs no Marrow.** This holds for buildings as it does for units, so a player who loses their Marrow vein can still rebuild a base.

@@ -64,7 +64,7 @@ pub const MIN_TILES: i32 = crate::wilds::MIN_TILES;
 /// What grows on a tile: each biome split by height, wetness, which way a
 /// slope faces, rock and the age of the woods (docs/27, "Biome depth").
 /// Drawn, and the choice of woods, grass and thicket; the simulation reads
-/// only the cover.
+/// the cover, and scrub edge as scrub to clear (`Map::settle_growth`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[repr(u8)]
 pub enum Habitat {

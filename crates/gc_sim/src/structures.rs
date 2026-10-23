@@ -474,9 +474,9 @@ const HP_SCALE: u32 = 100;
 const MELEE_REACH: Fx = Fx::from_int(2);
 /// Ticks a regiment that can't get at its building waits before trying
 /// again.
-const RETRY_TICKS: u16 = TICKS_PER_SECOND as u16;
+pub(crate) const RETRY_TICKS: u16 = TICKS_PER_SECOND as u16;
 /// Tries in a row that bring a regiment no nearer before it gives up.
-const STALLS: u8 = 3;
+pub(crate) const STALLS: u8 = 3;
 /// A building goes up at this percent of its hit points and fills up as
 /// it is built.
 const FOUNDATION_PERCENT: u32 = 10;
@@ -1031,6 +1031,8 @@ impl Structures {
     /// tile at `tile`, turned `turn` quarter turns: on the map, on ground
     /// regiments can walk, clear of other buildings (see `Nav::footing`),
     /// and with no regiment standing on it or node (`nodes`) within it.
+    /// Tiles `thicket` names may be thicket: it is cleared first
+    /// (docs/32-changing-land.md).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn check(
         &self,
@@ -1040,6 +1042,7 @@ impl Structures {
         nav: &Nav,
         regs: &Regiments,
         nodes: &[FxVec2],
+        thicket: impl Fn(i32, i32) -> bool,
     ) -> Result<(), Refusal> {
         let b = self
             .buildings
@@ -1049,7 +1052,7 @@ impl Structures {
             return Err(Refusal::Unknown);
         }
         let foot @ [_, _, w, d] = b.footprint(tile, turn);
-        nav.footing(foot)?;
+        nav.footing(foot, thicket)?;
         // No regiment's centre on ground it couldn't stand on once the
         // building is up.
         let margin = Fx::from_ratio(i32::from(CLEARANCE), CELLS_PER_TILE);

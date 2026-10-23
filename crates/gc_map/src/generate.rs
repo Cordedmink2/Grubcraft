@@ -110,6 +110,7 @@ impl Map {
         map.name = format!("Seed {seed}");
         map.players = START_PLATEAUS as u8;
         map.cover = map.grow_cover(seed);
+        map.settle_growth();
         map.objects = (0..)
             .zip(plateaus(tiles))
             .map(|(owner, at)| Placed {
@@ -357,16 +358,16 @@ mod tests {
         };
         assert_eq!(
             fingerprint(1, 256),
-            (0x7dca_be37_90bd_1f7b, 0x74c0_f127_3369_0296)
+            (0x7dca_be37_90bd_1f7b, 0xfc37_4683_efa8_a9fa)
         );
         assert_eq!(
             fingerprint(42, 256),
-            (0x8f2d_3f4f_0515_4bee, 0x2f45_a429_cb5c_bc85)
+            (0x8f2d_3f4f_0515_4bee, 0x5dac_62a7_2065_0a9f)
         );
         // The size the field-8000pt-2v2 golden replay plays on.
         assert_eq!(
             fingerprint(1, 384),
-            (0x276a_c467_503d_c5b9, 0x705a_6793_4b4a_d292)
+            (0x276a_c467_503d_c5b9, 0x0c94_b228_d3e8_0ad6)
         );
     }
 

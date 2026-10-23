@@ -551,7 +551,7 @@ mod tests {
         let data = data();
         let table = Table::new(&data);
         let stats = unit_stats(&data);
-        let nav = map.nav_costs();
+        let nav = map.sim_nav_costs();
         let mut world = World::new(&MatchSetup {
             seed: 11,
             capacities: Capacities::default(),

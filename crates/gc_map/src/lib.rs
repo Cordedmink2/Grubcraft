@@ -185,8 +185,8 @@ mod tests {
     #[test]
     fn shipped_maps_are_the_same_on_every_machine() {
         let hash = |name| Map::from_def(&shipped(name).unwrap()).hash();
-        assert_eq!(hash("ribcage_pass"), 0x70a5_cdda_6c76_7fb4);
-        assert_eq!(hash("four_teeth"), 0x7628_f079_c3f5_f126);
+        assert_eq!(hash("ribcage_pass"), 0x3dd0_e864_31a5_88c4);
+        assert_eq!(hash("four_teeth"), 0x44a9_affb_53d9_a5a6);
     }
 
     /// Choice 0 is the seeded map, as it has always been.
@@ -258,10 +258,10 @@ mod tests {
             .make()
             .hash()
         };
-        assert_eq!(hash(1), 0x6ec3_affb_885e_d2e6);
-        assert_eq!(hash(2), 0x9e0b_d1c1_1491_b054);
-        assert_eq!(hash(3), 0xafeb_ffb7_aa74_4896);
-        assert_eq!(hash(4), 0x5e4b_ce70_42e9_fb7a);
+        assert_eq!(hash(1), 0xa2f8_4316_7491_1a36);
+        assert_eq!(hash(2), 0x5359_e1ae_9a42_f5a4);
+        assert_eq!(hash(3), 0x659c_f795_05bd_b656);
+        assert_eq!(hash(4), 0xc44a_2da5_5aeb_eb5a);
         // The Small size for five or six players too.
         let at_320 = |choice| {
             FieldMap {
@@ -272,12 +272,12 @@ mod tests {
             .make()
             .hash()
         };
-        assert_eq!(at_320(1), 0x7a27_e6ff_5bcb_e01e);
-        assert_eq!(at_320(4), 0x4806_0190_c4df_7720);
+        assert_eq!(at_320(1), 0x1175_1bfe_378b_818e);
+        assert_eq!(at_320(4), 0x4810_c8ad_25ff_bc7c);
         // Grown land: erosion and the river lines are the parts most
         // likely to drift, and each of the dials.
-        assert_eq!(hash(GROWN + 1), 0x3768_8fe3_aefe_b76c);
-        assert_eq!(hash(GROWN + 2), 0x9e6d_60d5_dbb7_a60c);
-        assert_eq!(hash(GROWN + 3), 0x96a3_0209_6ec2_9390);
+        assert_eq!(hash(GROWN + 1), 0x4e0d_d838_2c3c_18e2);
+        assert_eq!(hash(GROWN + 2), 0x018d_aecb_df40_2342);
+        assert_eq!(hash(GROWN + 3), 0xfebc_be13_4da1_db26);
     }
 }

@@ -128,6 +128,7 @@
 mod army_shape;
 mod buildings;
 mod camera;
+mod clearing;
 mod conquest;
 mod conquest_ai;
 mod conquest_card;
@@ -1147,6 +1148,8 @@ struct Input {
     turn: [bool; 2],
     /// Where a left-drag (box select) started.
     left_down: Option<PhysicalPosition<f64>>,
+    /// The ground where a left-drag after the Clear button started.
+    clear_from: Option<Vec2>,
     /// Where a right-drag (line order) started: the cursor and the ground under it.
     right_down: Option<(PhysicalPosition<f64>, Vec2)>,
     middle_down: Option<PhysicalPosition<f64>>,
@@ -1276,7 +1279,7 @@ impl App {
             })
             .collect();
         let capacities = Capacities::default();
-        let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
+        let nav = tagged_alloc::scope(Tag::Map, || heightmap.sim_nav_costs());
         let blocked_marks = blocked_marks(&nav, heightmap.tiles);
         let scenery_models = scenery::load(&mut renderer).unwrap_or_else(|e| {
             logln!("grubcraft: scenery off: {e}");
@@ -1964,6 +1967,10 @@ impl Running {
             }
             (MouseButton::Left, ElementState::Pressed) => {
                 self.input.left_down = self.input.cursor;
+                // Choosing ground to clear: the drag starts on the ground.
+                self.input.clear_from = (self.hud.armed == Some(hud::Armed::Clear))
+                    .then(|| self.ground_under_cursor())
+                    .flatten();
             }
             // Q or W was pressed: this click says where (or at whom).
             (MouseButton::Left, ElementState::Released)
@@ -2851,6 +2858,7 @@ impl Running {
         if !viewing {
             self.push_placement_ghost();
             self.push_building_ghost();
+            self.push_clearing_marks();
             self.push_power_aim();
             let hm = &self.heightmap;
             (self.siege).advance(game_dt.as_secs_f32(), |p| hm.drawn_height(p.x, p.y));
@@ -3371,6 +3379,7 @@ impl Running {
             self.note_losses();
         }
         self.leave_marks();
+        self.fell_scenery();
         let took = t0.elapsed();
         self.stats.tick_time += took;
         self.stats.tick_max = self.stats.tick_max.max(took);
@@ -3997,7 +4006,7 @@ impl Running {
             stats_before = std::mem::replace(&mut self.units.stats, r.units.clone());
         }
         self.online = networked.then(|| online::Online::new(self.menu.net().is_host()));
-        let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
+        let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_nav_costs());
         if let MatchKind::Replay(r) = &kind {
             let (shown, stored) = (self.heightmap.ground(), r.setup().ground);
             if r.map_tiles != self.heightmap.tiles
@@ -4005,6 +4014,7 @@ impl Running {
                 || stored.heights != shown.heights
                 || stored.water_level != shown.water_level
                 || stored.cover != shown.cover
+                || (!stored.growth.is_empty() && stored.growth != shown.growth)
             {
                 map_note = Some(
                     "This replay's map was made by another build: the ground may look different from where the soldiers walk.",
@@ -4045,6 +4055,8 @@ impl Running {
             MatchKind::Replay(r) => r.new_world(),
             _ => World::new(&setup),
         });
+        // A new match on the same map has all its trees again.
+        self.scenery.regrow();
         // Before the recorder, which hashes the world as it starts.
         if let Some(plan) = &plan {
             let done = self.world.conquest(&plan.setup());
@@ -4215,7 +4227,7 @@ impl Running {
         });
         self.hud.set_terrain(hm);
         self.camera.map_size = hm.tiles as f32;
-        let nav = hm.nav_costs();
+        let nav = hm.sim_nav_costs();
         self.blocked_marks = blocked_marks(&nav, hm.tiles);
         // A Conquest map's trees are the same in every match on it, and on
         // every machine; a Field Battle map's follow its seed.
@@ -5254,12 +5266,13 @@ impl Running {
             return;
         };
         let colour = color_of(&self.parties, self.sandbox.side);
+        let fit = self.fit_of(&stats, tile, why);
         let hm = &self.heightmap;
         buildings::push_ghost(
             &stats,
             tile,
             self.sandbox.building_turn,
-            why.is_none(),
+            fit,
             colour,
             |x, z| hm.height_at(x, z).max(hm.water_level()),
             &mut self.instances,

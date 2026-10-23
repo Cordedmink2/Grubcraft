@@ -48,6 +48,7 @@ fn world_on(map: u32, seed: u64, units: &[UnitStats], cover: &[u8], teams: &[u8]
             heights: &[],
             water_level: 0,
             cover,
+            growth: &[],
         },
         champions: false,
     })

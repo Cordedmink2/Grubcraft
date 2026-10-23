@@ -102,7 +102,7 @@ impl Soak {
         let data = crate::data::load();
         let table = Table::new(&data);
         let units = conquest::unit_stats(&data);
-        let nav = map.nav_costs();
+        let nav = map.sim_nav_costs();
         let teams: Vec<u8> = (0..PLAYERS as u8).collect();
         let setup = MatchSetup {
             seed: SEED,

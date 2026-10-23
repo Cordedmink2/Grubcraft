@@ -988,6 +988,18 @@ impl Nav {
     /// tiles across ([`CELLS_PER_TILE`] cells per tile). Empty means an open
     /// plane with no obstacles.
     pub fn new(costs: &[u8], map_tiles: u32, regiments: usize) -> Nav {
+        Nav::standing(costs, map_tiles, regiments, core::iter::empty())
+    }
+
+    /// [`Nav::new`] with something already standing on each of `standing`'s
+    /// tiles (`[x, y, w, d]`, those on the map), as a building would
+    /// ([`Nav::set_built`]): thicket, which clearing takes away.
+    pub(crate) fn standing(
+        costs: &[u8],
+        map_tiles: u32,
+        regiments: usize,
+        standing: impl Iterator<Item = [i32; 4]>,
+    ) -> Nav {
         let grid = (!costs.is_empty()).then(|| {
             let side = map_tiles as i32 * CELLS_PER_TILE;
             assert_eq!(
@@ -995,7 +1007,7 @@ impl Nav {
                 (side * side) as usize,
                 "the nav grid must have {side} x {side} cells"
             );
-            Arc::new(Grid::build(costs, side))
+            Arc::new(Grid::build_standing(costs, side, standing))
         });
         Nav::on(grid, regiments)
     }
@@ -1160,17 +1172,25 @@ impl Nav {
 
     /// Whether a building could stand on the tiles `x..x + w` × `y..y + d`:
     /// all on the map, on ground a regiment could walk on, with no building
-    /// on them (always, with no map).
-    pub(crate) fn footing(&self, tiles: [i32; 4]) -> Result<(), Refusal> {
+    /// on them (always, with no map). Thicket stands on its tiles too (see
+    /// [`Nav::standing`]), and is cleared before a building goes up, so a
+    /// tile `thicket` says is one counts as free of it.
+    pub(crate) fn footing(
+        &self,
+        tiles: [i32; 4],
+        thicket: impl Fn(i32, i32) -> bool,
+    ) -> Result<(), Refusal> {
         let Some(g) = &self.grid else {
             return Ok(());
         };
         let [x0, y0, x1, y1] = g.cells(tiles).ok_or(Refusal::OffMap)?;
-        let cells = || (y0..y1).flat_map(move |cy| (x0..x1).map(move |cx| g.idx(cx, cy) as usize));
-        if cells().any(|i| g.ground[i] == BLOCKED) {
+        let cells = || (y0..y1).flat_map(move |cy| (x0..x1).map(move |cx| (cx, cy)));
+        let at = |(cx, cy)| g.idx(cx, cy) as usize;
+        if cells().any(|c| g.ground[at(c)] == BLOCKED) {
             return Err(Refusal::Rough);
         }
-        if cells().any(|i| g.built[i] > 0) {
+        let grown = |(cx, cy)| u8::from(thicket(cx / CELLS_PER_TILE, cy / CELLS_PER_TILE));
+        if cells().any(|c| g.built[at(c)] > 0 && g.built[at(c)] > grown(c)) {
             return Err(Refusal::Built);
         }
         Ok(())
@@ -1790,7 +1810,16 @@ fn smooth(
 }
 
 impl Grid {
+    /// The grid of the cells' `costs`, `side` cells across, with nothing
+    /// standing on it.
+    #[cfg(test)]
     fn build(costs: &[u8], side: i32) -> Grid {
+        Grid::build_standing(costs, side, core::iter::empty())
+    }
+
+    /// The grid of the cells' `costs` with something standing on each of
+    /// `standing`'s tiles, as a building would (see [`Nav::standing`]).
+    fn build_standing(costs: &[u8], side: i32, standing: impl Iterator<Item = [i32; 4]>) -> Grid {
         let n = (side * side) as usize;
         let mut grid = Grid {
             side,
@@ -1809,6 +1838,18 @@ impl Grid {
             edge_to: Vec::new(),
             edge_cost: Vec::new(),
         };
+        for t in standing {
+            let Some([x0, y0, x1, y1]) = grid.cells(t) else {
+                continue;
+            };
+            for cy in y0..y1 {
+                for cx in x0..x1 {
+                    let i = grid.idx(cx, cy) as usize;
+                    grid.built[i] = grid.built[i].saturating_add(1);
+                    grid.cost[i] = BLOCKED;
+                }
+            }
+        }
         grid.measure_clearance_in(0, 0, side, side);
         grid.number_areas();
         let partner = grid.place_portals(None);

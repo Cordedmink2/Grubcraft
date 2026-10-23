@@ -113,6 +113,7 @@ fn world(cover: &[u8]) -> World {
             heights: &[],
             water_level: 0,
             cover,
+            growth: &[],
         },
         champions: false,
     })
