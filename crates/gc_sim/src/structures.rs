@@ -32,7 +32,8 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::combat::Block;
 use crate::conquest::ConquestUnit;
 use crate::economy::Resource;
-use crate::nav::{CELLS_PER_TILE, CLEARANCE, Nav};
+use crate::gates::GateMode;
+use crate::nav::{CELLS_PER_TILE, CLEARANCE, Door, Nav};
 use crate::regiments::{Order, RegimentHandle, Regiments};
 use crate::verdict::Mains;
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
@@ -201,6 +202,8 @@ pub const TOLL: u16 = 512;
 /// Choir: its tower tolls a bell that silences enemy powers near it (see
 /// [`crate::towers`]).
 pub const SILENCES: u16 = 1024;
+/// A gate: a wall its owner's side walks through (see [`crate::gates`]).
+pub const GATE: u16 = 2048;
 /// The furthest a field or tuning reaches, in tiles.
 pub const MAX_REACH: u8 = 30;
 
@@ -237,8 +240,8 @@ pub struct BuildingStats {
     /// What it adds to its owner's supply cap.
     pub supply: u8,
     /// `DROP_OFF_*`, [`POWERS_FIELD`], [`ANTI_AIR`], [`LARVAE`], [`VEINS`],
-    /// [`NEEDS_POWER`], [`HONOR`], [`TRADE_POST`], [`TOLL`] and
-    /// [`SILENCES`] bits.
+    /// [`NEEDS_POWER`], [`HONOR`], [`TRADE_POST`], [`TOLL`], [`SILENCES`]
+    /// and [`GATE`] bits.
     pub flags: u16,
     pub attack: Option<TowerAttack>,
     /// How far its field of power ([`POWERS_FIELD`]) or its root-veins
@@ -368,6 +371,11 @@ pub struct StructureView {
     pub growing: bool,
     /// The parties that have seen it: every party outside fog of war.
     pub seen: u8,
+    /// A gate: how it is set (see [`crate::gates`]).
+    pub gate: Option<GateMode>,
+    /// A gate open to everyone (its gates swung back); a shut one still
+    /// lets its own side through unless it is Locked.
+    pub open: bool,
 }
 
 impl StructureView {
@@ -604,6 +612,11 @@ pub struct Structures {
     pub(crate) silence: Vec<u16>,
     /// Bells tolled in the last tick, for the events.
     pub(crate) tolled: Vec<StructureHandle>,
+    /// Gates, by slot (see [`crate::gates`]): how each is set, whom its
+    /// door lets through now, and ticks an Auto gate stays open.
+    pub(crate) gate: Vec<GateMode>,
+    pub(crate) gate_door: Vec<Door>,
+    pub(crate) gate_hold: Vec<u16>,
 }
 
 /// The match's building table, each made sane, and with no tier upgrade
@@ -684,6 +697,9 @@ impl Structures {
             bell: vec![0; n],
             silence: vec![0; n],
             tolled: Vec::with_capacity(n),
+            gate: vec![GateMode::Auto; n],
+            gate_door: vec![Door::default(); n],
+            gate_hold: vec![0; n],
         }
     }
 
@@ -751,6 +767,8 @@ impl Structures {
             }),
             growing: self.growing(i),
             seen: self.seen(i),
+            gate: self.is_gate(i).then_some(self.gate[i]),
+            open: self.gate_door[i].others,
         }
     }
 
@@ -858,6 +876,7 @@ impl Structures {
     /// south side as drawn, turned with it: a quarter turn puts it west.
     pub(crate) fn door(&self, i: usize, nav: &Nav) -> FxVec2 {
         let [x, y, w, d] = self.footprint(i);
+        let owner = self.owner[i];
         let (mid_x, mid_y) = (
             Fx::from_int(x) + Fx::from_ratio(w, 2),
             Fx::from_int(y) + Fx::from_ratio(d, 2),
@@ -872,7 +891,7 @@ impl Structures {
         let front = side(0);
         [side(3), side(1), side(2)]
             .into_iter()
-            .find(|&p| !nav.walkable(front) && nav.walkable(p))
+            .find(|&p| !nav.walkable(owner, front) && nav.walkable(owner, p))
             .unwrap_or(front)
     }
 
@@ -1102,6 +1121,9 @@ impl Structures {
         self.toll[i] = 0;
         self.bell[i] = 0;
         self.silence[i] = 0;
+        self.gate[i] = GateMode::Auto;
+        self.gate_door[i] = Door::default();
+        self.gate_hold[i] = 0;
         nav.set_built(self.footprint(i), true, regs);
         Some(self.handle(i))
     }
@@ -1171,6 +1193,9 @@ impl Structures {
     /// match), freeing their ground together: much cheaper than one by one.
     pub(crate) fn despawn_all(&mut self, all: &[StructureHandle], nav: &mut Nav, regs: &Regiments) {
         let slots: Vec<usize> = all.iter().filter_map(|&h| self.resolve(h)).collect();
+        for &i in &slots {
+            self.shut_door(i, nav, regs);
+        }
         let feet: Vec<[i32; 4]> = slots.iter().map(|&i| self.footprint(i)).collect();
         nav.set_built_all(&feet, false, regs);
         for i in slots {
@@ -1180,6 +1205,7 @@ impl Structures {
 
     /// Free building slot `i` (standing, or just brought to nothing).
     fn remove(&mut self, i: usize, nav: &mut Nav, regs: &Regiments) {
+        self.shut_door(i, nav, regs);
         nav.set_built(self.footprint(i), false, regs);
         self.free_slot(i);
     }
@@ -1474,6 +1500,9 @@ impl Structures {
             }
             if self.stats_of(i).attack.is_some() {
                 self.hash_tower(i, h);
+            }
+            if self.is_gate(i) {
+                self.hash_gate(i, h);
             }
         }
         h.u32(self.build_percent);

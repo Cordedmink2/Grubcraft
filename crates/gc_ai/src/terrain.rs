@@ -277,10 +277,13 @@ mod tests {
         for y in (3..253).step_by(3) {
             for x in (3..253).step_by(3) {
                 let p = Vec2::new(x as f32 + 0.25, y as f32 + 0.25);
-                let sim = world.nav().walkable(FxVec2::new(
-                    gc_fixed::Fx::from_raw((p.x * 65536.0) as i32),
-                    gc_fixed::Fx::from_raw((p.y * 65536.0) as i32),
-                ));
+                let sim = world.nav().walkable(
+                    0,
+                    FxVec2::new(
+                        gc_fixed::Fx::from_raw((p.x * 65536.0) as i32),
+                        gc_fixed::Fx::from_raw((p.y * 65536.0) as i32),
+                    ),
+                );
                 assert_eq!(t.walkable(p), sim, "at {p}");
             }
         }

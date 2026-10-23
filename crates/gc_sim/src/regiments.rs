@@ -680,9 +680,10 @@ impl Regiments {
         // Room either side of the centre, unless open all round (then the
         // whole frontage fits, however wide: the measure stops at
         // `CLEAR_CAP`).
-        let room = (!nav.open_around(self.position[i], reach_tiles)).then(|| {
+        let room = (!nav.open_around(self.owner[i], self.position[i], reach_tiles)).then(|| {
             let half = formation::block_size(files, models, fs, rs).1 / 2;
             nav.room_across(
+                self.owner[i],
                 self.position[i],
                 self.facing[i],
                 Fx::from_int(reach_tiles),
@@ -1001,7 +1002,7 @@ impl Regiments {
                     if (1..PATIENCE).contains(&self.held[i]) {
                         continue;
                     }
-                } else if !nav.open_around(here, OPEN_GROUND) {
+                } else if !nav.open_around(self.owner[i], here, OPEN_GROUND) {
                     let found = combat.friend_in_the_way(self, units, stances, i, next, dir);
                     // Following a friend marching on ahead (its route goes
                     // where this one's does, room beside it or not) uses
@@ -1048,7 +1049,7 @@ impl Regiments {
                     } else {
                         nav.reached(i);
                     }
-                } else if let Some(next) = nav.slide(here, next) {
+                } else if let Some(next) = nav.slide(self.owner[i], here, next) {
                     self.position[i] = next;
                 } else {
                     nav.lost(i);

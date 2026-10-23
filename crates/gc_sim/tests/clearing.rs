@@ -312,11 +312,11 @@ fn cleared_thicket_opens_a_way_through() {
         gc_fixed::Fx::from_ratio(89, 2),
         gc_fixed::Fx::from_ratio(61, 2),
     );
-    assert!(!w.nav().walkable(inside));
+    assert!(!w.nav().walkable(0, inside));
     let worker = spawn(&mut w, WORKER, 40, 30);
     assert!(clear(&mut w, worker, (44, 29), (2, 3)));
     until(&mut w, 8000, |w| all_open(w, [44, 29, 2, 3]));
-    assert!(w.nav().walkable(inside));
+    assert!(w.nav().walkable(0, inside));
     // A regiment marches through the gap to the far side.
     let spears = spawn(&mut w, SPEARS, 38, 30);
     let far = FxVec2::from_ints(52, 30);

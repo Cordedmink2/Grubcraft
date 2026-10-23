@@ -31,6 +31,7 @@
 use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_replay::{Recorder, Replay};
+use gc_sim::gates::GateMode;
 use gc_sim::structures::{Role, StructureView};
 use gc_sim::{
     BuildingId, Capacities, Command, MatchSetup, Meter, PlayerCommand, PlayerId, PowerTarget,
@@ -71,6 +72,12 @@ const SHRINES: u8 = 12;
 const TOWER_AT: u32 = 15 * TICKS_PER_SECOND;
 /// The quarter turns each side's tower is put up at.
 const TOWER_TURN: u8 = 1;
+/// When a side with a gate puts one up by its main building, turned a
+/// quarter, and then locks it, holds it open and sets it back to Auto.
+const GATE_AT: u32 = 16 * TICKS_PER_SECOND;
+const LOCK_AT: u32 = 20 * TICKS_PER_SECOND;
+const HOLD_OPEN_AT: u32 = 40 * TICKS_PER_SECOND;
+const AUTO_AT: u32 = 60 * TICKS_PER_SECOND;
 /// Soldiers and workers each side trains up to.
 const FIGHTERS: usize = 6;
 const WORKERS: usize = 8;
@@ -94,6 +101,8 @@ pub(crate) struct Kit {
     pub spare: BuildingId,
     /// Its cheapest tier-1 tower.
     pub tower: Option<BuildingId>,
+    /// Its gate, if it builds one.
+    pub gate: Option<BuildingId>,
     /// What a worker, a soldier and the upgrade cost: Grub, Marrow and
     /// supply.
     pub worker_cost: [u32; 3],
@@ -155,6 +164,9 @@ impl Kit {
         let tower = ids(&|i| table.stats[i].attack.is_some() && table.stats[i].tier <= 1)
             .into_iter()
             .min_by_key(|&b| (stats(b).cost_grub, b));
+        let gate = ids(&|i| table.stats[i].flags & gc_sim::structures::GATE != 0)
+            .first()
+            .copied();
         let building_cost = |b: u16| {
             [
                 u32::from(stats(b).cost_grub),
@@ -171,6 +183,7 @@ impl Kit {
             ]
         };
         Kit {
+            gate,
             main,
             keep,
             worker,
@@ -629,6 +642,7 @@ impl Match {
             self.sides[usize::from(p)].charged = seen || target.is_none();
         }
         self.tower(p, out);
+        self.gate(p, out);
         if p == 1 {
             self.powers(p, out);
         } else {
@@ -655,21 +669,7 @@ impl Match {
         };
         let order = |command| PlayerCommand { player: p, command };
         if t == TOWER_AT {
-            let main = self.main_of(p).expect("a main building");
-            let foot: Foot = [
-                main.tile.0,
-                main.tile.1,
-                i32::from(main.width),
-                main.depth.into(),
-            ];
-            let tile = conquest::ring(foot, 3)
-                .find(|&t| self.world.can_build(b, t, TOWER_TURN).is_ok())
-                .expect("room for a tower");
-            out.push(order(Command::SpawnStructure {
-                building: b,
-                tile: (tile.0 as i16, tile.1 as i16),
-                turn: TOWER_TURN,
-            }));
+            out.push(self.by_main(p, b, 3));
         }
         if self.sides[usize::from(p)].focused {
             return;
@@ -691,6 +691,57 @@ impl Match {
                 target: Some(foe.handle),
             }));
             self.sides[usize::from(p)].focused = true;
+        }
+    }
+
+    /// The host putting up building `b` for side `p`, turned
+    /// [`TOWER_TURN`], on the first free spot `ring` tiles out from its main
+    /// building.
+    fn by_main(&self, p: PlayerId, b: BuildingId, ring: i32) -> PlayerCommand {
+        let main = self.main_of(p).expect("a main building");
+        let foot: Foot = [
+            main.tile.0,
+            main.tile.1,
+            i32::from(main.width),
+            main.depth.into(),
+        ];
+        let tile = conquest::ring(foot, ring)
+            .find(|&t| self.world.can_build(b, t, TOWER_TURN).is_ok())
+            .expect("room by the main building");
+        PlayerCommand {
+            player: p,
+            command: Command::SpawnStructure {
+                building: b,
+                tile: (tile.0 as i16, tile.1 as i16),
+                turn: TOWER_TURN,
+            },
+        }
+    }
+
+    /// Side `p`'s gate: put up by the host by its main building, then
+    /// locked, held open and set back to Auto.
+    fn gate(&mut self, p: PlayerId, out: &mut Vec<PlayerCommand>) {
+        let t = self.world.tick_count();
+        let Some(b) = self.kits[usize::from(p)].gate else {
+            return;
+        };
+        let order = |command| PlayerCommand { player: p, command };
+        if t == GATE_AT {
+            // Out by the gathering ground, where workers going past open and
+            // shut it, but clear of the main fight.
+            out.push(self.by_main(p, b, 8));
+        }
+        let mode = match t {
+            LOCK_AT => GateMode::Locked,
+            HOLD_OPEN_AT => GateMode::Open,
+            AUTO_AT => GateMode::Auto,
+            _ => return,
+        };
+        if let Some(gate) = own(&self.world, p, Some(b)).first() {
+            out.push(order(Command::SetGate {
+                structure: gate.handle,
+                mode,
+            }));
         }
     }
 

@@ -395,6 +395,11 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(21);
             w.u8(to);
         }
+        Command::SetGate { structure, mode } => {
+            w.u8(26);
+            w.structure(structure);
+            w.u8(mode as u8);
+        }
         Command::FocusTower { structure, target } => {
             w.u8(24);
             w.structure(structure);
@@ -534,6 +539,10 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             on: r.bool()?,
         },
         21 => Command::HandOver { to: r.u8()? },
+        26 => Command::SetGate {
+            structure: r.structure()?,
+            mode: gc_sim::gates::GateMode::from_u8(r.u8()?)?,
+        },
         24 => Command::FocusTower {
             structure: r.structure()?,
             target: match r.u8()? {
@@ -768,6 +777,13 @@ mod tests {
                 on: false,
             },
             Command::HandOver { to: 2 },
+            Command::SetGate {
+                structure: StructureHandle {
+                    index: 9,
+                    generation: 3,
+                },
+                mode: gc_sim::gates::GateMode::Locked,
+            },
             Command::FocusTower {
                 structure: StructureHandle {
                     index: 9,

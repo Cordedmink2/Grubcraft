@@ -434,7 +434,7 @@ pub fn opening(
                     let r = radius + 2.5 * lap;
                     let p = (mid.0 + r * angle.cos(), mid.1 + r * angle.sin());
                     let fx = crate::fx_vec(Vec2::new(p.0, p.1));
-                    let clear = world.nav().walkable(fx)
+                    let clear = world.nav().walkable(player, fx)
                         && !taken.iter().any(|&f| near(f, p, 1.5))
                         && spots.iter().all(|s| (s.0 - p.0).hypot(s.1 - p.1) >= 2.0);
                     clear.then_some(p)

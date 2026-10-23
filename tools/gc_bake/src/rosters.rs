@@ -123,6 +123,8 @@ pub enum BuildingFlag {
     /// Choir: its tower tolls, silencing enemy powers near it (docs/26,
     /// "Towers").
     Silences,
+    /// A gate: a wall its owner's side walks through (docs/26, "Gates").
+    Gate,
 }
 
 #[derive(Deserialize)]

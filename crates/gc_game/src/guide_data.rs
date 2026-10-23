@@ -118,6 +118,7 @@ enum BuildingFlag {
     Honor,
     Toll,
     Silences,
+    Gate,
     #[serde(other)]
     Other,
 }
@@ -496,6 +497,10 @@ fn building_flag_text(f: BuildingFlag, b: &RBuilding) -> Option<String> {
         BuildingFlag::Honor => "Earns Honor".into(),
         BuildingFlag::Toll => "Earns 1 Grub per 4 damage it deals".into(),
         BuildingFlag::Silences => "Tolls: silences enemy powers within 10 tiles".into(),
+        BuildingFlag::Gate => {
+            "Gate: your side walks through, enemies don't; select it to set Auto, Locked or Open"
+                .into()
+        }
         BuildingFlag::Other => return None,
     })
 }

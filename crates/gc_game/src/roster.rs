@@ -172,7 +172,7 @@ mod tests {
             for dy in -r..=r {
                 for dx in -r..=r {
                     let at = gc_fixed::FxVec2::from_ints(x + dx, y + dy);
-                    if world.nav().walkable(at) {
+                    if world.nav().walkable(0, at) {
                         return (x + dx, y + dy);
                     }
                 }
@@ -189,7 +189,7 @@ mod tests {
                     (0..=10).all(|dx| {
                         world
                             .nav()
-                            .walkable(gc_fixed::FxVec2::from_ints(x + dx, y + dy))
+                            .walkable(0, gc_fixed::FxVec2::from_ints(x + dx, y + dy))
                     })
                 });
                 if open {

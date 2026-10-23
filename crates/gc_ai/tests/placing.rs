@@ -237,7 +237,7 @@ fn cell_centre(cx: i32, cy: i32) -> FxVec2 {
 
 fn cell_walkable(w: &World, cx: i32, cy: i32) -> bool {
     let side = TILES * CELLS_PER_TILE;
-    cx >= 0 && cy >= 0 && cx < side && cy < side && w.nav().walkable(cell_centre(cx, cy))
+    cx >= 0 && cy >= 0 && cx < side && cy < side && w.nav().walkable(0, cell_centre(cx, cy))
 }
 
 /// The walkable cell nearest `p` within 4 tiles of it.

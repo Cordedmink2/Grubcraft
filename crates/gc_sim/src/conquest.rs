@@ -237,6 +237,7 @@ impl Conquest {
         out: u8,
     ) {
         self.structures.update(regs, stats, &self.units, nav);
+        self.structures.work_gates(regs, nav, stances);
         self.structures.link_veins();
         self.structures.regrow();
         self.structures.link_power();

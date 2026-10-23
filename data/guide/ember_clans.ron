@@ -159,12 +159,12 @@
         ),
         (
             name: "Gate",
-            summary: "A wall segment that opens for your own and allied regiments. Put one in each wall line so your army can march out. Enemies must break it down like any wall.",
+            summary: "A wall segment your side walks through and enemies don't. Select it to set Auto (opens as your regiments march up, shuts 2 s after), Locked (shut to everyone) or Open (anyone can pass). Enemies break it down like any wall.",
             notes: [],
             tips: [
-                (icon: Move, text: "Put one in each wall line so your army can march out."),
-                (icon: Flag, text: "Place gates on the routes your army uses, since allied regiments can pass through them too."),
-                (icon: Alarm, text: "Expect enemies to break a Gate down like any wall, so guard the spot with spears."),
+                (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it against an attack; open it for a sally."),
+                (icon: Move, text: "An open gate lets enemies through too, so a rout back through it can carry the chasers in."),
+                (icon: Alarm, text: "Lock it under attack: on Auto, your troops standing in the gateway hold it open to enemies too."),
             ],
         ),
     ],

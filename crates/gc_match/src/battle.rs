@@ -769,7 +769,7 @@ pub(crate) mod tests {
         assert!(((v2(b) - v2(a)) - Vec2::new(0.0, 6.0)).length() < 0.01);
         // While deploying, that order puts the regiment straight down there.
         let (handle, facing) = (mine.handle, mine.facing);
-        let open = world.nav().walkable(a);
+        let open = world.nav().walkable(0, a);
         world.tick(&[
             PlayerCommand {
                 player: 0,

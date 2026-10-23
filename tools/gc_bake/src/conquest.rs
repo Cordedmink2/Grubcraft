@@ -407,6 +407,7 @@ fn building_flag(f: rosters::BuildingFlag) -> u16 {
         rosters::BuildingFlag::TradePost => cq::BUILDING_TRADE_POST,
         rosters::BuildingFlag::Toll => cq::BUILDING_TOLL,
         rosters::BuildingFlag::Silences => cq::BUILDING_SILENCES,
+        rosters::BuildingFlag::Gate => cq::BUILDING_GATE,
     }
 }
 

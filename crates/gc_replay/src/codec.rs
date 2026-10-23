@@ -367,6 +367,11 @@ impl Writer {
                 self.u8(21);
                 self.u8(to);
             }
+            Command::SetGate { structure, mode } => {
+                self.u8(28);
+                self.structure(structure);
+                self.u8(mode as u8);
+            }
             Command::FocusTower { structure, target } => {
                 self.u8(24);
                 self.structure(structure);
@@ -765,6 +770,10 @@ impl<'a> Reader<'a> {
                 on: self.bool()?,
             },
             21 => Command::HandOver { to: self.u8()? },
+            28 => Command::SetGate {
+                structure: self.structure()?,
+                mode: gc_sim::gates::GateMode::from_u8(self.u8()?)?,
+            },
             24 => Command::FocusTower {
                 structure: self.structure()?,
                 target: match self.u8()? {
@@ -943,6 +952,13 @@ mod tests {
                     index: 900,
                     generation: 7,
                 },
+            },
+            Command::SetGate {
+                structure: StructureHandle {
+                    index: 4,
+                    generation: 2,
+                },
+                mode: gc_sim::gates::GateMode::Open,
             },
             Command::FocusTower {
                 structure: StructureHandle {

@@ -547,7 +547,7 @@ fn shift(
         return false;
     };
     let Some(at) = spots_round(structures, s)
-        .filter(|&at| nav.walkable(at))
+        .filter(|&at| nav.walkable(player, at))
         .nth(usize::from(before))
     else {
         return false;
@@ -606,9 +606,9 @@ fn summon_spot(
             .any(|r| regs.alive[r] && (regs.position[r] - at).length_sq_raw() <= near * near)
     };
     let mut room = spots_round(structures, s)
-        .filter(|&at| nav.walkable(at))
-        .map(|at| nav.settle(at, berth))
-        .filter(|&at| nav.fits(at, berth));
+        .filter(|&at| nav.walkable(player, at))
+        .map(|at| nav.settle(player, at, berth))
+        .filter(|&at| nav.fits(player, at, berth));
     let first = room.next()?;
     let at = core::iter::once(first)
         .chain(room)

@@ -120,7 +120,7 @@ fn a_scratch_world_shares_the_map() {
     for y in (0..256).step_by(5) {
         for x in (0..256).step_by(5) {
             let p = FxVec2::from_ints(x, y);
-            assert_eq!(scratch.nav().walkable(p), world.nav().walkable(p));
+            assert_eq!(scratch.nav().walkable(0, p), world.nav().walkable(0, p));
         }
     }
     // The same order finds the same route in both.

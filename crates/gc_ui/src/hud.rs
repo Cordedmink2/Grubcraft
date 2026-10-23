@@ -272,6 +272,7 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("1-9", "Recall a group"),
             ("Space", "Jump to alert"),
             ("R, Wheel", "Turn a building you place"),
+            ("Q W E", "Selected gate: Auto, Locked, Open"),
             ("Esc", "Cancel, or menu"),
         ],
     ),
@@ -2935,6 +2936,7 @@ mod tests {
                 powered: None,
                 tuning: None,
                 shooting: None,
+                gate: None,
                 tips_open: None,
             }),
             ..Extras::default()

@@ -45,7 +45,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 
 use crate::regiments::Regiments;
 use crate::structures::Refusal;
-use crate::{StateHasher, UnitStats};
+use crate::{MAX_PARTIES, PlayerId, StateHasher, UnitStats};
 
 /// Grid cells along one tile.
 pub const CELLS_PER_TILE: i32 = 2;
@@ -134,6 +134,7 @@ const DIRS: [(i32, i32); 8] = [
 
 #[path = "nav_reblock.rs"]
 mod reblock;
+pub(crate) use reblock::Door;
 
 /// The walkable map and its portal graph. Built when the match starts, and
 /// shared with any scratch world on the same map (see [`Nav::sharing`]);
@@ -143,12 +144,16 @@ struct Grid {
     /// Cells per side.
     side: i32,
     /// Each cell's cost: the ground's own ([`Grid::ground`]), or
-    /// [`BLOCKED`] under a building.
+    /// [`BLOCKED`] under a building (but for an open door).
     cost: Vec<u8>,
     /// The ground's own cost of each cell, as the map gave it.
     ground: Vec<u8>,
     /// Buildings standing on each cell (see [`Nav::set_built`]).
     built: Vec<u8>,
+    /// Doors open on each cell, to the sides walking this grid (see
+    /// [`Nav::set_door`]): a cell is blocked while more buildings stand on
+    /// it than doors are open there. Empty until the first door opens.
+    opened: Vec<u8>,
     /// Steps (8-way) to the nearest blocked cell or the map edge, capped at
     /// [`CLEAR_CAP`].
     clear: Vec<u8>,
@@ -172,6 +177,9 @@ struct Grid {
     edge_first: Vec<u32>,
     edge_to: Vec<u32>,
     edge_cost: Vec<u32>,
+    /// The most the portal search's heap may hold over this graph (see
+    /// [`Grid::node_room`]), so every world searching it searches alike.
+    node_room: usize,
 }
 
 impl Grid {
@@ -513,10 +521,6 @@ struct Search {
     to_goal: Vec<u32>,
     node_stamp: u32,
     node_heap: BinaryHeap<Reverse<(u32, u32)>>,
-    /// The most the portal search's heap may hold: what the graph needs,
-    /// whatever the heap's capacity grew to, so every world on the same
-    /// grid searches alike.
-    node_room: usize,
     links: Vec<(u32, u32)>,
     /// Cells of the portal route: start, portals, goal.
     coarse: Vec<u32>,
@@ -527,9 +531,20 @@ struct Search {
 
 impl Search {
     /// Room for searches over `grid`'s portal graph.
+    #[cfg(test)]
     fn for_grid(grid: &Grid) -> Search {
-        let (nodes, edges, most) = Search::room(grid);
-        Search::new(nodes, edges, most)
+        let mut search = Search::new();
+        search.fit(grid);
+        search
+    }
+
+    /// Room for searches over each of `grids`' portal graphs.
+    fn for_grids(grids: &[Arc<Grid>]) -> Search {
+        let mut search = Search::new();
+        for g in grids {
+            search.fit(g);
+        }
+        search
     }
 
     /// Nodes, links and the most nodes in one sector, in `grid`'s graph.
@@ -543,22 +558,26 @@ impl Search {
         (grid.node_cell.len(), grid.edge_to.len(), most)
     }
 
-    /// Make room for searches over `grid`'s portal graph after it changed
-    /// (see `Grid::changed`), keeping what is already reserved.
+    /// Make room for searches over `grid`'s portal graph (a new one, or
+    /// one that changed, see `Grid::changed`), keeping what is already
+    /// reserved: one search serves every side's grid (see [`Nav`]).
     fn fit(&mut self, grid: &Grid) {
-        let (nodes, edges, most) = Search::room(grid);
-        self.node_g.resize(nodes + 2, 0);
-        self.node_parent.resize(nodes + 2, NONE);
-        self.node_seen.resize(nodes + 2, 0);
-        self.to_goal.resize(nodes + 2, 0);
+        let (nodes, _, most) = Search::room(grid);
+        if self.node_g.len() < nodes + 2 {
+            self.node_g.resize(nodes + 2, 0);
+            self.node_parent.resize(nodes + 2, NONE);
+            self.node_seen.resize(nodes + 2, 0);
+            self.to_goal.resize(nodes + 2, 0);
+        }
         // `reserve` makes room beyond what is there, so at least this much.
-        self.node_room = edges + 2 * most + 8;
-        self.node_heap.reserve(self.node_room);
+        self.node_heap.reserve(grid.node_room);
         self.links.reserve(most);
         self.coarse.reserve(nodes + 2);
     }
 
-    fn new(nodes: usize, edges: usize, max_sector_nodes: usize) -> Search {
+    /// Room for searches inside a sector; [`Search::fit`] makes room for a
+    /// grid's portal graph.
+    fn new() -> Search {
         let cells = (SECTOR * SECTOR) as usize;
         Search {
             g: vec![0; cells],
@@ -568,15 +587,14 @@ impl Search {
             weights: vec![0; cells],
             stamp: 0,
             heap: BinaryHeap::with_capacity(cells * 8 + 8),
-            node_g: vec![0; nodes + 2],
-            node_parent: vec![NONE; nodes + 2],
-            node_seen: vec![0; nodes + 2],
-            to_goal: vec![0; nodes + 2],
+            node_g: vec![0; 2],
+            node_parent: vec![NONE; 2],
+            node_seen: vec![0; 2],
+            to_goal: vec![0; 2],
             node_stamp: 0,
-            node_heap: BinaryHeap::with_capacity(edges + 2 * max_sector_nodes + 8),
-            node_room: edges + 2 * max_sector_nodes + 8,
-            links: Vec::with_capacity(max_sector_nodes),
-            coarse: Vec::with_capacity(nodes + 2),
+            node_heap: BinaryHeap::with_capacity(8),
+            links: Vec::new(),
+            coarse: Vec::with_capacity(2),
             chain: Vec::with_capacity(CHAIN_CAPACITY),
             work: 0,
         }
@@ -841,7 +859,7 @@ impl Search {
             let relax = |m: u32, cost: u32, s: &mut Search| {
                 let ng = g + cost;
                 if (s.node_seen[m as usize] != stamp || ng < s.node_g[m as usize])
-                    && s.node_heap.len() < s.node_room
+                    && s.node_heap.len() < grid.node_room
                 {
                     s.node_seen[m as usize] = stamp;
                     s.node_g[m as usize] = ng;
@@ -900,9 +918,25 @@ enum Route {
 }
 
 /// The map's walkable ground and every regiment's route.
+///
+/// Every side walks the same grid until a gate goes up. A gate is a door:
+/// open ground to some sides and wall to the rest (see [`Nav::set_door`]),
+/// so from the first gate a side whose own gates let it through where they
+/// stop others walks a grid of its own, a copy of the shared one kept up
+/// to date alongside it. A side is a party and its allies. Searches on
+/// each grid run just as on the one, at no extra cost; the price is the
+/// copies' memory and bringing each up to date when the ground changes.
 pub struct Nav {
-    /// `None` on an open plane with no map (tests): everyone walks straight.
-    grid: Option<Arc<Grid>>,
+    /// The grid each side may walk; empty on an open plane with no map
+    /// (tests), where everyone walks straight. The first is shared by every
+    /// side without one of its own.
+    grids: Vec<Arc<Grid>>,
+    /// Which of `grids` each party walks.
+    view: [u8; MAX_PARTIES],
+    /// Each party's side, as a mask of parties: itself and its allies.
+    side: [u8; MAX_PARTIES],
+    /// The parties in the match, as a mask.
+    parties: u8,
     search: Search,
     route: Vec<Route>,
     /// The target the route was found for.
@@ -1009,22 +1043,27 @@ impl Nav {
             );
             Arc::new(Grid::build_standing(costs, side, standing))
         });
-        Nav::on(grid, regiments)
+        Nav::on(grid.into_iter().collect(), regiments)
     }
 
     /// Routes for `regiments` regiments on the same map as this one, sharing
-    /// its grid and portal graph rather than building them again (scratch
+    /// its grids and portal graphs rather than building them again (scratch
     /// worlds, see `World::scratch`).
     pub fn sharing(&self, regiments: usize) -> Nav {
-        Nav::on(self.grid.clone(), regiments)
+        let mut nav = Nav::on(self.grids.clone(), regiments);
+        nav.view = self.view;
+        nav.side = self.side;
+        nav.parties = self.parties;
+        nav
     }
 
-    fn on(grid: Option<Arc<Grid>>, regiments: usize) -> Nav {
-        let search = grid
-            .as_deref()
-            .map_or(Search::new(0, 0, 0), Search::for_grid);
+    fn on(grids: Vec<Arc<Grid>>, regiments: usize) -> Nav {
+        let search = Search::for_grids(&grids);
         Nav {
-            grid,
+            grids,
+            view: [0; MAX_PARTIES],
+            side: core::array::from_fn(|p| 1 << p),
+            parties: u8::MAX,
             search,
             route: vec![Route::Idle; regiments],
             goal: vec![FxVec2::ZERO; regiments],
@@ -1039,31 +1078,63 @@ impl Nav {
 
     /// Whether there is a map (a walkable grid) at all.
     pub fn has_map(&self) -> bool {
-        self.grid.is_some()
+        !self.grids.is_empty()
     }
 
-    /// Whether a regiment's centre may stand at `p` (always true with no map).
-    pub fn walkable(&self, p: FxVec2) -> bool {
-        self.grid.as_ref().is_none_or(|g| g.open_cell(g.cell_at(p)))
+    /// The parties on each side, of the first `parties` (all there can be
+    /// when 0): `allied(a, b)` says whether `a` and `b` are on the same
+    /// side (their own gates let both through). Set once, before the first
+    /// gate goes up.
+    pub(crate) fn set_sides(
+        &mut self,
+        parties: usize,
+        allied: impl Fn(PlayerId, PlayerId) -> bool,
+    ) {
+        if (1..MAX_PARTIES).contains(&parties) {
+            self.parties = (1u8 << parties) - 1;
+        }
+        for a in 0..MAX_PARTIES {
+            self.side[a] = (0..MAX_PARTIES)
+                .filter(|&b| a == b || allied(a as PlayerId, b as PlayerId))
+                .fold(0, |m, b| m | 1 << b);
+        }
     }
 
-    /// Whether a soldier may stand at `p`: on the map, off deep water and
-    /// cliffs (always true with no map).
-    pub fn standable(&self, p: FxVec2) -> bool {
-        self.grid.as_ref().is_none_or(|g| {
+    /// The grid `party`'s regiments walk (`None` with no map).
+    fn grid_of(&self, party: PlayerId) -> Option<&Grid> {
+        grid_for(&self.grids, &self.view, party)
+    }
+
+    /// The first grid, for what is the same on every grid: the ground and
+    /// where buildings stand, not doors (`None` with no map).
+    fn base(&self) -> Option<&Grid> {
+        self.grids.first().map(|g| &**g)
+    }
+
+    /// Whether a regiment of `party`'s may have its centre at `p` (always
+    /// true with no map).
+    pub fn walkable(&self, party: PlayerId, p: FxVec2) -> bool {
+        self.grid_of(party)
+            .is_none_or(|g| g.open_cell(g.cell_at(p)))
+    }
+
+    /// Whether a soldier of `party`'s may stand at `p`: on the map, off deep
+    /// water, cliffs and buildings but for gates open to it (always true
+    /// with no map).
+    pub fn standable(&self, party: PlayerId, p: FxVec2) -> bool {
+        self.grid_of(party).is_none_or(|g| {
             let side = Fx::from_ratio(g.side, CELLS_PER_TILE);
             let on_map = p.x >= Fx::ZERO && p.y >= Fx::ZERO && p.x < side && p.y < side;
             on_map && g.cost[g.cell_at(p) as usize] != BLOCKED
         })
     }
 
-    /// Whether a regiment at `p` has open ground all round for at least
-    /// `tiles` (always true with no map): nothing blocked that near.
-    /// `tiles` is at most half [`CLEAR_CAP`].
-    pub fn open_around(&self, p: FxVec2, tiles: i32) -> bool {
+    /// Whether a regiment of `party`'s at `p` has open ground all round
+    /// for at least `tiles` (always true with no map): nothing blocked that
+    /// near. `tiles` is at most half [`CLEAR_CAP`].
+    pub fn open_around(&self, party: PlayerId, p: FxVec2, tiles: i32) -> bool {
         debug_assert!(tiles * CELLS_PER_TILE <= i32::from(CLEAR_CAP));
-        self.grid
-            .as_ref()
+        self.grid_of(party)
             .is_none_or(|g| i32::from(g.clear[g.cell_at(p) as usize]) >= tiles * CELLS_PER_TILE)
     }
 
@@ -1072,9 +1143,17 @@ impl Nav {
     /// either side along each line across the block at the offsets
     /// `lines` (tiles ahead of the centre; behind when negative), up to
     /// `reach`. A line that starts on blocked ground (the rear of a block
-    /// hanging over the water) doesn't count. Measured in quarter tiles.
-    pub(crate) fn room_across(&self, centre: FxVec2, facing: Angle, reach: Fx, lines: &[Fx]) -> Fx {
-        let Some(g) = &self.grid else {
+    /// hanging over the water) doesn't count. Measured in quarter tiles, on
+    /// the ground `party` walks.
+    pub(crate) fn room_across(
+        &self,
+        party: PlayerId,
+        centre: FxVec2,
+        facing: Angle,
+        reach: Fx,
+        lines: &[Fx],
+    ) -> Fx {
+        let Some(g) = self.grid_of(party) else {
             return reach;
         };
         // Steps to blocked ground from the cell under `p` (0 on it or off
@@ -1126,9 +1205,9 @@ impl Nav {
     ///
     /// Only to ground where the block fits: in a narrows the roomiest spot
     /// is one spot for everyone sent near it, and blocks ordered apart
-    /// would end up on top of each other.
-    pub(crate) fn settle(&self, p: FxVec2, berth: u8) -> FxVec2 {
-        let Some(g) = &self.grid else {
+    /// would end up on top of each other. On the ground `party` walks.
+    pub(crate) fn settle(&self, party: PlayerId, p: FxVec2, berth: u8) -> FxVec2 {
+        let Some(g) = self.grid_of(party) else {
             return p;
         };
         let work = &mut 0;
@@ -1145,20 +1224,18 @@ impl Nav {
         }
     }
 
-    /// Whether a block wanting `berth` fits with its centre at `p`: the
-    /// ground there is that far from blocked ground (always true with no
-    /// map).
-    pub(crate) fn fits(&self, p: FxVec2, berth: u8) -> bool {
-        self.grid
-            .as_ref()
+    /// Whether a block of `party`'s wanting `berth` fits with its centre
+    /// at `p`: the ground there is that far from blocked ground (always
+    /// true with no map).
+    pub(crate) fn fits(&self, party: PlayerId, p: FxVec2, berth: u8) -> bool {
+        self.grid_of(party)
             .is_none_or(|g| g.clear[g.cell_at(p) as usize] >= berth)
     }
 
-    /// Whether a regiment's centre could walk the straight line from `from`
-    /// to `to` (always true with no map).
-    pub fn clear_line(&self, from: FxVec2, to: FxVec2) -> bool {
-        self.grid
-            .as_ref()
+    /// Whether the centre of a regiment of `party`'s could walk the
+    /// straight line from `from` to `to` (always true with no map).
+    pub fn clear_line(&self, party: PlayerId, from: FxVec2, to: FxVec2) -> bool {
+        self.grid_of(party)
             .is_none_or(|g| g.line_open(g.cell_at(from), g.cell_at(to), &mut 0))
     }
 
@@ -1180,7 +1257,8 @@ impl Nav {
         tiles: [i32; 4],
         thicket: impl Fn(i32, i32) -> bool,
     ) -> Result<(), Refusal> {
-        let Some(g) = &self.grid else {
+        // Buildings and thicket stand on every side's grid alike.
+        let Some(g) = self.base() else {
             return Ok(());
         };
         let [x0, y0, x1, y1] = g.cells(tiles).ok_or(Refusal::OffMap)?;
@@ -1198,7 +1276,7 @@ impl Nav {
 
     /// Portal nodes in the graph (for the dev overlay and tests).
     pub fn portal_count(&self) -> usize {
-        self.grid.as_ref().map_or(0, |g| g.node_cell.len())
+        self.base().map_or(0, |g| g.node_cell.len())
     }
 
     /// Regiments waiting for a route (some still walking the old one).
@@ -1209,7 +1287,7 @@ impl Nav {
     /// The rest of regiment slot `i`'s route, for drawing: the waypoints
     /// still ahead, ending at the target.
     pub(crate) fn route_ahead(&self, i: usize, target: Option<FxVec2>) -> &[FxVec2] {
-        match (self.grid.is_some(), self.route[i]) {
+        match (self.has_map(), self.route[i]) {
             (true, Route::Waypoints | Route::Rerouting) => self.ahead(i),
             (false, _) | (true, Route::Direct) if target.is_some() => {
                 core::slice::from_ref(&self.goal[i])
@@ -1226,7 +1304,7 @@ impl Nav {
     /// walked to straight only if the line keeps it (or as much as the
     /// regiment has where it stands and the target has).
     pub(crate) fn plan(&mut self, regs: &mut Regiments, units: &[UnitStats]) {
-        let Some(grid) = &self.grid else {
+        if self.grids.is_empty() {
             // Open plane: remember targets so the game can draw them.
             for i in 0..regs.alive.len() {
                 if let Some(t) = regs.target[i] {
@@ -1234,7 +1312,9 @@ impl Nav {
                 }
             }
             return;
-        };
+        }
+        let (grids, view) = (&self.grids, &self.view);
+        let grid_of = |owner: PlayerId| grid_for(grids, view, owner).expect("a map");
         self.search.work = 0;
         for i in 0..regs.alive.len() {
             let (true, Some(t)) = (regs.alive[i], regs.target[i]) else {
@@ -1261,6 +1341,7 @@ impl Nav {
                 continue;
             }
             self.goal[i] = t;
+            let grid = grid_of(regs.owner[i]);
             let (from, to) = (grid.cell_at(regs.position[i]), grid.cell_at(t));
             let need = grid.need(from, to, regs.berth(units, i));
             self.later.remove(i);
@@ -1291,6 +1372,7 @@ impl Nav {
             served += 1;
             let way = &mut self.way[i * MAX_WAYPOINTS..][..MAX_WAYPOINTS];
             let berth = regs.berth(units, i);
+            let grid = grid_of(regs.owner[i]);
             match find(grid, &mut self.search, regs.position[i], t, berth, way) {
                 Some((len, partial)) => {
                     self.route[i] = Route::Waypoints;
@@ -1314,7 +1396,7 @@ impl Nav {
     /// Where regiment slot `i` should walk now on its way to `target`, and
     /// whether that is the end of the route. `None`: stand and wait.
     pub(crate) fn steer(&self, i: usize, target: FxVec2) -> Option<(FxVec2, bool)> {
-        if self.grid.is_none() {
+        if !self.has_map() {
             return Some((target, true));
         }
         match self.route[i] {
@@ -1382,12 +1464,12 @@ impl Nav {
         self.later.remove(i);
     }
 
-    /// Whether a step from `from` to `to` would walk onto or across
-    /// blocked ground (a step of several cells can't jump a thin wall).
-    /// Regiments already standing on blocked ground may step anywhere, so
-    /// they can walk off it.
-    pub(crate) fn blocks(&self, from: FxVec2, to: FxVec2) -> bool {
-        self.grid.as_ref().is_some_and(|g| {
+    /// Whether a step from `from` to `to` by a regiment of `party`'s would
+    /// walk onto or across blocked ground (a step of several cells can't
+    /// jump a thin wall). Regiments already standing on blocked ground may
+    /// step anywhere, so they can walk off it.
+    pub(crate) fn blocks(&self, party: PlayerId, from: FxVec2, to: FxVec2) -> bool {
+        self.grid_of(party).is_some_and(|g| {
             g.cost[g.cell_at(from) as usize] != BLOCKED
                 && (g.cost[g.cell_at(to) as usize] == BLOCKED
                     || g.on_map(from)
@@ -1402,8 +1484,8 @@ impl Nav {
     /// if that stays off it and is at least half the longer part. `None`
     /// otherwise: the way is shut (a regiment heading into a wall, not
     /// glancing off it, finds a new route rather than creep along it).
-    pub(crate) fn slide(&self, from: FxVec2, to: FxVec2) -> Option<FxVec2> {
-        if !self.blocks(from, to) {
+    pub(crate) fn slide(&self, party: PlayerId, from: FxVec2, to: FxVec2) -> Option<FxVec2> {
+        if !self.blocks(party, from, to) {
             return Some(to);
         }
         let d = to - from;
@@ -1419,13 +1501,12 @@ impl Nav {
         tries
             .into_iter()
             .flatten()
-            .find(|&p| p != from && !self.blocks(from, p))
+            .find(|&p| p != from && !self.blocks(party, from, p))
     }
 
-    /// Whether `p` is on blocked ground (never with no map).
-    pub(crate) fn blocked(&self, p: FxVec2) -> bool {
-        self.grid
-            .as_ref()
+    /// Whether `p` is on ground blocked to `party` (never with no map).
+    pub(crate) fn blocked(&self, party: PlayerId, p: FxVec2) -> bool {
+        self.grid_of(party)
             .is_some_and(|g| g.cost[g.cell_at(p) as usize] == BLOCKED)
     }
 
@@ -1465,7 +1546,7 @@ impl Nav {
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
-        if self.grid.is_none() {
+        if !self.has_map() {
             return;
         }
         for i in 0..self.route.len() {
@@ -1497,6 +1578,16 @@ impl Nav {
 /// writing waypoints into `out`. Returns how many, and whether they stop
 /// short of the goal (more to search for later); `None` when there is no
 /// way there.
+/// The grid of `grids` that `party`'s regiments walk, as `view` says.
+fn grid_for<'a>(
+    grids: &'a [Arc<Grid>],
+    view: &[u8; MAX_PARTIES],
+    party: PlayerId,
+) -> Option<&'a Grid> {
+    let v = view.get(usize::from(party)).copied().unwrap_or(0);
+    grids.get(usize::from(v)).map(|g| &**g)
+}
+
 fn find(
     grid: &Grid,
     s: &mut Search,
@@ -1826,6 +1917,7 @@ impl Grid {
             cost: costs.to_vec(),
             ground: costs.to_vec(),
             built: vec![0; n],
+            opened: Vec::new(),
             clear: vec![0; n],
             area: vec![0; n],
             areas: 0,
@@ -1837,6 +1929,7 @@ impl Grid {
             edge_first: Vec::new(),
             edge_to: Vec::new(),
             edge_cost: Vec::new(),
+            node_room: 0,
         };
         for t in standing {
             let Some([x0, y0, x1, y1]) = grid.cells(t) else {
@@ -1853,8 +1946,17 @@ impl Grid {
         grid.measure_clearance_in(0, 0, side, side);
         grid.number_areas();
         let partner = grid.place_portals(None);
-        grid.link_portals(&partner, &mut Search::new(0, 0, 0));
+        grid.link_portals(&partner, &mut Search::new());
+        grid.node_room = grid.node_room();
         grid
+    }
+
+    /// The most the portal search's heap may hold over this grid's graph:
+    /// every link, and each end's links into its sector, with room to
+    /// spare.
+    fn node_room(&self) -> usize {
+        let (_, edges, most) = Search::room(self);
+        edges + 2 * most + 8
     }
 
     /// The cells of the tiles `x..x + w` × `y..y + d`: `[x0, y0, x1, y1]`,

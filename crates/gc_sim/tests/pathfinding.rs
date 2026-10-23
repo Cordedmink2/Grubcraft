@@ -236,7 +236,7 @@ fn regiments_on_blocked_ground_walk_off_it() {
     let nav = map(64, wall_with_gap);
     let mut w = world_on(64, &nav, &DRILL_UNITS);
     let r = spawn(&mut w, 0, SPEARS, 20, 32, NORTH); // inside the wall
-    assert!(!w.nav().walkable(FxVec2::from_ints(20, 32)));
+    assert!(!w.nav().walkable(0, FxVec2::from_ints(20, 32)));
     move_to(&mut w, 0, r, 20, 10);
     for _ in 0..20 * 120 {
         w.tick(&[]);

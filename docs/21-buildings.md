@@ -6,7 +6,7 @@ Every faction's buildings with first-pass numbers for Conquest (M3): cost, build
 
 **Built (2026-10-17, buildings brought to life):** all 46 Conquest buildings of the four factions have 3D models with visible construction stages (main halls and upgrades in PR #149, the other 33 after). The game picks the look from the simulation's percent built, and the simulation is unchanged. A building with no model is still drawn as the old placeholder box, with its hit bar. Looks, upgrades, workers, packs and budgets are in [Models and construction stages](#models-and-construction-stages) below.
 
-**Planned (approved 2026-10-22, not built):** walls for every faction, working gates, towers that fire, field works, collapses and walled towns are designed in [26 · Fortifications and Bases](26-fortifications.md). Today towers do not shoot and the Ember Gate blocks its own side too.
+**Planned (approved 2026-10-22, not built):** walls for every faction, working gates, towers that fire, field works, collapses and walled towns are designed in [26 · Fortifications and Bases](26-fortifications.md). Towers shoot since stage 1, and since stage 2 the Ember Gate lets its own side and allies through (Auto, Locked or Open, see [26](26-fortifications.md#gates)).
 
 ## Shared rules
 

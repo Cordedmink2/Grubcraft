@@ -81,8 +81,9 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::HandOver { .. } => "HandOver",
         Command::UsePower { .. } => "UsePower",
         Command::FocusTower { .. } => "FocusTower",
+        Command::SetGate { .. } => "SetGate",
     };
-    const KINDS: [&str; 26] = [
+    const KINDS: [&str; 27] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -109,6 +110,7 @@ fn the_goldens_cover_every_kind_of_command() {
         "HandOver",
         "UsePower",
         "FocusTower",
+        "SetGate",
     ];
     let seen: BTreeSet<&str> = goldens()
         .iter()
@@ -134,9 +136,9 @@ fn fingerprint(replay: &Replay) -> u64 {
 /// that other builds and old replays know: this table then fails, and is
 /// updated from the test's output.
 const PINNED: (u32, &[(&str, u64)]) = (
-    27,
+    28,
     &[
-        ("conquest-ribcage-1v1", 0xf38a329139890742),
+        ("conquest-ribcage-1v1", 0xf03fe4c0a663df8c),
         ("field-1v1", 0x65e7dff2fbc0d661),
         ("field-2v2", 0xda48af4dcfe4c050),
         ("field-8000pt-2v2", 0x04e63820ef5708f0),

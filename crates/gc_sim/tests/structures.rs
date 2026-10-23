@@ -271,7 +271,7 @@ fn a_regiment_knocks_a_farmstead_down() {
     assert_eq!(w.siege_target(r), None);
     // Gone from the field: its slot and its ground are free again.
     assert!(w.structures().unwrap().is_empty());
-    assert!(w.nav().walkable(FxVec2::from_ints(31, 21)));
+    assert!(w.nav().walkable(0, FxVec2::from_ints(31, 21)));
     put_up(&mut w, 1, FARMSTEAD, 30, 20);
 }
 
@@ -378,13 +378,13 @@ fn archers_shoot_from_range() {
 fn a_fallen_building_frees_its_ground() {
     let mut w = conquest(64, &[]);
     let hall = put_up(&mut w, 1, HALL, 30, 30);
-    assert!(!w.nav().walkable(FxVec2::from_ints(32, 32)));
+    assert!(!w.nav().walkable(0, FxVec2::from_ints(32, 32)));
     assert!(order(
         &mut w,
         1,
         Command::RemoveStructure { structure: hall }
     ));
-    assert!(w.nav().walkable(FxVec2::from_ints(32, 32)));
+    assert!(w.nav().walkable(0, FxVec2::from_ints(32, 32)));
     // And another fits there now.
     put_up(&mut w, 0, HALL, 30, 30);
 }

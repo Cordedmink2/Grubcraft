@@ -108,8 +108,10 @@ pub const BUILDING_TOLL: u16 = 512;
 /// Choir: its tower tolls a bell that silences enemy powers near it
 /// (schema 8).
 pub const BUILDING_SILENCES: u16 = 1024;
+/// A gate: a wall its owner's side walks through (schema 8).
+pub const BUILDING_GATE: u16 = 2048;
 /// Every flag there is; a record with any other bit set is refused.
-const BUILDING_FLAGS: u16 = (BUILDING_SILENCES << 1) - 1;
+const BUILDING_FLAGS: u16 = (BUILDING_GATE << 1) - 1;
 
 /// [`BuildingRecord::tunes`]: the nodes a building tunes (schema 4).
 pub const TUNES_NOTHING: u8 = 0;

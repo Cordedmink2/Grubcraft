@@ -28,6 +28,7 @@ pub mod economy;
 pub mod events;
 pub mod fork;
 pub mod formation;
+pub mod gates;
 mod hash;
 pub mod honor;
 pub mod larvae;
@@ -104,7 +105,7 @@ pub const SYSTEMS: [&str; 14] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 27;
+pub const SIM_VERSION: u32 = 28;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -664,6 +665,12 @@ pub enum Command {
         structure: StructureHandle,
         target: Option<RegimentHandle>,
     },
+    /// Conquest: set one of the issuer's gates Auto, Locked or Open (see
+    /// [`gates`]). Takes effect once it is built.
+    SetGate {
+        structure: StructureHandle,
+        mode: gates::GateMode,
+    },
 }
 
 impl Command {
@@ -691,6 +698,7 @@ impl Command {
             | Command::Upgrade { .. }
             | Command::UsePower { .. }
             | Command::FocusTower { .. }
+            | Command::SetGate { .. }
             | Command::Rally { .. }
             | Command::HandOver { .. } => true,
             Command::SpawnRegiment { .. }
@@ -751,6 +759,14 @@ impl World {
         assert!(setup.teams.len() <= MAX_PARTIES, "too many parties");
         let stances = Stances::from_teams(setup.teams);
         let terrain = Terrain::new(&setup.ground, setup.map_tiles);
+        // Thicket stands on the walkable grid until it is cleared.
+        let mut nav = Nav::standing(
+            setup.nav,
+            setup.map_tiles,
+            setup.capacities.regiments as usize,
+            terrain.thicket(),
+        );
+        nav.set_sides(setup.teams.len(), |a, b| !stances.hostile(a, b));
         let vision = Vision::new(setup.capacities.regiments as usize, &terrain, &stances);
         World {
             tick: 0,
@@ -759,13 +775,7 @@ impl World {
             combat: Combat::new(setup.capacities.regiments as usize),
             units: setup.units.iter().map(|u| u.sanitized()).collect(),
             map_tiles: setup.map_tiles,
-            // Thicket stands on the walkable grid until it is cleared.
-            nav: Nav::standing(
-                setup.nav,
-                setup.map_tiles,
-                setup.capacities.regiments as usize,
-                terrain.thicket(),
-            ),
+            nav,
             stances,
             terrain: Arc::new(terrain),
             vision,
@@ -1658,6 +1668,14 @@ impl World {
             Command::FocusTower { structure, target } => {
                 self.focus_tower(pc.player, structure, target)
             }
+            Command::SetGate { structure, mode } => self.conquest.as_mut().is_some_and(|c| {
+                let s = &mut c.structures;
+                let Some(i) = s.owned(structure, pc.player).filter(|&i| s.is_gate(i)) else {
+                    return false;
+                };
+                s.set_gate(i, mode);
+                true
+            }),
             Command::RemoveStructure { structure } => self.conquest.as_mut().is_some_and(|c| {
                 c.structures
                     .despawn(structure, &mut self.nav, &self.regiments)
@@ -2010,7 +2028,7 @@ impl World {
                 .deploy
                 .zone(r.owner)
                 .is_some_and(|z| z.contains(position))
-            && self.nav.walkable(position);
+            && self.nav.walkable(r.owner, position);
         let Some(i) = allowed
             .then(|| {
                 self.regiments
@@ -2297,6 +2315,6 @@ pub mod streams {
 fn stand_back(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, i: usize) {
     if let Some(target) = regs.target[i] {
         let berth = regs.berth(units, i);
-        regs.target[i] = Some(nav.settle(target, berth));
+        regs.target[i] = Some(nav.settle(regs.owner[i], target, berth));
     }
 }

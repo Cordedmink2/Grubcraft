@@ -8,6 +8,7 @@ use std::fmt::Write;
 
 use gc_data::ConquestUnitRecord;
 use gc_data::conquest::UNIT_CONSUMED;
+use gc_sim::gates::GateMode;
 use gc_sim::structures::CANCEL_REFUND_PERCENT;
 use gc_sim::{
     BuildingId, Command, PlayerCommand, RegimentHandle, Regiments, StructureHandle, StructureView,
@@ -48,6 +49,8 @@ pub enum Action {
     Upgrade(BuildingId),
     /// Call off the selected building or its upgrade.
     CallOff,
+    /// Set the selected gate to this mode.
+    SetGate(GateMode),
 }
 
 /// The grid as Conquest fills it: an action per slot. With `whole`, the card
@@ -68,6 +71,13 @@ impl Running {
         let mut slots = [None; GRID_SLOTS];
         let structures = self.world.structures()?;
         if let Some(s) = self.picked_structure().and_then(|h| structures.get(h)) {
+            // Your gates take their mode in the first slots (Q, W, E), going
+            // up or standing; they train nothing.
+            if s.gate.is_some() && s.owner == self.sandbox.side {
+                for (slot, mode) in slots.iter_mut().zip(GateMode::ALL) {
+                    *slot = Some(Action::SetGate(mode));
+                }
+            }
             if !s.finished() {
                 slots[SLOT_LAST] = Some(Action::CallOff);
             } else {
@@ -141,7 +151,7 @@ impl Running {
             Action::Lay(b) => self.world.may_lay(side, b).err(),
             Action::Train(u) => structure.and_then(|h| self.world.can_train(side, h, u).err()),
             Action::Upgrade(_) => structure.and_then(|h| self.world.can_upgrade(side, h).err()),
-            Action::OpenBuild | Action::Clear | Action::CallOff => None,
+            Action::OpenBuild | Action::Clear | Action::CallOff | Action::SetGate(_) => None,
         }
         .map(buildings::why)
     }
@@ -155,6 +165,7 @@ impl Running {
         details: &mut [String; GRID_SLOTS],
     ) -> [SlotState; GRID_SLOTS] {
         let mut states = [SlotState::Off; GRID_SLOTS];
+        let gate_mode = self.gate_mode();
         for (i, action) in card.slots.iter().enumerate() {
             let (label, detail) = (&mut labels[i], &mut details[i]);
             label.clear();
@@ -198,10 +209,13 @@ impl Running {
                     label.push_str("Cancel");
                     let _ = write!(detail, "{CANCEL_REFUND_PERCENT}%");
                 }
+                Action::SetGate(mode) => label.push_str(gate_name(mode)),
             }
             let armed = match action {
                 Action::Lay(b) => self.hud.armed == Some(Armed::Lay(b)),
                 Action::Clear => self.hud.armed == Some(Armed::Clear),
+                // The mode it is set to now.
+                Action::SetGate(mode) => gate_mode == Some(mode),
                 _ => false,
             };
             states[i] = if armed {
@@ -256,13 +270,14 @@ impl Running {
                 }
                 return true;
             }
-            Action::Train(_) | Action::Upgrade(_) | Action::CallOff => {}
+            Action::Train(_) | Action::Upgrade(_) | Action::CallOff | Action::SetGate(_) => {}
         }
         // The rest are the selected building's.
         let Some(structure) = self.picked_structure() else {
             return true;
         };
         self.order(match action {
+            Action::SetGate(mode) => Command::SetGate { structure, mode },
             Action::Train(unit) => Command::Train { structure, unit },
             Action::Upgrade(_) => Command::Upgrade { structure },
             _ => Command::CallOff { structure },
@@ -312,6 +327,11 @@ impl Running {
         if !self.input.shift {
             self.set_build_menu(false);
         }
+    }
+
+    /// How the selected building is set, if it is a gate.
+    pub fn gate_mode(&self) -> Option<GateMode> {
+        self.world.structures()?.get(self.picked_structure()?)?.gate
     }
 
     /// Whether `s` is a finished building of yours that shoots.
@@ -536,6 +556,24 @@ fn has_flag(
             .get(usize::from(r.unit))
             .is_some_and(|u| u.flags & flag != 0)
     })
+}
+
+/// A gate mode's name on the card.
+pub fn gate_name(mode: GateMode) -> &'static str {
+    match mode {
+        GateMode::Auto => "Auto",
+        GateMode::Locked => "Locked",
+        GateMode::Open => "Open",
+    }
+}
+
+/// What a gate's mode means, for its card and tooltips.
+pub fn gate_line(mode: GateMode) -> &'static str {
+    match mode {
+        GateMode::Auto => "Gate: Auto - opens for your side as they march up",
+        GateMode::Locked => "Gate: Locked - shut to everyone",
+        GateMode::Open => "Gate: Open - anyone can pass",
+    }
 }
 
 /// A grid slot's price: Grub, and Marrow after a slash if it costs any.

@@ -4,6 +4,7 @@
 use crate::{MatchKind, UnitTable, roster};
 use gc_sim::events::Event;
 use gc_sim::formation::GroupOrder;
+use gc_sim::gates::GateMode;
 use gc_sim::{MoraleState, PlayerId, StructureHandle};
 use gc_ui::DrawList;
 use gc_ui::Icon;
@@ -955,6 +956,11 @@ impl Running {
                         .flatten()
                         .and_then(|h| self.world.regiments.get(h))
                         .map(|r| self.units.names[r.unit as usize].as_str()),
+                    // Your own gate: how it is set, and whether it is open.
+                    gate: mine
+                        .then_some(s.gate)
+                        .flatten()
+                        .map(|m| (crate::conquest_card::gate_line(m), gate_now(s.open))),
                     tips_open,
                 }
             });
@@ -1719,6 +1725,15 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
     }
 }
 
+/// Whether a gate is open right now, for its card.
+fn gate_now(open: bool) -> &'static str {
+    if open {
+        "Open right now"
+    } else {
+        "Shut right now"
+    }
+}
+
 /// The picture and tooltip line of a Conquest card slot.
 fn card_look(action: Option<Action>) -> (Icon, &'static str) {
     match action {
@@ -1733,6 +1748,14 @@ fn card_look(action: Option<Action>) -> (Icon, &'static str) {
         ),
         Some(Action::Train(_)) => (Icon::Flag, "Train this regiment at the building."),
         Some(Action::Upgrade(_)) => (Icon::Ultimate, "Raise the building to its next tier."),
+        Some(Action::SetGate(mode)) => (
+            match mode {
+                GateMode::Auto => Icon::Flag,
+                GateMode::Locked => Icon::FallBack,
+                GateMode::Open => Icon::Move,
+            },
+            crate::conquest_card::gate_line(mode),
+        ),
         Some(Action::CallOff) => (
             Icon::FallBack,
             "Call it off and get a part of the cost back.",

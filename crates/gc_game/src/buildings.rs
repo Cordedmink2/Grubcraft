@@ -31,6 +31,7 @@ const _: () = assert!(
         && record::BUILDING_TRADE_POST == gc_sim::structures::TRADE_POST
         && record::BUILDING_TOLL == gc_sim::structures::TOLL
         && record::BUILDING_SILENCES == gc_sim::structures::SILENCES
+        && record::BUILDING_GATE == gc_sim::structures::GATE
         && record::MAX_REACH_TILES == gc_sim::structures::MAX_REACH
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );
@@ -39,6 +40,15 @@ const _: () = assert!(
 const WALL_HEIGHT: f32 = 1.5;
 /// A building model's walls are what stands in its lowest share.
 const WALL_SHARE: f32 = 0.3;
+/// A gate's jamb posts stand a little over its walls' height.
+const POST_RISE: f32 = 0.3;
+/// How far along the wall a gate's jamb post reaches, in tiles.
+const POST_LEN: f32 = 0.5;
+/// How thick a gate's door leaves are, in tiles.
+const LEAF_THICK: f32 = 0.15;
+/// How tall a gate's door leaves are drawn (a bit under the posts).
+const LEAF_HEIGHT: f32 = WALL_HEIGHT * 0.85;
+const LEAF_COLOR: [u8; 4] = [112, 78, 46, 0];
 const HEIGHT: f32 = 3.0;
 const MAIN_HEIGHT: f32 = 5.0;
 /// A building at no hit points would be this much of its colour; at full
@@ -446,15 +456,104 @@ fn block(
     color: [u8; 4],
     ground: &impl Fn(f32, f32) -> f32,
 ) -> BoxInstance {
-    let (lo, hi) = ground_range(ground, s);
-    // The box drapes over the terrain, each corner on the ground below it:
-    // sunk by the slope under it, so its top follows the ground at `height`.
+    let slab = Slab {
+        centre: centre_of(s.tile, s.width, s.depth),
+        size: Vec2::new(f32::from(s.width), f32::from(s.depth)),
+    };
+    draped(slab, height, color, ground_range(ground, s))
+}
+
+/// A box over `slab`, `height` tall, on ground running from `lo` to `hi`
+/// under it. The box drapes over the terrain, each corner on the ground
+/// below it: sunk by the slope under it, so its top follows the ground at
+/// `height`.
+fn draped(slab: Slab, height: f32, color: [u8; 4], (lo, hi): (f32, f32)) -> BoxInstance {
     BoxInstance {
-        pos: centre_of(s.tile, s.width, s.depth).to_array(),
+        pos: slab.centre.to_array(),
         facing: [0.0, 1.0],
-        size: [f32::from(s.width), height + (hi - lo), f32::from(s.depth)],
+        size: [slab.size.x, height + (hi - lo), slab.size.y],
         color,
         lift: lo - hi,
+    }
+}
+
+/// A flat box seen from above: its middle and its extent along x and y.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Slab {
+    pub centre: Vec2,
+    pub size: Vec2,
+}
+
+/// The pieces a gate is drawn from: a jamb post at each end of its wall
+/// line and two door leaves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GateParts {
+    pub posts: [Slab; 2],
+    pub leaves: [Slab; 2],
+}
+
+/// Lay out a gate whose turned footprint is `width` by `depth` tiles and
+/// centred on `centre`. Its wall line runs along the longer side and troops
+/// pass across the shorter. Shut, the leaves meet in the middle across the
+/// doorway between the posts; open, each is swung back to lie along the
+/// passage against the inner side of its post.
+pub fn gate_parts(centre: Vec2, width: u8, depth: u8, open: bool) -> GateParts {
+    let (w, d) = (f32::from(width), f32::from(depth));
+    // Work with the wall line along "long" and the passage along "thin",
+    // then turn the pieces back onto x and y.
+    let along_y = depth >= width;
+    let (long, thin) = if along_y { (d, w) } else { (w, d) };
+    let post = POST_LEN.min(long / 2.0);
+    let door = long - 2.0 * post;
+    let slab = |long_at: f32, thin_at: f32, long_len: f32, thin_len: f32| {
+        let (at, size) = if along_y {
+            (Vec2::new(thin_at, long_at), Vec2::new(thin_len, long_len))
+        } else {
+            (Vec2::new(long_at, thin_at), Vec2::new(long_len, thin_len))
+        };
+        Slab {
+            centre: centre + at,
+            size,
+        }
+    };
+    let end = (long - post) / 2.0;
+    let posts = [-end, end].map(|at| slab(at, 0.0, post, thin));
+    let leaves = [-1.0, 1.0].map(|side| {
+        if open {
+            // Lying along the passage, tight against the post.
+            let len = (door / 2.0).min(thin);
+            slab(
+                side * (door / 2.0 - LEAF_THICK / 2.0),
+                (len - thin) / 2.0,
+                LEAF_THICK,
+                len,
+            )
+        } else {
+            slab(side * door / 4.0, 0.0, door / 2.0, LEAF_THICK)
+        }
+    });
+    GateParts { posts, leaves }
+}
+
+/// A gate as boxes: jamb posts in its owner's colour (unless a model
+/// stands for them) and door leaves, open or shut as it is.
+fn push_gate(
+    s: &StructureView,
+    posts: Option<[u8; 3]>,
+    ground: &impl Fn(f32, f32) -> f32,
+    out: &mut Vec<BoxInstance>,
+) {
+    let range = ground_range(ground, s);
+    let centre = centre_of(s.tile, s.width, s.depth);
+    let parts = gate_parts(centre, s.width, s.depth, s.open);
+    let slab = |slab: Slab, height: f32, color: [u8; 4]| draped(slab, height, color, range);
+    if let Some([r, g, b]) = posts {
+        for post in parts.posts {
+            out.push(slab(post, WALL_HEIGHT + POST_RISE, [r, g, b, 0]));
+        }
+    }
+    for leaf in parts.leaves {
+        out.push(slab(leaf, LEAF_HEIGHT, LEAF_COLOR));
     }
 }
 
@@ -486,7 +585,7 @@ pub fn push(
     };
     let right = Vec2::new(-across.y, across.x);
     for s in structures.iter().filter(|s| shown(s)) {
-        if out.len() + 3 > MAX_BOX_INSTANCES {
+        if out.len() + 6 > MAX_BOX_INSTANCES {
             return;
         }
         let Some(stats) = table.stats.get(usize::from(s.building)) else {
@@ -494,12 +593,15 @@ pub fn push(
         };
         // A building with a model is drawn with the soldiers (its bar
         // floats over the model's roof).
-        let height = modelled(&s).unwrap_or_else(|| {
-            let [r, g, b] = shade(team(s.owner), s.hp, s.max_hp);
-            let height = height_of(stats.role);
-            out.push(block(&s, height, [r, g, b, 0], &ground));
-            height
-        });
+        // A gate standing is drawn as posts and door leaves, not a block.
+        let model = modelled(&s);
+        let height = model.unwrap_or(height_of(stats.role));
+        let [r, g, b] = shade(team(s.owner), s.hp, s.max_hp);
+        match (s.gate.is_some() && s.finished(), model) {
+            (true, _) => push_gate(&s, model.is_none().then_some([r, g, b]), &ground, out),
+            (false, None) => out.push(block(&s, height, [r, g, b, 0], &ground)),
+            (false, Some(_)) => {}
+        }
         if s.hp >= s.max_hp {
             continue;
         }
@@ -1194,6 +1296,8 @@ fn footprint_view(tile: (i32, i32), width: u8, depth: u8, turn: u8) -> Structure
         upgrading: None,
         growing: false,
         seen: u8::MAX,
+        gate: None,
+        open: false,
     }
 }
 
@@ -1376,6 +1480,66 @@ mod tests {
         assert!(table.describe(0).contains("Clan Hall"));
     }
 
+    /// The extent of `slabs` along one axis (`x` or not), as (low, high).
+    fn span(slabs: &[Slab], x: bool) -> (f32, f32) {
+        let side = |s: &Slab| {
+            if x {
+                (s.centre.x, s.size.x)
+            } else {
+                (s.centre.y, s.size.y)
+            }
+        };
+        slabs.iter().fold((f32::MAX, f32::MIN), |(lo, hi), s| {
+            let (c, len) = side(s);
+            (lo.min(c - len / 2.0), hi.max(c + len / 2.0))
+        })
+    }
+
+    #[test]
+    fn shut_leaves_span_the_doorway_and_open_ones_lie_along_the_jambs() {
+        // As drawn: 1 wide (x), 3 deep (y), so the wall runs along y.
+        let centre = Vec2::new(10.5, 21.5);
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        let shut = gate_parts(centre, 1, 3, false);
+        // The posts take half a tile at each end; the leaves meet between.
+        let (lo, hi) = span(&shut.posts, false);
+        assert!(near(lo, 20.0) && near(hi, 23.0), "{lo} {hi}");
+        let (lo, hi) = span(&shut.leaves, false);
+        assert!(near(lo, 20.5) && near(hi, 22.5), "{lo} {hi}");
+        assert!(near(
+            shut.leaves[0].centre.y + shut.leaves[0].size.y / 2.0,
+            shut.leaves[1].centre.y - shut.leaves[1].size.y / 2.0
+        ));
+        for leaf in shut.leaves {
+            // Thin across the passage, on the footprint's middle line.
+            assert!(near(leaf.size.x, LEAF_THICK) && near(leaf.centre.x, centre.x));
+        }
+        let open = gate_parts(centre, 1, 3, true);
+        for (leaf, post) in open.leaves.iter().zip(&open.posts) {
+            // Along the passage, inside the footprint, beside its post.
+            assert!(near(leaf.size.y, LEAF_THICK) && near(leaf.size.x, 1.0));
+            assert!(leaf.centre.x - leaf.size.x / 2.0 >= 10.0 - 1e-4);
+            assert!(leaf.centre.x + leaf.size.x / 2.0 <= 11.0 + 1e-4);
+            let gap = (leaf.centre.y - post.centre.y).abs() - (leaf.size.y + post.size.y) / 2.0;
+            assert!(near(gap, 0.0), "{gap}");
+        }
+        // The doorway is clear between the open leaves.
+        let (a, b) = (open.leaves[0], open.leaves[1]);
+        assert!(b.centre.y - a.centre.y > 1.5);
+        // Turned a quarter, the wall runs along x and the same holds.
+        let turned = gate_parts(centre, 3, 1, false);
+        let (lo, hi) = span(&turned.leaves, true);
+        assert!(near(lo, 9.5) && near(hi, 11.5), "{lo} {hi}");
+        assert!(turned.leaves.iter().all(|l| near(l.size.y, LEAF_THICK)));
+        let turned_open = gate_parts(centre, 3, 1, true);
+        assert!(
+            turned_open
+                .leaves
+                .iter()
+                .all(|l| near(l.size.x, LEAF_THICK) && near(l.size.y, 1.0))
+        );
+    }
+
     #[test]
     fn stages_follow_the_work_done() {
         assert_eq!(stage_of(0), 0);
@@ -1480,6 +1644,8 @@ mod tests {
             upgrading: None,
             growing: false,
             seen: 1,
+            gate: None,
+            open: false,
         };
         let model = |s: &StructureView| looks.model_of(s).map(|m| models.models[m].name());
         assert_eq!(model(&s), Some("Clan Hall #2"));

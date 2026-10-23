@@ -273,6 +273,7 @@
             hp: 1000,
             armour: Fortified,
             footprint: (1, 3),
+            flags: [Gate],
             effect: "A wall segment that opens for your own and allied regiments.",
         ),
     ],

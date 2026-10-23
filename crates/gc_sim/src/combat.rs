@@ -175,6 +175,7 @@ const ALL_SLOTS: u32 = (1 << OWNER_SLOTS) - 1;
 fn ground_ends(
     terrain: &Terrain,
     nav: &Nav,
+    party: PlayerId,
     map_tiles: u32,
     centre: FxVec2,
     behind: FxVec2,
@@ -182,7 +183,7 @@ fn ground_ends(
     let edge = Fx::from_int(map_tiles as i32);
     let off_map = map_tiles > 0
         && (behind.x < Fx::ZERO || behind.y < Fx::ZERO || behind.x > edge || behind.y > edge);
-    off_map || nav.blocked(behind) || (terrain.wet(behind) && !terrain.wet(centre))
+    off_map || nav.blocked(party, behind) || (terrain.wet(behind) && !terrain.wet(centre))
 }
 
 /// Whether regiments `i` and `j` can't lock in melee because one is falling
@@ -862,7 +863,7 @@ impl Combat {
                 || !(regs.engaged[i].is_some()
                     || regs.held[i] > 0
                     || (regs.target[i].is_none() && regs.attack_target[i].is_none())
-                    || !nav.open_around(regs.position[i], OPEN_GROUND))
+                    || !nav.open_around(regs.owner[i], regs.position[i], OPEN_GROUND))
             {
                 continue;
             }
@@ -1017,7 +1018,7 @@ impl Combat {
         let here = regs.position[i];
         [apart, -apart]
             .iter()
-            .any(|&d| nav.clear_line(here, them.centre + right * d))
+            .any(|&d| nav.clear_line(regs.owner[i], here, them.centre + right * d))
     }
 
     /// Contacts, charges and chasing, before anyone moves this tick.
@@ -1273,7 +1274,7 @@ impl Combat {
             let pace = Fx::from_raw((GIVE_GROUND.raw() * i32::from(regs.giving[i]) / 100).max(1));
             let mass = units[regs.unit[i] as usize].mass;
             let give = away * terrain.going(pace, me.centre, mass);
-            if nav.blocks(foe, foe + give) {
+            if nav.blocks(regs.owner[j], foe, foe + give) {
                 // Its foe can't follow, so nobody is pushing.
                 continue;
             }
@@ -1282,7 +1283,7 @@ impl Combat {
             let wing = across * me.extent_along(across);
             if [rear, rear + wing, rear - wing]
                 .iter()
-                .any(|&p| ground_ends(terrain, nav, map_tiles, me.centre, p))
+                .any(|&p| ground_ends(terrain, nav, regs.owner[i], map_tiles, me.centre, p))
                 || self.backs_into(regs, stances, i, me.centre + give)
             {
                 regs.disorder(i);
@@ -1348,7 +1349,7 @@ impl Combat {
                 };
                 let can_step = |&k: &usize| {
                     let at = self.blocks[k].centre;
-                    !nav.blocks(at, at + step)
+                    !nav.blocks(regs.owner[k], at, at + step)
                 };
                 return (chain[..=hop].windows(2).all(draws_away)
                     && chain[..hop].iter().all(can_step))
@@ -1390,7 +1391,8 @@ impl Combat {
         let step =
             (them.centre - me.centre).normalized() * terrain.going(CLOSE_UP, me.centre, mass);
         let next = me.centre + step;
-        (!nav.blocks(me.centre, next) && !self.backs_into(regs, stances, i, next)).then_some(step)
+        (!nav.blocks(regs.owner[i], me.centre, next) && !self.backs_into(regs, stances, i, next))
+            .then_some(step)
     }
 
     /// Whether regiment `i` stepping to `next` would back (or close) into another
@@ -2045,7 +2047,7 @@ fn step_up(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, j: usize, ranks
         let (_, spacing) = units[regs.unit[j] as usize].spacing(regs.formation[j]);
         let step = Fx::from_raw(spacing.raw() * i32::from(ranks_before - ranks_after) / 2);
         let to = regs.position[j] + regs.facing[j].to_vec() * step;
-        if !nav.blocks(regs.position[j], to) {
+        if !nav.blocks(regs.owner[j], regs.position[j], to) {
             regs.position[j] = to;
         }
     }

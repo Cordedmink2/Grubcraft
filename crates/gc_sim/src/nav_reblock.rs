@@ -1,5 +1,6 @@
-//! Ground that changes mid-match: buildings put up and pulled down (see
-//! [`crate::structures`]). A change blocks or frees a rectangle of cells;
+//! Ground that changes mid-match: buildings put up and pulled down, and
+//! gates opening and shutting (see [`crate::structures`]). A change blocks
+//! or frees a rectangle of cells;
 //! the walkable grid is brought up to date around it instead of being
 //! built again, so a building going up costs a few milliseconds, not the
 //! whole map's worth of searches:
@@ -37,6 +38,7 @@ use gc_fixed::{Fx, FxVec2};
 use super::{
     BLOCKED, CELLS_PER_TILE, CLEAR_CAP, CLEARANCE, GRAPH_BERTH, Grid, Nav, Route, SECTOR, Search,
 };
+use crate::PlayerId;
 use crate::regiments::Regiments;
 
 /// Buildings put up or pulled down together whose footprints fit in a box
@@ -45,19 +47,89 @@ use crate::regiments::Regiments;
 /// building (most of a change's cost is the same whatever its size).
 const GROUP: i32 = 4 * SECTOR;
 
+/// Whether a gate lets its owner's side through, and everyone else (see
+/// [`Nav::set_door`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Door {
+    pub(crate) own: bool,
+    pub(crate) others: bool,
+}
+
+/// A change to a rectangle of cells.
+#[derive(Clone, Copy)]
+enum Change {
+    /// A building put up (`true`) or pulled down.
+    Built(bool),
+    /// A door opened (`true`) or shut, on a building already standing.
+    Opened(bool),
+}
+
 impl Nav {
     /// Put up (`on`) or pull down a building on each of `all`'s tiles
-    /// (`[x, y, w, d]`, all on the map), bringing the grid up to date once
-    /// for each group of them close together. Routes that might cross the
-    /// changed ground are searched again. No effect with no map.
+    /// (`[x, y, w, d]`, all on the map), on every side's grid, bringing
+    /// each up to date once for each group of them close together. Routes
+    /// that might cross the changed ground are searched again. No effect
+    /// with no map.
     pub(crate) fn set_built_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
-        let Some(grid) = &mut self.grid else {
+        for v in 0..self.grids.len() {
+            self.change(v, all, Change::Built(on), regs);
+        }
+    }
+
+    /// The gate standing on `tiles` (put up with [`Nav::set_built`], so a
+    /// wall to everyone until now), owned by `owner`, goes from letting
+    /// through as `was` says to as `now` does. From the first gate that
+    /// lets its owner's side through but not everyone, that side walks a
+    /// grid of its own (see [`Nav`]).
+    pub(crate) fn set_door(
+        &mut self,
+        tiles: [i32; 4],
+        owner: PlayerId,
+        was: Door,
+        now: Door,
+        regs: &Regiments,
+    ) {
+        let Some(&side) = self.side.get(usize::from(owner)) else {
             return;
         };
+        if self.grids.is_empty() || was == now {
+            return;
+        }
+        let sharing =
+            (0..self.view.len()).any(|p| self.view[p] == 0 && self.parties & !side & 1 << p != 0);
+        if now.own != now.others && self.view[usize::from(owner)] == 0 && sharing {
+            // A copy of the shared grid, where the owner's side's gates
+            // stand as for everyone (this is its first that doesn't). The
+            // last side left on the shared grid keeps it as its own.
+            let own = Arc::new(Grid::clone(&self.grids[0]));
+            self.grids.push(own);
+            let v = (self.grids.len() - 1) as u8;
+            for p in 0..self.view.len() {
+                if side & 1 << p != 0 {
+                    self.view[p] = v;
+                }
+            }
+        }
+        let own = usize::from(self.view[usize::from(owner)]);
+        for v in 0..self.grids.len() {
+            let pick = |d: Door| if v == own { d.own } else { d.others };
+            if pick(was) != pick(now) {
+                self.change(v, &[tiles], Change::Opened(pick(now)), regs);
+            }
+        }
+    }
+
+    /// Make `change` on each of `all`'s tiles on grid `v`, rerouting the
+    /// regiments walking it whose routes pass near.
+    fn change(&mut self, v: usize, all: &[[i32; 4]], change: Change, regs: &Regiments) {
         // Linking the grid again isn't the routes' search work this tick.
         let work = self.search.work;
-        let changed = Arc::make_mut(grid).set_built_all(all, on, &mut self.search);
+        let changed = Arc::make_mut(&mut self.grids[v]).change_all(all, change, &mut self.search);
         self.search.work = work;
+        let freed = match change {
+            Change::Built(on) => !on,
+            Change::Opened(open) => open,
+        };
         // Any route passing near a change is found again (walking the old
         // way meanwhile: if the change blocks it, the regiment stops at
         // the edge and looks again then), and, once ground is freed, any
@@ -77,13 +149,13 @@ impl Nav {
             return;
         }
         for i in 0..self.route.len() {
-            if !regs.alive[i] {
+            if !regs.alive[i] || usize::from(self.view[usize::from(regs.owner[i])]) != v {
                 continue;
             }
             let ahead = match self.route[i] {
                 Route::Direct => core::slice::from_ref(&self.goal[i]),
                 Route::Waypoints => self.ahead(i),
-                Route::Failed if !on => {
+                Route::Failed if freed => {
                     self.lost(i);
                     continue;
                 }
@@ -122,10 +194,22 @@ impl Grid {
     /// [`Grid::set_built`] for each of `all`'s tiles (those on the map),
     /// bringing the grid up to date once for each group of them that fits
     /// in a [`GROUP`]-wide box. Returns each group's box of changed cells.
+    #[cfg(test)]
     pub(super) fn set_built_all(
         &mut self,
         all: &[[i32; 4]],
         on: bool,
+        search: &mut Search,
+    ) -> Vec<[i32; 4]> {
+        self.change_all(all, Change::Built(on), search)
+    }
+
+    /// Make `change` on each of `all`'s tiles (those on the map), as
+    /// [`Grid::set_built_all`] does.
+    fn change_all(
+        &mut self,
+        all: &[[i32; 4]],
+        change: Change,
         search: &mut Search,
     ) -> Vec<[i32; 4]> {
         // Each footprint's cells join the first group they fit in: the
@@ -149,17 +233,26 @@ impl Grid {
                 None => groups.push((c, vec![c])),
             }
         }
+        if matches!(change, Change::Opened(_)) && self.opened.is_empty() {
+            // Made on the first door, so maps without gates don't carry it.
+            self.opened = vec![0; self.built.len()];
+        }
         for (g, feet) in &groups {
             for &[cx0, cy0, cx1, cy1] in feet {
                 for cy in cy0..cy1 {
                     for cx in cx0..cx1 {
                         let i = self.idx(cx, cy) as usize;
-                        self.built[i] = if on {
-                            self.built[i].saturating_add(1)
-                        } else {
-                            self.built[i].saturating_sub(1)
+                        let (count, on) = match change {
+                            Change::Built(on) => (&mut self.built[i], on),
+                            Change::Opened(open) => (&mut self.opened[i], open),
                         };
-                        self.cost[i] = if self.built[i] > 0 {
+                        *count = if on {
+                            count.saturating_add(1)
+                        } else {
+                            count.saturating_sub(1)
+                        };
+                        let opened = self.opened.get(i).copied().unwrap_or(0);
+                        self.cost[i] = if self.built[i] > opened {
                             BLOCKED
                         } else {
                             self.ground[i]
@@ -219,6 +312,7 @@ impl Grid {
             }
         }
         self.relink(&partner, &old, &dirty, search);
+        self.node_room = self.node_room();
         search.fit(self);
     }
 
@@ -699,6 +793,36 @@ mod tests {
             build_on(&mut g, b, false);
         }
         same(&g, &Grid::build(&ground, side));
+    }
+
+    #[test]
+    fn an_open_door_is_ground_as_if_nothing_stood_there() {
+        let tiles: i32 = 96;
+        let side = tiles * CELLS_PER_TILE;
+        let ground = ribs_map(tiles as u32);
+        let mut g = Grid::build(&ground, side);
+        let mut search = Search::for_grid(&g);
+        // A wall right across, a gate in it, and a house the gate's door
+        // knows nothing of.
+        let (wall, gate, house) = ([0, 40, 50, 1], [50, 40, 3, 1], [70, 60, 3, 3]);
+        for b in [wall, gate, house] {
+            assert!(g.set_built(b, true, &mut search).is_some());
+        }
+        let mut walled = Grid::build(&g.cost, side);
+        walled.ground.clone_from(&g.ground);
+        walled.built.clone_from(&g.built);
+        same(&g, &walled);
+        g.change_all(&[gate], Change::Opened(true), &mut search);
+        let mut free = Grid::build(&ground, side);
+        let mut s2 = Search::for_grid(&free);
+        for b in [wall, house] {
+            assert!(free.set_built(b, true, &mut s2).is_some());
+        }
+        same(&g, &free);
+        // Shut again, the wall it was; the gate still stands either way.
+        g.change_all(&[gate], Change::Opened(false), &mut search);
+        same(&g, &walled);
+        assert!(g.built[g.idx(101, 81) as usize] > 0);
     }
 
     #[test]

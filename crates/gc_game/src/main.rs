@@ -2927,9 +2927,10 @@ impl Running {
         };
         let ridden = self.ride.as_ref().map(|ride| ride.regiment);
         let haste_glow = self.haste_glow();
-        // Soldiers stand only where a regiment could walk.
+        // Soldiers stand only where a regiment of theirs could walk (an
+        // open gate is ground to them; a shut one is wall).
         let nav = self.world.nav();
-        let firm = |p: Vec2| nav.standable(fx_vec(p));
+        let firm = |owner| move |p: Vec2| nav.standable(owner, fx_vec(p));
         for r in self.world.regiments.iter().take_while(|_| !viewing) {
             // Enemies hidden in woods and tall grass aren't drawn (their
             // soldiers keep marching out of sight, below).
@@ -2978,8 +2979,13 @@ impl Running {
                 fighter: fighter_of(stats, &r),
             };
             if !seen {
-                self.puppets
-                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |_| {});
+                self.puppets.update_on(
+                    &block,
+                    r.owner,
+                    game_dt.as_secs_f32(),
+                    firm(r.owner),
+                    |_| {},
+                );
                 continue;
             }
             if block.disorder > 0.0 {
@@ -3084,8 +3090,13 @@ impl Running {
                     lift: pole[1] - flag_size[1],
                 });
                 // Keep the puppets marching (and falling) out of sight.
-                self.puppets
-                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |_| {});
+                self.puppets.update_on(
+                    &block,
+                    r.owner,
+                    game_dt.as_secs_f32(),
+                    firm(r.owner),
+                    |_| {},
+                );
                 continue;
             }
             if let Some(color) = banner {
@@ -3146,8 +3157,12 @@ impl Running {
                         let reach = f32::from(b.width.max(b.depth)) / 2.0 + 2.0;
                         (buildings::centre_of(b.tile, b.width, b.depth), reach)
                     });
-                self.puppets
-                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
+                self.puppets.update_on(
+                    &block,
+                    r.owner,
+                    game_dt.as_secs_f32(),
+                    firm(r.owner),
+                    |s| {
                         let mut s = s;
                         // At the wall: the ranks step up to it, and the front
                         // one swings.
@@ -3214,7 +3229,8 @@ impl Running {
                             lift: 0.0,
                             scale: look.scale,
                         });
-                    });
+                    },
+                );
                 continue;
             }
             let size = [
@@ -3225,7 +3241,7 @@ impl Running {
             let color = [cr, cg, cb, if selected { 70 } else { 0 }];
             let instances = &mut self.instances;
             self.puppets
-                .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
+                .update_on(&block, r.owner, game_dt.as_secs_f32(), firm(r.owner), |s| {
                     instances.push(BoxInstance {
                         pos: s.pos.to_array(),
                         facing: s.facing.to_array(),
@@ -5238,7 +5254,7 @@ impl Running {
         let Some((at, facing)) = self.placement() else {
             return;
         };
-        if !self.world.nav().walkable(fx_vec(at)) {
+        if !self.world.nav().walkable(self.sandbox.side, fx_vec(at)) {
             self.say("No regiment can stand there.".into());
             return;
         }
@@ -5732,7 +5748,7 @@ impl Running {
         let stats = &self.units.stats[self.sandbox.unit as usize];
         let (width, depth) = stats.block_size_in(Formation::Line, stats.files, stats.models);
         let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
-        let color = if self.world.nav().walkable(fx_vec(at)) {
+        let color = if self.world.nav().walkable(self.sandbox.side, fx_vec(at)) {
             [cr, cg, cb, 200]
         } else {
             BLOCKED_COLOR
