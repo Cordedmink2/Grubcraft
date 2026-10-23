@@ -514,6 +514,9 @@ pub struct Puppets {
     /// Per puppet, the simulation's last blow by him that didn't kill: the
     /// puppet it fell on, whether it wounded him, and when it was told.
     told: Vec<Option<(u32, bool, f32)>>,
+    /// Per puppet slot, when a man last stepped into it (or left it): blows
+    /// told on that slot before then fell on someone else.
+    filled: Vec<f32>,
     time: f32,
     /// The last frame's step, in seconds.
     dt: f32,
@@ -557,6 +560,7 @@ impl Puppets {
             lodged: Vec::with_capacity(MAX_SINKING),
             slain: Vec::with_capacity(MAX_SINKING),
             told: vec![None; regiment_capacity * SLOTS],
+            filled: vec![f32::NEG_INFINITY; regiment_capacity * SLOTS],
             time: 0.0,
             dt: 0.0,
             duel: None,
@@ -622,8 +626,8 @@ impl Puppets {
                 }
             }
             _ if striker != NONE && self.owner[r] == Some(b.target) => {
-                self.partner[striker as usize] = (r * SLOTS + b.target_slot as usize) as u32;
                 let target = (r * SLOTS + b.target_slot as usize) as u32;
+                self.partner[striker as usize] = target;
                 let told = &mut self.told[striker as usize];
                 // Two blows before his next swing: it shows the wound, if
                 // either drew blood on that man.
@@ -940,19 +944,18 @@ impl Puppets {
         };
         let crushes = || roll(i, j, blow, 2) < CRUSH_PER_CLASS * me.outweighs(&them, true);
         let guard = if them.shield { Act::Block } else { Act::Parry };
-        let act = match self.told[i].take() {
+        let told = self.told[i].take().filter(|&(t, _, at)| {
+            t == j as u32 && self.time - at <= TOLD_KEEP && at > self.filled[j]
+        });
+        let act = match told {
             // The simulation's blow: a wound gets through (a heavier man's
             // crushing through to knock him down), anything else is turned.
-            Some((t, wounded, at)) if t == self.partner[i] && self.time - at <= TOLD_KEEP => {
-                match () {
-                    _ if !wounded => guard,
-                    _ if crushes() => Act::Down,
-                    _ => Act::Stagger,
-                }
-            }
-            _ if roll(i, j, blow, 1) < me.lands(defence) => Act::Stagger,
-            _ if crushes() => Act::Down,
-            _ => guard,
+            Some((_, false, _)) => guard,
+            Some(_) if crushes() => Act::Down,
+            Some(_) => Act::Stagger,
+            None if roll(i, j, blow, 1) < me.lands(defence) => Act::Stagger,
+            None if crushes() => Act::Down,
+            None => guard,
         };
         self.suffer(j, i, act);
     }
@@ -1058,6 +1061,7 @@ impl Puppets {
             self.act[r * SLOTS..(r + 1) * SLOTS].fill((Act::None, 0.0));
             self.reeling[r * SLOTS..(r + 1) * SLOTS].fill(f32::NEG_INFINITY);
             self.told[r * SLOTS..(r + 1) * SLOTS].fill(None);
+            self.filled[r * SLOTS..(r + 1) * SLOTS].fill(self.time);
             for k in 0..SLOTS {
                 self.looks[r * SLOTS + k] = look_of(block.handle, k);
             }
@@ -1377,6 +1381,9 @@ impl Puppets {
             self.looks[victim] = self.looks[last];
             // Whoever steps into the gap finds a new man, so the blows he
             // struck from the last slot are done with.
+            // Blows told on whoever stood in either slot are not his.
+            self.filled[victim] = self.time;
+            self.filled[last] = self.time;
             self.told[victim] = None;
             self.told[last] = None;
             // Whoever steps into the gap finds his own man next frame.
