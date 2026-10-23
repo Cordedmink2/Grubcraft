@@ -284,7 +284,8 @@ fn driven_to_a_river_bank_a_regiment_is_pinned() {
 
 #[test]
 fn a_pinned_regiment_loses_heart() {
-    // No one falls in these fights: only being pinned costs morale.
+    // No one falls in these fights: wounds cost a little morale, being
+    // pinned much more.
     let morale = |behind: Behind| {
         let mut w = world(behind);
         let (_, sturdy) = face_off(&mut w, STRONG, STURDY);
@@ -295,11 +296,12 @@ fn a_pinned_regiment_loses_heart() {
     };
     let free = morale(Behind::Open);
     let pinned = morale(Behind::Cliff(26));
-    assert_eq!(free, 60);
+    assert!((55..=60).contains(&free), "{free}");
     // Pinned after about four seconds, then 3 points a second at the
     // battle's pace (`gc_sim::combat::BATTLE_PACE_PERCENT`): at full pace,
     // 12 to 18 seconds pinned, 36 to 54 points.
-    let lost = (60 - i64::from(pinned)) * 100 / gc_sim::combat::BATTLE_PACE_PERCENT as i64;
+    let lost =
+        (i64::from(free) - i64::from(pinned)) * 100 / gc_sim::combat::BATTLE_PACE_PERCENT as i64;
     assert!((36..=54).contains(&lost), "{pinned}");
 }
 

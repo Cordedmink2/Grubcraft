@@ -14,9 +14,12 @@
 //!    and removes regiments with no soldiers left.
 //!
 //! Every regiment strikes once a second, staggered by pool index so the work
-//! spreads over the ticks. Damage is the expected value of the blows with a
-//! ±25% roll from the combat random stream, carried in 1/256ths of a hit point
-//! so small hits add up.
+//! spreads over the ticks. On its turn each of its soldiers who can reach the
+//! foe strikes the enemy soldier across from him (see [`duel`]): the blow
+//! lands with the chance to hit, and one that lands takes its damage, rolled
+//! ±25% on the combat random stream, off that one man. Damage is carried in
+//! 1/256ths of a hit point so small hits add up, and a soldier dies when his
+//! own hit points run out (docs/28-soldier-combat.md, option B).
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -70,6 +73,11 @@ pub const FALL_BACK_TICKS: u16 = 8 * TICKS_PER_SECOND as u16;
 pub const MISSILE_SPEED: Fx = Fx::ONE;
 /// Volleys in flight at once, across all players.
 pub const MAX_VOLLEYS: usize = 2048;
+/// Room for this many melee blows a tick per regiment the match holds:
+/// about one regiment in twenty strikes on any one tick, with at most a
+/// regiment's worth of soldiers each, so in all but the biggest battles
+/// none are left untold.
+const MAX_BLOWS_PER_REGIMENT: usize = 8;
 /// Ground covered per soldier in a "normal" block (0.8 × 0.8 tiles); denser
 /// blocks take more arrow hits, looser ones fewer.
 const REFERENCE_AREA_PER_SOLDIER: i64 = (Fx::ONE.raw() as i64 * 64) / 100;
@@ -360,7 +368,36 @@ pub struct Combat {
     /// Volleys that came down this tick, for the tick's events (kept only
     /// while `tell`: a rehearsal's world tells no one).
     landed: Vec<Event>,
+    /// Melee blows struck this tick, for the screen (kept only while
+    /// `tell`, and only as many as there is room for).
+    blows: Vec<Blow>,
     tell: bool,
+}
+
+/// One soldier's melee blow on another (docs/28-soldier-combat.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Blow {
+    pub striker: RegimentHandle,
+    /// The striker's slot in his regiment.
+    pub striker_slot: u8,
+    pub target: RegimentHandle,
+    /// The target's slot in his regiment when the blow landed. A man who
+    /// is killed leaves it to the soldier from the regiment's last slot,
+    /// who steps up into the gap.
+    pub target_slot: u8,
+    pub outcome: Outcome,
+}
+
+/// What a melee blow did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// It missed, was parried or blocked, or glanced off without a wound.
+    Parried,
+    /// It landed and wounded him.
+    Wounded,
+    /// It landed and killed him, and with a blow to spare, as many more
+    /// (`men` in all) of the soldiers who stepped up into his place.
+    Killed { men: u8 },
 }
 
 /// Where every regiment is, borrowed field by field from [`Regiments`] so a
@@ -472,6 +509,7 @@ impl Combat {
             },
             loosed: Vec::with_capacity(regiment_capacity),
             landed: Vec::with_capacity(MAX_VOLLEYS),
+            blows: Vec::with_capacity(regiment_capacity * MAX_BLOWS_PER_REGIMENT),
             tell: true,
         }
     }
@@ -480,9 +518,17 @@ impl Combat {
     pub(crate) fn untold(self) -> Combat {
         Combat {
             landed: Vec::new(),
+            blows: Vec::new(),
             tell: false,
             ..self
         }
+    }
+
+    /// The melee blows struck in the last tick, in the order they were
+    /// struck (none in a world that tells no one). In a very big battle
+    /// some may be left out when there is no room for them.
+    pub(crate) fn blows(&self) -> &[Blow] {
+        &self.blows
     }
 
     /// The volleys loosed in the last tick: (volley, shooter, target).
@@ -1324,6 +1370,7 @@ impl Combat {
     ) {
         self.loosed.clear();
         self.landed.clear();
+        self.blows.clear();
         // Melee.
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
@@ -1374,7 +1421,8 @@ impl Combat {
             }
             let (files, models) = (regs.files[i], regs.models[i]);
             // Soldiers who can reach the foe, in percent of a soldier.
-            let fighters = match me.side_facing(them.centre) {
+            let my_side = me.side_facing(them.centre);
+            let fighters = match my_side {
                 Side::Front => attacker.front_fighters_percent(files, models),
                 Side::Flank => 100 * u64::from(formation::ranks(files, models)),
                 Side::Rear => 100 * u64::from(files.min(models).div_ceil(2)),
@@ -1384,7 +1432,7 @@ impl Combat {
             // `UnitStats::melee_defence_in`).
             let defence =
                 defender.melee_defence_in(regs.formation[j], side == Side::Front, regs.still(j));
-            let hit = hit_percent(i32::from(attacker.melee_attack), defence) as u128;
+            let hit = hit_percent(i32::from(attacker.melee_attack), defence) as u32;
             let charge = 100
                 + u128::from(regs.charge_bonus[i]) * u128::from(regs.charge[i])
                     / u128::from(CHARGE_TICKS);
@@ -1395,17 +1443,15 @@ impl Combat {
                 100 - disorder_percent(regs.disorder[i]),
                 100 + disorder_percent(regs.disorder[j]),
             );
+            // What one soldier's blow that lands does, in 1/256 hit points.
             // In u128: the extra factors would overflow u64 for big blows.
-            // With every new factor at 100 this is exactly the old formula.
-            let mut expected = (u128::from(fighters)
-                * hit
-                * u128::from(attacker.melee_damage)
+            let mut landed = (u128::from(attacker.melee_damage)
                 * u128::from(side.damage_percent())
                 * charge
                 * heart
                 * room
                 * 256
-                / (100 * 100 * 100 * 100 * 100 * 100)) as u64
+                / (100 * 100 * 100 * 100)) as u64
                 * ground
                 / 100
                 * shaken
@@ -1414,17 +1460,34 @@ impl Combat {
                 / 100;
             // Caught off guard by an ambush.
             if vision.off_guard(i) {
-                expected = expected * OFF_GUARD_DAMAGE_PERCENT / 100;
+                landed = landed * OFF_GUARD_DAMAGE_PERCENT / 100;
             }
-            expected = expected * BATTLE_PACE_PERCENT / 100;
-            // Even a blow that can't wound shoves.
+            landed = landed * BATTLE_PACE_PERCENT / 100;
+            // Even a blow that can't wound shoves, by the weight of all the
+            // blows the regiment strikes.
+            let expected = landed * fighters * u64::from(hit) / (100 * 100);
             let shove = expected
                 .max(1)
                 .saturating_mul(attacker.mass.heft())
                 .min(u64::from(u32::MAX)) as u32;
             regs.pressing[i] = regs.pressing[i].saturating_add(shove);
             regs.pressed[j] = regs.pressed[j].saturating_add(shove);
-            deal(regs, units, j, expected, side, rng);
+            let blows = (self.tell).then_some(&mut self.blows);
+            duel(
+                regs,
+                units,
+                Fight {
+                    i,
+                    j,
+                    my_side,
+                    side,
+                    hit,
+                    landed,
+                    reach: attacker.reach,
+                },
+                rng,
+                blows,
+            );
         }
 
         // Who is winning each melee, read once a second on each regiment's
@@ -1669,21 +1732,257 @@ fn deal(
     side: Side,
     rng: &mut Pcg32,
 ) -> u16 {
+    struck_on(regs, j, side);
+    let whole = carry(regs, j, roll(expected, rng));
+    let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
+    let lost = regs.take_damage(j, whole.min(u64::from(u32::MAX)) as u32);
+    step_up(regs, units, j, ranks_before);
+    lost
+}
+
+/// Marks regiment `j` as struck on `side`, for its next morale check.
+fn struck_on(regs: &mut Regiments, j: usize, side: Side) {
     regs.shock[j] |= match side {
         Side::Front => 0,
         Side::Flank => SHOCK_FLANK,
         Side::Rear => SHOCK_REAR,
     };
-    let rolled = expected * (192 + u64::from(rng.below(129))) / 256;
+}
+
+/// `expected` damage rolled ±25% on the combat random stream.
+fn roll(expected: u64, rng: &mut Pcg32) -> u64 {
+    expected * (192 + u64::from(rng.below(129))) / 256
+}
+
+/// Adds `rolled` (1/256 hit points) to regiment `j`'s carried fraction and
+/// returns the whole hit points it makes, keeping the rest.
+fn carry(regs: &mut Regiments, j: usize, rolled: u64) -> u64 {
     let total = rolled + u64::from(regs.damage_carry[j]);
     regs.damage_carry[j] = (total % 256) as u16;
+    total / 256
+}
+
+/// One regiment's melee turn against its foe, as [`duel`] plays it.
+struct Fight {
+    /// The striking regiment and its foe.
+    i: usize,
+    j: usize,
+    /// The striker's side that faces the foe, and the foe's side that faces
+    /// the striker.
+    my_side: Side,
+    side: Side,
+    /// The chance each blow lands, in percent.
+    hit: u32,
+    /// What one blow that lands does, in 1/256 hit points, before its roll.
+    landed: u64,
+    /// Spears and pikes: the second rank fights too.
+    reach: bool,
+}
+
+/// The soldiers of a regiment along one side of its block, in order from
+/// one end to the other.
+#[derive(Clone, Copy)]
+struct Edge {
+    side: Side,
+    /// For a flank, which: the end of each rank with the last file, or the
+    /// first.
+    last_file: bool,
+    files: u16,
+    models: u16,
+}
+
+impl Edge {
+    fn of(regs: &Regiments, i: usize, side: Side, last_file: bool) -> Edge {
+        let models = regs.models[i];
+        Edge {
+            side,
+            last_file,
+            files: regs.files[i].clamp(1, models.max(1)),
+            models,
+        }
+    }
+
+    fn ranks(&self) -> u16 {
+        formation::ranks(self.files, self.models)
+    }
+
+    /// How many soldiers stand along it.
+    fn len(&self) -> u16 {
+        match self.side {
+            Side::Front => self.files.min(self.models),
+            Side::Rear => self.models - (self.ranks() - 1) * self.files,
+            Side::Flank => self.ranks(),
+        }
+    }
+
+    /// The slot of its `n`th soldier.
+    fn slot(&self, n: u16) -> u16 {
+        match self.side {
+            Side::Front => n,
+            Side::Rear => (self.ranks() - 1) * self.files + n,
+            Side::Flank if self.last_file => (n * self.files + self.files - 1).min(self.models - 1),
+            Side::Flank => n * self.files,
+        }
+    }
+}
+
+/// Where soldier `k` of regiment `i` stands.
+fn slot_pos(regs: &Regiments, units: &[UnitStats], i: usize, k: u16) -> FxVec2 {
+    let (fs, rs) = units[regs.unit[i] as usize].spacing(regs.formation[i]);
+    let local = formation::slot_offset(k, regs.files[i], regs.models[i], fs, rs);
+    formation::local_to_world(regs.position[i], regs.facing[i], local)
+}
+
+/// Whether regiment `i`'s flank by its last file is nearer `point` than
+/// the one by its first.
+fn last_file_nearer(regs: &Regiments, units: &[UnitStats], i: usize, point: FxVec2) -> bool {
+    let files = regs.files[i].clamp(1, regs.models[i].max(1));
+    let first = slot_pos(regs, units, i, 0);
+    let last = slot_pos(regs, units, i, files - 1);
+    (last - point).length_sq_raw() < (first - point).length_sq_raw()
+}
+
+/// The soldiers along one side of a regiment's block, laid out on the
+/// ground, for finding who stands across from a point.
+struct Line {
+    edge: Edge,
+    /// The first soldier's spot, and the way to the last one's.
+    a: FxVec2,
+    along: FxVec2,
+}
+
+impl Line {
+    fn of(regs: &Regiments, units: &[UnitStats], j: usize, side: Side, last_file: bool) -> Line {
+        let edge = Edge::of(regs, j, side, last_file);
+        let a = slot_pos(regs, units, j, edge.slot(0));
+        let b = slot_pos(regs, units, j, edge.slot(edge.len().max(1) - 1));
+        Line {
+            edge,
+            a,
+            along: b - a,
+        }
+    }
+
+    /// The soldier across from the point `p`: the one nearest where `p`
+    /// falls on the line through the side's ends.
+    fn across_from(&self, p: FxVec2) -> u16 {
+        let n = self.edge.len();
+        if n <= 1 {
+            return self.edge.slot(0);
+        }
+        let (along, from_a) = (self.along, p - self.a);
+        let dot = i64::from(from_a.x.raw()) * i64::from(along.x.raw())
+            + i64::from(from_a.y.raw()) * i64::from(along.y.raw());
+        let num = dot * i64::from(n - 1);
+        let den = (along.length_sq_raw() as i64).max(1);
+        let at = ((2 * num + den) / (2 * den)).clamp(0, i64::from(n - 1));
+        self.edge.slot(at as u16)
+    }
+}
+
+/// Regiment `fight.i`'s turn in melee: each of its soldiers who can reach
+/// the foe strikes the soldier across from him on the foe's side that
+/// faces it. The front rank fights to the front (and the second rank too,
+/// at [`crate::SECOND_RANK_PERCENT`] of a blow, for spears and pikes), the
+/// man at the end of each rank to a flank, and the rear rank's men, as many
+/// as half the front, to the rear (no more than stand in the rear rank). A blow lands with the chance to hit, and
+/// then takes its damage, rolled ±25%, off its man; he dies when his hit
+/// points run out, and the soldier in the last slot steps up into his
+/// place and takes the rest of the blow. Blows are told to `blows`, while
+/// it has room.
+fn duel(
+    regs: &mut Regiments,
+    units: &[UnitStats],
+    fight: Fight,
+    rng: &mut Pcg32,
+    mut blows: Option<&mut Vec<Blow>>,
+) {
+    let Fight {
+        i,
+        j,
+        my_side,
+        side,
+        hit,
+        landed,
+        reach,
+    } = fight;
+    struck_on(regs, j, side);
+    let models = regs.models[i];
+    let mine = Edge::of(
+        regs,
+        i,
+        my_side,
+        last_file_nearer(regs, units, i, regs.position[j]),
+    );
+    let theirs_last_file = last_file_nearer(regs, units, j, regs.position[i]);
     let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
-    let lost = regs.take_damage(j, (total / 256).min(u64::from(u32::MAX)) as u32);
+    // The foe's side facing us, laid out again only when a man falls.
+    let mut line = Line::of(regs, units, j, side, theirs_last_file);
+    let striker = RegimentHandle {
+        index: i as u32,
+        generation: regs.generation[i],
+    };
+    let target = RegimentHandle {
+        index: j as u32,
+        generation: regs.generation[j],
+    };
+    // Who strikes: the first `second` of them with a whole blow each.
+    let front = mine.files.min(models);
+    let (count, second) = match my_side {
+        Side::Front if reach => (front + front.min(models - front), front),
+        Side::Front => (front, front),
+        Side::Flank => (mine.len(), u16::MAX),
+        Side::Rear => (front.div_ceil(2).min(mine.len()), u16::MAX),
+    };
+    for n in 0..count {
+        if regs.models[j] == 0 {
+            break;
+        }
+        let (k, share) = match my_side {
+            Side::Rear => (models - 1 - n, 100),
+            _ if n >= second => (n, crate::SECOND_RANK_PERCENT),
+            _ => (mine.slot(n), 100),
+        };
+        let t = line.across_from(slot_pos(regs, units, i, k));
+        let outcome = if rng.below(100) >= hit {
+            Outcome::Parried
+        } else {
+            let damage = carry(regs, j, roll(landed * share / 100, rng));
+            match regs.wound(j, t, damage.min(u64::from(u16::MAX)) as u16) {
+                // Too light to cut him, this time: it glanced off.
+                0 if damage == 0 => Outcome::Parried,
+                0 => Outcome::Wounded,
+                men => {
+                    if regs.models[j] > 0 {
+                        line = Line::of(regs, units, j, side, theirs_last_file);
+                    }
+                    Outcome::Killed { men: men as u8 }
+                }
+            }
+        };
+        if let Some(list) = blows.as_deref_mut()
+            && list.len() < list.capacity()
+        {
+            list.push(Blow {
+                striker,
+                striker_slot: k as u8,
+                target,
+                target_slot: t as u8,
+                outcome,
+            });
+        }
+    }
+    step_up(regs, units, j, ranks_before);
+}
+
+/// A regiment that has lost whole ranks (it had `ranks_before`) steps
+/// forward, so its front stays where it was (in melee, in contact). A
+/// broken one, cut down as it runs, has no line to hold and stays put.
+fn step_up(regs: &mut Regiments, units: &[UnitStats], j: usize, ranks_before: u16) {
     let ranks_after = formation::ranks(regs.files[j], regs.models[j]);
-    if regs.models[j] > 0 && ranks_after < ranks_before {
+    if regs.models[j] > 0 && ranks_after < ranks_before && !regs.morale_state[j].broken() {
         let (_, spacing) = units[regs.unit[j] as usize].spacing(regs.formation[j]);
         let step = Fx::from_raw(spacing.raw() * i32::from(ranks_before - ranks_after) / 2);
         regs.position[j] += regs.facing[j].to_vec() * step;
     }
-    lost
 }

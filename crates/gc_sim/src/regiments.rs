@@ -228,6 +228,9 @@ regiment_fields! {
     /// regiment's last morale check.
     losses: u16 = 0,
     shock: u8 = 0,
+    /// Hit points lost since the regiment's last morale check, wounds and
+    /// deaths alike: what its nerve feels (see [`crate::morale`]).
+    bled: u16 = 0,
     /// While routing: ticks spent with no enemy near.
     rout_clock: u16 = 0,
     /// Tick the regiment last broke and ran, plus one (0: never).
@@ -813,21 +816,57 @@ impl Regiments {
     pub(crate) fn take_damage(&mut self, i: usize, mut amount: u32) -> u16 {
         let before = self.models[i];
         let hp = &mut self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize];
+        let mut bled = 0u16;
         while amount > 0 && self.models[i] > 0 {
             let k = self.models[i] as usize - 1;
             if u32::from(hp[k]) > amount {
                 hp[k] -= amount as u16;
+                bled = bled.saturating_add(amount as u16);
                 amount = 0;
             } else {
                 amount -= u32::from(hp[k]);
+                bled = bled.saturating_add(hp[k]);
                 hp[k] = 0;
                 self.models[i] -= 1;
             }
         }
-        self.files[i] = self.files[i].min(self.models[i]).max(1);
         let lost = before - self.models[i];
-        self.losses[i] = self.losses[i].saturating_add(lost);
+        self.bleed(i, bled, lost);
         lost
+    }
+
+    /// Take `damage` hit points off soldier `k` of regiment `i`. Each time
+    /// that kills the man in slot `k`, the soldier in the last slot steps up
+    /// into his place and takes what the blow had to spare. Returns soldiers
+    /// lost.
+    pub(crate) fn wound(&mut self, i: usize, k: u16, mut damage: u16) -> u16 {
+        let hp = &mut self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize];
+        let k = k as usize;
+        let mut lost = 0;
+        let mut bled = 0;
+        while damage > 0 && k < self.models[i] as usize {
+            if hp[k] > damage {
+                hp[k] -= damage;
+                bled += damage;
+                break;
+            }
+            damage -= hp[k];
+            bled += hp[k];
+            let last = self.models[i] as usize - 1;
+            hp[k] = hp[last];
+            hp[last] = 0;
+            self.models[i] -= 1;
+            lost += 1;
+        }
+        self.bleed(i, bled, lost);
+        lost
+    }
+
+    /// Books `bled` hit points and `lost` soldiers taken off regiment `i`.
+    fn bleed(&mut self, i: usize, bled: u16, lost: u16) {
+        self.files[i] = self.files[i].min(self.models[i]).max(1);
+        self.bled[i] = self.bled[i].saturating_add(bled);
+        self.losses[i] = self.losses[i].saturating_add(lost);
     }
 
     fn view(&self, i: usize) -> RegimentView {

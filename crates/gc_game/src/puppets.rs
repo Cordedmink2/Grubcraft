@@ -17,7 +17,7 @@
 //! the duel the simulation rolled, blow by blow. None of this feeds back
 //! into the simulation, so it may use floats and frame time.
 
-use gc_sim::combat::{CHARGE_TICKS, hit_percent};
+use gc_sim::combat::{Blow, CHARGE_TICKS, Outcome, hit_percent};
 use gc_sim::formation::MAX_MODELS;
 use gc_sim::{Challenge, Mass, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
@@ -501,6 +501,10 @@ pub struct Puppets {
     shot_dir: Vec<Vec2>,
     /// Arrows that stuck in the bodies of soldiers who fell this frame.
     lodged: Vec<Lodged>,
+    /// Soldiers the simulation's blows have killed and the puppets have yet
+    /// to fell, in the order they fell: the regiment, his slot then, and
+    /// the puppet who struck him (or `NONE`).
+    slain: Vec<(RegimentHandle, u8, u32)>,
     time: f32,
     /// The last frame's step, in seconds.
     dt: f32,
@@ -542,6 +546,7 @@ impl Puppets {
             shot: vec![0; regiment_capacity],
             shot_dir: vec![Vec2::X; regiment_capacity],
             lodged: Vec::with_capacity(MAX_SINKING),
+            slain: Vec::with_capacity(MAX_SINKING),
             time: 0.0,
             dt: 0.0,
             duel: None,
@@ -571,6 +576,40 @@ impl Puppets {
         if lost > 0 && self.owner[r] == Some(target) {
             self.shot[r] = self.shot[r].saturating_add(lost.min(u16::from(u8::MAX)) as u8);
             self.shot_dir[r] = dir;
+        }
+    }
+
+    /// A melee blow the simulation struck (`World::blows`): the striker
+    /// takes its target as his man, and a man it killed is the one who
+    /// falls, to his blow. Call for each tick's blows, in order.
+    pub fn struck(&mut self, b: &Blow) {
+        let (s, r) = (b.striker.index as usize, b.target.index as usize);
+        let striker = if self.owner[s] == Some(b.striker) {
+            (s * SLOTS + b.striker_slot as usize) as u32
+        } else {
+            NONE
+        };
+        match b.outcome {
+            Outcome::Killed { men } if self.owner[r] == Some(b.target) => {
+                if self.slain.len() + usize::from(men) > self.slain.capacity() {
+                    // Kills for regiments since gone that never fell here.
+                    let owner = &self.owner;
+                    self.slain
+                        .retain(|&(h, ..)| owner[h.index as usize] == Some(h));
+                }
+                // The first falls to the blow; any more who step up into
+                // his place go down with him.
+                for m in 0..men {
+                    if self.slain.len() < self.slain.capacity() {
+                        let by = if m == 0 { striker } else { NONE };
+                        self.slain.push((b.target, b.target_slot, by));
+                    }
+                }
+            }
+            _ if striker != NONE && self.owner[r] == Some(b.target) => {
+                self.partner[striker as usize] = (r * SLOTS + b.target_slot as usize) as u32;
+            }
+            _ => {}
         }
     }
 
@@ -605,6 +644,7 @@ impl Puppets {
         self.owner[r] = None;
         self.models[r] = 0;
         self.shot[r] = 0;
+        self.slain.retain(|&(s, ..)| s != h);
     }
 
     /// If an arrow of regiment `h`'s last volley is still to find a man,
@@ -1204,14 +1244,16 @@ impl Puppets {
         }
     }
 
-    /// Soldiers lost since last frame fall where they stand. The simulation
-    /// takes casualties off the last slots, but on screen the men who fall
-    /// are the ones fighting: a front-rank soldier (any soldier, for a block
-    /// under arrows) drops, and the soldier from the emptied slot takes his
-    /// place and walks up to fill the gap. In melee the man who falls is one
-    /// locked in a duel, if any are, and his man swings the killing blow: he
-    /// stands until it lands. A champion who has lost his duel falls to the
-    /// other's last blow; one still fighting is never taken from the ranks.
+    /// Soldiers lost since last frame fall where they stand, and the soldier
+    /// from the emptied last slot takes the place of each and walks up to
+    /// fill the gap. A man the simulation's blows killed (see
+    /// [`Puppets::struck`]) is the one who falls, to his striker's killing
+    /// blow. For other losses the men who fall are the ones fighting: a
+    /// front-rank soldier (any soldier, for a block under arrows), in melee
+    /// one locked in a duel if any are, whose man swings the killing blow;
+    /// a man struck down stands until the blow lands. A champion who has
+    /// lost his duel falls to the other's last blow; one still fighting is
+    /// never taken from the ranks.
     fn fall(&mut self, block: &Block, owner: u8, models: usize) {
         let r = block.handle.index as usize;
         let base = r * SLOTS;
@@ -1225,13 +1267,22 @@ impl Puppets {
             };
             let roll = unit_hash(block.handle, gone, self.time.to_bits());
             let slain = self.slain_champion(r);
+            // The next man the simulation's blows killed, unless it is the
+            // champion's turn to fall.
+            let blow = slain
+                .is_none()
+                .then(|| self.slain.iter().position(|&(h, ..)| h == block.handle))
+                .flatten()
+                .map(|n| self.slain.remove(n));
             let champion = self.champion_of(r).map(|(_, _, c)| c);
             let out = |k: usize| champion == Some(base + k);
+            let blow = blow.filter(|&(_, k, _)| usize::from(k) <= gone && !out(usize::from(k)));
             // Best a man and his partner fighting each other, then any man
             // with a partner, else anyone not out as a champion.
             let partner = |k: usize| self.partner[base + k] as usize;
             let pick = slain
                 .map(|(champion, _)| champion - base)
+                .or(blow.map(|(_, k, _)| usize::from(k)))
                 .or_else(|| {
                     nth_of(pool, roll, |k| {
                         partner(k) != NONE as usize && self.partner[partner(k)] as usize == base + k
@@ -1241,7 +1292,11 @@ impl Puppets {
                 .or_else(|| nth_of(pool, roll, |k| !out(k)))
                 .unwrap_or(gone);
             let (victim, last) = (base + pick, base + gone);
-            let killer = slain.map_or(self.partner[victim] as usize, |(_, killer)| killer);
+            let killer = match (slain, blow) {
+                (Some((_, killer)), _) => killer,
+                (None, Some((.., by))) if by != NONE => by as usize,
+                _ => self.partner[victim] as usize,
+            };
             let blow_in = if killer == NONE as usize {
                 None
             } else if slain.is_some() {

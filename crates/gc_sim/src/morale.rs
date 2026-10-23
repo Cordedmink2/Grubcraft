@@ -130,6 +130,7 @@ pub(crate) fn update(
             }
         }
         regs.losses[i] = 0;
+        regs.bled[i] = 0;
         regs.shock[i] = 0;
     }
 }
@@ -159,7 +160,9 @@ fn check(
     if regs.shock[i] & SHOCK_PINNED != 0 {
         drain += i32::from(PINNED_SHOCK * SCALE);
     }
-    let mut tenths = -(i32::from(regs.losses[i]) * 100 * CASUALTY_TENTHS_PER_PERCENT / full);
+    // Wounds shake it as much as deaths: hit points lost, counted in men.
+    let bled = i32::from(regs.bled[i]) * 100 * CASUALTY_TENTHS_PER_PERCENT;
+    let mut tenths = -(bled / (full * i32::from(stats.hp_per_model.max(1))));
     if regs.engaged[i].is_some() {
         if i32::from(regs.models[i]) * 2 < full {
             drain += i32::from(HALF_STRENGTH_DRAIN * SCALE);
@@ -170,7 +173,7 @@ fn check(
         } else if enemies >= friends.max(1) * 2 {
             drain += i32::from(OUTNUMBERED_2 * SCALE);
         }
-    } else if regs.losses[i] == 0 {
+    } else if regs.bled[i] == 0 {
         tenths += i32::from(RECOVERY * SCALE);
     }
     tenths -= drain * BATTLE_PACE_PERCENT as i32 / 100;

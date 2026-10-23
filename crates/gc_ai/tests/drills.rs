@@ -379,6 +379,10 @@ fn only(these: impl IntoIterator<Item = usize>) -> Vec<usize> {
 /// The Auditor.
 const STEADY: [usize; 4] = [0, 3, 4, 6];
 
+/// How long a regiment that has just left a melee gets to turn and face a
+/// new threat before being caught side-on counts as the AI's fault.
+const TURN_SECONDS: f32 = 2.0;
+
 #[test]
 fn spears_turn_to_meet_cavalry_and_its_cavalry_keeps_off_spears() {
     for personality in only(0..8) {
@@ -402,10 +406,22 @@ fn spears_turn_to_meet_cavalry_and_its_cavalry_keeps_off_spears() {
         let mut contacts = Contacts::default();
         let mut charges = 0;
         let mut faults: Vec<String> = Vec::new();
+        // When each regiment was last locked in melee: a spear that has just
+        // won a fight has had no chance to turn to the next one.
+        let mut locked_at: Vec<f32> = Vec::new();
         run(drill, 60, |f| {
             let before = Contacts {
                 was: contacts.was.clone(),
             };
+            for r in &f.view.regiments {
+                let i = r.handle.index as usize;
+                if locked_at.len() <= i {
+                    locked_at.resize(i + 1, f32::MIN);
+                }
+                if before.was_engaged(r) {
+                    locked_at[i] = f.seconds();
+                }
+            }
             for r in contacts.new_ones(f) {
                 let Some(o) = f.opposite(r) else {
                     continue;
@@ -413,7 +429,9 @@ fn spears_turn_to_meet_cavalry_and_its_cavalry_keeps_off_spears() {
                 let (ours, theirs) = if r.owner == AI { (r, o) } else { (o, r) };
                 if theirs.unit == CAVALRY && ours.unit == SPEARS && r.owner == FOE {
                     charges += 1;
-                    if ours.side_facing(theirs.pos) != Side::Front {
+                    let turning =
+                        f.seconds() - locked_at[ours.handle.index as usize] < TURN_SECONDS;
+                    if !turning && ours.side_facing(theirs.pos) != Side::Front {
                         faults.push(format!(
                             "{:.1}s: enemy cavalry hit our spears' {:?}",
                             f.seconds(),

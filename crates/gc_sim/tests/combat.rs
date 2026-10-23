@@ -83,10 +83,21 @@ fn blocks_in_contact_fight_until_one_falls() {
     assert!(w.regiments.get(a).unwrap().engaged);
     assert!(w.regiments.get(b).unwrap().engaged);
     run(&mut w, 20 * 10);
-    assert!(models(&w, a) < 24 && models(&w, b) < 24, "no casualties");
-    // Casualties come off the back: the front rank keeps full health.
-    let hp = w.regiments.model_hp(a).unwrap();
-    assert!(hp[..8].iter().all(|&h| h == 10), "{hp:?}");
+    // Each blow falls on the man across from its striker: the front rank
+    // is wounded, and men from the back step up into the gaps whole.
+    for h in [a, b] {
+        let hp = w.regiments.model_hp(h).unwrap();
+        assert!(
+            hp[..8].iter().any(|&h| h < 10),
+            "both sides are cut: {hp:?}"
+        );
+        assert!(hp[8..].iter().all(|&h| h == 10), "{hp:?}");
+    }
+    run(&mut w, 20 * 10);
+    for h in [a, b] {
+        let hp = w.regiments.model_hp(h).unwrap();
+        assert!(hp.len() < 24, "both sides lose men: {hp:?}");
+    }
     run(&mut w, 20 * 300);
     let alive = [a, b]
         .iter()
@@ -280,4 +291,99 @@ fn players_cannot_attack_their_own_regiments() {
         },
     }]);
     assert_eq!(stats.commands_rejected, 1);
+}
+
+/// The melee blows regiment `h` strikes over `ticks`.
+fn blows_by(w: &mut World, h: RegimentHandle, ticks: u32) -> Vec<gc_sim::combat::Blow> {
+    let mut out = Vec::new();
+    for _ in 0..ticks {
+        w.tick(&[]);
+        out.extend(w.blows().iter().filter(|b| b.striker == h));
+    }
+    out
+}
+
+#[test]
+fn each_soldier_strikes_the_man_across_from_him() {
+    let mut units = fearless();
+    units[SPEARS as usize].reach = true;
+    let mut w = world_with(&units);
+    let a = spawn(&mut w, 0, SPEARS, 50, 50, NORTH);
+    let b = spawn(&mut w, 1, SPEARS, 50, 47, SOUTH);
+    let blows = blows_by(&mut w, a, 20 * 3);
+    assert!(!blows.is_empty());
+    // Spears: the front rank and the second strike, at the foe's front.
+    assert!(blows.iter().all(|x| x.target == b));
+    assert!(
+        blows
+            .iter()
+            .all(|x| x.striker_slot < 16 && x.target_slot < 8)
+    );
+    assert!(blows.iter().any(|x| x.striker_slot >= 8));
+    // Level fronts: each man in the front rank has his own man.
+    let first: Vec<_> = blows.iter().take_while(|x| x.striker_slot < 16).collect();
+    let mut men: Vec<u8> = first
+        .iter()
+        .filter(|x| x.striker_slot < 8)
+        .map(|x| x.target_slot)
+        .collect();
+    men.sort_unstable();
+    men.dedup();
+    assert_eq!(men.len(), 8, "{first:?}");
+}
+
+#[test]
+fn the_men_who_fall_are_the_men_struck_down() {
+    use gc_sim::combat::Outcome;
+    let mut w = world();
+    let a = spawn(&mut w, 0, SPEARS, 50, 50, NORTH);
+    let b = spawn(&mut w, 1, SPEARS, 50, 47, SOUTH);
+    let mut killed = 0;
+    for _ in 0..20 * 30 {
+        w.tick(&[]);
+        for x in w.blows() {
+            if let Outcome::Killed { men } = x.outcome
+                && x.striker == a
+            {
+                assert!(x.target_slot < 8, "only the front rank is struck");
+                killed += u16::from(men);
+            }
+        }
+    }
+    assert!(killed > 0);
+    assert_eq!(24 - models(&w, b), killed, "every loss came from a blow");
+    // The men who stepped up from the back came whole.
+    let hp = w.regiments.model_hp(b).unwrap();
+    assert!(hp[8..].iter().all(|&h| h == 10), "{hp:?}");
+}
+
+#[test]
+fn men_gang_up_where_lines_overlap() {
+    let mut units = fearless();
+    // A wide block, and a narrow one four men across.
+    units[1] = UnitStats {
+        files: 4,
+        models: 8,
+        ..units[0]
+    };
+    units[0].files = 12;
+    let mut w = world_with(&units);
+    let a = spawn(&mut w, 0, 0, 50, 50, NORTH);
+    let b = spawn(&mut w, 1, 1, 50, 48, SOUTH);
+    let blows = blows_by(&mut w, a, 20 * 3);
+    let turn: Vec<_> = blows
+        .iter()
+        .filter(|x| x.striker_slot < 12)
+        .take(12)
+        .collect();
+    assert_eq!(turn.len(), 12);
+    let mut on = [0; 4];
+    for x in &turn {
+        assert_eq!(x.target, b);
+        on[x.target_slot as usize] += 1;
+    }
+    // All four are fought, and the men overlapping their line close in on
+    // the two at its ends.
+    assert!(on.iter().all(|&n| n >= 1), "{on:?}");
+    assert!(on[0] >= 3 && on[3] >= 3, "{on:?}");
 }

@@ -4555,6 +4555,9 @@ impl Running {
                 _ => {}
             }
         }
+        for b in self.world.blows() {
+            self.puppets.struck(b);
+        }
     }
 
     /// Volleys in flight: a few arrows each, arcing from the archers to where

@@ -19,13 +19,16 @@ const DUMMY: u16 = 1;
 /// Drill unit 2: 12 archers with a 25-tile range.
 const ARCHERS: u16 = 2;
 
-/// The drill's units with morale off (nobody routs) and no charge bonus
-/// (contact is made at a walk anyway), unit 0 changed by `tested`, and
-/// unit 1 a plain copy of the original unit 0.
+/// The drill's units with morale off (nobody routs), no charge bonus
+/// (contact is made at a walk anyway) and hit points enough that nobody
+/// falls (so every blow is counted, however the dice fall on each man),
+/// unit 0 changed by `tested`, and unit 1 a plain copy of the original
+/// unit 0.
 fn units(tested: impl FnOnce(&mut UnitStats)) -> [UnitStats; 4] {
     let mut units = DRILL_UNITS.map(|u| UnitStats {
         morale: 0,
         charge_bonus: 0,
+        hp_per_model: 1000,
         ..u
     });
     units[DUMMY as usize] = units[TESTED as usize];
@@ -151,7 +154,8 @@ fn melee(
     (first, theirs_before - hp(&w, foe), mine_before - hp(&w, me))
 }
 
-const FIGHT: u32 = 20 * 12;
+/// Long enough that the dice of each man's blows even out.
+const FIGHT: u32 = 20 * 60;
 
 #[test]
 fn spears_fight_from_two_ranks() {
@@ -389,6 +393,10 @@ fn routers_keep_no_ranks() {
     // A brittle regiment in Tight order, beaten until it runs.
     let mut units = units(|_| {});
     units[TESTED as usize].morale = 5;
+    // It breaks from its losses, so men must fall.
+    for u in &mut units[..2] {
+        u.hp_per_model = DRILL_UNITS[0].hp_per_model;
+    }
     let mut w = world(&units);
     let me = spawn(&mut w, 0, TESTED, 100, 100, NORTH);
     assert!(form(&mut w, 0, me, Formation::Tight));

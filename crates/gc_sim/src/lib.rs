@@ -100,7 +100,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 22;
+pub const SIM_VERSION: u32 = 23;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -1899,6 +1899,13 @@ impl World {
     /// world.
     pub fn events(&self) -> &[events::Event] {
         self.events.list()
+    }
+
+    /// The melee blows struck in the last tick, soldier on soldier, in the
+    /// order they were struck (docs/28-soldier-combat.md). None in a
+    /// rehearsal's scratch world; in a very big battle some may be left out.
+    pub fn blows(&self) -> &[combat::Blow] {
+        self.combat.blows()
     }
 
     /// The ambushes sprung in the last tick.
