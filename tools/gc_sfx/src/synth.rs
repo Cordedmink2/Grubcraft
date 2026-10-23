@@ -5,6 +5,10 @@ use std::f32::consts::TAU;
 
 pub const SFX_RATE: u32 = 22_050;
 pub const MUSIC_RATE: u32 = 16_000;
+/// The ambient beds are filtered noise with little above 5 kHz.
+pub const BED_RATE: u32 = 16_000;
+/// How long each bed loops, in seconds.
+pub const BED_SECONDS: f32 = 8.0;
 
 pub struct Rendered {
     pub id: SoundId,
@@ -44,7 +48,191 @@ pub fn all() -> Vec<Rendered> {
     ];
     // The battle cries come from recordings (see `cries`).
     clips.extend(crate::cries::all());
+    // The ambient beds (loops the game plays continuously under everything).
+    let bed = |id, buf: Buf| Rendered {
+        id,
+        rate: BED_RATE,
+        looped: true,
+        pcm: buf.finish(0.8, false),
+    };
+    clips.push(bed(SoundId::BedWind, bed_wind()));
+    clips.push(bed(SoundId::BedWater, bed_water()));
+    clips.push(bed(SoundId::BedWoods, bed_woods()));
+    clips.push(bed(SoundId::BedBattle, bed_battle()));
     clips
+}
+
+// ------------------------------------------------------------------ beds
+//
+// Ambient loops: filtered noise shaped by slow random swells. Each is built
+// longer than the loop and its tail faded into its head, so the join cannot
+// be heard.
+
+/// `len` samples of noise from `seed`, run through `f` (which owns any
+/// filter state), then made to loop: the extra `fade` samples `f` produced
+/// past `len` are crossfaded (equal power, since the noise is unrelated)
+/// into the start.
+fn looped_noise(len: usize, seed: u32, mut f: impl FnMut(f32, usize) -> f32) -> Vec<f32> {
+    let fade = len / 8;
+    let mut rng = Rng(seed);
+    let raw: Vec<f32> = (0..len + fade).map(|i| f(rng.noise(), i)).collect();
+    (0..len)
+        .map(|i| {
+            if i < fade {
+                let w = (i as f32 / fade as f32) * (TAU / 4.0);
+                raw[i] * w.sin() + raw[len + i] * w.cos()
+            } else {
+                raw[i]
+            }
+        })
+        .collect()
+}
+
+/// A slow random swell between -1 and 1, for gusts and surges: noise below
+/// `cutoff` Hz, scaled to fill the range.
+fn swell(len: usize, rate: f32, cutoff: f32, seed: u32) -> Vec<f32> {
+    let mut lp = OnePole::default();
+    let mut track = looped_noise(len, seed, |n, _| lp.low(n, cutoff, rate));
+    let top = track.iter().fold(1e-6f32, |m, v| m.max(v.abs()));
+    track.iter_mut().for_each(|v| *v /= top);
+    track
+}
+
+fn bed_buf(samples: Vec<f32>) -> Buf {
+    let mut b = Buf::looping(BED_SECONDS, BED_RATE);
+    b.s = samples;
+    b
+}
+
+/// Wind: a low rush with a breathy upper band, swelling in gusts.
+fn bed_wind() -> Buf {
+    let rate = BED_RATE as f32;
+    let len = (BED_SECONDS * rate) as usize;
+    let gust = swell(len, rate, 0.35, 11);
+    let flutter = swell(len, rate, 3.0, 12);
+    let (mut low, mut hi, mut band) = (Pole2::default(), OnePole::default(), Pole2::default());
+    let samples = looped_noise(len, 13, |n, i| {
+        let g = (gust[i % len] + 1.0) * 0.5;
+        let fl = (flutter[i % len] + 1.0) * 0.5;
+        let rush = low.low(n, 180.0 + 220.0 * g, rate);
+        let breath = band.low(hi.high(n, 600.0, rate), 1100.0 + 700.0 * g, rate);
+        (rush * 2.2 + breath * (0.5 + 0.5 * fl)) * (0.25 + 0.75 * g * g)
+    });
+    bed_buf(samples)
+}
+
+/// Water: a steady hiss with a bubbling, chuckling band over it and a few
+/// glugs.
+fn bed_water() -> Buf {
+    let rate = BED_RATE as f32;
+    let len = (BED_SECONDS * rate) as usize;
+    let surge = swell(len, rate, 0.5, 21);
+    let bubble = swell(len, rate, 14.0, 22);
+    let (mut hp_a, mut lp_a, mut hp_b, mut lp_b) = (
+        OnePole::default(),
+        Pole2::default(),
+        OnePole::default(),
+        Pole2::default(),
+    );
+    let samples = looped_noise(len, 23, |n, i| {
+        let s = (surge[i % len] + 1.0) * 0.5;
+        let b = bubble[i % len].max(0.0);
+        let hiss = lp_a.low(hp_a.high(n, 700.0, rate), 4200.0, rate);
+        let chuckle = lp_b.low(hp_b.high(n, 350.0, rate), 1100.0, rate);
+        hiss * (0.55 + 0.45 * s) + chuckle * b * b * 3.0
+    });
+    let mut buf = bed_buf(samples);
+    // Glugs: short rising notes, scattered (the buffer wraps).
+    let mut rng = Rng(24);
+    for k in 0..30u32 {
+        let at = (rng.noise() * 0.5 + 0.5) * BED_SECONDS;
+        let base = 380.0 + 420.0 * (rng.noise() * 0.5 + 0.5);
+        let amp = 0.12 + 0.12 * (rng.noise() * 0.5 + 0.5);
+        let mut phase = 0.0f32;
+        buf.at(
+            at,
+            |t, _| {
+                phase += TAU * base * (1.0 + 2.2 * t) / rate;
+                phase.sin() * amp * (t / 0.004).min(1.0) * decay(t, 0.018)
+            },
+            0.08,
+            25 + k,
+        );
+    }
+    buf
+}
+
+/// Woods: leaves and branches, a hiss that breaks into rustling bursts over
+/// a faint hush.
+fn bed_woods() -> Buf {
+    let rate = BED_RATE as f32;
+    let len = (BED_SECONDS * rate) as usize;
+    let gust = swell(len, rate, 0.4, 31);
+    let rustle = swell(len, rate, 9.0, 32);
+    let (mut hp, mut lp, mut hush) = (OnePole::default(), OnePole::default(), OnePole::default());
+    let samples = looped_noise(len, 33, |n, i| {
+        let g = (gust[i % len] + 1.0) * 0.5;
+        let r = (rustle[i % len] + 1.0) * 0.5;
+        let leaves = lp.low(hp.high(n, 2200.0, rate), 6500.0, rate);
+        let low = hush.low(n, 420.0, rate);
+        leaves * r * r * (0.3 + 0.7 * g) * 2.0 + low * (0.25 + 0.5 * g)
+    });
+    bed_buf(samples)
+}
+
+/// The roar of a battle heard from a distance: a crowd's voices in four
+/// vowel-like bands, surging, with a low rumble of drums and boots and the
+/// odd ring of steel.
+fn bed_battle() -> Buf {
+    let rate = BED_RATE as f32;
+    let len = (BED_SECONDS * rate) as usize;
+    let surge = swell(len, rate, 0.45, 41);
+    let bands: [(f32, f32); 4] = [(250.0, 1.0), (520.0, 0.9), (900.0, 0.6), (1500.0, 0.3)];
+    let mut shaped: Vec<(Vec<f32>, OnePole, Pole2)> = bands
+        .iter()
+        .enumerate()
+        .map(|(k, _)| {
+            (
+                swell(len, rate, 3.0 + k as f32 * 1.7, 42 + k as u32),
+                OnePole::default(),
+                Pole2::default(),
+            )
+        })
+        .collect();
+    let samples = looped_noise(len, 46, |n, i| {
+        let s = (surge[i % len] + 1.0) * 0.5;
+        let mut sum = 0.0;
+        for ((modulator, hp, lp), (centre, weight)) in shaped.iter_mut().zip(bands) {
+            let v = lp.low(hp.high(n, centre * 0.7, rate), centre * 1.2, rate);
+            sum += v * weight * (0.55 + 0.45 * modulator[i % len]);
+        }
+        sum * (0.5 + 0.5 * s)
+    });
+    let mut buf = bed_buf(samples);
+    // Drums and boots under it, and steel ringing here and there.
+    let mut rng = Rng(47);
+    for k in 0..12u32 {
+        let at = (rng.noise() * 0.5 + 0.5) * BED_SECONDS;
+        drum(
+            &mut buf,
+            at,
+            0.12 + 0.1 * (rng.noise() * 0.5 + 0.5),
+            55.0,
+            50 + k,
+        );
+    }
+    for k in 0..40u32 {
+        let at = (rng.noise() * 0.5 + 0.5) * BED_SECONDS;
+        let f = 900.0 + 1400.0 * (rng.noise() * 0.5 + 0.5);
+        let amp = 0.05 + 0.06 * (rng.noise() * 0.5 + 0.5);
+        buf.at(
+            at,
+            |t, _| (TAU * f * t).sin() * amp * decay(t, 0.05),
+            0.2,
+            100 + k,
+        );
+    }
+    buf
 }
 
 // ---------------------------------------------------------------- toolkit
@@ -155,6 +343,21 @@ impl OnePole {
 
     fn high(&mut self, x: f32, cutoff: f32, rate: f32) -> f32 {
         x - self.low(x, cutoff, rate)
+    }
+}
+
+/// Two one-pole low-passes in a row: a steeper roll-off, so filtered noise
+/// loses its hiss instead of keeping it at 6 dB an octave.
+#[derive(Default)]
+struct Pole2 {
+    a: OnePole,
+    b: OnePole,
+}
+
+impl Pole2 {
+    fn low(&mut self, x: f32, cutoff: f32, rate: f32) -> f32 {
+        let y = self.a.low(x, cutoff, rate);
+        self.b.low(y, cutoff, rate)
     }
 }
 
@@ -638,6 +841,9 @@ mod tests {
             if c.id.is_music() {
                 assert!(c.looped);
                 assert!((seconds - LOOP_SECONDS).abs() < 0.01, "{:?}", c.id);
+            } else if c.id.is_bed() {
+                assert!(c.looped);
+                assert!((seconds - BED_SECONDS).abs() < 0.01, "{:?}", c.id);
             } else {
                 assert!(!c.looped);
                 assert!((0.05..2.0).contains(&seconds), "{:?} is {seconds}s", c.id);

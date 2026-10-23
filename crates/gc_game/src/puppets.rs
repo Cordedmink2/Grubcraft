@@ -59,10 +59,33 @@ const GLANCE: f32 = 0.22;
 /// tiles, and keeps him until he is this far away.
 const DUEL_REACH: f32 = 2.6;
 const DUEL_KEEP: f32 = 3.4;
-/// Paired soldiers close to this gap, in tiles, but stray no further than
-/// the leash from their own slot.
+/// Paired soldiers close to this gap, in tiles: the usual one, a spear's
+/// length, big bodies (cavalry, monsters and great blades) and small ones
+/// (swarms) that get right on top of their man. A pair stands apart by the
+/// mean of its two men's gaps, each body taking its own half.
 const DUEL_GAP: f32 = 0.85;
+const SPEAR_GAP: f32 = 1.4;
+const BIG_GAP: f32 = 1.05;
+const SMALL_GAP: f32 = 0.6;
+/// A dueling soldier strays no further than his leash from his own slot:
+/// this much, plus up to the extra for the bolder men, so the meeting line
+/// breaks up into a ragged band.
 const DUEL_LEASH: f32 = 0.6;
+const LEASH_BOLD: f32 = 0.6;
+/// Choosing a new man, the soldiers already fighting him make him seem
+/// further away by this much times their number squared, in tiles squared,
+/// so men spread along the enemy line and only gang up two (or three) on
+/// one where their line overlaps his.
+const CROWD: f32 = 1.6;
+/// In melee the ranks behind the fighting ones close up by this fraction
+/// of their spacing, pressing in behind the men in front.
+const PRESS: f32 = 0.25;
+/// Men waiting their turn behind the fighting ranks shift their weight this
+/// much more than men at rest, and about half of them shout now and then:
+/// for this long, in seconds, once in this many.
+const RESTLESS: f32 = 2.0;
+const SHOUT_SECONDS: f32 = 1.2;
+const SHOUT_EVERY: f32 = 7.0;
 /// The step in and back as a pair trades blows, in tiles, and its rate.
 const DUEL_STEP: f32 = 0.16;
 const DUEL_RATE: f32 = 0.8;
@@ -176,6 +199,9 @@ pub struct Fighter {
     pub mass: Mass,
     /// Big swinging blades, which hit a guard like a heavier man.
     pub heavy_blade: bool,
+    /// Spears and pikes: the second rank fights too, over the shoulders of
+    /// the first, and men hold a spear's length from their foe.
+    pub reach: bool,
 }
 
 impl Default for Fighter {
@@ -188,6 +214,7 @@ impl Default for Fighter {
             shield: false,
             mass: Mass::Medium,
             heavy_blade: false,
+            reach: false,
         }
     }
 }
@@ -197,6 +224,16 @@ impl Fighter {
     /// simulation's chance to hit.
     fn lands(&self, defence: i32) -> f32 {
         hit_percent(self.attack, defence) as f32 * self.sharpness as f32 / 10_000.0
+    }
+
+    /// The gap this man keeps from his foe, in tiles.
+    fn gap(&self) -> f32 {
+        match () {
+            _ if self.reach => SPEAR_GAP,
+            _ if self.heavy_blade || self.mass == Mass::Heavy => BIG_GAP,
+            _ if self.mass == Mass::Light => SMALL_GAP,
+            _ => DUEL_GAP,
+        }
     }
 
     /// Classes of mass a heavy man has over `them`; with `blade`, a big
@@ -222,13 +259,20 @@ pub struct Soldier {
     /// Moving against the way he faces: giving ground with his face to the
     /// enemy, so he steps backwards.
     pub backing: bool,
-    /// In a fighting front rank, striking at the enemy.
+    /// In a fighting rank (the front one, and the second for spears),
+    /// striking at the enemy.
     pub striking: bool,
+    /// Waiting his turn behind the fighting ranks and standing still, and
+    /// shouting at the enemy: how many seconds into his shout.
+    pub shouting: Option<f32>,
     /// What he is doing in a duel: paired with an enemy soldier and trading
     /// blows, or still reeling from one. `None` out of a duel.
     pub fight: Option<Move>,
     /// A stable value in [0, 1) per soldier, to keep animations out of step.
     pub phase: f32,
+    /// A stable value per soldier for his look (`models::look`), which he
+    /// keeps when he falls.
+    pub look: u8,
 }
 
 /// A dueling soldier's move, with how far through it he is (0 to 1).
@@ -291,6 +335,7 @@ struct Fallen {
     fell: f32,
     unit: u16,
     owner: u8,
+    look: u8,
 }
 
 /// A soldier lying where he fell.
@@ -300,6 +345,8 @@ pub struct Corpse {
     pub facing: Vec2,
     pub owner: u8,
     pub unit: u16,
+    /// His look, as he had it standing ([`Soldier::look`]).
+    pub look: u8,
     /// Seconds since he fell; negative while he still stands, waiting for
     /// the killing blow.
     pub age: f32,
@@ -429,6 +476,12 @@ pub struct Puppets {
     /// swing begun before then.
     act: Vec<(Act, f32)>,
     reeling: Vec<f32>,
+    /// Each soldier's look ([`Soldier::look`]), which goes with him when he
+    /// steps into a gap.
+    looks: Vec<u8>,
+    /// How many soldiers have picked each soldier as their man, counted
+    /// afresh every frame.
+    marked: Vec<u8>,
     /// Scratch for pairing: regiments in melee, and the enemies near one.
     fighting: Vec<u32>,
     near: Vec<u32>,
@@ -477,6 +530,8 @@ impl Puppets {
             partner: vec![NONE; regiment_capacity * SLOTS],
             act: vec![(Act::None, 0.0); regiment_capacity * SLOTS],
             reeling: vec![f32::NEG_INFINITY; regiment_capacity * SLOTS],
+            looks: vec![0; regiment_capacity * SLOTS],
+            marked: vec![0; regiment_capacity * SLOTS],
             fighting: Vec::with_capacity(regiment_capacity),
             near: Vec::with_capacity(regiment_capacity),
             unit: vec![0; regiment_capacity],
@@ -542,6 +597,7 @@ impl Puppets {
                 fell: self.time,
                 unit: self.unit[r],
                 owner: self.player[r],
+                look: self.looks[base + k],
             };
             self.lay(fallen);
             self.lodge(h, k, &fallen);
@@ -585,11 +641,15 @@ impl Puppets {
         }
     }
 
-    /// Pair front-rank soldiers of fighting regiments with the nearest enemy
-    /// across the line, from last frame's positions, and play out the blows
-    /// that land this frame. A soldier keeps his partner while the partner
-    /// stands within reach; several may pick the same man. `hostile` says
-    /// whether two players fight. Call once a frame, before the updates.
+    /// Pair the fighting ranks of regiments in melee (the front rank, and
+    /// the second too for spears) with enemy front-rank soldiers across the
+    /// line, from last frame's positions, and play out the blows that land
+    /// this frame. A soldier keeps his man while the man stands within
+    /// reach. A new man is the nearest, counting each soldier already
+    /// fighting him as a little further off, so men spread along the enemy
+    /// line and gang up two on one where their line overlaps his. `hostile`
+    /// says whether two players fight. Call once a frame, before the
+    /// updates.
     pub fn pair(&mut self, hostile: impl Fn(u8, u8) -> bool) {
         let mut fighting = core::mem::take(&mut self.fighting);
         let mut near = core::mem::take(&mut self.near);
@@ -601,37 +661,75 @@ impl Puppets {
                 self.partner[r * SLOTS..(r + 1) * SLOTS].fill(NONE);
             }
         }
+        // First the pairs that hold, so everyone choosing a new man knows
+        // who is already taken.
         for &a in &fighting {
             let a = a as usize;
-            near.clear();
-            near.extend(fighting.iter().copied().filter(|&b| {
-                let b = b as usize;
-                b != a
-                    && hostile(self.player[a], self.player[b])
-                    && self.centre[a].distance_squared(self.centre[b])
-                        <= DUEL_REGIMENT_RANGE * DUEL_REGIMENT_RANGE
-            }));
-            let front = self.front(a);
-            let impact = self.charge[a] > IMPACT_TICKS;
+            self.foes_near(a, &fighting, &hostile, &mut near);
+            let band = if near.is_empty() { 0 } else { self.band(a) };
             for k in 0..SLOTS {
                 let i = a * SLOTS + k;
-                if k >= front || near.is_empty() {
-                    self.partner[i] = NONE;
-                    continue;
-                }
                 let j = self.partner[i];
-                if j == NONE || !self.can_duel(a, j as usize, self.pos[i], &near) {
+                if k >= band || j == NONE || !self.can_duel(a, j as usize, self.pos[i], &near) {
+                    self.partner[i] = NONE;
+                } else {
+                    self.mark(j as usize);
+                }
+            }
+        }
+        for &a in &fighting {
+            let a = a as usize;
+            self.foes_near(a, &fighting, &hostile, &mut near);
+            if near.is_empty() {
+                continue;
+            }
+            let impact = self.charge[a] > IMPACT_TICKS;
+            for k in 0..self.band(a) {
+                let i = a * SLOTS + k;
+                if self.partner[i] == NONE {
                     let foe = self.nearest_foe(self.pos[i], &near);
                     self.partner[i] = foe;
-                    if foe != NONE && impact {
-                        self.charge_home(i, foe as usize);
+                    if foe != NONE {
+                        self.mark(foe as usize);
+                        if impact {
+                            self.charge_home(i, foe as usize);
+                        }
                     }
                 }
                 self.strike(i);
             }
         }
+        // Counted afresh next frame.
+        for &a in &fighting {
+            let a = a as usize;
+            self.marked[a * SLOTS..(a + 1) * SLOTS].fill(0);
+        }
         self.fighting = fighting;
         self.near = near;
+    }
+
+    /// One more soldier has puppet `j` as his man.
+    fn mark(&mut self, j: usize) {
+        self.marked[j] = self.marked[j].saturating_add(1);
+    }
+
+    /// The regiments of `fighting` hostile to regiment `a` and close enough
+    /// to pair with, into `near`.
+    fn foes_near(
+        &self,
+        a: usize,
+        fighting: &[u32],
+        hostile: &impl Fn(u8, u8) -> bool,
+        near: &mut Vec<u32>,
+    ) {
+        near.clear();
+        near.extend(fighting.iter().copied().filter(|&b| {
+            let b = b as usize;
+            b != a
+                && hostile(self.player[a], self.player[b])
+                && self.centre[a].distance_squared(self.centre[b])
+                    <= DUEL_REGIMENT_RANGE * DUEL_REGIMENT_RANGE
+        }));
     }
 
     /// Follow the champions' duel, if the simulation has called one; `now`
@@ -701,15 +799,22 @@ impl Puppets {
     }
 
     /// The nearest front-rank soldier of the regiments `near` within reach
-    /// of `me`, or `NONE`.
+    /// of `me`, those others already fight seeming further off (`CROWD`),
+    /// or `NONE`.
     fn nearest_foe(&self, me: Vec2, near: &[u32]) -> u32 {
-        let mut best = (NONE, DUEL_REACH * DUEL_REACH);
+        let reach = DUEL_REACH * DUEL_REACH;
+        let mut best = (NONE, f32::INFINITY);
         for &b in near {
             let b = b as usize;
             for j in b * SLOTS..b * SLOTS + self.front(b) {
                 let d = me.distance_squared(self.pos[j]);
-                if d < best.1 {
-                    best = (j as u32, d);
+                if d >= reach {
+                    continue;
+                }
+                let m = f32::from(self.marked[j]);
+                let score = d + CROWD * m * m;
+                if score < best.1 {
+                    best = (j as u32, score);
                 }
             }
         }
@@ -835,6 +940,13 @@ impl Puppets {
         (self.files[r] as usize).min(self.models[r] as usize)
     }
 
+    /// How many of regiment `r`'s soldiers stand in its fighting ranks: the
+    /// front one, and the second too for spears.
+    fn band(&self, r: usize) -> usize {
+        let ranks = if self.fighter[r].reach { 2 } else { 1 };
+        (self.front(r) * ranks).min(self.models[r] as usize)
+    }
+
     /// Whether the soldier at `me` in regiment `a` can go on fighting puppet
     /// `j`: still standing in the front rank of a nearby enemy regiment
     /// (`near`), and within reach.
@@ -874,6 +986,9 @@ impl Puppets {
             self.partner[r * SLOTS..(r + 1) * SLOTS].fill(NONE);
             self.act[r * SLOTS..(r + 1) * SLOTS].fill((Act::None, 0.0));
             self.reeling[r * SLOTS..(r + 1) * SLOTS].fill(f32::NEG_INFINITY);
+            for k in 0..SLOTS {
+                self.looks[r * SLOTS + k] = look_of(block.handle, k);
+            }
         } else {
             self.fall(block, owner, models);
         }
@@ -914,9 +1029,12 @@ impl Puppets {
             )
         };
         let champion_here = self.champion_of(r);
+        let band = self.band(r);
+        let pressing = block.engaged && !block.routing;
         for k in 0..models {
             let i = r * SLOTS + k;
-            let local = slot_offset(
+            let rank = f32::from(k as u16 / files);
+            let mut local = slot_offset(
                 k as u16,
                 files,
                 block.models,
@@ -924,6 +1042,10 @@ impl Puppets {
                 block.rank_spacing,
             ) * spread
                 + jitter(block.handle, k) * scatter;
+            if pressing {
+                // The ranks behind press in on the fighting ones.
+                local.y -= rank * PRESS * block.rank_spacing;
+            }
             let mut slot = block.centre + right * local.x + back * local.y;
             if mess > 0.0 {
                 // Jostled about: each soldier wanders round his slot.
@@ -933,8 +1055,9 @@ impl Puppets {
             }
             let slot = onto_ground(slot, block.centre, &firm);
             // A champion out between the lines faces the other; a dueling
-            // soldier closes on his man, on a leash from his slot; one
-            // knocked down lies where he fell.
+            // soldier in the front rank closes on his man, on a leash from
+            // his slot, and a spearman behind him thrusts from his place;
+            // one knocked down lies where he fell.
             let champion = champion_here
                 .filter(|&(_, _, c)| c == i)
                 .map(|(d, side, _)| (d, side));
@@ -956,10 +1079,13 @@ impl Puppets {
             let target = match (champion, foe) {
                 (Some((d, side)), _) => self.stance(&d, side),
                 _ if down => self.pos[i],
+                (None, Some(_)) if k >= files as usize => slot,
                 (None, Some(f)) => {
-                    let gap = (self.pos[i] - f).normalize_or(back);
-                    let spot = f + gap * DUEL_GAP;
-                    slot + (spot - slot).clamp_length_max(DUEL_LEASH)
+                    let them = &self.fighter[j as usize / SLOTS];
+                    let gap = (block.fighter.gap() + them.gap()) / 2.0;
+                    let spot = f + (self.pos[i] - f).normalize_or(back) * gap;
+                    let leash = DUEL_LEASH + LEASH_BOLD * unit_hash(block.handle, k, 13);
+                    slot + (spot - slot).clamp_length_max(leash)
                 }
                 (None, None) => slot,
             };
@@ -976,7 +1102,6 @@ impl Puppets {
                 } else {
                     (block.speed * CATCH_UP + dist * PULL_PER_TILE) * pace
                 };
-                let rank = f32::from(k as u16 / files);
                 let accel = ACCEL * pace / (1.0 + rank * ACCEL_FALLOFF_PER_RANK);
                 let accel = if block.routing { accel * 1.5 } else { accel };
                 let v = self.vel[i];
@@ -1011,7 +1136,15 @@ impl Puppets {
             let speed = if fresh { 0.0 } else { self.vel[i].length() };
             let mut pos = self.pos[i];
             let mut facing = self.facing[i];
-            let striking = block.engaged && (k as u16) < files * 2 && champion.is_none();
+            let striking = block.engaged && k < band && champion.is_none();
+            let waiting = pressing && !striking && champion.is_none();
+            // About half the men waiting their turn shout now and then.
+            let shout = (self.time / SHOUT_EVERY + unit_hash(block.handle, k, 15)).fract();
+            let shouting = (waiting
+                && speed < 0.15
+                && unit_hash(block.handle, k, 14) < 0.5
+                && shout * SHOUT_EVERY < SHOUT_SECONDS)
+                .then_some(shout * SHOUT_EVERY);
             let phase = unit_hash(block.handle, k, 5);
             let dueling = foe.is_some() && striking;
             let beat = dueling.then(|| Self::beat(i, j as usize, self.time));
@@ -1046,10 +1179,12 @@ impl Puppets {
                 let swing = ((self.time * LUNGE_RATE + lunge) * tau).sin();
                 pos += facing * LUNGE * swing.max(0.0);
             } else if speed < 0.15 && !block.routing && champion.is_none() {
-                // At rest: shift weight and glance about.
+                // At rest: shift weight and glance about; restlessly, waiting
+                // to fight.
                 let p = unit_hash(block.handle, k, 6) * tau;
+                let sway_by = if waiting { SWAY * RESTLESS } else { SWAY };
                 let sway = (self.time * 0.9 + p).sin() + 0.5 * (self.time * 2.3 + p * 1.7).sin();
-                pos += right * SWAY * sway;
+                pos += right * sway_by * sway;
                 let glance = (self.time * 0.31 + p).sin() * (self.time * 0.13 + p * 0.6).sin();
                 facing = Vec2::from_angle(GLANCE * glance).rotate(facing);
             }
@@ -1061,8 +1196,10 @@ impl Puppets {
                 // the walk back and forth.
                 backing: self.vel[i].dot(facing) < -0.5 * speed,
                 striking,
+                shouting,
                 fight,
                 phase,
+                look: self.looks[i],
             });
         }
     }
@@ -1137,6 +1274,7 @@ impl Puppets {
                 fell,
                 unit: block.unit,
                 owner,
+                look: self.looks[victim],
             };
             self.lay(fallen);
             if fell <= self.time {
@@ -1149,6 +1287,7 @@ impl Puppets {
             self.act[last] = (Act::None, 0.0);
             self.reeling[victim] = self.reeling[last];
             self.reeling[last] = f32::NEG_INFINITY;
+            self.looks[victim] = self.looks[last];
             // Whoever steps into the gap finds his own man next frame.
             self.partner[victim] = NONE;
             self.partner[last] = NONE;
@@ -1187,6 +1326,7 @@ impl Puppets {
             facing: f.facing,
             owner: f.owner,
             unit: f.unit,
+            look: f.look,
             age: self.time - f.fell,
             sink,
         };
@@ -1234,6 +1374,11 @@ fn unit_hash(h: RegimentHandle, k: usize, salt: u32) -> f32 {
     mix(h.index, u32::from(h.generation), k as u32, salt)
 }
 
+/// A stable look per soldier (see [`Soldier::look`]).
+fn look_of(h: RegimentHandle, k: usize) -> u8 {
+    (unit_hash(h, k, 16) * 256.0) as u8
+}
+
 /// A stable value in [0, 1) for blow `blow` between two puppets, one per
 /// `salt`.
 fn roll(i: usize, j: usize, blow: u32, salt: u32) -> f32 {
@@ -1241,7 +1386,7 @@ fn roll(i: usize, j: usize, blow: u32, salt: u32) -> f32 {
 }
 
 /// A stable value in [0, 1) from four numbers.
-fn mix(a: u32, b: u32, c: u32, d: u32) -> f32 {
+pub(crate) fn mix(a: u32, b: u32, c: u32, d: u32) -> f32 {
     let mut x = a.wrapping_mul(0x9E37_79B9)
         ^ b.wrapping_mul(0x85EB_CA6B)
         ^ c.wrapping_mul(0xC2B2_AE35)
@@ -1668,6 +1813,107 @@ mod tests {
             }
         }
         count
+    }
+
+    /// Two regiments locked in melee, `a` facing north and `b` south, after
+    /// two seconds of fighting.
+    fn scrum(a: Block, b: Block) -> Puppets {
+        let mut p = Puppets::new(2, 64);
+        for _ in 0..(2.0 / FRAME) as usize {
+            frame(&mut p, &a, &b);
+        }
+        p
+    }
+
+    #[test]
+    fn spears_fight_from_the_second_rank() {
+        let spears = Fighter {
+            reach: true,
+            ..Fighter::default()
+        };
+        let (a, b) = melee_pair(spears, Fighter::default());
+        let p = scrum(a, b);
+        let paired = |r: usize, ranks: core::ops::Range<usize>| {
+            ranks.filter(|k| p.partner[r * SLOTS + k] != NONE).count()
+        };
+        assert_eq!(paired(0, 0..8), 8, "both spear ranks fight");
+        assert_eq!(paired(1, 0..4), 4);
+        assert_eq!(paired(1, 4..8), 0, "swords fight from the front rank only");
+        // The second rank strikes from its place, over the shoulders of
+        // the first: it is still behind it.
+        for k in 0..4 {
+            assert!(p.pos[4 + k].y > p.pos[k].y + 0.3, "slot {}", 4 + k);
+        }
+    }
+
+    #[test]
+    fn spearmen_hold_their_foe_off() {
+        // How far apart the front ranks stand once they have closed.
+        let apart = |a: Fighter| {
+            let (x, y) = melee_pair(a, Fighter::default());
+            let p = scrum(x, y);
+            (0..4)
+                .map(|k| p.pos[k].distance(p.pos[p.partner[k] as usize]))
+                .sum::<f32>()
+                / 4.0
+        };
+        let spears = apart(Fighter {
+            reach: true,
+            ..Fighter::default()
+        });
+        let swarm = apart(Fighter {
+            mass: Mass::Light,
+            ..Fighter::default()
+        });
+        let swords = apart(Fighter::default());
+        assert!(spears > swords + 0.15, "spears {spears} swords {swords}");
+        assert!(swarm < swords - 0.05, "swarm {swarm} swords {swords}");
+    }
+
+    #[test]
+    fn men_spread_along_the_line_and_gang_up_where_it_overlaps() {
+        // Level fronts: one man each.
+        let (a, b) = melee_pair(Fighter::default(), Fighter::default());
+        let p = scrum(a, b);
+        let mut men: Vec<u32> = (0..4).map(|k| p.partner[k]).collect();
+        men.sort_unstable();
+        men.dedup();
+        assert_eq!(men.len(), 4, "{men:?}");
+        // Four men against two: two on each.
+        let b = Block {
+            files: 2,
+            models: 4,
+            ..block(1, Vec2::new(0.0, -2.6), Vec2::Y, true)
+        };
+        let p = scrum(block(0, Vec2::ZERO, Vec2::NEG_Y, true), b);
+        let mut on = [0; 2];
+        for k in 0..4 {
+            let j = p.partner[k];
+            assert_ne!(j, NONE, "slot {k} has no man");
+            on[j as usize - SLOTS] += 1;
+        }
+        assert_eq!(on, [2, 2]);
+    }
+
+    #[test]
+    fn men_waiting_their_turn_shout() {
+        let (a, b) = melee_pair(Fighter::default(), Fighter::default());
+        let mut p = Puppets::new(2, 64);
+        let (mut front, mut rear) = (0, 0);
+        for _ in 0..(SHOUT_EVERY * 2.0 / FRAME) as usize {
+            p.advance(FRAME);
+            p.pair(|x, y| x != y);
+            let mut k = 0;
+            p.update(&a, 0, FRAME, |s| {
+                if s.shouting.is_some() {
+                    if k < 4 { front += 1 } else { rear += 1 }
+                }
+                k += 1;
+            });
+            p.update(&b, 1, FRAME, |_| {});
+        }
+        assert_eq!(front, 0);
+        assert!(rear > 0);
     }
 
     fn fighter(attack: i32, defence: i32) -> Fighter {

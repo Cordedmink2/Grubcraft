@@ -13,9 +13,9 @@ use gc_ui::conquest::{
 };
 use gc_ui::hero::{HeroAbility, HeroPanel};
 use gc_ui::hud::{
-    Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, HelpScroll, Hud,
-    HudData, HudEvent, HudInput, MinimapData, MinimapTerrain, Selection, ShapeChip, SlotState,
-    StatusStrip,
+    Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, HandOverButton,
+    HelpScroll, Hud, HudData, HudEvent, HudInput, MinimapData, MinimapTerrain, Selection,
+    ShapeChip, SlotState, StatusStrip,
 };
 use gc_ui::placer::{PlaceLater, PlacePicker, PlaceRow, PlaceSide};
 use gc_ui::powers::{POWER_KEYS, PowerButton};
@@ -665,6 +665,7 @@ impl Running {
         } else {
             Vec::new()
         };
+        let handover = self.handover_text(side);
         let help_notes = if self.hud.help {
             self.help_notes()
         } else {
@@ -957,6 +958,11 @@ impl Running {
             }),
             help: hud.help.then_some(HelpScroll { notes: &help_notes }),
             picker: place_view.as_ref().map(|v| v.picker(hud.placer, placing)),
+            handover: handover.as_ref().map(|(label, tip, lit)| HandOverButton {
+                label,
+                tip,
+                lit: *lit,
+            }),
             hero,
             minimap: MinimapData {
                 map_tiles: map,
@@ -1060,6 +1066,7 @@ impl Running {
             HudEvent::PlaceTab(i) => self.place_tab_to(i),
             HudEvent::PlaceFaction(i) => self.place_faction_to(i),
             HudEvent::ArmyShape(i) => self.pick_army_shape(i),
+            HudEvent::HandOver => self.hand_over_next(),
             // The queue gives back its last regiment, whichever is clicked.
             HudEvent::Unqueue(_) => self.untrain(),
             HudEvent::Ready => {
@@ -1084,6 +1091,79 @@ impl Running {
             return;
         }
         self.battle_press(slot);
+    }
+
+    /// The allies `side` could hand its army to: same team, still in it.
+    fn allies_of(&self, side: PlayerId) -> Vec<PlayerId> {
+        (0..self.parties.len() as PlayerId)
+            .filter(|&p| p != side && !self.world.hostile(side, p) && !self.world.is_out(p))
+            .collect()
+    }
+
+    /// The Hand over button's label, tooltip and whether the army is with
+    /// an ally now; `None` when there is nobody to hand it to.
+    fn handover_text(&self, side: PlayerId) -> Option<(String, String, bool)> {
+        if self.watching.is_some() {
+            return None;
+        }
+        let allies = self.allies_of(side);
+        let with = self.world.stances().commander(side);
+        if allies.is_empty() && with == side {
+            return None;
+        }
+        let next = self.next_commander(side, &allies);
+        let name = |p| party_name(&self.parties, p);
+        let tip = if next == side {
+            format!("Your army is with {}. Click to take it back.", name(with))
+        } else if with == side {
+            format!(
+                "Give your whole army to {}, who then commands it. Click again to cycle, and once more to take it back.",
+                name(next)
+            )
+        } else {
+            format!(
+                "Your army is with {}. Click to pass it to {}.",
+                name(with),
+                name(next)
+            )
+        };
+        let label = if with == side {
+            "Hand over".to_string()
+        } else {
+            format!("With {}", name(with))
+        };
+        Some((label, tip, with != side))
+    }
+
+    /// Who a click on Hand over gives the army to: the first ally, then each
+    /// next one, then back to `side` itself.
+    fn next_commander(&self, side: PlayerId, allies: &[PlayerId]) -> PlayerId {
+        let with = self.world.stances().commander(side);
+        if with == side {
+            return allies.first().copied().unwrap_or(side);
+        }
+        let next = allies.iter().position(|&a| a == with).map(|i| i + 1);
+        next.and_then(|i| allies.get(i)).copied().unwrap_or(side)
+    }
+
+    /// The Hand over button: pass the army to the next ally, or take it back.
+    fn hand_over_next(&mut self) {
+        if self.watching.is_some() {
+            return;
+        }
+        let side = self.sandbox.side;
+        let to = self.next_commander(side, &self.allies_of(side));
+        self.human_orders.push(gc_sim::PlayerCommand {
+            player: side,
+            command: gc_sim::Command::HandOver { to },
+        });
+        self.ui_sound(sounds::UiSound::Move);
+        let msg = if to == side {
+            "You command your army again".to_string()
+        } else {
+            format!("Your army now answers to {}", party_name(&self.parties, to))
+        };
+        self.say(msg);
     }
 
     /// A battle grid slot: Move, Attack, Formation, Brace or Fall back.

@@ -178,6 +178,30 @@ impl Clips {
     }
 }
 
+/// Small differences between soldiers of one model, so a regiment does not
+/// look cloned.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    /// For the last byte of [`gc_render::SoldierInstance::color`]
+    /// ([`gc_render::TONE_NEUTRAL`] leaves him as painted).
+    pub tone: u8,
+    /// Playback rate of his idle, walk and run loops, 0.93 to 1.07.
+    pub rate: f32,
+    /// His height, 0.97 to 1.03.
+    pub scale: f32,
+}
+
+/// The look of a soldier whose stable look value is `seed`
+/// (`puppets::Soldier::look`).
+pub fn look(seed: u8) -> Look {
+    let mix = |salt| crate::puppets::mix(u32::from(seed), 0, 0, salt);
+    Look {
+        tone: seed,
+        rate: 0.93 + 0.14 * mix(1),
+        scale: 0.97 + 0.06 * mix(2),
+    }
+}
+
 /// 0 at both ends of `f` (0 to 1), rising to 1 halfway.
 fn peak(f: f32) -> f32 {
     1.0 - (2.0 * f - 1.0).abs()
@@ -208,6 +232,15 @@ fn looping(clip: &ClipRecord, seconds: f32) -> Pose {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn looks_stay_in_range_and_vary() {
+        let looks: Vec<Look> = (0..=255).map(look).collect();
+        assert!(looks.iter().all(|l| (0.93..=1.07).contains(&l.rate)));
+        assert!(looks.iter().all(|l| (0.97..=1.03).contains(&l.scale)));
+        assert!(looks.iter().any(|l| l.rate < 0.96) && looks.iter().any(|l| l.rate > 1.04));
+        assert!(looks.iter().any(|l| l.scale < 0.98) && looks.iter().any(|l| l.scale > 1.02));
+    }
 
     #[test]
     fn embedded_models_load_and_dress_every_unit_type() {

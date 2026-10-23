@@ -691,7 +691,20 @@ struct TexturedOut {
     // The material's first layer in the array.
     @location(5) @interpolate(flat) layer: i32,
     @location(6) @interpolate(flat) team_color: vec3<f32>,
+    // The soldier's tone, from -1 to 1 (0 leaves the model as painted).
+    @location(7) @interpolate(flat) tone: f32,
 };
+
+// The soldier's tone byte (128 neutral) as -1 to 1.
+fn tone_of(byte: f32) -> f32 {
+    return clamp((byte * 255.0 - 128.0) / 128.0, -1.0, 1.0);
+}
+
+// What a tone does to colour: up to 8% lighter or darker with a faint
+// warm or cool shift. Team parts take a third of it.
+fn tone_mul(tone: f32) -> vec3<f32> {
+    return (1.0 + 0.08 * tone) * (1.0 + tone * vec3<f32>(0.04, 0.015, -0.03));
+}
 
 fn bone_texel(row: u32, bone: u32, r: u32) -> vec4<f32> {
     return textureLoad(bones, vec2<i32>(i32(bone * 3u + r), i32(row)), 0);
@@ -848,7 +861,12 @@ fn vs_soldier(v: SoldierIn) -> SoldierOut {
     let team = f32(v.team_material.x) / 255.0;
     let shade_of = dot(v.vcolor.rgb, vec3<f32>(0.3, 0.59, 0.11));
     let tinted = v.team_color.rgb * (0.45 + shade_of * 1.1);
-    out.color = mix(v.vcolor.rgb, tinted, team);
+    let tone = tone_of(v.team_color.a);
+    out.color = mix(
+        v.vcolor.rgb * tone_mul(tone),
+        tinted * tone_mul(tone / 3.0),
+        team,
+    );
     out.highlight = v.flags.y;
     return out;
 }
@@ -882,6 +900,7 @@ fn vs_soldier_textured(v: SoldierIn) -> TexturedOut {
     out.uv = v.vuv;
     out.layer = (i32(v.team_material.y) - 1) * 3;
     out.team_color = srgb_to_linear(v.team_color.rgb);
+    out.tone = tone_of(v.team_color.a);
     out.highlight = v.flags.y;
     return out;
 }
@@ -894,7 +913,11 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     // Team parts are painted in greys, light grey (0.8 linear) taking the
     // whole team colour and darker greys (folds, occlusion) less of it.
     let grey = dot(a.rgb, vec3<f32>(0.3, 0.59, 0.11));
-    let albedo = mix(a.rgb, in.team_color * min(grey * 1.25, 1.2), a.a);
+    let albedo = mix(
+        a.rgb * tone_mul(in.tone),
+        in.team_color * min(grey * 1.25, 1.2) * tone_mul(in.tone / 3.0),
+        a.a,
+    );
     let n0 = in.normal;
     let t = normalize(in.tangent.xyz - n0 * dot(n0, in.tangent.xyz) + vec3<f32>(1e-5, 0.0, 0.0));
     let bt = cross(n0, t) * select(-1.0, 1.0, in.tangent.w >= 0.0);

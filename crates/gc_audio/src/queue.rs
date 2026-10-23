@@ -12,12 +12,22 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     /// Start a sound. `pan` is -127 (left) to 127 (right); a higher
-    /// `priority` survives when all voices are busy.
+    /// `priority` survives when all voices are busy. `dull` (0 clear, 255
+    /// muffled) takes the highs off, the way distance does.
     Play {
         sound: SoundId,
         gain: u8,
         pan: i8,
         priority: u8,
+        dull: u8,
+    },
+    /// Set an ambient bed (an index into [`SoundId::BEDS`]): how loud it is,
+    /// where it is, and how muffled. The mixer glides to the new values.
+    Bed {
+        bed: u8,
+        level: u8,
+        pan: i8,
+        dull: u8,
     },
     /// 0 = calm music only, 255 = full battle layer.
     MusicIntensity(u8),
@@ -37,11 +47,24 @@ impl Command {
                 gain,
                 pan,
                 priority,
+                dull,
             } => {
                 1 | (sound as u64) << 8
                     | u64::from(gain) << 16
                     | u64::from(pan as u8) << 24
                     | u64::from(priority) << 32
+                    | u64::from(dull) << 40
+            }
+            Command::Bed {
+                bed,
+                level,
+                pan,
+                dull,
+            } => {
+                6 | u64::from(bed) << 8
+                    | u64::from(level) << 16
+                    | u64::from(pan as u8) << 24
+                    | u64::from(dull) << 32
             }
             Command::MusicIntensity(v) => 2 | u64::from(v) << 8,
             Command::MusicVolume(v) => 3 | u64::from(v) << 8,
@@ -58,6 +81,13 @@ impl Command {
                 gain: byte(16),
                 pan: byte(24) as i8,
                 priority: byte(32),
+                dull: byte(40),
+            },
+            6 => Command::Bed {
+                bed: byte(8),
+                level: byte(16),
+                pan: byte(24) as i8,
+                dull: byte(32),
             },
             2 => Command::MusicIntensity(byte(8)),
             3 => Command::MusicVolume(byte(8)),
@@ -130,6 +160,7 @@ mod tests {
             gain: n,
             pan: -5,
             priority: 200,
+            dull: 90,
         }
     }
 
@@ -142,6 +173,13 @@ mod tests {
                 gain: 255,
                 pan: 127,
                 priority: 0,
+                dull: 255,
+            },
+            Command::Bed {
+                bed: 3,
+                level: 200,
+                pan: -127,
+                dull: 17,
             },
             Command::MusicIntensity(9),
             Command::MusicVolume(0),

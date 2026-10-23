@@ -121,6 +121,12 @@ impl Audio {
     /// -1 (left) to 1 (right), `priority` decides who is cut off when the 32
     /// voices are all busy. Silent sounds are not sent.
     pub fn play(&self, sound: SoundId, gain: f32, pan: f32, priority: u8) {
+        self.play_muffled(sound, gain, pan, priority, 0.0);
+    }
+
+    /// Like [`play`](Audio::play), with the highs taken off: `dull` is 0
+    /// (clear) to 1 (muffled), how distance changes a sound.
+    pub fn play_muffled(&self, sound: SoundId, gain: f32, pan: f32, priority: u8, dull: f32) {
         let gain = to_byte(gain);
         if gain == 0 {
             return;
@@ -128,8 +134,22 @@ impl Audio {
         self.commands.push(Command::Play {
             sound,
             gain,
-            pan: (pan.clamp(-1.0, 1.0) * 127.0).round() as i8,
+            pan: to_pan(pan),
             priority,
+            dull: to_byte(dull),
+        });
+    }
+
+    /// Set an ambient bed (`SoundId::BEDS[bed]`): `level` 0..=1 (0 fades it
+    /// out), `pan` -1..=1 and `dull` 0..=1 as for [`play_muffled`](Audio::play_muffled).
+    /// The mixer glides to the new values, so this is cheap to call as the
+    /// scene changes.
+    pub fn set_bed(&self, bed: usize, level: f32, pan: f32, dull: f32) {
+        self.commands.push(Command::Bed {
+            bed: bed as u8,
+            level: to_byte(level),
+            pan: to_pan(pan),
+            dull: to_byte(dull),
         });
     }
 
@@ -175,6 +195,10 @@ impl Audio {
     pub fn sample_rate(&self) -> u32 {
         self.rate
     }
+}
+
+fn to_pan(v: f32) -> i8 {
+    (v.clamp(-1.0, 1.0) * 127.0).round() as i8
 }
 
 fn to_byte(v: f32) -> u8 {

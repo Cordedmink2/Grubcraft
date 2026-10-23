@@ -9,7 +9,14 @@
 //! and rally, and when their champion wins the duel between the lines.
 //! Sounds are placed relative to the listener (the bird's-eye camera's
 //! ground point, or the eye when riding with a regiment): quieter with
-//! distance (less so when zoomed out) and panned left or right.
+//! distance (less so when zoomed out), duller with distance (the highs go
+//! first) and panned left or right.
+//!
+//! Under the one-shot sounds run four ambient beds: the roar of the fighting
+//! (louder and nearer the more regiments are engaged, panned towards them,
+//! muffled when they are far), and wind, water and woods taken from the
+//! ground around the camera, so a river on one side or a forest on the other
+//! can be heard.
 
 use crate::camera::Listener;
 use crate::from_fx_vec;
@@ -34,6 +41,41 @@ const FULL_BATTLE: f32 = 4.0;
 const BLOW_COOLDOWN: u32 = 3;
 /// Every this many ticks an engaged regiment is heard even without a death.
 const AMBIENT_EVERY: u32 = 10;
+
+/// How far (as a multiple of the hearing range) the roar of a fight
+/// carries: further than any one blow.
+const ROAR_REACH: f32 = 1.6;
+/// How quickly the roar fills out as regiments join in (per unit of summed
+/// nearness), and the most it reaches: the one-shot sounds stay on top.
+const ROAR_FILL: f32 = 0.9;
+const ROAR_MAX: f32 = 0.9;
+/// Even a roar from right beside the camera is a little dulled; a far one is
+/// dull up to this.
+const ROAR_DULL_MIN: f32 = 0.15;
+
+/// The ground is listened to every this many ticks.
+const LAND_EVERY: u32 = 10;
+/// The ground around the camera is sampled on a grid of this many points
+/// along a side, out to [`LAND_REACH`] of the hearing range (at most
+/// [`LAND_MAX`] tiles): fine enough that a river a few tiles wide is not
+/// stepped over.
+const LAND_GRID: i32 = 25;
+const LAND_REACH: f32 = 0.35;
+const LAND_MAX: f32 = 45.0;
+/// How much water or woods in earshot (the weighted share of the ground
+/// round the camera) fills the bed: a river across part of the view must
+/// be heard, so a small share counts for a lot.
+const WATER_FILL: f32 = 5.0;
+const WOODS_FILL: f32 = 1.6;
+/// Wind: a breeze everywhere, more over open ground, more still on a rise
+/// (the camera this many tiles above the ground round it is fully exposed).
+const WIND_CALM: f32 = 0.2;
+const WIND_OPEN: f32 = 0.35;
+const WIND_EXPOSED: f32 = 0.3;
+const WIND_RISE: f32 = 6.0;
+/// The beds fade with zoom: full close to the ground, a hush at the far end.
+const BED_ZOOM_FAR: f32 = 300.0;
+const BED_ZOOM_FLOOR: f32 = 0.3;
 
 /// Battle cries: how long one is counted as sounding (they run 1 to 1.6
 /// s), and how many may sound at once, so a big battle is a roar and not a
@@ -114,6 +156,158 @@ impl CryCap {
     }
 }
 
+/// What one ambient bed should be doing: how loud, where, how muffled.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct BedMix {
+    level: f32,
+    pan: f32,
+    dull: f32,
+}
+
+impl BedMix {
+    fn scaled(self, by: f32) -> BedMix {
+        BedMix {
+            level: self.level * by,
+            ..self
+        }
+    }
+}
+
+/// The ambient beds, in [`gc_audio::SoundId::BEDS`] order.
+const WIND: usize = 0;
+const WATER: usize = 1;
+const WOODS: usize = 2;
+const BATTLE: usize = 3;
+
+/// The fights in earshot, summed into the battle bed.
+#[derive(Default)]
+struct Roar {
+    /// Sum of how near each fight is (0 at the edge of earshot, 1 on top).
+    near: f32,
+    /// The same, weighted by how far to the right each is.
+    side: f32,
+    /// The same, weighted by how far away each is.
+    far: f32,
+}
+
+impl Roar {
+    /// A fight `distance` tiles off, `side` tiles to the right of the
+    /// listener (negative: left), heard out to `radius`.
+    fn add(&mut self, distance: f32, side: f32, radius: f32) {
+        let near = 1.0 - distance / radius;
+        if near > 0.0 {
+            self.near += near;
+            self.side += near * side;
+            self.far += near * (1.0 - near);
+        }
+    }
+
+    fn mix(&self, radius: f32) -> BedMix {
+        if self.near <= 0.0 {
+            return BedMix::default();
+        }
+        BedMix {
+            level: (1.0 - (-ROAR_FILL * self.near).exp()).min(ROAR_MAX),
+            pan: (self.side / self.near / (radius * 0.5)).clamp(-1.0, 1.0),
+            dull: (ROAR_DULL_MIN + (1.0 - ROAR_DULL_MIN) * self.far / self.near).clamp(0.0, 1.0),
+        }
+    }
+}
+
+/// What the ground is at a point, for the beds.
+#[derive(Clone, Copy, Debug)]
+struct Probe {
+    wet: bool,
+    wood: bool,
+    /// Height above the sea level of the map, in tiles.
+    height: f32,
+}
+
+/// Wind, water and woods from the ground round `focus`, sampled out to
+/// `radius` tiles: each is louder the more of it there is and the nearer it
+/// is (weighted by nearness squared), panned towards it. `right` is the
+/// camera's right on the ground.
+fn land_mix(probe: impl Fn(Vec2) -> Probe, focus: Vec2, right: Vec2, radius: f32) -> [BedMix; 3] {
+    let step = 2.0 * radius / (LAND_GRID - 1) as f32;
+    let (mut all, mut wet, mut wood, mut wet_side, mut wood_side, mut height) =
+        (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    for iy in 0..LAND_GRID {
+        for ix in 0..LAND_GRID {
+            let offset = Vec2::new(ix as f32, iy as f32) * step - Vec2::splat(radius);
+            let near = 1.0 - offset.length() / radius;
+            if near <= 0.0 {
+                continue;
+            }
+            let w = near * near;
+            let p = probe(focus + offset);
+            let side = offset.dot(right);
+            all += w;
+            height += w * p.height;
+            if p.wet {
+                wet += w;
+                wet_side += w * side;
+            }
+            if p.wood {
+                wood += w;
+                wood_side += w * side;
+            }
+        }
+    }
+    if all <= 0.0 {
+        return [BedMix::default(); 3];
+    }
+    let place = |share: f32, side: f32, fill: f32| {
+        let level = (share / all * fill).min(1.0);
+        BedMix {
+            level,
+            pan: if share > 0.0 {
+                (side / share / (radius * 0.5)).clamp(-1.0, 1.0)
+            } else {
+                0.0
+            },
+            // What there is less of is further away.
+            dull: (1.0 - level) * 0.7,
+        }
+    };
+    let water = place(wet, wet_side, WATER_FILL);
+    let woods = place(wood, wood_side, WOODS_FILL);
+    let exposure = ((probe(focus).height - height / all) / WIND_RISE).clamp(0.0, 1.0);
+    let wind = BedMix {
+        level: WIND_CALM + WIND_OPEN * (1.0 - woods.level) + WIND_EXPOSED * exposure,
+        pan: 0.0,
+        dull: 0.1,
+    };
+    [wind, water, woods]
+}
+
+/// How much the beds are heard at this zoom (`distance` of the camera).
+fn zoom_hush(distance: f32) -> f32 {
+    (1.15 - distance / BED_ZOOM_FAR).clamp(BED_ZOOM_FLOOR, 1.0)
+}
+
+/// The beds as last sent to the mixer, in coarse steps, so a bed that has
+/// not changed audibly costs no message.
+#[derive(Default)]
+struct BedsSent([Option<[i16; 3]>; 4]);
+
+impl BedsSent {
+    /// Whether `mix` differs audibly from what bed `bed` was last set to
+    /// (and is noted as sent if so).
+    fn changed(&mut self, bed: usize, mix: BedMix) -> bool {
+        let q = |v: f32, steps: f32| (v.clamp(-1.0, 1.0) * steps).round() as i16;
+        let now = [q(mix.level, 50.0), q(mix.pan, 25.0), q(mix.dull, 25.0)];
+        if self.0[bed] == Some(now) {
+            return false;
+        }
+        self.0[bed] = Some(now);
+        true
+    }
+
+    fn forget(&mut self) {
+        self.0 = Default::default();
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Seen {
     handle: RegimentHandle,
@@ -157,6 +351,14 @@ pub struct Sounds {
     duel_cried: Option<u32>,
     /// True while `observe` only records what it sees: no sound plays.
     hushed: bool,
+    /// The ambient beds as last sent, and the ground's three (wind, water,
+    /// woods) as last heard, kept between the slower ground listens.
+    beds: BedsSent,
+    land: [BedMix; 3],
+    /// The tick the ground was last listened to.
+    land_at: Option<u32>,
+    /// False while no match is on screen (the menu is up): the beds are off.
+    live: bool,
     /// When the output may next be reopened, and how long to wait after
     /// that if it fails again. Kept after a success, so a stream that dies
     /// again at once still waits.
@@ -236,6 +438,10 @@ impl Sounds {
                     cries: CryCap::default(),
                     duel_cried: None,
                     hushed: false,
+                    beds: BedsSent::default(),
+                    land: [BedMix::default(); 3],
+                    land_at: None,
+                    live: true,
                     reopen: None,
                 };
                 sounds.apply_state();
@@ -258,6 +464,33 @@ impl Sounds {
             &mut self.cries,
             &mut self.duel_cried,
         );
+        self.land = [BedMix::default(); 3];
+        self.land_at = None;
+        self.silence_beds();
+    }
+
+    /// Fade every bed out (and forget it was ever sent, so it comes back).
+    fn silence_beds(&mut self) {
+        for bed in 0..gc_audio::SoundId::BEDS.len() {
+            self.audio.set_bed(bed, 0.0, 0.0, 0.0);
+        }
+        self.beds.forget();
+    }
+
+    /// Set a bed, unless it is already (about) what it was last set to.
+    fn set_bed(&mut self, bed: usize, mix: BedMix) {
+        if self.beds.changed(bed, mix) {
+            self.audio.set_bed(bed, mix.level, mix.pan, mix.dull);
+        }
+    }
+
+    /// Whether a match is on screen. Called once a frame: the beds are
+    /// faded out while the menu is up and come back with the next tick.
+    pub fn set_live(&mut self, live: bool) {
+        if self.live && !live {
+            self.silence_beds();
+        }
+        self.live = live;
     }
 
     /// Tell a freshly opened output what the player has set: mute, music
@@ -292,6 +525,8 @@ impl Sounds {
                     audio.sample_rate()
                 );
                 self.audio = audio;
+                // The new output knows none of the beds.
+                self.beds.forget();
                 self.apply_state();
                 // A stream that dies again at once waits too, instead of
                 // being rebuilt every frame.
@@ -330,6 +565,8 @@ impl Sounds {
         self.duel(world, heard, &shown, &voice);
 
         let mut fighting = 0.0f32;
+        let mut roar = Roar::default();
+        let roar_radius = self.hearing * ROAR_REACH;
         for r in world.regiments.iter() {
             let i = r.handle.index as usize;
             let at = from_fx_vec(r.position);
@@ -348,14 +585,61 @@ impl Sounds {
             if r.engaged && self.in_earshot(at, 1.5) {
                 fighting += 1.0;
             }
+            if r.engaged {
+                let offset = at - self.focus;
+                roar.add(offset.length(), offset.dot(self.right), roar_radius);
+            }
         }
         self.hushed = false;
+        self.beds_told(world, heard, listener.distance, roar.mix(roar_radius));
 
         let intensity = (fighting / FULL_BATTLE).min(1.0);
         let byte = (intensity * 20.0).round() as u8;
         if byte != self.last_intensity {
             self.last_intensity = byte;
             self.audio.set_music_intensity(intensity);
+        }
+    }
+
+    /// The ambient beds for this tick: the roar of the fights (`roar`, from
+    /// the regiments the player can see) and, every [`LAND_EVERY`] ticks,
+    /// the wind, water and woods of the ground around the camera. Off while
+    /// a rejoining player catches up or no match is on screen.
+    fn beds_told(&mut self, world: &World, heard: bool, zoom: f32, roar: BedMix) {
+        let tick = world.tick_count();
+        let on = heard && self.live;
+        // The ground is not scanned while the beds are off.
+        if on
+            && self
+                .land_at
+                .is_none_or(|at| tick.wrapping_sub(at) >= LAND_EVERY)
+        {
+            self.land_at = Some(tick);
+            let terrain = world.terrain();
+            let radius = (self.hearing * LAND_REACH).min(LAND_MAX);
+            self.land = land_mix(
+                |p| {
+                    let at = crate::fx_vec(p);
+                    Probe {
+                        wet: terrain.wet(at),
+                        wood: terrain.cover(at) == gc_sim::Cover::Wood,
+                        height: terrain.height(at) as f32 / gc_sim::terrain::HEIGHT_UNITS as f32,
+                    }
+                },
+                self.focus,
+                self.right,
+                radius,
+            );
+        }
+        let hush = zoom_hush(zoom);
+        let [wind, water, woods] = self.land;
+        for (bed, mix) in [
+            (WIND, wind.scaled(hush)),
+            (WATER, water.scaled(hush)),
+            (WOODS, woods.scaled(hush)),
+            (BATTLE, roar),
+        ] {
+            self.set_bed(bed, if on { mix } else { BedMix::default() });
         }
     }
 
@@ -659,7 +943,9 @@ impl Sounds {
         }
         let near = 1.0 - distance / radius;
         let pan = offset.dot(self.right) / (radius * 0.5);
-        self.audio.play(sound, gain * near * near, pan, priority);
+        // The highs go first with distance.
+        self.audio
+            .play_muffled(sound, gain * near * near, pan, priority, 1.0 - near);
     }
 
     /// An ambush sprung on or by the side you command: a war-drum roll and
@@ -798,6 +1084,131 @@ mod tests {
             "off to the side"
         );
         assert!(!closing_on(at, east, at), "on top of itself");
+    }
+
+    fn probe_of(wet: fn(Vec2) -> bool, wood: fn(Vec2) -> bool) -> impl Fn(Vec2) -> Probe {
+        move |p| Probe {
+            wet: wet(p),
+            wood: wood(p),
+            height: 0.0,
+        }
+    }
+
+    const NONE: fn(Vec2) -> bool = |_| false;
+
+    #[test]
+    fn a_distant_fight_is_a_dull_quiet_roar_and_a_near_one_is_loud() {
+        let radius = 100.0;
+        let mut far = Roar::default();
+        far.add(90.0, 90.0, radius);
+        let mut near = Roar::default();
+        near.add(5.0, 5.0, radius);
+        let (far, near) = (far.mix(radius), near.mix(radius));
+        assert!(near.level > 3.0 * far.level, "{near:?} against {far:?}");
+        assert!(far.dull > 0.8 && near.dull < 0.3, "{near:?} {far:?}");
+        assert!(far.pan > 0.0, "the fight is to the right");
+    }
+
+    #[test]
+    fn more_fights_make_a_bigger_roar_that_never_passes_the_cap() {
+        let radius = 100.0;
+        let level = |n: usize| {
+            let mut roar = Roar::default();
+            for _ in 0..n {
+                roar.add(40.0, -40.0, radius);
+            }
+            roar.mix(radius)
+        };
+        assert!(level(1).level < level(3).level);
+        assert!(level(50).level <= ROAR_MAX);
+        assert!(level(1).pan < 0.0);
+        // Out of earshot, or nothing fighting: silence.
+        let mut out = Roar::default();
+        out.add(150.0, 0.0, radius);
+        assert_eq!(out.mix(radius), BedMix::default());
+        assert_eq!(Roar::default().mix(radius), BedMix::default());
+    }
+
+    #[test]
+    fn a_river_to_the_right_is_heard_on_the_right() {
+        // A stream six tiles wide, 12 tiles east of the camera.
+        let probe = probe_of(|p| (p.x - 12.0).abs() < 3.0, NONE);
+        let [_, water, woods] = land_mix(probe, Vec2::ZERO, Vec2::X, 40.0);
+        assert!(water.level > 0.3, "{water:?}");
+        assert!(water.pan > 0.1, "it is on the right: {water:?}");
+        assert_eq!(woods.level, 0.0);
+        // From the other side of the river it is on the left.
+        let [_, flipped, _] = land_mix(
+            probe_of(|p| (p.x - 12.0).abs() < 3.0, NONE),
+            Vec2::new(24.0, 0.0),
+            Vec2::X,
+            40.0,
+        );
+        assert!(flipped.pan < -0.1, "{flipped:?}");
+    }
+
+    #[test]
+    fn standing_in_woods_is_louder_than_standing_beside_them() {
+        let in_wood = land_mix(probe_of(NONE, |_| true), Vec2::ZERO, Vec2::X, 40.0)[2];
+        let beside = land_mix(probe_of(NONE, |p| p.x > 20.0), Vec2::ZERO, Vec2::X, 40.0)[2];
+        assert!(in_wood.level > beside.level && beside.level > 0.0);
+        assert!(in_wood.dull < beside.dull);
+    }
+
+    #[test]
+    fn wind_is_stronger_in_the_open_and_on_a_rise() {
+        let flat = |wood: bool| {
+            move |_: Vec2| Probe {
+                wet: false,
+                wood,
+                height: 0.0,
+            }
+        };
+        let open = land_mix(flat(false), Vec2::ZERO, Vec2::X, 40.0)[0].level;
+        let wooded = land_mix(flat(true), Vec2::ZERO, Vec2::X, 40.0)[0].level;
+        // A hill: the camera is at the top.
+        let hill = land_mix(
+            |p: Vec2| Probe {
+                wet: false,
+                wood: false,
+                height: 10.0 - p.length() * 0.3,
+            },
+            Vec2::ZERO,
+            Vec2::X,
+            40.0,
+        )[0]
+        .level;
+        assert!(open > wooded && hill > open, "{wooded} {open} {hill}");
+        assert!(wooded > 0.0, "there is always a breeze");
+    }
+
+    #[test]
+    fn the_beds_fade_as_the_camera_pulls_back() {
+        assert_eq!(zoom_hush(14.0), 1.0);
+        assert!(zoom_hush(110.0) < 1.0 && zoom_hush(110.0) > zoom_hush(260.0));
+        assert_eq!(zoom_hush(10_000.0), BED_ZOOM_FLOOR);
+    }
+
+    #[test]
+    fn a_bed_is_only_resent_when_it_changes_audibly() {
+        let mut sent = BedsSent::default();
+        let mix = BedMix {
+            level: 0.5,
+            pan: 0.2,
+            dull: 0.1,
+        };
+        assert!(sent.changed(1, mix));
+        assert!(!sent.changed(
+            1,
+            BedMix {
+                level: 0.505,
+                ..mix
+            }
+        ));
+        assert!(sent.changed(1, BedMix { level: 0.6, ..mix }));
+        assert!(sent.changed(2, mix), "each bed is its own");
+        sent.forget();
+        assert!(sent.changed(1, mix), "a new output knows nothing");
     }
 
     #[test]

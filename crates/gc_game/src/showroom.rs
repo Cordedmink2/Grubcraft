@@ -271,7 +271,7 @@ pub(crate) fn stand(
         facing: FACING.to_array(),
         frames: pose.rows,
         flags: pose_flags(pose, 0, flat),
-        color: [color[0], color[1], color[2], 255],
+        color: [color[0], color[1], color[2], gc_render::TONE_NEUTRAL],
         lift,
         scale: 1.0,
     });

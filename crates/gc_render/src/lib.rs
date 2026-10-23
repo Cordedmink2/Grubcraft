@@ -61,7 +61,7 @@ pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
 pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance};
-pub use soldiers::{MAX_SOLDIER_INSTANCES, SoldierBatch, SoldierInstance};
+pub use soldiers::{MAX_SOLDIER_INSTANCES, SoldierBatch, SoldierInstance, TONE_NEUTRAL};
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 use shadows::{SHADOW_BIAS, SHADOW_FORMAT, SHADOW_SIZE};
 /// Direction toward the sun.
