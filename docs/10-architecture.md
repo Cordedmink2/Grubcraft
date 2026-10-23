@@ -149,6 +149,7 @@ Crates marked *(later)* don't exist yet. `gc_match` (review fix 13, 2026-10-16) 
 After each tick the sim tells what it did (`gc_sim::events`, `World::events()`), so the game's sounds, falling soldiers, shooting marks and alerts read it instead of comparing what they saw before with what they see now:
 - `Loosed` (a volley's id, shooter and target) and `Landed` (where it came down and how many of its target fell to it). A volley's id is its pool slot and launch tick, and `World::volleys()` shows each one in the air with its id and shooter.
 - `Losses` (soldiers a regiment lost this tick to anything; all it had when wiped out), `Morale` (a change of heart: wavered, broke, rallied, shattered), `Contact` (a regiment met an enemy in melee, having fought nobody the tick before) and `Ambush`.
+- Conquest: `Struck` (a blow on a building, and the regiment that struck it: each melee blow, volley or siege shot), `Fallen` (a building brought down), `Tolled` (a Bell Tower rang) and `Consumed` (a worker used up to start a building). The siege drawing, its sounds and the building alerts read `Struck` and `Fallen` ([21 · Buildings](21-buildings.md), "Sieges on screen").
 
 Events are not part of the match's state: not hashed, not in snapshots, and gone at the next tick, so a viewer that skips ticks (catching up, seeking a replay) just doesn't read them.
 

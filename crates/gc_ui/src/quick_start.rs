@@ -43,7 +43,7 @@ const STEPS: [Step; 5] = [
     Step {
         title: "Win",
         scene: win,
-        text: "Break every enemy main building. Pick any of your buildings and click its i for tips on using it.",
+        text: "Right-click enemy buildings to attack; smoke and fire show the damage. Break every enemy main building. Click i for tips.",
     },
 ];
 
