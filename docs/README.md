@@ -31,6 +31,7 @@ Read in order the first time; afterwards each document stands alone.
 | 25 | [Scenery models](25-scenery-models.md) | The 26 scenery models (trees, bushes, grass and rocks) that dress each land: what grows where, triangle counts, the bake and how to rebuild one |
 | 26 | [Fortifications and Bases](26-fortifications.md) | Walls for every faction drawn at any angle with three levels, gates that open for your side, manned walls, three kinds of tower that fire, stakes, barricades and traps, sieges you can see, walled towns, and the eight-stage build plan (approved, not built yet) |
 | 27 | [Living Land](27-living-land.md) | Organic world generation (planned): land grown from noise, rock strata, erosion, rivers and lakes instead of line and disc stamps; fairness by measurement with a Mirrored option; habitats inside each biome, riversides and trails; the build stages |
+| 28 | [Every Soldier Fights](28-soldier-combat.md) | Individual soldier combat (decided 2026-10-23, not built yet): every soldier fights his own duel when regiments clash; duels in the simulation (option B) first when the project resumes, every soldier simulated (option C) as a later stage; the scrum, exchanges, matched kills, charge impacts, layered animation, the fight library and the seven build stages |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |
