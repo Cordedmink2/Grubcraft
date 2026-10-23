@@ -10,8 +10,20 @@
 - **Fortifications and bases** ([26](26-fortifications.md)), all eight stages.
 - **Ideas 1 to 19** from 2026-10-22. Ideas 16 (smarter formations, PR #178) and 18 (better guides, PR #177) are built. Idea 20 is soldier combat.
 - **Idea 21, less-flat textures** (Mario, 2026-10-23, at minimal cost): (1) a small shared set of repeating detail textures (stone, wood, plaster, cloth, tiles) layered by material over every building and unit; (2) real grass and soil textures with normal maps blended across the ground, from the Grass001 and Ground054 sets in the project files; (3) lighting stage 1, already planned; (4) a stronger bake with crevice darkening, colour varied from block to block and stronger normals, then every building and unit re-baked.
+- **Idea 22, clearing land to expand** (Mario, 2026-10-23): trees and scrub stand in the way of a growing base, with the full mechanics, animations and planning. See [Idea 22 in brief](#idea-22-in-brief).
 
 Not in it: faction depth stages 7 to 9 (Tithe, Brood metamorphosis, heroes). They fit in any wave from 2 on without clashing with this plan if Mario wants them.
+
+## Idea 22 in brief
+
+Mario (2026-10-23): "Make it so that tree/scrub etc clearance is a thing for expanding bases", planned and built in full, with animations. The plan, with first-pass numbers that T9's design note settles:
+
+- **Ground has to be cleared to build on.** Buildings can't go on scrub, woods or thicket. Workers get a **Clear** order (drag an area): scrub goes quickly, woods slower, thicket slowest. Laying a building on overgrown ground queues the clearing first, so a blueprint just takes longer.
+- **Cleared ground changes the battlefield.** It becomes open ground with stumps: nobody hides there any more, troops no longer slow down in it, and cleared thicket stops blocking the way. Felled timber pays a little Grub.
+- **Each faction clears its own way**, to confirm with Mario in the design note. For example, the Clans fell and haul timber, the Concord burns it (fast, leaving scorched ground), the Choir shatters it with resonance, and Brood Gnawers eat it.
+- **Maps and computer players.** Living Land grows woods and scrub round every start, with equal open and clearable room for each player (T2's fairness work). Computer players clear ground as they expand.
+- **On screen.** Workers chop with their own moves, trees shake and fall, logs pile up, and stumps and bare earth stay behind. The moves and models are Sonnet 3D work.
+- **How it works.** One runtime ground-change command updates a tile's cover and, for thicket, the walking grid through T1's reopen hook. It goes through the lockstep like every other order, and burning woods, flooded fords and siege rubble reuse it later.
 
 ## How the work is split
 
@@ -19,17 +31,17 @@ Work is grouped into **eleven threads, one per area of code**. A thread keeps it
 
 | # | Thread | Covers | Owns | Lead · effort | Helpers | Waves | Cost |
 |---|---|---|---|---|---|---|---|
-| T1 | Pathfinding overhaul | Idea 17; nav doors for gates | `gc_sim` `nav.rs`, `nav_reblock.rs` | Opus · high | Haiku: benches, ford test, goldens, docs. Sonnet: nav debug overlay | 1–2 | L |
-| T2 | Living Land maps | Doc 27 stages 1–4 | `gc_map`, `gc_mapcheck`, map dressing in `gc_game/scenery.rs` | Opus · medium | Sonnet: port each layer behind hash tests, and the five new scenery models. Haiku: mapcheck sweeps, load times, screenshots, docs | 1–4 | L |
+| T1 | Pathfinding overhaul | Idea 17; nav doors for gates; the hook that reopens cleared ground (idea 22) | `gc_sim` `nav.rs`, `nav_reblock.rs` | Opus · high | Haiku: benches, ford test, goldens, docs. Sonnet: nav debug overlay | 1–2 | L |
+| T2 | Living Land maps | Doc 27 stages 1–4; scrub, woods and thicket as separate cover, and the clearable room near each start counted in fairness (idea 22) | `gc_map`, `gc_mapcheck`, map dressing in `gc_game/scenery.rs` | Opus · medium | Sonnet: port each layer behind hash tests, and the five new scenery models. Haiku: mapcheck sweeps, load times, screenshots, docs | 1–4 | L |
 | T3 | Cinematic lighting | Lighting stages 1–5 (stage 1 is idea 21 part 3); small wins: camera tilt, backlit foliage, film grain, light motes; idea 5 director camera and replays; look of ideas 1 and 9 | `gc_render` frame, post, shadows, sky, particles; `world.wgsl` lighting; `gc_game` `camera.rs`, `replays.rs` | Sonnet · high for stage 1, then medium | Haiku: screenshots, bench runs, docs | 1–4 | L |
 | T4 | Every soldier fights | Doc 28 stages 1, 2, 5; small win: soldier variation; hit flash; idea 11 physical formations; idea 12 commander on the field | `gc_game/puppets.rs`; `gc_sim` melee in `combat.rs`, `morale.rs`, `regiments.rs`, `champions.rs` | Opus · medium for stage 1, high from stage 2 | Sonnet: scrum and matched-kill screen code. Haiku: balance tables, benches, goldens, docs | 1–4 (C after) | XL |
 | T5 | Materials, animation engine and fight library | Idea 21 parts 1 and 4 (detail textures by material, the stronger bake, re-baking buildings and units); doc 28 stages 3–4 | `gc_render/soldiers.rs` (it draws buildings too) and skinning, `gc_assets` model format, `gc_artbake`, the building and unit bake scripts | Sonnet · high for the engine, medium for bakes and moves | Sonnet: re-bakes, retargeting and tagging moves in Blender, one faction at a time. Haiku: screenshots, docs | 2–4 | XL |
 | T6 | Fortifications and bases | Doc 26 stages 1–6 and 8; bridges that are built and burned (idea 6) | `gc_sim/structures.rs`, tower volleys, new wall modules; placing tool; fortification AI | Opus · medium | Sonnet: placing tool and wall interface. Sonnet: wall and tower models. Haiku: goldens, docs | 1–5 | XL |
 | T7 | Battle effects and aftermath | Doc 26 stage 7; doc 28 stage 6; idea 8 wear, trophies, torn banners; idea 14 crows and lingering dead | Effect modules in `gc_game` and the particle users in `gc_render` | Sonnet · medium | Sonnet: collapse chunks, banner and trophy models. Haiku: sound list, screenshots, docs | 3–4 | L |
-| T8 | Living ground | Idea 21 part 2 (blended ground textures with normals, its first pull request); ideas 15 and 19; idea 2 trampled grass and scars (also on the Conquest map, idea 14); small win: trampled ground; doc 27 habitat ground materials | Ground surface in `world.wgsl`, new ground-mask module | Sonnet · high | Haiku: texture sourcing and baking, screenshots, docs | 2–3 | M |
-| T9 | Weather and changing land | Idea 13 terrain tactics; ideas 1 and 9 rules (rain, mud, night vision by light); idea 2 woods that burn and are cut; idea 6 fords that flood; idea 7 seasons in Conquest | `gc_sim/terrain.rs`, `vision.rs`, new `weather.rs`, a runtime ground-change command | Opus · medium | Haiku: balance tables, goldens, docs | 3–5 | L |
+| T8 | Living ground | Idea 21 part 2 (blended ground textures with normals, its first pull request); ideas 15 and 19; idea 2 trampled grass and scars (also on the Conquest map, idea 14); small win: trampled ground; doc 27 habitat ground materials; cleared ground and stumps (idea 22) | Ground surface in `world.wgsl`, new ground-mask module | Sonnet · high | Haiku: texture sourcing and baking, screenshots, docs | 2–3 | M |
+| T9 | Weather and changing land | Idea 22 first: its design note, then clearing trees and scrub to expand (orders, rules, computer players); idea 13 terrain tactics; ideas 1 and 9 rules (rain, mud, night vision by light); idea 2 woods that burn and are cut; idea 6 fords that flood; idea 7 seasons in Conquest | `gc_sim/terrain.rs`, `vision.rs`, new `weather.rs`, a runtime ground-change command | Opus · medium | Haiku: balance tables, goldens, docs | 2–5 | L |
 | T10 | Battle soundscape | Idea 4, later hit, weather and habitat sounds | `gc_audio`, `gc_game/sounds.rs` | Sonnet · medium | Haiku: sound sourcing and licence checks, credits | 1–2, 4 | M |
-| T11 | Ambient life and busy bases | Ideas 3 and 10; doc 27 living touches (mist, fireflies, birds) | New `gc_game` ambient module | Sonnet · medium | Sonnet: animal and villager models. Haiku: screenshots, docs | 3–4 | L |
+| T11 | Ambient life and busy bases | Ideas 3 and 10; idea 22 on screen (workers chopping, trees falling, log piles); doc 27 living touches (mist, fireflies, birds) | New `gc_game` ambient module | Sonnet · medium | Sonnet: animal and villager models. Haiku: screenshots, docs | 3–4 | L |
 
 **Cost tiers** are relative, for planning: **M** is two or three pull requests, mostly Sonnet. **L** is four to six pull requests, or fewer with an Opus lead on hard code. **XL** is seven or more pull requests, long-lived.
 
@@ -52,9 +64,9 @@ A wave starts when the work it waits on has merged, not on a date. At most seven
 
 Only T1 and T6 change the simulation in wave 1, in different files.
 
-**Wave 2:** T1 builds nav doors (cells open to one team), then finishes. T2 stage 2, once T1's overhaul is in. T3 builds particles first (stage 3) because four threads wait on them, then clean edges (stage 2) and light motes. T4 stage 2, duels in the simulation. T6 stage 2, gates and turning, once the nav doors are in. New, both once T3 stage 1 is in: T5 starts with idea 21's surface detail (the stronger bake, detail textures by material, then the re-bakes), carried in the same model-format change as the animation engine; T8 starts with real ground textures (idea 21 part 2).
+**Wave 2:** T1 builds nav doors (cells open to one team) and the hook that reopens cleared ground, then finishes. T9 starts in its place with idea 22: a short design note for Mario, then clearing. T2 stage 2, once T1's overhaul is in. T3 builds particles first (stage 3) because four threads wait on them, then clean edges (stage 2) and light motes. T4 stage 2, duels in the simulation. T6 stage 2, gates and turning, once the nav doors are in. New, both once T3 stage 1 is in: T5 starts with idea 21's surface detail (the stronger bake, detail textures by material, then the re-bakes), carried in the same model-format change as the animation engine; T8 starts with real ground textures (idea 21 part 2).
 
-**Wave 3:** T2 stage 3 (measured fairness) and stage 4. T3 stage 4, camera craft and the director camera. T4 physical formations. T5 fight library, Ember Clans first. T6 stages 3 and 4. T8 habitat ground materials, once Living Land stage 1 is in. New: T7 and T11, once particles are in, and T9, once duels are in.
+**Wave 3:** T2 stage 3 (measured fairness) and stage 4. T3 stage 4, camera craft and the director camera. T4 physical formations. T5 fight library, Ember Clans first. T6 stages 3 and 4. T8 habitat ground materials, once Living Land stage 1 is in. T9 terrain tactics, once duels are in. New: T7 and T11, once particles are in; T11 starts with idea 22 on screen.
 
 **Wave 4:** T3 stage 5, the look of weather and night. T4 stage 5, matched kills and impacts, and the commander on the field. T5 the other three factions' moves. T6 stages 5 and 6 (with bridges). T7 sparks, blood, wear and aftermath, using T4's blow events. T9 weather, night and changing land. T10 hit, weather and habitat sounds.
 
