@@ -391,7 +391,11 @@ impl Mixer {
         let glide = (seconds * BED_RATE).min(1.0);
         for bed in self.beds.iter_mut().flatten() {
             if bed.silent() {
+                // Out of earshot: the next fade-in starts where it is told,
+                // not from wherever it faded out.
                 bed.level = 0.0;
+                (bed.pan, bed.dull) = (bed.target.1, bed.target.2);
+                bed.lp = 0.0;
                 continue;
             }
             let (level, pan, dull) = bed.target;

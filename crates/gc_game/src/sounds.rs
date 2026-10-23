@@ -355,6 +355,8 @@ pub struct Sounds {
     /// woods) as last heard, kept between the slower ground listens.
     beds: BedsSent,
     land: [BedMix; 3],
+    /// The tick the ground was last listened to.
+    land_at: Option<u32>,
     /// False while no match is on screen (the menu is up): the beds are off.
     live: bool,
     /// When the output may next be reopened, and how long to wait after
@@ -438,6 +440,7 @@ impl Sounds {
                     hushed: false,
                     beds: BedsSent::default(),
                     land: [BedMix::default(); 3],
+                    land_at: None,
                     live: true,
                     reopen: None,
                 };
@@ -462,6 +465,7 @@ impl Sounds {
             &mut self.duel_cried,
         );
         self.land = [BedMix::default(); 3];
+        self.land_at = None;
         self.silence_beds();
     }
 
@@ -605,7 +609,12 @@ impl Sounds {
         let tick = world.tick_count();
         let on = heard && self.live;
         // The ground is not scanned while the beds are off.
-        if on && tick.is_multiple_of(LAND_EVERY) {
+        if on
+            && self
+                .land_at
+                .is_none_or(|at| tick.wrapping_sub(at) >= LAND_EVERY)
+        {
+            self.land_at = Some(tick);
             let terrain = world.terrain();
             let radius = (self.hearing * LAND_REACH).min(LAND_MAX);
             self.land = land_mix(
