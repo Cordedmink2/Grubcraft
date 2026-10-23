@@ -67,6 +67,53 @@ fn every_wilds_map_passes_the_checker() {
     );
 }
 
+/// Every grown map (Living Land), at every wildness and size from small
+/// to large, passes the checker and has room for all its sites.
+#[test]
+fn every_grown_map_passes_the_checker() {
+    let jobs: Vec<(Wildness, i32, u64)> = Wildness::ALL
+        .into_iter()
+        .flat_map(|w| [256, 512, 768].map(|t| (w, t)))
+        .flat_map(|(w, t)| (1..=4).map(move |seed| (w, t, seed)))
+        .collect();
+    // The game makes a map whose starts are cut off from each other again
+    // from the next seed (`gc_map::FieldMap::make`); stage 2's passes and
+    // fords will make that rarer still.
+    let rerolls = AtomicUsize::new(0);
+    let failed = failures(&jobs, |&(wild, tiles, seed)| {
+        let Some(def) = (0..8)
+            .map(|k| gc_map::grown::describe(tiles, seed + k, wild))
+            .find(|d| {
+                let joined = gc_map::Map::from_def(d).starts_joined();
+                if !joined {
+                    rerolls.fetch_add(1, Relaxed);
+                }
+                joined
+            })
+        else {
+            return Some(format!(
+                "{wild:?} {tiles} seed {seed}: no seed of 8 joins the starts"
+            ));
+        };
+        let report = check(&def);
+        let e = report
+            .errors
+            .first()
+            .cloned()
+            .or_else(|| short_of_sites(&def))?;
+        Some(format!("{wild:?} {tiles} seed {seed}: {e}"))
+    });
+    assert!(
+        failed.is_empty(),
+        "{} grown maps failed the checker:\n{}",
+        failed.len(),
+        failed.join("\n")
+    );
+    let rerolls = rerolls.into_inner();
+    println!("{rerolls} of {} grown maps were made again", jobs.len());
+    assert!(rerolls * 5 <= jobs.len(), "{rerolls} rerolls");
+}
+
 /// Big Conquest maps pass the checker's Conquest checks at every wildness,
 /// at the Standard size and at 768 (which takes the bigger maps'
 /// branches), with room for all their sites: the game doesn't reroll them.

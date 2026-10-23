@@ -89,6 +89,9 @@ pub struct Map {
     /// The look of the ground, one [`crate::def::Land`] per tile as a byte,
     /// row by row (empty: meadow everywhere).
     pub land: Vec<u8>,
+    /// What grows on each tile, one [`crate::grown::Habitat`] byte per
+    /// tile, row by row (empty on a map that wasn't grown).
+    pub habitat: Vec<u8>,
     /// Starts, seeps, veins, hamlets and the rest. A generated map has its
     /// four starts and nothing else.
     pub objects: Vec<Placed>,
@@ -137,6 +140,7 @@ impl Map {
             cover: Vec::new(),
             thicket: Vec::new(),
             land: Vec::new(),
+            habitat: Vec::new(),
             objects: Vec::new(),
             set_pieces: Vec::new(),
         }

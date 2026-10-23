@@ -126,6 +126,7 @@ pub fn describe(recipe: ConquestRecipe, size: SizeClass, seed: u64) -> Option<Ma
         base,
         water: WATER,
         noise: Some(noise),
+        grown: None,
         terrain: w.terrain,
         cover: w.cover,
         land: Vec::new(),

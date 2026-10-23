@@ -283,6 +283,10 @@ pub struct MapDef {
     pub water: i32,
     #[serde(default)]
     pub noise: Option<Noise>,
+    /// Grown land (Living Land, docs/27) under the stamps instead of the
+    /// base and the noise: the loader grows it from this seed.
+    #[serde(default)]
+    pub grown: Option<crate::grown::Grown>,
     #[serde(default)]
     pub terrain: Vec<TerrainOp>,
     #[serde(default)]

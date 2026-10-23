@@ -158,7 +158,7 @@ mod tests {
         menu.show(Screen::Play);
         step(&mut menu, &mut ui, &mut previews);
         let field = |seed| MapPreviewKey::Field {
-            choice: gc_map::WILDS,
+            choice: gc_map::GROWN,
             tiles: 512,
             seed,
         };

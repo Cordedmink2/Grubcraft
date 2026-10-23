@@ -635,9 +635,9 @@ mod tests {
             assert_eq!(choice_of(file), Some(i));
         }
         let lands = gc_map::wilds::Wildness::ALL;
-        assert_eq!(CONQUEST_MAPS[SHIPPED_CONQUEST], "Land: Random");
+        assert_eq!(CONQUEST_MAPS[SHIPPED_CONQUEST], "Classic: Random");
         for (k, land) in lands.iter().enumerate() {
-            let name = format!("Land: {}", land.name());
+            let name = format!("Classic: {}", land.name());
             assert_eq!(CONQUEST_MAPS[SHIPPED_CONQUEST + 1 + k], name);
         }
         assert_eq!(CONQUEST_MAPS.len(), SHIPPED_CONQUEST + 1 + lands.len());

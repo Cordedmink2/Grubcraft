@@ -152,8 +152,13 @@ impl Map {
         let at = |x: i64, y: i64| (y * side + x) as usize;
         // Heights in simulation units, one per sample: the base, the
         // rolling ground, then the stamps.
-        let mut field = vec![def.base * SIXTEENTH; (side * side) as usize];
-        if let Some(noise) = def.noise {
+        // Grown land (docs/27) is grown from its seed instead.
+        let grown = def.grown.map(|g| crate::grown::grow(tiles as u32, g));
+        let mut field = match &grown {
+            Some(land) => land.sample_heights(side as usize),
+            None => vec![def.base * SIXTEENTH; (side * side) as usize],
+        };
+        if let (None, Some(noise)) = (&grown, def.noise) {
             roll(&mut field, noise, def.symmetry, side);
         }
         // Each stamp's strength per sample, the strongest of its copies;
@@ -198,11 +203,22 @@ impl Map {
         // Cover per tile, from the shape at the tile's centre; thicket is
         // woods that also blocks.
         let n = tiles as usize;
-        let mut cover = vec![0u8; n * n];
         // A layer only a map that uses it fills; empty otherwise.
         let layer = |used: bool| if used { n * n } else { 0 };
-        let mut thicket =
-            vec![false; layer(def.cover.iter().any(|c| c.kind == CoverKind::Thicket))];
+        let (mut cover, mut thicket, mut land, habitat) = match &grown {
+            Some(g) => (
+                g.cover.clone(),
+                g.thicket.clone(),
+                g.land.clone(),
+                g.habitat.clone(),
+            ),
+            None => (
+                vec![0u8; n * n],
+                vec![false; layer(def.cover.iter().any(|c| c.kind == CoverKind::Thicket))],
+                vec![0u8; layer(!def.land.is_empty())],
+                Vec::new(),
+            ),
+        };
         for op in &def.cover {
             let byte = match op.kind {
                 CoverKind::Open => gc_sim::Cover::Open as u8,
@@ -218,13 +234,13 @@ impl Map {
             });
         }
         // The land, painted in order.
-        let mut land = vec![0u8; layer(!def.land.is_empty())];
         for op in &def.land {
             each_tile_in(op.shape, def.symmetry, tiles, |i| land[i] = op.land as u8);
         }
         map.cover = cover;
         map.thicket = thicket;
         map.land = land;
+        map.habitat = habitat;
         map.name.clone_from(&def.name);
         map.size = Some(def.size);
         map.players = def.players;
