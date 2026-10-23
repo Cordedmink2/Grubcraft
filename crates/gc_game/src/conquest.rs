@@ -1003,16 +1003,39 @@ mod tests {
             s.seen_by(0)
         };
         assert!(seen(0), "you see your own Hive");
-        let plain = crate::land::sources(&world, 0, false);
+        let plain = crate::land::sources(&world, buildings::shown_to(0, false), &table);
         assert!(plain.iter().any(|s| s.centre == at(&mine)));
         assert_eq!(
             plain.iter().any(|s| s.centre == at(&theirs)),
             seen(1),
             "no land in the fog"
         );
-        let all = crate::land::sources(&world, 0, true);
+        let all = crate::land::sources(&world, buildings::shown_to(0, true), &table);
         assert!(all.iter().any(|s| s.centre == at(&theirs)));
         assert!(all.len() > plain.len() || seen(1));
+    }
+
+    /// Every faction's opening spreads land of its own kind: the Brood from
+    /// its veins, the Choir from its fields of power, the Clans and the
+    /// Concord from their finished buildings.
+    #[test]
+    fn each_faction_spreads_land_of_its_own_kind() {
+        let data = data();
+        let map = make_map(0, 0);
+        for (faction, kind) in [
+            (Faction::Brood, gc_render::LAND_BROOD),
+            (Faction::EmberClans, gc_render::LAND_CLANS),
+            (Faction::Choir, gc_render::LAND_CHOIR),
+            (Faction::CarrionConcord, gc_render::LAND_CONCORD),
+        ] {
+            let factions = [faction, faction];
+            let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
+            let opening = opening(&data, &table, &map, &world, &factions);
+            world.tick(&opening);
+            let all = crate::land::sources(&world, buildings::shown_to(0, true), &table);
+            assert!(!all.is_empty(), "{faction:?} spreads no land");
+            assert!(all.iter().all(|s| s.kind == kind), "{faction:?}: {all:?}");
+        }
     }
 
     /// A Choir opening tunes the two nearest seeps with its two starting

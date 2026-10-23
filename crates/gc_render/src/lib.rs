@@ -137,6 +137,13 @@ pub struct BoxInstance {
     pub lift: f32,
 }
 
+/// The kinds of land the grid given to `Renderer::set_land` can hold in its
+/// green byte (the shader's `LAND_*` are these).
+pub const LAND_BROOD: u8 = 1;
+pub const LAND_CLANS: u8 = 2;
+pub const LAND_CHOIR: u8 = 3;
+pub const LAND_CONCORD: u8 = 4;
+
 /// How the renderer is set up. The draw switches exist to measure what each
 /// part of the frame costs on real machines.
 #[derive(Clone, Copy, Debug)]
@@ -1452,10 +1459,10 @@ impl Renderer {
         terrain.fogged = values.is_some();
     }
 
-    /// Draw a faction's land over the ground: four bytes per map tile (red,
+    /// Draw the factions' lands over the ground: four bytes per map tile (red,
     /// green, blue, alpha), row by row from the north-west corner. Red is
     /// how much of the tile the land covers (0 bare, 255 fully), green is
-    /// whose it is (reserved: every land draws as the Brood's for now), blue is its distance from
+    /// whose it is (one of the `LAND_*` kinds), blue is its distance from
     /// the nearest source in quarter tiles (the pulses run along it), alpha
     /// is spare. Edges are blurred over about a tile. `None` is bare ground
     /// again, as after `set_terrain`; it costs nothing when the ground is
