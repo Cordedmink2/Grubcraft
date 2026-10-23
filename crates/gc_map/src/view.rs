@@ -41,6 +41,13 @@ impl Map {
         top + (bottom - top) * fz
     }
 
+    /// The height things stand on where they are drawn at a map position:
+    /// the ground, or just under the surface of deeper water (matches the
+    /// shaders).
+    pub fn drawn_height(&self, x: f32, z: f32) -> f32 {
+        self.height_at(x, z).max(self.water_level() - 0.05)
+    }
+
     /// Each player's start as a map position in tiles (see [`Map::starts`]).
     pub fn start_positions(&self) -> Vec<Vec2> {
         self.starts()

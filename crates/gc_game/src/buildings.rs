@@ -284,6 +284,25 @@ pub struct Looks {
 
 impl Looks {
     pub fn new(table: &Table, models: &Models<'_>) -> Looks {
+        let scale = gc_assets::model::POSITION_SCALE;
+        // A still model's top, and how far its walls (what stands in the
+        // lowest part of it) reach from its middle.
+        let (tops, walls) = (models.models.iter())
+            .map(|m| {
+                let first = m.first_vertex as usize;
+                let vertices = &models.vertices[first..first + m.vertex_count as usize];
+                if !m.is_still() {
+                    return (None, None);
+                }
+                let top = vertices.iter().map(|v| v.pos[1]).max().unwrap_or(0).max(0);
+                let low = (f32::from(top) * WALL_SHARE) as i16;
+                let half = (vertices.iter().filter(|v| v.pos[1] <= low))
+                    .fold(Vec2::ZERO, |h, v| {
+                        h.max(Vec2::new(f32::from(v.pos[0]), f32::from(v.pos[2])).abs())
+                    });
+                (Some(f32::from(top) / scale), Some(half / scale))
+            })
+            .unzip();
         Looks {
             stages: (table.names.iter())
                 .map(|name| core::array::from_fn(|k| models.by_name(&stage_name(name, k))))
@@ -291,32 +310,8 @@ impl Looks {
             crews: (table.factions.iter())
                 .map(|&f| models.by_name(worker_of(f)))
                 .collect(),
-            tops: (models.models.iter())
-                .map(|m| {
-                    let first = m.first_vertex as usize;
-                    let vertices = &models.vertices[first..first + m.vertex_count as usize];
-                    m.is_still().then(|| {
-                        let top = vertices.iter().map(|v| v.pos[1]).max().unwrap_or(0);
-                        f32::from(top.max(0)) / gc_assets::model::POSITION_SCALE
-                    })
-                })
-                .collect(),
-            walls: (models.models.iter())
-                .map(|m| {
-                    let first = m.first_vertex as usize;
-                    let vertices = &models.vertices[first..first + m.vertex_count as usize];
-                    m.is_still().then(|| {
-                        let top = vertices.iter().map(|v| v.pos[1]).max().unwrap_or(0);
-                        // The walls: what stands in the lowest part of it.
-                        let low = (f32::from(top.max(0)) * WALL_SHARE) as i16;
-                        let half = (vertices.iter().filter(|v| v.pos[1] <= low))
-                            .fold(Vec2::ZERO, |h, v| {
-                                h.max(Vec2::new(f32::from(v.pos[0]), f32::from(v.pos[2])).abs())
-                            });
-                        half / gc_assets::model::POSITION_SCALE
-                    })
-                })
-                .collect(),
+            tops,
+            walls,
         }
     }
 

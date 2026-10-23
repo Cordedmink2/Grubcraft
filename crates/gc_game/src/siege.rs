@@ -15,7 +15,7 @@ use std::f32::consts::{PI, TAU};
 use gc_data::Faction;
 use gc_render::BoxInstance;
 use gc_sim::structures::{Armour, Breaker};
-use gc_sim::{RegimentHandle, StructureHandle};
+use gc_sim::{PlayerId, RegimentHandle, StructureHandle};
 use glam::Vec2;
 
 use crate::field::{ARROW_COLOR, ARROW_SIZE, ARROWS_PER_VOLLEY};
@@ -52,6 +52,13 @@ const SMOULDER_SECONDS: f32 = 25.0;
 const RUBBLE_SINK: f32 = 6.0;
 /// A regiment that loosed at a building this recently is still shooting.
 const SHOOTING_SECONDS: f32 = 1.2;
+/// Smoke trailed by a fire-pot in flight, and dust thrown up by a building
+/// going down, in puffs a second.
+const TRAIL_RATE: f32 = 48.0;
+const COLLAPSE_DUST_RATE: f32 = 36.0;
+/// Sounds kept for the game to play at most (more at once are lost in the
+/// din, and none pile up while nothing plays them).
+const MAX_NOISES: usize = 32;
 /// How fast soldiers close up to the wall once at a siege, as a share a
 /// second; how near it they stand to swing, and how far at most they step
 /// up to it on screen.
@@ -213,6 +220,7 @@ pub struct Look {
     /// middle.
     pub model: Option<usize>,
     pub lift: f32,
+    pub owner: PlayerId,
     pub colour: [u8; 3],
     pub stuff: Stuff,
     /// Share of its hit points left, as the damage shows (1 while it goes
@@ -373,8 +381,12 @@ impl Shot {
 #[derive(Clone, Copy, Debug)]
 struct Fall {
     look: Look,
+    /// When it starts down: once the shots already on their way to it
+    /// have landed.
     born: f32,
     seed: u32,
+    /// Whether its burst of chips and its crash have gone off yet.
+    burst: bool,
 }
 
 /// A fallen building's model, sinking, for the game to draw.
@@ -384,6 +396,15 @@ pub struct Sinking {
     pub pos: Vec2,
     pub lift: f32,
     pub colour: [u8; 3],
+}
+
+/// Where a regiment's soldiers swung at a building's wall.
+#[derive(Clone, Copy, Debug)]
+struct Touches {
+    by: RegimentHandle,
+    at: StructureHandle,
+    points: [Vec2; TOUCHES],
+    n: u8,
 }
 
 /// A building shaken by the last blow on it.
@@ -409,8 +430,9 @@ pub struct Siege {
     struck: Vec<Option<(RegimentHandle, f32)>>,
     /// By regiment slot: how far its front rank has closed to the wall.
     lean: Vec<f32>,
-    /// By regiment slot: where its soldiers swung at the wall last frame.
-    touches: Vec<Option<(RegimentHandle, [Vec2; TOUCHES], u8)>>,
+    /// By regiment slot: where its soldiers swung at the wall of which
+    /// building last frame.
+    touches: Vec<Option<Touches>>,
     noises: Vec<Noise>,
 }
 
@@ -470,7 +492,12 @@ impl Siege {
         if a.kind.shot() {
             if !a.seen {
                 // Unseen archers: their shots land unannounced.
-                self.land(&look, a.kind, wall, 0.8, toward);
+                let across = Vec2::new(-toward.y, toward.x);
+                for _ in 0..a.kind.count() {
+                    let at = look.nearest(wall + across * self.roll() * 1.2);
+                    self.land(&look, a.kind, at, 0.8, toward);
+                }
+                self.noise(a.kind.sound(), wall);
                 return;
             }
             let (speed, _) = a.kind.flight();
@@ -490,18 +517,16 @@ impl Siege {
             let k = self.pick(MAX_SHOTS);
             push_capped(&mut self.shots, MAX_SHOTS, k, shot);
             if a.kind != Kind::Arrows {
-                self.noises.push(Noise {
-                    sound: Sound::Launch,
-                    at: a.at,
-                });
+                self.noise(Sound::Launch, a.at);
             }
             return;
         }
         // A blow from the wall: where its soldiers swung, if they were seen
         // to, or along its front.
         let touches = self.touches.get(r).copied().flatten();
-        let point = match touches.filter(|t| t.0 == a.handle && t.2 > 0) {
-            Some((_, points, n)) => points[self.pick(usize::from(n))],
+        let swung = touches.filter(|t| t.by == a.handle && t.at == structure && t.n > 0);
+        let point = match swung {
+            Some(t) => t.points[self.pick(usize::from(t.n))],
             None => {
                 let across = Vec2::new(-toward.y, toward.x);
                 look.nearest(wall + across * (self.roll() * a.frontage * 0.5))
@@ -513,10 +538,19 @@ impl Siege {
             0.5 + self.roll().abs() * 0.5
         };
         self.land(&look, a.kind, point, height, toward);
-        self.noises.push(Noise {
-            sound: a.kind.sound(),
-            at: point,
-        });
+        self.noise(a.kind.sound(), point);
+    }
+
+    fn noise(&mut self, sound: Sound, at: Vec2) {
+        if self.noises.len() < MAX_NOISES {
+            self.noises.push(Noise { sound, at });
+        }
+    }
+
+    /// How many of something that comes `rate` times a second come in `dt`
+    /// seconds: as many on average at any frame rate, and none while still.
+    fn spawns(&mut self, rate: f32, dt: f32) -> usize {
+        (rate * dt + (self.roll() + 1.0) / 2.0) as usize
     }
 
     /// A blow of `kind` lands on building `look` at `at`, `height` over the
@@ -578,22 +612,43 @@ impl Siege {
     }
 
     /// Building `structure` was brought down (an `Event::Fallen`): it
-    /// sinks into a cloud of dust and leaves rubble.
+    /// sinks into a cloud of dust and leaves rubble, once the shots on
+    /// their way to it (the last of them brought it down) have landed.
     pub fn fallen(&mut self, structure: StructureHandle) {
         let Some(look) = self.look(structure).copied() else {
             return;
         };
-        self.looks[structure.index as usize] = None;
-        self.jolts.retain(|j| j.handle != structure);
+        self.forget(structure);
+        let due = (self.shots.iter())
+            .filter(|s| s.structure == structure)
+            .map(|s| s.born + s.flight)
+            .fold(self.time, f32::max);
+        let now = due <= self.time;
         self.seed = self.seed.wrapping_add(0x9E37_79B9);
         let fall = Fall {
             look,
-            born: self.time,
+            born: due,
             seed: self.seed,
+            burst: now,
         };
         let k = self.pick(MAX_FALLS);
         push_capped(&mut self.falls, MAX_FALLS, k, fall);
-        // A burst of chips from every side.
+        if now {
+            self.collapse(look);
+        }
+    }
+
+    /// Building `structure` is gone unseen: drop it without a show.
+    pub fn forget(&mut self, structure: StructureHandle) {
+        if let Some(l) = self.looks.get_mut(structure.index as usize) {
+            *l = None;
+        }
+        self.jolts.retain(|j| j.handle != structure);
+    }
+
+    /// A building starts down: a burst of chips from every side, and the
+    /// crash.
+    fn collapse(&mut self, look: Look) {
         let centre = look.centre();
         let n = (12.0 + look.size().x * look.size().y).min(40.0) as usize;
         for k in 0..n {
@@ -606,10 +661,7 @@ impl Siege {
             let edge = look.nearest(centre + dir * 100.0);
             self.chip(edge, y, vel, vy, size, look.stuff.colours[k % 3], spin);
         }
-        self.noises.push(Noise {
-            sound: Sound::Collapse,
-            at: centre,
-        });
+        self.noise(Sound::Collapse, centre);
     }
 
     /// Start a frame `dt` seconds after the last; `ground` is the height
@@ -646,15 +698,19 @@ impl Siege {
             let s = self.shots[k];
             let t = (now - s.born) / s.flight;
             if t < 1.0 {
-                if s.kind == Kind::Fire && self.roll() > -0.6 {
+                if s.kind == Kind::Fire {
                     let (pos, y) = s.at(0, t);
-                    self.puff(pos, y, Vec2::ZERO, 0.3, 0.3, [70, 66, 62, 0], 0.9);
+                    for _ in 0..self.spawns(TRAIL_RATE, dt) {
+                        self.puff(pos, y, Vec2::ZERO, 0.3, 0.3, [70, 66, 62, 0], 0.9);
+                    }
                 }
                 k += 1;
                 continue;
             }
             self.shots.swap_remove(k);
-            let Some(look) = self.look(s.structure).copied() else {
+            // The shot that brought it down lands on it as it starts down.
+            let fell = (self.falls.iter()).find(|f| f.look.handle == s.structure);
+            let Some(look) = self.look(s.structure).copied().or(fell.map(|f| f.look)) else {
                 continue;
             };
             for a in 0..s.kind.count() {
@@ -662,23 +718,28 @@ impl Siege {
                 let height = (y - look.base).max(0.3);
                 self.land(&look, s.kind, look.nearest(pos), height, s.dir);
             }
-            self.noises.push(Noise {
-                sound: s.kind.sound(),
-                at: s.to,
-            });
+            self.noise(s.kind.sound(), s.to);
         }
         // Collapsing buildings throw up dust as they go down.
         for f in 0..self.falls.len() {
-            let Fall { look, born, .. } = self.falls[f];
-            if now - born >= COLLAPSE_SECONDS || self.roll() < -0.2 {
+            let Fall {
+                look, born, burst, ..
+            } = self.falls[f];
+            if now < born || now - born >= COLLAPSE_SECONDS {
                 continue;
             }
-            let around = Vec2::from_angle(self.roll() * PI);
-            let edge = look.nearest(look.centre() + around * 100.0);
-            let y = look.base + self.roll().abs() * look.top * 0.4;
-            let vel = around * (0.6 + self.roll().abs());
-            let size = 0.9 + self.roll().abs() * 0.8;
-            self.puff(edge + around * 0.3, y, vel, 0.5, size, look.stuff.dust, 2.2);
+            if !burst {
+                self.falls[f].burst = true;
+                self.collapse(look);
+            }
+            for _ in 0..self.spawns(COLLAPSE_DUST_RATE, dt) {
+                let around = Vec2::from_angle(self.roll() * PI);
+                let edge = look.nearest(look.centre() + around * 100.0);
+                let y = look.base + self.roll().abs() * look.top * 0.4;
+                let vel = around * (0.6 + self.roll().abs());
+                let size = 0.9 + self.roll().abs() * 0.8;
+                self.puff(edge + around * 0.3, y, vel, 0.5, size, look.stuff.dust, 2.2);
+            }
         }
         self.falls
             .retain(|f| now - f.born < COLLAPSE_SECONDS + RUBBLE_SECONDS);
@@ -739,22 +800,27 @@ impl Siege {
         *l
     }
 
-    /// Forget where regiment `h`'s soldiers swung at the wall, before this
-    /// frame's are noted.
-    pub fn untouch(&mut self, h: RegimentHandle) {
+    /// Forget where regiment `h`'s soldiers swung, before this frame's
+    /// swings at building `at` are noted.
+    pub fn untouch(&mut self, h: RegimentHandle, at: StructureHandle) {
         if let Some(t) = self.touches.get_mut(h.index as usize) {
-            *t = Some((h, [Vec2::ZERO; TOUCHES], 0));
+            *t = Some(Touches {
+                by: h,
+                at,
+                points: [Vec2::ZERO; TOUCHES],
+                n: 0,
+            });
         }
     }
 
     /// A soldier of regiment `h` swings at the wall at `p`.
     pub fn touch(&mut self, h: RegimentHandle, p: Vec2) {
         if let Some(Some(t)) = self.touches.get_mut(h.index as usize)
-            && t.0 == h
-            && usize::from(t.2) < TOUCHES
+            && t.by == h
+            && usize::from(t.n) < TOUCHES
         {
-            t.1[usize::from(t.2)] = p;
-            t.2 += 1;
+            t.points[usize::from(t.n)] = p;
+            t.n += 1;
         }
     }
 
@@ -763,13 +829,15 @@ impl Siege {
         let now = self.time;
         self.falls.iter().filter_map(move |f| {
             let model = f.look.model?;
-            let t = (now - f.born) / COLLAPSE_SECONDS;
+            // Standing until its last shot lands.
+            let t = ((now - f.born) / COLLAPSE_SECONDS).max(0.0);
             if t >= 1.0 {
                 return None;
             }
             // Slow to give, then gone in a rush, shuddering as it goes.
             let down = t * t * (3.0 - 2.0 * t);
-            let shudder = (now * 41.0).sin() * 0.06 * (1.0 - t);
+            let going = if now < f.born { 0.0 } else { 1.0 - t };
+            let shudder = (now * 41.0).sin() * 0.06 * going;
             let across = Vec2::new((now * 37.0).cos(), (now * 29.0).sin()) * shudder;
             Some(Sinking {
                 model,
@@ -1084,6 +1152,7 @@ mod tests {
             top: 3.0,
             model: Some(2),
             lift: 0.0,
+            owner: 1,
             colour: [200, 0, 0],
             stuff: stuff(Some(Faction::EmberClans), Armour::Structure),
             hp,
@@ -1143,7 +1212,7 @@ mod tests {
         let h = handle(0);
         s.remember(look(h, 1.0));
         let a = blade(Vec2::new(12.0, 16.0));
-        s.untouch(a.handle);
+        s.untouch(a.handle, h);
         s.touch(a.handle, Vec2::new(11.0, 13.0));
         s.struck(h, a);
         assert!(
@@ -1151,6 +1220,44 @@ mod tests {
                 .iter()
                 .all(|c| (c.pos - Vec2::new(11.0, 13.15)).length() < 0.01)
         );
+        // Swings noted at another building's wall don't count here.
+        let other = handle(1);
+        s.remember(look(other, 1.0));
+        s.chips.clear();
+        s.untouch(a.handle, h);
+        s.touch(a.handle, Vec2::new(11.0, 13.0));
+        s.struck(other, a);
+        assert!(
+            s.chips
+                .iter()
+                .all(|c| (c.pos - Vec2::new(11.0, 13.15)).length() > 0.01)
+        );
+    }
+
+    #[test]
+    fn the_killing_shot_lands_before_the_building_goes_down() {
+        let mut s = Siege::new(8);
+        let h = handle(0);
+        s.remember(look(h, 1.0));
+        let mut a = blade(Vec2::new(12.0, 30.0));
+        a.kind = Kind::Boulder;
+        s.struck(h, a);
+        s.fallen(h);
+        let _ = s.drain_noises().count();
+        // Still standing while the stone flies; nothing piles up while
+        // paused.
+        for _ in 0..20 {
+            s.advance(0.0, flat);
+        }
+        assert!(s.puffs.is_empty());
+        assert_eq!(s.sinking().next().map(|f| f.lift), Some(0.0));
+        assert!(s.drain_noises().next().is_none());
+        for _ in 0..60 {
+            s.advance(0.05, flat);
+        }
+        let heard: Vec<_> = s.drain_noises().map(|n| n.sound).collect();
+        assert!(heard.contains(&Sound::Impact) && heard.contains(&Sound::Collapse));
+        assert!(s.sinking().next().is_some_and(|f| f.lift < 0.0));
     }
 
     #[test]

@@ -2817,9 +2817,7 @@ impl Running {
             self.push_building_ghost();
             self.push_power_aim();
             let hm = &self.heightmap;
-            (self.siege).advance(game_dt.as_secs_f32(), |p| {
-                hm.height_at(p.x, p.y).max(hm.water_level() - 0.05)
-            });
+            (self.siege).advance(game_dt.as_secs_f32(), |p| hm.drawn_height(p.x, p.y));
             self.note_building_looks();
             self.push_buildings();
         }
@@ -3062,8 +3060,8 @@ impl Running {
                     .map_or(0.0, |t| {
                         RAM_DRAW * (t.min(1.0) * std::f32::consts::PI).sin()
                     });
-                if wall.is_some() {
-                    siege.untouch(r.handle);
+                if let Some(w) = wall {
+                    siege.untouch(r.handle, w.handle);
                 }
                 let shooting = self.shooting[r.handle.index as usize]
                     || (wall.is_some() && !melee && siege.shooting(r.handle));
@@ -4673,6 +4671,8 @@ impl Running {
                 self.arrows.loosed(v.id, v.from, v.shots);
             }
         }
+        // Buildings whose blows this tick were shown.
+        let mut shown = Vec::new();
         for e in self.world.events() {
             match *e {
                 Event::Landed {
@@ -4693,16 +4693,27 @@ impl Running {
                     let seen = self.reveal_all || self.world.sees(side, by);
                     // A blow under fog on a building not your side's is
                     // neither seen nor heard.
-                    let friendly = (self.world.structures().and_then(|all| all.get(structure)))
-                        .is_some_and(|b| !self.world.hostile(side, b.owner));
+                    let friendly = (self.siege.look(structure))
+                        .is_some_and(|l| !self.world.hostile(side, l.owner));
                     let hm = &self.heightmap;
-                    let ground = |p: Vec2| hm.height_at(p.x, p.y).max(hm.water_level() - 0.05);
+                    let ground = |p: Vec2| hm.drawn_height(p.x, p.y);
                     let a = attacker_of(&self.world, &self.units, by, seen, ground);
                     if let Some(a) = a.filter(|_| seen || friendly) {
                         self.siege.struck(structure, a);
+                        shown.push(structure);
                     }
                 }
-                Event::Fallen { structure } => self.siege.fallen(structure),
+                // Nor is its fall, unless the blow that felled it was.
+                Event::Fallen { structure } => {
+                    let side = self.sandbox.side;
+                    let friendly = (self.siege.look(structure))
+                        .is_some_and(|l| !self.world.hostile(side, l.owner));
+                    if self.reveal_all || friendly || shown.contains(&structure) {
+                        self.siege.fallen(structure);
+                    } else {
+                        self.siege.forget(structure);
+                    }
+                }
                 _ => {}
             }
         }
@@ -4723,7 +4734,7 @@ impl Running {
         let hm = &self.heightmap;
         self.siege.push(
             standing,
-            |p| hm.height_at(p.x, p.y).max(hm.water_level() - 0.05),
+            |p| hm.drawn_height(p.x, p.y),
             gc_render::MAX_BOX_INSTANCES - BOX_ROOM_AFTER_CORPSES,
             &mut self.instances,
         );
@@ -5442,7 +5453,7 @@ impl Running {
             return;
         };
         let hm = &self.heightmap;
-        let ground = |x, z| hm.height_at(x, z).max(hm.water_level() - 0.05);
+        let ground = |x, z| hm.drawn_height(x, z);
         let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
         for s in structures.iter().filter(|s| shown(s)) {
             let Some(stats) = self.buildings.stats.get(usize::from(s.building)) else {
@@ -5469,6 +5480,7 @@ impl Running {
                 top,
                 model,
                 lift,
+                owner: s.owner,
                 colour: color_of(&self.parties, s.owner),
                 stuff: siege::stuff(self.buildings.faction(s.building), stats.armour),
                 hp: if s.finished() {
@@ -5490,7 +5502,7 @@ impl Running {
         };
         let hm = &self.heightmap;
         // As the skinning shader clamps it, so the lift lands where meant.
-        let ground = |x, z| hm.height_at(x, z).max(hm.water_level() - 0.05);
+        let ground = |x, z| hm.drawn_height(x, z);
         let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
         let time = self.puppets.time();
         for fall in self.siege.sinking() {

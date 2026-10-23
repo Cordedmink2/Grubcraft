@@ -15,7 +15,7 @@ Bases should feel like places worth holding. You draw a wall the way you draw an
 - **Towers:** the Watchtower, Tollgate, Bell Tower and Spine Mound carry a `TowerAttack` (range, damage, reload, shots) in `gc_sim::structures`, but no code fires it. Towers do not shoot.
 - **Placing:** no rotation (a footprint is anchored at its north-west tile and has no facing), no dragging a line of wall, no snapping.
 - **Destruction:** a building brought to nothing is removed at once and its ground freed. Since 2026-10-24 a first pass of "Sieges you can see" draws it: blows on buildings (`Event::Struck`) shake them and knock chips off, shots fly to them, damaged buildings smoke and burn, and a fallen one sinks in dust and leaves rubble that is only a picture ([21 · Buildings](21-buildings.md), "Sieges on screen"). It is drawn with boxes, as there is no particle system yet.
-- **Attacking buildings:** regiments ordered to attack a building close in and deal damage (`Command::AttackStructure`), but they are drawn as a plain block. No clip plays and nothing shows on the building.
+- **Attacking buildings:** regiments ordered to attack a building close in and deal damage (`Command::AttackStructure`). Since 2026-10-24 their soldiers step up to the wall and swing at it, rams draw back and strike, and archers face it and shoot; the blows show on the building (see Destruction).
 - **Ground:** heights are fixed after the map loads. Building footprints are the only thing that changes the walking grid in a match (`nav_reblock` updates it in place, at two cells a tile).
 
 ## Drawn walls
