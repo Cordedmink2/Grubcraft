@@ -5961,16 +5961,16 @@ mod tests {
     #[test]
     fn the_lobby_offers_the_maps_gc_map_makes() {
         assert_eq!(gc_ui::lobby::MAPS, gc_map::FIELD_MAPS);
-        assert_eq!(gc_ui::lobby::DEFAULT_MAP, gc_map::WILDS);
+        assert_eq!(gc_ui::lobby::DEFAULT_MAP, gc_map::GROWN);
     }
 
-    /// A new lobby's two-player battle is on the Wilds, as wild as the
+    /// A new lobby's two-player battle is on grown land, as wild as the
     /// seed picks, at the standard size for two.
     #[test]
-    fn a_new_lobby_plays_on_the_wilds() {
+    fn a_new_lobby_plays_on_grown_land() {
         let key = battle_map(&gc_ui::lobby::LobbySettings::default(), 2);
         let wilds = FieldMap {
-            choice: gc_map::WILDS,
+            choice: gc_map::GROWN,
             tiles: 512,
             seed: 0x6772_7562,
         };

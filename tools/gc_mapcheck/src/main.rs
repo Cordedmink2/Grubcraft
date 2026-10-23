@@ -2,7 +2,8 @@
 //! `gc_mapcheck png FILE OUT.png` draws one; `gc_mapcheck gen RECIPE SIZE
 //! SEED OUT.ron` writes the map a recipe makes from a seed, so a good one
 //! can become a hand-tuned map: a Field Battle recipe (Pass, Ford, Hill or
-//! Open, or the Wilds as Plains, Mixed or Wild) takes a size in tiles, as
+//! Open, the Wilds as Plains, Mixed or Wild, or grown land as Land-Plains,
+//! Land-Mixed or Land-Wild) takes a size in tiles, as
 //! do the big Conquest Wilds (Conquest-Plains, Conquest-Mixed or
 //! Conquest-Wild, 512 tiles and up); a Conquest recipe (Teeth, Bowl or
 //! Fen) takes Duel, Skirmish or Warfield and rerolls the seed until the
@@ -42,6 +43,18 @@ fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String
             ));
         }
         gc_map::wilds::describe(tiles, seed, wild)
+    } else if let Some(wild) = Wildness::ALL
+        .into_iter()
+        .find(|w| is(&format!("Land-{}", w.name())))
+    {
+        let tiles = tiles()?;
+        if tiles < gc_map::grown::MIN_TILES {
+            return Err(format!(
+                "grown land is {} tiles or more",
+                gc_map::grown::MIN_TILES
+            ));
+        }
+        gc_map::grown::describe(tiles, seed, wild)
     } else if let Some(wild) = Wildness::ALL
         .into_iter()
         .find(|w| is(&format!("Conquest-{}", w.name())))

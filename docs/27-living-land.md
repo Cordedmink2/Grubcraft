@@ -1,6 +1,6 @@
 # 27 · Living Land: organic world generation
 
-*Plan, 2026-10-22. Nothing here is built yet: the project is paused, and building starts when Mario says go. The fairness model was decided by Mario on 2026-10-22 (see [Fairness](#fairness)).*
+*Plan, 2026-10-22. Stage 1, grown land, is built (2026-10-23, see [Stage 1 as built](#stage-1-as-built)); stages 2 to 5 are not yet. The fairness model was decided by Mario on 2026-10-22 (see [Fairness](#fairness)).*
 
 Mario asked for maps that are "truly random, truly chaotic, like nature", where no two things are alike. Today's maps tend to be lines, ovals and circles. This document says why, what replaces it, how maps stay fair, how the biomes get depth, and the order of the work. The concept page with prototype maps is the "Grubcraft Living Land" artifact (https://claude.ai/artifact/S9PTV2MgvKnoHBFZ16s6Wt). The Python prototype that made them is in the project files under `design/world-gen/proto/`.
 
@@ -104,9 +104,38 @@ Each stage is playable on its own.
 4. **Biome look and sites by reason.** Ground materials per habitat, riverside dressing, trails and the few new scenery models. Sites placed by the rules above, with Conquest lairs guarding the rich fields.
 5. **Optional: water that runs downhill.** The game has one water line for the whole map, so rivers sit in valleys cut down to it (see [07 · Water](07-world-and-maps.md#water-later)). Highland lakes and falling rivers need a water level per tile. That touches the simulation's ground and the water drawing, so it is its own decision.
 
+## Stage 1 as built
+
+*Built 2026-10-23.* The code is `crates/gc_map/src/grown/`: `field.rs` (fixed-point helpers, value noise, fractal noise, warping, ridged noise, blurs and distances), `shape.rs` (shape and rock), `erode.rs` (weather), `water.rs` and `biome.rs` (biomes, habitats and canopy), with `mod.rs` running them in order. Every value is a whole number (16.16 fixed point), and the crate's float lint covers it.
+
+**How the lobby offers it.** A Field Battle lists **Land: Random**, **Land: Plains**, **Land: Mixed** and **Land: Wild**, the grown maps, and a new lobby starts on Land: Random. The old Wilds are still there as **Classic: Random**, **Classic: Plains**, **Classic: Mixed** and **Classic: Wild**, built exactly as before, so old seeds and replays load. Conquest's big six-player maps are still the Classic Wilds in stage 1 and are named Classic in its list; they move to grown land once fairness is measured (stage 3), because Conquest's shares and lairs are placed by the Wilds' layout. The network protocol went from 20 to 21 because the map choices changed.
+
+**How the map is stored.** A grown map's description (`gc_map::grown::describe`) holds the seed, the wildness, the starts, the sites and set pieces; `MapDef.grown` tells the loader to grow the heights, cover, thicket, land and habitat from the seed (cached, so the lobby picture and the battle share one build) and then lay any stamps on top. So a grown map is the same bytes on every machine, and the fingerprints of one map of each wildness are pinned in a test.
+
+**The pipeline, in order.**
+
+1. Shape at half resolution, drawn up to full: broad land, rolling hills and mountain country (ridged crests to the power 1.5), kept off the starts.
+2. Strata benches (from 2.7 tiles above the water line, 1.6 tiles high), cliff or ramp by a sharpness field, then crags on the highest cores of mountain country. A "lean" field sets each crag wall's width from 0.35 to 3 tiles of height, so some walls are sheer and some climbable. Heights ease off below the top the map can hold, so peaks don't flatten.
+3. Weather: about 70,000 raindrops on a 512 map (scaled by area), run one after another so the result is the same everywhere, then a light crumbling pass.
+4. Each start gets a flat clearing, and the mountains keep off a ragged ring round it, not a circle.
+5. Symmetry: the land is grown whole, then the south half is made the turned copy of the north along a wandering seam, blended over a band so there is no straight join. The water and biome layers are made symmetric the same way: every noise field the biomes read is blended across the seam, and the water is worked out on symmetric ground, with the map's middle rows as outlets, so rivers that reach the middle end in lobed ponds instead of stopping dead.
+6. Water: priority flood and flow, river lines that meander (more on flat land), lakes with a size cap, valleys easing down to the rivers, and shallows across every long river about every 140 tiles of its length (fords).
+7. Biomes, the 19 habitats of [Biome depth](#biome-depth) and canopy: woods, tall grass and thicket are chosen per habitat. Thicket stands only deep in old growth, in small knots (never a wall more than 11 tiles long) and never near a start.
+8. Dead ground: a walkable pocket no start can reach (say a mesa ringed by cliffs) is broken into rock, up to four rounds.
+
+**The dials.** Plains, Mixed and Wild set the share of mountain country (11%, 30%, 44%), crest height, how sharp bench edges are, where crags begin and how tall they are, forest density and how much flow makes a river.
+
+**Cover for idea 22.** Woods, tall grass and thicket stay the tile cover layer the sim already reads, written into the `Map` at load, never baked into the ground. Scrub (scrub edge and the like) is its own habitat with lighter cover: tall grass, or woods where the canopy allows, so it can be cleared differently from old growth. Every tile keeps its habitat (`Map.habitat`), ready for a cleared tile to become a glade or rough grass. Nothing reads the habitat yet; the biome look (stage 4) will.
+
+**Sites and set pieces.** The starts are the seeded map's plateaus. The sites (village, company camp, old fort, lair, standing stones) are placed in the north half on standable ground and turned for the south; placing them by reason is stage 4. The set pieces are found from the built land: "The heights" and "The far heights" where ground stands well above its surroundings, and "The ford" where enough ford tiles gather. A map with fewer than two gets a knoll at each side.
+
+**Measured (2026-10-23, release build).** A 768 map builds in about 2.1 to 2.4 seconds (`grown_load_time`, run by hand, on a machine busy with other builds), inside the 3-second target. `every_grown_map_passes_the_checker` builds each wildness at 256, 512 and 768 for four seeds (36 maps) and runs them through `gc_mapcheck`'s checks. All pass, and none needed a reroll; the test allows a reroll for one map in five, as the lobby rerolls a map whose starts aren't joined. `cargo run -p gc_mapcheck -- gen Land-Wild 512 SEED OUT.ron` (or `Land-Plains`, `Land-Mixed`) writes a grown map. Screenshots are in the project files under `screenshots/living-land/`.
+
+**Not in stage 1.** Ways through (the pass and ford carver) and the AI's route check are stage 2; fairness is still the turned copy until stage 3; grown maps use today's ground colours by land, not the habitat materials, until stage 4.
+
 ## Costs and risks
 
-- **Load time.** The Python prototype takes 20 to 40 seconds a map. The game runs erosion, drainage and the start search on coarse grids. Estimate 1 to 3 seconds for a 768 map, to be measured in stage 1.
+- **Load time.** The Python prototype takes 20 to 40 seconds a map. The game runs erosion, drainage and the start search on coarse grids. Estimated 1 to 3 seconds for a 768 map; measured in stage 1 at about 2 seconds.
 - **Same map everywhere.** Online play needs identical maps on every machine. Erosion and river tracing are the new parts to pin with hash tests, the way `Map::generate` is pinned today.
 - **The computer players.** The battle and Conquest minds read chokes and routes from the map, and organic maps have more varied chokes. Their route reading gets a check in stage 2.
 - **Replays and seeds.** Maps are rebuilt from their seed, so the generator's version is saved with the map choice. Old replays keep playing on Classic.

@@ -183,25 +183,29 @@ pub fn field_map_tiles(size: MapSize, players: usize) -> u32 {
 }
 
 /// Maps the lobby offers: the seeded map, a random map from each recipe,
-/// a random recipe, and the big Wilds maps as wild as the seed picks or
-/// as plains, mixed or wild land. The same names in the same order as
-/// `gc_map::FIELD_MAPS` (the game checks).
-pub const MAPS: [&str; 10] = [
+/// a random recipe, the Classic Wilds maps and grown land (Living Land),
+/// each as wild as the seed picks or as plains, mixed or wild land. The
+/// same names in the same order as `gc_map::FIELD_MAPS` (the game checks).
+pub const MAPS: [&str; 14] = [
     "Proving Ground",
     "Random: Pass",
     "Random: Ford",
     "Random: Hill",
     "Random: Open",
     "Random: Any",
+    "Classic: Random",
+    "Classic: Plains",
+    "Classic: Mixed",
+    "Classic: Wild",
     "Land: Random",
     "Land: Plains",
     "Land: Mixed",
     "Land: Wild",
 ];
 
-/// The map a new lobby starts on: Wilds, as wild as the seed picks
-/// (`gc_map::WILDS`).
-pub const DEFAULT_MAP: usize = 6;
+/// The map a new lobby starts on: grown land, as wild as the seed picks
+/// (`gc_map::GROWN`).
+pub const DEFAULT_MAP: usize = 10;
 
 /// The Conquest maps the lobby offers, and how many players each is for:
 /// first the shipped maps (the game makes them from the shipped maps of
@@ -210,10 +214,10 @@ pub const DEFAULT_MAP: usize = 6;
 pub const CONQUEST_MAPS: [&str; 6] = [
     "Ribcage Pass",
     "The Four Teeth",
-    "Land: Random",
-    "Land: Plains",
-    "Land: Mixed",
-    "Land: Wild",
+    "Classic: Random",
+    "Classic: Plains",
+    "Classic: Mixed",
+    "Classic: Wild",
 ];
 pub const CONQUEST_MAP_PLAYERS: [usize; 6] = [2, 4, 6, 6, 6, 6];
 /// How many of [`CONQUEST_MAPS`] are shipped maps, which the map seed

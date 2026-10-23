@@ -244,6 +244,7 @@ fn battlefield(ground: Ground, seed: u64) -> Heightmap {
         base,
         water,
         noise: None,
+        grown: None,
         terrain,
         cover,
         land: Vec::new(),

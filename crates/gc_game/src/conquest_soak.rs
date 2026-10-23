@@ -36,7 +36,7 @@ use crate::conquest_golden::{
 };
 
 const SEED: u64 = 0x50AC_0006;
-/// "Land: Mixed": some of every kind of ground.
+/// "Classic: Mixed": some of every kind of ground.
 const MAP: usize = SHIPPED_CONQUEST_MAPS + 2;
 const PLAYERS: usize = 6;
 /// Each faction twice but the Brood, whose soldiers come from larvae at

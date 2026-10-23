@@ -106,6 +106,7 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
         base: BASE,
         water: WATER,
         noise: Some(noise),
+        grown: None,
         terrain: w.terrain,
         cover: w.cover,
         land: Vec::new(),

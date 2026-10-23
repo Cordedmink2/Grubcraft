@@ -35,6 +35,7 @@ pub mod battle;
 pub mod conquest;
 pub mod def;
 mod generate;
+pub mod grown;
 mod map;
 pub mod recipe;
 mod stamp;
@@ -48,25 +49,35 @@ pub use map::{
 };
 
 /// The maps a Field Battle can be played on, in the lobby's order: the
-/// seeded map, a random map from each recipe, a random recipe, then the
-/// Wilds as wild as the seed picks and at each [`wilds::Wildness`] (added
-/// last, so older replays keep their choices).
-pub const FIELD_MAPS: [&str; 10] = [
+/// seeded map, a random map from each recipe, a random recipe, the Classic
+/// Wilds as wild as the seed picks and at each [`wilds::Wildness`], then
+/// grown land (Living Land, [`grown`]) the same way. Each group was added
+/// after the last, so older replays keep their choices.
+pub const FIELD_MAPS: [&str; 14] = [
     "Proving Ground",
     "Random: Pass",
     "Random: Ford",
     "Random: Hill",
     "Random: Open",
     "Random: Any",
+    "Classic: Random",
+    "Classic: Plains",
+    "Classic: Mixed",
+    "Classic: Wild",
     "Land: Random",
     "Land: Plains",
     "Land: Mixed",
     "Land: Wild",
 ];
 
-/// The first Wilds choice in [`FIELD_MAPS`], as wild as the seed picks:
-/// the one a new lobby starts on. Each [`wilds::Wildness`] follows it.
+/// The first Classic Wilds choice in [`FIELD_MAPS`], as wild as the seed
+/// picks. Each [`wilds::Wildness`] follows it.
 pub const WILDS: usize = 6;
+
+/// The first grown land choice in [`FIELD_MAPS`], as wild as the seed
+/// picks: the one a new lobby starts on. Each [`wilds::Wildness`] follows
+/// it.
+pub const GROWN: usize = WILDS + 1 + wilds::Wildness::ALL.len();
 
 /// A Field Battle map: the lobby's choice (an index into [`FIELD_MAPS`]),
 /// its size and its seed. The same three make the same map on every
@@ -91,6 +102,7 @@ impl FieldMap {
         enum Maker {
             Recipe(recipe::Recipe),
             Wilds(wilds::Wildness),
+            Grown(wilds::Wildness),
         }
         let (recipes, lands) = (recipe::Recipe::ALL, wilds::Wildness::ALL);
         let pick = |count: usize| (seed % count as u64) as usize;
@@ -100,6 +112,8 @@ impl FieldMap {
             c if c == recipes.len() + 1 => Maker::Recipe(recipes[pick(recipes.len())]),
             WILDS => Maker::Wilds(lands[pick(lands.len())]),
             c if c <= WILDS + lands.len() => Maker::Wilds(lands[c - WILDS - 1]),
+            GROWN => Maker::Grown(lands[pick(lands.len())]),
+            c if c <= GROWN + lands.len() => Maker::Grown(lands[c - GROWN - 1]),
             _ => return Map::generate(seed, tiles),
         };
         let make = |k| {
@@ -107,6 +121,7 @@ impl FieldMap {
             Map::from_def(&match maker {
                 Maker::Recipe(recipe) => recipe::describe(recipe, tiles as i32, seed),
                 Maker::Wilds(wild) => wilds::describe(tiles as i32, seed, wild),
+                Maker::Grown(wild) => grown::describe(tiles as i32, seed, wild),
             })
         };
         let first = make(0);
@@ -193,14 +208,17 @@ mod tests {
     }
 
     /// After the recipes (see `recipe_names_are_the_lobby_names`), the
-    /// lobby names the Wilds by how wild.
+    /// lobby names the Classic Wilds and grown land by how wild.
     #[test]
     fn the_wilds_choices_are_named_for_how_wild() {
-        assert_eq!(FIELD_MAPS[WILDS], "Land: Random");
-        for (k, wild) in wilds::Wildness::ALL.iter().enumerate() {
-            assert_eq!(FIELD_MAPS[WILDS + 1 + k], format!("Land: {}", wild.name()));
+        for (first, kind) in [(WILDS, "Classic"), (GROWN, "Land")] {
+            assert_eq!(FIELD_MAPS[first], format!("{kind}: Random"));
+            for (k, wild) in wilds::Wildness::ALL.iter().enumerate() {
+                let name = format!("{kind}: {}", wild.name());
+                assert_eq!(FIELD_MAPS[first + 1 + k], name);
+            }
         }
-        assert_eq!(FIELD_MAPS.len(), WILDS + 1 + wilds::Wildness::ALL.len());
+        assert_eq!(FIELD_MAPS.len(), GROWN + 1 + wilds::Wildness::ALL.len());
     }
 
     /// Every lobby choice, at both Small sizes, makes a map whose starts
@@ -256,5 +274,10 @@ mod tests {
         };
         assert_eq!(at_320(1), 0x7a27_e6ff_5bcb_e01e);
         assert_eq!(at_320(4), 0x4806_0190_c4df_7720);
+        // Grown land: erosion and the river lines are the parts most
+        // likely to drift, and each of the dials.
+        assert_eq!(hash(GROWN + 1), 0x3768_8fe3_aefe_b76c);
+        assert_eq!(hash(GROWN + 2), 0x9e6d_60d5_dbb7_a60c);
+        assert_eq!(hash(GROWN + 3), 0x96a3_0209_6ec2_9390);
     }
 }

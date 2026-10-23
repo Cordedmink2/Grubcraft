@@ -287,6 +287,7 @@ pub fn battle_map(region: Region, seed: u64) -> MapDef {
         base,
         water: WATER,
         noise: Some(noise),
+        grown: None,
         terrain: w.terrain,
         cover: w.cover,
         land: Vec::new(),

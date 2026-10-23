@@ -51,7 +51,7 @@ use crate::stamp::dist2;
 pub const MIN_TILES: i32 = 256;
 
 /// How wild a Wilds map is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum Wildness {
     /// Mostly open meadow, one band with plenty of ways over it.
     Plains,
@@ -167,6 +167,7 @@ pub(crate) fn make(tiles: i32, seed: u64, wildness: Wildness, purpose: Purpose) 
         base: BASE,
         water: WATER,
         noise: Some(noise),
+        grown: None,
         terrain: w.terrain,
         cover: w.cover,
         land,
