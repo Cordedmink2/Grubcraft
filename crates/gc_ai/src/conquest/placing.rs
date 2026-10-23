@@ -16,10 +16,9 @@ use glam::Vec2;
 /// Tiles kept free between two small buildings (houses, towers, walls)
 /// set side by side.
 pub const GAP: i32 = 1;
-/// Tiles kept free round any other building: the narrowest ground a
-/// regiment can walk through ([`gc_sim::nav::CLEARANCE`] from blocked
-/// ground on both sides), so a production building's regiments can always
-/// get out.
+/// Tiles kept free round any other building: a regiment can walk through
+/// a gap a tile wide, but only in a column, so a production building's
+/// regiments get out with room to keep their ranks.
 pub const WIDE_GAP: i32 = 3;
 /// Half-width of the lane kept free from a hall to each of its nodes.
 pub const LANE: f32 = 2.5;

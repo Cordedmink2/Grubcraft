@@ -654,8 +654,10 @@ mod tests {
     #[test]
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_four_teeth_ends_in_a_win() {
+        // A last side standing can take most of the 100 minutes to clear
+        // the others' bases one by one (seed 8: about 91).
         for seed in [7, 8] {
-            let played = play(1, &Faction::ALL, &[Difficulty::Veteran], seed, 90);
+            let played = play(1, &Faction::ALL, &[Difficulty::Veteran], seed, 100);
             assert!(played.winner().is_some(), "{}", played.report());
         }
     }

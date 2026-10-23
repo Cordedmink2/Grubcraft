@@ -2,6 +2,23 @@
 
 Before and after numbers from each milestone's performance pass ([12 · Performance](12-performance.md#the-loop)). Newest first.
 
+## Pathfinding overhaul (2026-10-24, restart plan T1)
+
+Routes now use the ground as drawn: a regiment's centre may stand on any open cell (clearance 1, was 3), straight lines are checked exactly, regiments slide along walls instead of stopping, and a long route keeps being walked while the rest is searched for ([10 · Architecture](10-architecture.md#pathfinding)). Linking the route graph searches each sector once instead of once per portal pair, and portals are placed again only near a change. Cloud container; instruction counts under callgrind.
+
+| | Before | After |
+|---|---|---|
+| `drill` (bench gate, instructions) | 6.45 G | 5.58 G (−13%) |
+| `pathing-storm` (bench gate) | 2.93 G | 2.12 G (−28%) |
+| `field-8000pt-2v2` (bench gate) | 8.55 G | 7.47 G (−13%) |
+| `pathing-storm`, last route handed out | 24 ticks | 11 ticks |
+| Building the walking grid, 256-tile ridged map | 1.8 G | 0.93 G |
+| `conquest-6p`, a building going up (typical) | 11.3 ms | 7.2 ms |
+| `conquest-6p`, a building going up (worst) | 48 ms | 13.6 ms |
+| `conquest-6p`, tick p50 | 1.79 ms | 1.15 ms |
+
+Drill p99 on wall clock is unchanged within this container's noise (2.4 to 3.1 ms on both, 1.3 ms on open ground). The baseline was re-blessed to keep the gain; that headroom is for gates (fortifications stage 2) to spend.
+
 ## Battle pace (2026-10-18)
 
 Slower fights ([05](05-combat.md#battle-pace)) keep more soldiers alive and locked in melee for longer, so each benchmark does more work over the same ticks. No code got slower; the baseline was re-blessed.

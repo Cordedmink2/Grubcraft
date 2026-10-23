@@ -1048,11 +1048,11 @@ impl Regiments {
                     } else {
                         nav.reached(i);
                     }
-                } else if nav.blocks(here, next) {
+                } else if let Some(next) = nav.slide(here, next) {
+                    self.position[i] = next;
+                } else {
                     nav.lost(i);
                     continue;
-                } else {
-                    self.position[i] = next;
                 }
                 if self.falling_back[i] == 0 {
                     self.run_up[i] = (self.run_up[i] + 1).min(crate::combat::RUN_UP_TICKS);

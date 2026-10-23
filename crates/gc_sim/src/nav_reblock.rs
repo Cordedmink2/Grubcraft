@@ -10,13 +10,16 @@
 //!   change, when that box can tell (a new piece of ground, or an area cut
 //!   in two where at most one side runs on out of the box). Otherwise
 //!   (two areas joined, or a wall cut an area right across) they are
-//!   numbered again across the map, in two passes that are about ten
-//!   times faster than [`Grid::label_areas`]'s flood fill (on a 768-tile
-//!   map that flood fill took most of the 200 ms a building cost).
-//! - **Portals** are placed again everywhere (cheap), but linked again only
-//!   in the sectors where a cell may have opened or shut (within
-//!   [`CLEARANCE`] of the change), or whose portals moved because a
-//!   neighbour's did: every other sector's links are copied across.
+//!   numbered again across the map, in two passes (see
+//!   [`Grid::number_areas`]) that are about ten times faster than a flood
+//!   fill (on a 768-tile map a flood fill took most of the 200 ms a
+//!   building cost).
+//! - **Portals** are placed again only on sector edges within
+//!   [`CLEAR_CAP`] of the change (a portal sits where clearance is
+//!   greatest, so no other edge's can move), and linked again only in the
+//!   sectors where a cell may have opened or shut (within [`CLEARANCE`] of
+//!   the change), or whose portals moved because a neighbour's did: every
+//!   other edge's portals and sector's links are copied across.
 //!
 //! The result has the same areas, portals and links as building the grid
 //! from scratch (tests check), though an area's number may differ, as
@@ -32,8 +35,7 @@ use alloc::sync::Arc;
 use gc_fixed::{Fx, FxVec2};
 
 use super::{
-    BLOCKED, CELLS_PER_TILE, CLEAR_CAP, CLEARANCE, GRAPH_BERTH, Grid, MAX_WAYPOINTS, Nav, Route,
-    SECTOR, Search,
+    BLOCKED, CELLS_PER_TILE, CLEAR_CAP, CLEARANCE, GRAPH_BERTH, Grid, Nav, Route, SECTOR, Search,
 };
 use crate::regiments::Regiments;
 
@@ -56,8 +58,10 @@ impl Nav {
         let work = self.search.work;
         let changed = Arc::make_mut(grid).set_built_all(all, on, &mut self.search);
         self.search.work = work;
-        // Any route passing near a change is found again, and, once ground
-        // is freed, any that found no way may find one now.
+        // Any route passing near a change is found again (walking the old
+        // way meanwhile: if the change blocks it, the regiment stops at
+        // the edge and looks again then), and, once ground is freed, any
+        // that found no way may find one now.
         let reach = i32::from(CLEAR_CAP);
         let tile = |c: i32| Fx::from_ratio(c, CELLS_PER_TILE);
         let near: Vec<(FxVec2, FxVec2)> = changed
@@ -78,15 +82,12 @@ impl Nav {
             }
             let ahead = match self.route[i] {
                 Route::Direct => core::slice::from_ref(&self.goal[i]),
-                Route::Waypoints => {
-                    &self.way[i * MAX_WAYPOINTS..]
-                        [self.way_next[i] as usize..self.way_len[i] as usize]
-                }
+                Route::Waypoints => self.ahead(i),
                 Route::Failed if !on => {
                     self.lost(i);
                     continue;
                 }
-                Route::Failed | Route::Idle | Route::Waiting => continue,
+                Route::Failed | Route::Idle | Route::Waiting | Route::Rerouting => continue,
             };
             let (mut a, mut b) = (regs.position[i], regs.position[i]);
             for p in ahead {
@@ -97,7 +98,7 @@ impl Nav {
                 .iter()
                 .any(|(lo, hi)| a.x <= hi.x && a.y <= hi.y && b.x >= lo.x && b.y >= lo.y)
             {
-                self.lost(i);
+                self.reroute(i);
             }
         }
     }
@@ -178,17 +179,22 @@ impl Grid {
     pub(super) fn changed(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, search: &mut Search) {
         let change = [x0, y0, x1, y1];
         let [wx0, wy0, wx1, wy1] = self.grow(change, i32::from(CLEAR_CAP) + 1);
-        // Cells that may open or shut: links, portals and areas read only
-        // whether a cell is open (clearance of at least CLEARANCE) and its
-        // cost, so a cell further than that from the change can't have
-        // moved them, whatever its clearance did.
+        // Cells that may open or shut: areas read only whether a cell is
+        // open (clearance of at least CLEARANCE), so a cell further than
+        // that from the change can't have moved them, whatever its
+        // clearance did.
         let near = self.grow(change, i32::from(CLEARANCE));
         let was_open: Vec<bool> = self.cells_in(near).map(|c| self.open_cell(c)).collect();
+        let wide = [wx0, wy0, wx1, wy1];
+        let room_was: Vec<u8> = self.cells_in(wide).map(|c| self.link_room(c)).collect();
         self.measure_clearance_in(wx0, wy0, wx1, wy1);
         if !self.renumber_near(near, &was_open) {
             self.number_areas();
         }
-        // Sectors a cell that may have opened or shut lies in.
+        // Sectors a cell that may have opened or shut lies in, and those
+        // where a cell's room as links read it changed (links keep
+        // GRAPH_BERTH from blocked ground where they can, so their costs
+        // read clearance up to it, further out than cells open or shut).
         let [dx0, dy0, dx1, dy1] = near;
         let mut dirty = vec![false; (self.sectors * self.sectors) as usize];
         for sy in dy0 / SECTOR..=(dy1 - 1) / SECTOR {
@@ -196,8 +202,15 @@ impl Grid {
                 dirty[(sy * self.sectors + sx) as usize] = true;
             }
         }
+        for (c, &was) in self.cells_in(wide).zip(&room_was) {
+            if self.link_room(c) != was {
+                dirty[self.sector_of(c) as usize] = true;
+            }
+        }
         let old = OldGraph::take(self);
-        let partner = self.place_portals();
+        // Portals sit where clearance is greatest, so only edges near
+        // cells whose clearance may have changed can move.
+        let partner = self.place_portals(Some((&old, [wx0, wy0, wx1, wy1])));
         // A sector whose portals moved (a neighbour's edge changed) is
         // linked again too.
         for (s, d) in dirty.iter_mut().enumerate() {
@@ -288,6 +301,12 @@ impl Grid {
     }
 
     /// The cells of the box `[x0, y0, x1, y1]` (end exclusive), row by row.
+    /// Cell `c`'s clearance as links' costs read it (see [`Grid::weight`]),
+    /// and whether it is open.
+    fn link_room(&self, c: u32) -> u8 {
+        self.clear[c as usize].min(GRAPH_BERTH)
+    }
+
     fn cells_in(&self, [x0, y0, x1, y1]: [i32; 4]) -> impl Iterator<Item = u32> + '_ {
         (y0..y1).flat_map(move |y| (x0..x1).map(move |x| self.idx(x, y)))
     }
@@ -380,11 +399,9 @@ impl Grid {
                 number[run[0].1] = run[0].0;
             }
         }
-        let mut next = None;
         for n in number.iter_mut().filter(|n| **n == 0) {
-            let last = next.get_or_insert_with(|| self.area.iter().copied().max().unwrap_or(0));
-            *last += 1;
-            *n = *last;
+            self.areas += 1;
+            *n = self.areas;
         }
         for (range, &n) in pieces.iter().zip(&number) {
             for &l in &cells[range.clone()] {
@@ -394,13 +411,15 @@ impl Grid {
         true
     }
 
-    /// What [`Grid::label_areas`] gives, numbered the same way, but in two
-    /// passes over the map instead of a flood fill. A step on the diagonal
+    /// Number the connected areas of open ground, so a search never starts
+    /// for a goal that can't be reached: each area by the first cell met in
+    /// it, row by row, as a flood fill from each new cell would, but in two
+    /// passes over the map. A step on the diagonal
     /// needs both squares beside it open, so areas join along rows and
     /// columns only: the first pass gives each open cell the label of the
     /// cell behind or above it (a new one if both are shut), noting labels
     /// that meet as one; the second numbers each area by the first cell
-    /// met in it, as the flood fill does.
+    /// met in it.
     pub(super) fn number_areas(&mut self) {
         let side = self.side as usize;
         // Each label's parent, never above the label: a root is its own.
@@ -458,6 +477,7 @@ impl Grid {
             }
             *a = number[r];
         }
+        self.areas = next;
     }
 
     /// The node cells of sector `s`, in order.
@@ -470,6 +490,17 @@ impl Grid {
     fn relink(&mut self, partner: &[u32], old: &OldGraph, dirty: &[bool], search: &mut Search) {
         let nodes = self.node_cell.len();
         let place = places(&self.sector_first, &self.sector_nodes, nodes);
+        let costs: Vec<Vec<u32>> = dirty
+            .iter()
+            .enumerate()
+            .map(|(s, &d)| {
+                if d {
+                    self.sector_costs(search, s)
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect();
         let (mut first, mut to, mut cost) = (
             Vec::with_capacity(nodes + 1),
             Vec::with_capacity(old.edge_to.len()),
@@ -478,11 +509,10 @@ impl Grid {
         first.push(0);
         for (u, &p) in partner.iter().enumerate() {
             let cell = self.node_cell[u];
-            to.push(p);
-            cost.push(self.step_cost(cell, self.node_cell[p as usize], false, GRAPH_BERTH));
+            self.link_across(u, p, &mut to, &mut cost);
             let s = self.sector_of(cell) as usize;
             if dirty[s] {
-                self.link_in_sector(search, u, &mut to, &mut cost);
+                self.link_within(u, place[u], &costs[s], &mut to, &mut cost);
             } else {
                 // The same node, by its place in the sector, in the old
                 // graph; its first edge was to its partner.
@@ -542,7 +572,7 @@ fn pieces_of(open: &[bool], w: usize, h: usize) -> (Vec<u32>, Vec<Range<usize>>,
 }
 
 /// Each node's place in its sector's list, from a graph's sector lists.
-fn places(sector_first: &[u32], sector_nodes: &[u32], nodes: usize) -> Vec<u32> {
+pub(super) fn places(sector_first: &[u32], sector_nodes: &[u32], nodes: usize) -> Vec<u32> {
     let mut place = vec![0; nodes];
     for w in sector_first.windows(2) {
         for (k, &n) in sector_nodes[w[0] as usize..w[1] as usize]
@@ -556,8 +586,9 @@ fn places(sector_first: &[u32], sector_nodes: &[u32], nodes: usize) -> Vec<u32> 
 }
 
 /// The portal graph as it stood before a change.
-struct OldGraph {
-    node_cell: Vec<u32>,
+pub(super) struct OldGraph {
+    pub(super) node_cell: Vec<u32>,
+    pub(super) pair_first: Vec<u32>,
     sector_first: Vec<u32>,
     sector_nodes: Vec<u32>,
     edge_first: Vec<u32>,
@@ -576,6 +607,7 @@ impl OldGraph {
         OldGraph {
             place: places(&sector_first, &sector_nodes, node_cell.len()),
             node_cell,
+            pair_first: core::mem::take(&mut grid.pair_first),
             sector_first,
             sector_nodes,
             edge_first: core::mem::take(&mut grid.edge_first),
@@ -594,7 +626,7 @@ impl OldGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nav::CELLS_PER_TILE;
+    use crate::nav::{CELLS_PER_TILE, DIRS};
     use crate::scenario::ribs_map;
     use gc_fixed::Pcg32;
 
@@ -619,6 +651,7 @@ mod tests {
         }
         same_areas(a, b);
         assert_eq!(a.node_cell, b.node_cell, "portals differ");
+        assert_eq!(a.pair_first, b.pair_first, "portals differ");
         assert_eq!(a.sector_first, b.sector_first);
         assert_eq!(a.sector_nodes, b.sector_nodes);
         assert_eq!(a.edge_first, b.edge_first, "links differ");
@@ -669,6 +702,86 @@ mod tests {
     }
 
     #[test]
+    fn a_straight_walk_is_checked_through_every_cell_it_crosses() {
+        // Random blocked cells and random walks, many starting or ending on
+        // cell edges: a walk passed as clear never touches a blocked cell
+        // anywhere along it.
+        let side = 24;
+        let mut rng = Pcg32::new(5, 3);
+        let mut costs = vec![1u8; (side * side) as usize];
+        for c in &mut costs {
+            if rng.below(6) == 0 {
+                *c = BLOCKED;
+            }
+        }
+        let g = Grid::build(&costs, side);
+        // A position in cells, in halves or in finer steps, as tiles.
+        let at = |rng: &mut Pcg32| {
+            let raw = if rng.below(2) == 0 {
+                rng.below(2 * side as u32) as i32 * (1 << 15)
+            } else {
+                rng.below((side as u32) << 16) as i32
+            };
+            Fx::from_raw(raw / CELLS_PER_TILE)
+        };
+        let mut passed = 0;
+        for _ in 0..4000 {
+            let (p, q) = (
+                FxVec2::new(at(&mut rng), at(&mut rng)),
+                FxVec2::new(at(&mut rng), at(&mut rng)),
+            );
+            if !g.segment_within(p, q, CLEARANCE, u8::MAX, &mut 0) {
+                continue;
+            }
+            passed += 1;
+            for k in 0..=512i64 {
+                let along = |a: Fx, b: Fx| {
+                    Fx::from_raw(
+                        (i64::from(a.raw()) + (i64::from(b.raw()) - i64::from(a.raw())) * k / 512)
+                            as i32,
+                    )
+                };
+                let m = FxVec2::new(along(p.x, q.x), along(p.y, q.y));
+                assert!(
+                    g.cost[g.cell_at(m) as usize] != BLOCKED,
+                    "{p:?} to {q:?} crosses blocked ground at {m:?}"
+                );
+            }
+        }
+        assert!(passed > 200, "{passed}");
+        // The case that slipped through: a start on a cell's west edge,
+        // heading west.
+        let mut costs = vec![1u8; (side * side) as usize];
+        costs[(side + 2) as usize] = BLOCKED; // cell (2, 1)
+        let g = Grid::build(&costs, side);
+        let tiles = |x: i32, y: i32| FxVec2::new(Fx::from_raw(x << 14), Fx::from_raw(y << 14));
+        // Cells (4.0, 0.5) to (1.5, 3.5), in quarter tiles.
+        assert!(!g.segment_within(tiles(8, 1), tiles(3, 7), CLEARANCE, u8::MAX, &mut 0));
+    }
+
+    #[test]
+    fn a_building_near_a_sector_edge_reprices_the_sector_beyond() {
+        // A building a few cells short of a sector edge narrows the room
+        // in the next sector too, which its links' costs read, even where
+        // that sector's portals stay put.
+        let tiles: i32 = 64;
+        let side = tiles * CELLS_PER_TILE;
+        let ground = vec![1; (side * side) as usize];
+        // Sector edges every 16 tiles: from right by x = 16 to 5 tiles short.
+        for y in (0..28).step_by(3) {
+            for x in 9..14 {
+                let mut g = Grid::build(&ground, side);
+                let mut search = Search::for_grid(&g);
+                assert!(g.set_built([x, y, 2, 3], true, &mut search).is_some());
+                let mut fresh = Grid::build(&g.cost, side);
+                fresh.ground.clone_from(&g.ground);
+                fresh.built.clone_from(&g.built);
+                same(&g, &fresh);
+            }
+        }
+    }
+
+    #[test]
     fn buildings_put_up_and_pulled_down_together_leave_the_grid_built_afresh() {
         // Two bases' worth of buildings far apart, and a few strays: all
         // put up in one go, half pulled down in another, then the rest.
@@ -701,6 +814,42 @@ mod tests {
         same(&g, &Grid::build(&ground, side));
     }
 
+    /// The areas numbered by a flood fill from each new open cell met,
+    /// row by row: what [`Grid::number_areas`] must give.
+    fn flood_areas(g: &Grid) -> Vec<u32> {
+        let mut g = g.clone();
+        g.area.fill(0);
+        let mut queue: Vec<u32> = Vec::with_capacity(g.cost.len());
+        let mut next = 0;
+        for c in 0..g.cost.len() as u32 {
+            if !g.open_cell(c) || g.area[c as usize] != 0 {
+                continue;
+            }
+            next += 1;
+            g.area[c as usize] = next;
+            queue.clear();
+            queue.push(c);
+            let mut head = 0;
+            while head < queue.len() {
+                let (x, y) = g.xy(queue[head]);
+                head += 1;
+                for (k, &(dx, dy)) in DIRS.iter().enumerate() {
+                    if !g.open(x + dx, y + dy)
+                        || (k >= 4 && !(g.open(x + dx, y) && g.open(x, y + dy)))
+                    {
+                        continue;
+                    }
+                    let m = g.idx(x + dx, y + dy);
+                    if g.area[m as usize] == 0 {
+                        g.area[m as usize] = next;
+                        queue.push(m);
+                    }
+                }
+            }
+        }
+        g.area
+    }
+
     #[test]
     fn areas_are_numbered_as_the_flood_fill_numbers_them() {
         // Speckled ground: many small areas, and labels that meet late
@@ -711,11 +860,8 @@ mod tests {
             let cost: Vec<u8> = (0..side * side)
                 .map(|_| if rng.below(100) < blocked { BLOCKED } else { 1 })
                 .collect();
-            let mut g = Grid::build(&cost, side);
-            let flooded = g.area.clone();
-            g.area.fill(7);
-            g.number_areas();
-            assert!(g.area == flooded, "{blocked}% blocked");
+            let g = Grid::build(&cost, side);
+            assert!(g.area == flood_areas(&g), "{blocked}% blocked");
         }
     }
 

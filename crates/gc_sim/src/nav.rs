@@ -2,9 +2,11 @@
 //!
 //! The map is a grid of half-tile cells, each with a cost: 0 is ground no
 //! regiment can cross (cliffs, deep water), 1 is open, and higher costs are
-//! slow going that routes avoid when they can. A regiment's centre keeps
-//! [`CLEARANCE`] cells away from blocked ground, so "open" below means "far
-//! enough from anything blocked".
+//! slow going that routes avoid when they can. A regiment's centre may
+//! stand on any cell that isn't blocked ([`CLEARANCE`]), so the walkable
+//! ground is the ground drawn: a gap a tile wide between two buildings, or
+//! between a cliff and the water, is a way through. "Open" below means a
+//! cell a regiment's centre may stand on.
 //!
 //! The grid is cut into sectors of [`SECTOR`] x [`SECTOR`] cells. Where open
 //! cells face each other across a sector edge there is a portal, and at load
@@ -29,6 +31,9 @@
 //! Searches are budgeted: requests queue up and each tick serves them in
 //! order until [`WORK_PER_TICK`] units of work are spent (at least one request
 //! a tick), so a hundred regiments ordered at once can't stall a tick.
+//! Regiments standing still for their route are served before those that
+//! keep walking the way they have meanwhile (the rest of a long route, or
+//! one near ground that changed), so nobody stops for a search it needn't.
 
 use alloc::collections::BinaryHeap;
 use alloc::sync::Arc;
@@ -47,9 +52,12 @@ pub const CELLS_PER_TILE: i32 = 2;
 /// Sector edge, in cells (16 tiles).
 pub const SECTOR: i32 = 32;
 /// Cells a regiment's centre keeps from blocked ground: a cell is open when
-/// the nearest blocked cell is at least this many steps away. Three cells
-/// leaves 1.25 tiles from the centre to the edge of blocked ground.
-pub const CLEARANCE: u8 = 3;
+/// the nearest blocked cell is at least this many steps away. One is any
+/// cell that isn't blocked itself, so the narrowest way through is a tile
+/// wide (two cells, each next to blocked ground), as wide as it looks. How
+/// much room a block wants beyond that is its berth (see [`Nav::plan`]):
+/// routes keep it where they can and narrow the block where they can't.
+pub const CLEARANCE: u8 = 1;
 /// Clearances are measured up to this many cells (16 tiles) and no further:
 /// nothing asks about open ground wider than that, and it keeps a change of
 /// ground (a building going up) from reaching across the map.
@@ -82,7 +90,7 @@ const WALL_PENALTY: [[u8; MAX_BERTH as usize + 1]; MAX_BERTH as usize + 1] = {
     table
 };
 /// Waypoints stored per regiment. A longer route is followed in parts: when
-/// the last stored waypoint is reached, the rest is searched again.
+/// the last leg of the stored waypoints starts, the rest is searched for.
 pub const MAX_WAYPOINTS: usize = 16;
 /// Search work allowed per tick, in [`POP_WORK`] per search step and 1 per
 /// cell checked along a line.
@@ -100,6 +108,11 @@ const RETARGET: Fx = Fx::from_int(3);
 /// Longest straight leg smoothing makes, in cells (24 tiles). Checking
 /// longer sight lines costs more than the extra waypoints save.
 const SMOOTH_REACH: i32 = 48;
+/// Portals a route is filled in through, cell by cell (about eight
+/// sectors, 128 tiles): more than its waypoints usually reach, and a long
+/// route's search costs a part of the work and spreads the rest over the
+/// march instead of spending it all on the tick it was ordered.
+const FILL_PORTALS: usize = 16;
 /// Upper bound on cells in one route before smoothing.
 const CHAIN_CAPACITY: usize = 32_768;
 const NONE: u32 = u32::MAX;
@@ -141,10 +154,17 @@ struct Grid {
     clear: Vec<u8>,
     /// Connected area of each open cell (1, 2, ...); 0 for cells not open.
     area: Vec<u32>,
+    /// The highest area number given out so far (areas brought up to date
+    /// near a change take numbers above it).
+    areas: u32,
     /// Sectors per side.
     sectors: i32,
-    /// Portal graph: each node is an open cell on a sector edge.
+    /// Portal graph: each node is an open cell on a sector edge, in pairs
+    /// facing each other across it (nodes `2k` and `2k + 1`).
     node_cell: Vec<u32>,
+    /// The pairs on each sector edge, the east edge then the south edge of
+    /// each sector in turn: edge `e`'s are `pair_first[e]..pair_first[e + 1]`.
+    pair_first: Vec<u32>,
     /// Nodes of sector `s` are `sector_nodes[sector_first[s]..sector_first[s + 1]]`.
     sector_first: Vec<u32>,
     sector_nodes: Vec<u32>,
@@ -193,8 +213,9 @@ impl Grid {
 
     /// Whether a route can go from `a` to `b` by way of `m` keeping `need`
     /// from blocked ground on ground costing no more than `max_cost`.
-    fn legs_keep(&self, a: u32, m: u32, b: u32, need: u8, max_cost: u8, work: &mut u32) -> bool {
-        self.line_within(a, m, need, max_cost, work) && self.line_within(m, b, need, max_cost, work)
+    fn legs_keep(&self, [a, m, b]: [FxVec2; 3], need: u8, max_cost: u8, work: &mut u32) -> bool {
+        self.segment_within(a, m, need, max_cost, work)
+            && self.segment_within(m, b, need, max_cost, work)
     }
 
     /// What crossing cell `c` costs a regiment wanting `berth`: the
@@ -222,6 +243,15 @@ impl Grid {
             (x0 + SECTOR).min(self.side),
             (y0 + SECTOR).min(self.side),
         )
+    }
+
+    /// Whether a map position is on the map.
+    fn on_map(&self, p: FxVec2) -> bool {
+        let inside = |v: Fx| {
+            v.raw() >= 0
+                && (i64::from(v.raw()) * i64::from(CELLS_PER_TILE)) >> 16 < i64::from(self.side)
+        };
+        inside(p.x) && inside(p.y)
     }
 
     /// The cell under a map position (clamped onto the map).
@@ -264,6 +294,15 @@ impl Grid {
         10 * dx.max(dy) + 4 * dx.min(dy)
     }
 
+    /// Whether cell (x, y) is on the map, at least `need` from blocked
+    /// ground and costing no more than `max_cost`.
+    fn fits(&self, x: i32, y: i32, need: u8, max_cost: u8) -> bool {
+        self.inside(x, y) && {
+            let i = self.idx(x, y) as usize;
+            self.clear[i] >= need && self.cost[i] <= max_cost
+        }
+    }
+
     /// Whether the straight line between two cell centres stays on open
     /// cells. A line through a cell corner needs both cells beside the corner
     /// open. Adds the cells checked to `work`.
@@ -274,12 +313,7 @@ impl Grid {
     /// [`Grid::line_open`], on cells at least `need` from blocked ground
     /// and costing no more than `max_cost`.
     fn line_within(&self, a: u32, b: u32, need: u8, max_cost: u8, work: &mut u32) -> bool {
-        let open = |x: i32, y: i32| {
-            self.inside(x, y) && {
-                let i = self.idx(x, y) as usize;
-                self.clear[i] >= need && self.cost[i] <= max_cost
-            }
-        };
+        let open = |x: i32, y: i32| self.fits(x, y, need, max_cost);
         let (mut x, mut y) = self.xy(a);
         let (x1, y1) = self.xy(b);
         let (nx, ny) = ((x1 - x).abs(), (y1 - y).abs());
@@ -307,6 +341,83 @@ impl Grid {
                 iy += 1;
             }
             if !open(x, y) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Whether the straight walk from `p` to `q` (map positions) stays on
+    /// cells at least `need` from blocked ground and costing no more than
+    /// `max_cost`: every cell the line passes through, and both cells
+    /// beside a corner it passes exactly through. What a regiment marching
+    /// from `p` to `q` touches, wherever in their cells the two lie (a line
+    /// between cell centres, as [`Grid::line_within`] checks, can miss the
+    /// corner of a cell a regiment starting off-centre clips). Adds the
+    /// cells checked to `work`.
+    fn segment_within(&self, p: FxVec2, q: FxVec2, need: u8, max_cost: u8, work: &mut u32) -> bool {
+        let ok = |x: i32, y: i32| self.fits(x, y, need, max_cost);
+        // In cells, 16 bits of fraction.
+        const ONE: i64 = 1 << 16;
+        let cells = |v: Fx| i64::from(v.raw()) * i64::from(CELLS_PER_TILE);
+        let (x0, y0, x1, y1) = (cells(p.x), cells(p.y), cells(q.x), cells(q.y));
+        let (mut x, mut y) = ((x0 >> 16) as i32, (y0 >> 16) as i32);
+        let (ex, ey) = ((x1 >> 16) as i32, (y1 >> 16) as i32);
+        if !ok(x, y) {
+            return false;
+        }
+        let (sx, sy) = ((x1 - x0).signum() as i32, (y1 - y0).signum() as i32);
+        let (adx, ady) = ((x1 - x0).abs(), (y1 - y0).abs());
+        // Distance along each axis from the start to the next cell edge
+        // the line crosses on it; the line reaches the x edge first when
+        // `bx / adx < by / ady`.
+        let edge = |v: i64, s: i32| match s {
+            1 => ONE - (v & (ONE - 1)),
+            -1 => v & (ONE - 1),
+            _ => 0,
+        };
+        let (mut bx, mut by) = (edge(x0, sx), edge(y0, sy));
+        // A start exactly on a cell's low edge, heading back across it: the
+        // walk is in the cell beyond at once (both beside a corner).
+        let (back_x, back_y) = (sx < 0 && bx == 0, sy < 0 && by == 0);
+        if back_x && back_y && !(ok(x - 1, y) && ok(x, y - 1)) {
+            return false;
+        }
+        if back_x {
+            x -= 1;
+            bx = ONE;
+        }
+        if back_y {
+            y -= 1;
+            by = ONE;
+        }
+        if (back_x || back_y) && !ok(x, y) {
+            return false;
+        }
+        while x != ex || y != ey {
+            *work += 1;
+            // Each factor is under 2^31 on any side under 2^15 cells.
+            let (tx, ty) = (bx * ady, by * adx);
+            let step_x = sx != 0 && x != ex && (sy == 0 || y == ey || tx <= ty);
+            let step_y = sy != 0 && y != ey && (sx == 0 || x == ex || ty <= tx);
+            if step_x && step_y {
+                // Exactly through a corner: both cells beside it.
+                if !ok(x + sx, y) || !ok(x, y + sy) {
+                    return false;
+                }
+            }
+            if step_x {
+                x += sx;
+                bx += ONE;
+            }
+            if step_y {
+                y += sy;
+                by += ONE;
+            }
+            if !(step_x || step_y) {
+                break; // can't happen: one axis always has a cell to go
+            }
+            if !ok(x, y) {
                 return false;
             }
         }
@@ -388,6 +499,10 @@ struct Search {
     g: Vec<u32>,
     parent: Vec<u32>,
     seen: Vec<u32>,
+    /// Cells [`Search::reach`] is done once it has settled (marked with
+    /// its stamp), and the weights it reads.
+    want: Vec<u32>,
+    weights: Vec<u32>,
     stamp: u32,
     heap: BinaryHeap<Reverse<(u32, u32)>>,
     /// Search over the portal graph (two extra nodes: start and goal).
@@ -449,6 +564,8 @@ impl Search {
             g: vec![0; cells],
             parent: vec![NONE; cells],
             seen: vec![0; cells],
+            want: vec![0; cells],
+            weights: vec![0; cells],
             stamp: 0,
             heap: BinaryHeap::with_capacity(cells * 8 + 8),
             node_g: vec![0; nodes + 2],
@@ -470,11 +587,7 @@ impl Search {
     /// whether the goal was reached (true without a goal). Afterwards
     /// [`Search::cost_to`] gives the cost to each cell reached.
     fn sector(&mut self, grid: &Grid, sec: u32, from: u32, to: Option<u32>, berth: u8) -> bool {
-        self.stamp = self.stamp.wrapping_add(1);
-        if self.stamp == 0 {
-            self.seen.fill(0);
-            self.stamp = 1;
-        }
+        self.next_stamp();
         let (x0, y0, x1, y1) = grid.sector_bounds(sec);
         let local = |c: u32| {
             let (x, y) = grid.xy(c);
@@ -524,6 +637,99 @@ impl Search {
             }
         }
         to.is_none()
+    }
+
+    /// A fresh stamp for a search's marks.
+    fn next_stamp(&mut self) {
+        self.stamp = self.stamp.wrapping_add(1);
+        if self.stamp == 0 {
+            self.seen.fill(0);
+            self.want.fill(0);
+            self.stamp = 1;
+        }
+    }
+
+    /// Note sector `sec`'s weights for `berth` (see [`Grid::weight`]), 0
+    /// on cells that aren't open, for [`Search::reach`]: one sector's
+    /// worth of searches reads them instead of working each out again.
+    fn weigh(&mut self, grid: &Grid, sec: u32, berth: u8) {
+        let (x0, y0, x1, y1) = grid.sector_bounds(sec);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let c = grid.idx(x, y);
+                let w = if grid.open_cell(c) {
+                    grid.weight(c, berth)
+                } else {
+                    0
+                };
+                self.weights[((y - y0) * SECTOR + (x - x0)) as usize] = w;
+            }
+        }
+    }
+
+    /// [`Search::sector`] with no goal over the weights [`Search::weigh`]
+    /// noted for sector `sec`, stopping once it has settled every cell of
+    /// `wanted` (all in the sector): their costs from `from` are known
+    /// then (other cells' may not be), or every reachable cell's if some
+    /// of `wanted` can't be reached.
+    fn reach(&mut self, grid: &Grid, sec: u32, from: u32, wanted: &[u32]) {
+        self.next_stamp();
+        let (x0, y0, x1, y1) = grid.sector_bounds(sec);
+        let (w, h) = (x1 - x0, y1 - y0);
+        let local = |c: u32| {
+            let (x, y) = grid.xy(c);
+            ((y - y0) * SECTOR + (x - x0)) as usize
+        };
+        let mut unsettled = 0;
+        for &c in wanted {
+            let l = local(c);
+            if self.want[l] != self.stamp {
+                self.want[l] = self.stamp;
+                unsettled += 1;
+            }
+        }
+        self.heap.clear();
+        let l0 = local(from);
+        self.seen[l0] = self.stamp;
+        self.g[l0] = 0;
+        self.heap.push(Reverse((0, l0 as u32)));
+        let open = |weights: &[u32], x: i32, y: i32| {
+            x >= 0 && y >= 0 && x < w && y < h && weights[(y * SECTOR + x) as usize] > 0
+        };
+        while let Some(Reverse((g, l))) = self.heap.pop() {
+            let l = l as usize;
+            if g != self.g[l] {
+                continue; // a stale entry
+            }
+            if self.want[l] == self.stamp {
+                self.want[l] = 0;
+                unsettled -= 1;
+                if unsettled == 0 {
+                    return;
+                }
+            }
+            let (x, y) = (l as i32 % SECTOR, l as i32 / SECTOR);
+            let here = self.weights[l];
+            for (k, &(dx, dy)) in DIRS.iter().enumerate() {
+                let (nx, ny) = (x + dx, y + dy);
+                if !open(&self.weights, nx, ny) {
+                    continue;
+                }
+                let diagonal = k >= 4;
+                if diagonal && !(open(&self.weights, x + dx, y) && open(&self.weights, x, y + dy)) {
+                    continue;
+                }
+                let nl = (ny * SECTOR + nx) as usize;
+                let ng = g + if diagonal { 7 } else { 5 } * (here + self.weights[nl]);
+                if (self.seen[nl] != self.stamp || ng < self.g[nl])
+                    && self.heap.len() < self.heap.capacity()
+                {
+                    self.seen[nl] = self.stamp;
+                    self.g[nl] = ng;
+                    self.heap.push(Reverse((ng, nl as u32)));
+                }
+            }
+        }
     }
 
     /// Cost to `c` found by the last [`Search::sector`] in sector `sec`.
@@ -686,6 +892,11 @@ enum Route {
     Waiting,
     /// No way there; stands still until the target moves.
     Failed,
+    /// Queued for a search, but still walking the stored waypoints until
+    /// it is served (the rest of a long route, or ground changed near the
+    /// way ahead): it only stands if they end short of the target and it
+    /// reaches their end first.
+    Rerouting,
 }
 
 /// The map's walkable ground and every regiment's route.
@@ -702,7 +913,11 @@ pub struct Nav {
     way_next: Vec<u8>,
     /// The stored waypoints stop short of the goal.
     partial: Vec<bool>,
+    /// Regiments standing still until their search is served, served
+    /// first...
     queue: Queue,
+    /// ...then those still walking meanwhile ([`Route::Rerouting`]).
+    later: Queue,
 }
 
 /// Regiments waiting for a search, oldest first: a ring buffer with room
@@ -715,6 +930,15 @@ struct Queue {
 }
 
 impl Queue {
+    fn new(regiments: usize) -> Queue {
+        Queue {
+            slots: vec![0; regiments],
+            head: 0,
+            len: 0,
+            queued: vec![false; regiments],
+        }
+    }
+
     fn push(&mut self, i: usize) {
         if self.queued[i] {
             return;
@@ -738,6 +962,24 @@ impl Queue {
 
     fn iter(&self) -> impl Iterator<Item = u32> + '_ {
         (0..self.len).map(|k| self.slots[(self.head + k) % self.slots.len()])
+    }
+
+    /// Take `i` out of the queue, keeping the others' order.
+    fn remove(&mut self, i: usize) {
+        if !self.queued[i] {
+            return;
+        }
+        let cap = self.slots.len();
+        let mut kept = 0;
+        for k in 0..self.len {
+            let s = self.slots[(self.head + k) % cap];
+            if s as usize != i {
+                self.slots[(self.head + kept) % cap] = s;
+                kept += 1;
+            }
+        }
+        self.len = kept;
+        self.queued[i] = false;
     }
 }
 
@@ -778,12 +1020,8 @@ impl Nav {
             way_len: vec![0; regiments],
             way_next: vec![0; regiments],
             partial: vec![false; regiments],
-            queue: Queue {
-                slots: vec![0; regiments],
-                head: 0,
-                len: 0,
-                queued: vec![false; regiments],
-            },
+            queue: Queue::new(regiments),
+            later: Queue::new(regiments),
         }
     }
 
@@ -943,18 +1181,16 @@ impl Nav {
         self.grid.as_ref().map_or(0, |g| g.node_cell.len())
     }
 
-    /// Regiments waiting for a route.
+    /// Regiments waiting for a route (some still walking the old one).
     pub fn queued(&self) -> usize {
-        self.queue.len
+        self.queue.len + self.later.len
     }
 
     /// The rest of regiment slot `i`'s route, for drawing: the waypoints
     /// still ahead, ending at the target.
     pub(crate) fn route_ahead(&self, i: usize, target: Option<FxVec2>) -> &[FxVec2] {
         match (self.grid.is_some(), self.route[i]) {
-            (true, Route::Waypoints) => {
-                &self.way[i * MAX_WAYPOINTS..][self.way_next[i] as usize..self.way_len[i] as usize]
-            }
+            (true, Route::Waypoints | Route::Rerouting) => self.ahead(i),
             (false, _) | (true, Route::Direct) if target.is_some() => {
                 core::slice::from_ref(&self.goal[i])
             }
@@ -981,19 +1217,16 @@ impl Nav {
         };
         self.search.work = 0;
         for i in 0..regs.alive.len() {
-            if !regs.alive[i] {
+            let (true, Some(t)) = (regs.alive[i], regs.target[i]) else {
                 self.route[i] = Route::Idle;
-                continue;
-            }
-            let Some(t) = regs.target[i] else {
-                self.route[i] = Route::Idle;
+                self.later.remove(i);
                 continue;
             };
             let d = t - self.goal[i];
             let near = self.route[i] != Route::Idle && d.x.abs() < RETARGET && d.y.abs() < RETARGET;
             if near {
                 match self.route[i] {
-                    Route::Direct | Route::Waiting => self.goal[i] = t,
+                    Route::Direct | Route::Waiting | Route::Rerouting => self.goal[i] = t,
                     Route::Waypoints if !self.partial[i] => {
                         // Keep aiming at the target unless the route ends
                         // short of it (the target was on blocked ground).
@@ -1010,12 +1243,15 @@ impl Nav {
             self.goal[i] = t;
             let (from, to) = (grid.cell_at(regs.position[i]), grid.cell_at(t));
             let need = grid.need(from, to, regs.berth(units, i));
+            self.later.remove(i);
             if grid.open_cell(from)
                 && grid.open_cell(to)
-                && grid.line_within(from, to, need, u8::MAX, &mut self.search.work)
+                && grid.segment_within(regs.position[i], t, need, u8::MAX, &mut self.search.work)
             {
                 self.route[i] = Route::Direct;
             } else {
+                // Nothing to walk meanwhile: served ahead of those that
+                // have.
                 self.route[i] = Route::Waiting;
                 self.queue.push(i);
             }
@@ -1023,13 +1259,13 @@ impl Nav {
 
         let mut served = 0;
         while served == 0 || self.search.work < WORK_PER_TICK {
-            let Some(i) = self.queue.pop() else {
+            let Some(i) = self.queue.pop().or_else(|| self.later.pop()) else {
                 break;
             };
             let Some(t) = regs.target[i] else {
                 continue;
             };
-            if !regs.alive[i] || self.route[i] != Route::Waiting {
+            if !regs.alive[i] || !matches!(self.route[i], Route::Waiting | Route::Rerouting) {
                 continue;
             }
             served += 1;
@@ -1063,7 +1299,9 @@ impl Nav {
         }
         match self.route[i] {
             Route::Direct => Some((target, true)),
-            Route::Waypoints => {
+            // A rerouting regiment walks on until its search is served; its
+            // route is partial, so never at its end.
+            Route::Waypoints | Route::Rerouting => {
                 let n = self.way_next[i] as usize;
                 let last = n + 1 == self.way_len[i] as usize && !self.partial[i];
                 Some((self.way[i * MAX_WAYPOINTS + n], last))
@@ -1072,27 +1310,96 @@ impl Nav {
         }
     }
 
-    /// Regiment slot `i` reached the waypoint [`Nav::steer`] gave it.
+    /// Regiment slot `i` reached the waypoint [`Nav::steer`] gave it. The
+    /// rest of a route that stops short of its goal is searched for while
+    /// the regiment walks its last stretch, so it doesn't stop for it.
     pub(crate) fn reached(&mut self, i: usize) {
         self.way_next[i] += 1;
-        if self.way_next[i] >= self.way_len[i] {
-            if self.partial[i] {
-                // The rest of a long route.
+        let left = self.way_len[i] - self.way_next[i];
+        match (self.route[i], left) {
+            (Route::Waypoints, 1) if self.partial[i] => self.reroute_now(i),
+            (Route::Waypoints | Route::Rerouting, 0) if self.partial[i] => {
+                // Nothing left to walk: served ahead of those still walking.
+                self.later.remove(i);
                 self.route[i] = Route::Waiting;
                 self.queue.push(i);
-            } else {
-                self.route[i] = Route::Idle;
             }
+            (Route::Waypoints | Route::Rerouting, 0) => self.stop(i),
+            _ => {}
         }
     }
 
-    /// Whether a step from `from` to `to` would walk onto blocked ground.
+    /// The waypoints slot `i` has still to walk.
+    fn ahead(&self, i: usize) -> &[FxVec2] {
+        &self.way[i * MAX_WAYPOINTS..][self.way_next[i] as usize..self.way_len[i] as usize]
+    }
+
+    /// Queue a search for regiment slot `i` while it keeps walking the way
+    /// it has ([`Route::Rerouting`]): a straight walk becomes a waypoint at
+    /// its old goal. Changes nothing when it has no way to walk.
+    pub(crate) fn reroute(&mut self, i: usize) {
+        match self.route[i] {
+            Route::Direct => {
+                self.way[i * MAX_WAYPOINTS] = self.goal[i];
+                self.way_len[i] = 1;
+                self.way_next[i] = 0;
+                self.partial[i] = false;
+            }
+            Route::Waypoints | Route::Rerouting if !self.ahead(i).is_empty() => {}
+            _ => return,
+        }
+        self.reroute_now(i);
+    }
+
+    fn reroute_now(&mut self, i: usize) {
+        self.route[i] = Route::Rerouting;
+        self.later.push(i);
+    }
+
+    /// Regiment slot `i` has no route, nor a search queued while it walks.
+    fn stop(&mut self, i: usize) {
+        self.route[i] = Route::Idle;
+        self.later.remove(i);
+    }
+
+    /// Whether a step from `from` to `to` would walk onto or across
+    /// blocked ground (a step of several cells can't jump a thin wall).
     /// Regiments already standing on blocked ground may step anywhere, so
     /// they can walk off it.
     pub(crate) fn blocks(&self, from: FxVec2, to: FxVec2) -> bool {
         self.grid.as_ref().is_some_and(|g| {
-            g.cost[g.cell_at(to) as usize] == BLOCKED && g.cost[g.cell_at(from) as usize] != BLOCKED
+            g.cost[g.cell_at(from) as usize] != BLOCKED
+                && (g.cost[g.cell_at(to) as usize] == BLOCKED
+                    || g.on_map(from)
+                        && g.on_map(to)
+                        && !g.segment_within(from, to, CLEARANCE, u8::MAX, &mut 0))
         })
+    }
+
+    /// Where a step from `from` toward `to` ends: `to`, unless that is
+    /// blocked ground (see [`Nav::blocks`]); then the step slides along the
+    /// edge, keeping only its part along x or along y (the longer first)
+    /// if that stays off it and is at least half the longer part. `None`
+    /// otherwise: the way is shut (a regiment heading into a wall, not
+    /// glancing off it, finds a new route rather than creep along it).
+    pub(crate) fn slide(&self, from: FxVec2, to: FxVec2) -> Option<FxVec2> {
+        if !self.blocks(from, to) {
+            return Some(to);
+        }
+        let d = to - from;
+        let (ax, ay) = (d.x.abs(), d.y.abs());
+        let longer = ax.max(ay);
+        let along_x = (ax * 2 >= longer).then(|| FxVec2::new(to.x, from.y));
+        let along_y = (ay * 2 >= longer).then(|| FxVec2::new(from.x, to.y));
+        let tries = if ax >= ay {
+            [along_x, along_y]
+        } else {
+            [along_y, along_x]
+        };
+        tries
+            .into_iter()
+            .flatten()
+            .find(|&p| p != from && !self.blocks(from, p))
     }
 
     /// Whether `p` is on blocked ground (never with no map).
@@ -1104,7 +1411,7 @@ impl Nav {
 
     /// Regiment slot `i` was stopped by blocked ground: find a new route.
     pub(crate) fn lost(&mut self, i: usize) {
-        self.route[i] = Route::Idle;
+        self.stop(i);
     }
 
     /// Give regiment slot `i` the route it has in `from`, a world on the same
@@ -1129,6 +1436,12 @@ impl Nav {
                 self.queue.push(i);
             }
         }
+        for i in from.later.iter() {
+            let i = i as usize;
+            if copied(i) {
+                self.later.push(i);
+            }
+        }
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
@@ -1150,9 +1463,11 @@ impl Nav {
                 h.i32(p.y.raw());
             }
         }
-        h.u32(self.queue.len as u32);
-        for i in self.queue.iter() {
-            h.u32(i);
+        for queue in [&self.queue, &self.later] {
+            h.u32(queue.len as u32);
+            for i in queue.iter() {
+                h.u32(i);
+            }
         }
     }
 }
@@ -1194,7 +1509,10 @@ fn find(
     let straight = |s: &mut Search, a: u32, b: u32| {
         grid.line_within(a, b, grid.need(a, b, berth), u8::MAX, &mut s.work)
     };
-    if straight(s, start, goal) {
+    // Where the march starts: here, or the open cell stepped out to.
+    let start_point = if lead { grid.centre(start) } else { from };
+    let need = grid.need(start, goal, berth);
+    if grid.segment_within(start_point, goal_point, need, u8::MAX, &mut s.work) {
         s.chain.push(goal);
     } else if start_sector == goal_sector && s.sector(grid, start_sector, start, Some(goal), berth)
     {
@@ -1204,9 +1522,15 @@ fn find(
             return None;
         }
         via_portals = true;
-        // Fill in the legs between portals that aren't straight lines.
+        // Fill in the legs between portals that aren't straight lines, as
+        // far as [`FILL_PORTALS`]: the rest is searched again while the
+        // regiment walks the last stretch of this part (see `reached`).
         let mut prev = start;
         for k in 1..s.coarse.len() {
+            if k > FILL_PORTALS {
+                truncated = true;
+                break;
+            }
             let c = s.coarse[k];
             if c == prev {
                 continue;
@@ -1226,7 +1550,16 @@ fn find(
             prev = c;
         }
     }
-    let (n, partial) = smooth(grid, s, lead, goal_point, truncated, berth, out);
+    let (n, partial) = smooth(
+        grid,
+        s,
+        lead,
+        start_point,
+        goal_point,
+        truncated,
+        berth,
+        out,
+    );
     if via_portals {
         spread_through_portals(grid, s, usize::from(lead), from, n, berth, out);
     }
@@ -1290,7 +1623,8 @@ fn spread_through_portals(
         let cross = i64::from(p.1.raw()) + run * to_edge / across;
         let target = ((cross * i64::from(CELLS_PER_TILE)) >> 16) as i32;
         let shift = (target - here.1).clamp(-PORTAL_SPAN, PORTAL_SPAN);
-        let (from_cell, to_cell) = (grid.cell_at(prev), grid.cell_at(out[i + 1]));
+        let next = out[i + 1];
+        let (from_cell, to_cell) = (grid.cell_at(prev), grid.cell_at(next));
         let need = grid.need3(from_cell, c, to_cell, berth);
         // Across plain ground only, unless the portal itself is in a ford
         // or on a slope: then across ground no worse than it, so blocks
@@ -1305,9 +1639,9 @@ fn spread_through_portals(
             if shift == 0 || !grid.inside(x, y) {
                 break;
             }
-            let moved = grid.idx(x, y);
-            if grid.legs_keep(from_cell, moved, to_cell, need, max_cost, &mut s.work) {
-                out[i] = grid.centre(moved);
+            let moved = grid.centre(grid.idx(x, y));
+            if grid.legs_keep([prev, moved, next], need, max_cost, &mut s.work) {
+                out[i] = moved;
                 break;
             }
         }
@@ -1360,11 +1694,10 @@ fn tighten(
                     Fx::from_raw(pull.x.raw() / 4 * quarters),
                     Fx::from_raw(pull.y.raw() / 4 * quarters),
                 );
-            let m = grid.cell_at(to);
-            if m == c {
+            if grid.cell_at(to) == c {
                 break;
             }
-            if grid.legs_keep(a, m, b, need, max_cost, &mut s.work) {
+            if grid.legs_keep([prev, to, next], need, max_cost, &mut s.work) {
                 out[i] = to;
                 break;
             }
@@ -1376,10 +1709,16 @@ fn tighten(
 /// Pull the chain of cells tight: keep only the cells where the straight
 /// line from the last kept one would come closer to blocked ground than
 /// `berth`, or than the chain itself came between them.
+///
+/// Lines are checked from where the march really goes: `start_point` for
+/// the chain's first cell and `goal_point` for its last (unless it was
+/// cut short), the middles of the cells between.
+#[allow(clippy::too_many_arguments)]
 fn smooth(
     grid: &Grid,
     s: &mut Search,
     lead: bool,
+    start_point: FxVec2,
     goal_point: FxVec2,
     truncated: bool,
     berth: u8,
@@ -1396,6 +1735,11 @@ fn smooth(
         return (n + 1, false);
     }
     let mut partial = truncated;
+    let point = |s: &Search, k: usize| match k {
+        0 => start_point,
+        k if k == len - 1 && !truncated => goal_point,
+        k => grid.centre(s.chain[k]),
+    };
     let (mut anchor, mut k) = (0, 1);
     // The least room along the chain from the anchor to `k`, up to `berth`.
     let room = |c: u32| grid.need(c, c, berth);
@@ -1403,23 +1747,38 @@ fn smooth(
     while k < len {
         if k + 1 < len {
             let need = least.min(room(s.chain[k + 1]));
-            if grid.span(s.chain[anchor], s.chain[k + 1]) <= SMOOTH_REACH
-                && grid.line_within(s.chain[anchor], s.chain[k + 1], need, u8::MAX, &mut s.work)
-            {
+            if grid.span(s.chain[anchor], s.chain[k + 1]) <= SMOOTH_REACH && {
+                let (a, b) = (point(s, anchor), point(s, k + 1));
+                grid.segment_within(a, b, need, u8::MAX, &mut s.work)
+            } {
                 least = need;
                 k += 1;
                 continue;
             }
         }
-        if n == out.len() {
+        // A leg to the next chain cell was checked between cell centres
+        // (as a straight leg between portals may run far): where it starts
+        // or ends off-centre, at the regiment or its target, and doesn't
+        // hold there, walk it between the centres.
+        let (a, b) = (point(s, anchor), point(s, k));
+        let mut bridge = [None, None];
+        if k == anchor + 1
+            && (anchor == 0 || k == len - 1)
+            && !grid.segment_within(a, b, CLEARANCE, u8::MAX, &mut s.work)
+        {
+            let (ca, cb) = (grid.centre(s.chain[anchor]), grid.centre(s.chain[k]));
+            bridge = [(a != ca).then_some(ca), (b != cb).then_some(cb)];
+        }
+        let extra = bridge.iter().flatten().count();
+        if n + extra >= out.len() {
             partial = true;
             break;
         }
-        out[n] = if k == len - 1 && !truncated {
-            goal_point
-        } else {
-            grid.centre(s.chain[k])
-        };
+        for p in bridge.into_iter().flatten() {
+            out[n] = p;
+            n += 1;
+        }
+        out[n] = b;
         n += 1;
         anchor = k;
         k += 1;
@@ -1440,8 +1799,10 @@ impl Grid {
             built: vec![0; n],
             clear: vec![0; n],
             area: vec![0; n],
+            areas: 0,
             sectors: (side + SECTOR - 1) / SECTOR,
             node_cell: Vec::new(),
+            pair_first: Vec::new(),
             sector_first: Vec::new(),
             sector_nodes: Vec::new(),
             edge_first: Vec::new(),
@@ -1449,8 +1810,8 @@ impl Grid {
             edge_cost: Vec::new(),
         };
         grid.measure_clearance_in(0, 0, side, side);
-        grid.label_areas();
-        let partner = grid.place_portals();
+        grid.number_areas();
+        let partner = grid.place_portals(None);
         grid.link_portals(&partner, &mut Search::new(0, 0, 0));
         grid
     }
@@ -1463,63 +1824,36 @@ impl Grid {
         (c.iter().all(|&v| on(v)) && c[0] < c[2] && c[1] < c[3]).then_some(c)
     }
 
-    /// Number the connected areas of open ground, so a search never starts
-    /// for a goal that can't be reached.
-    fn label_areas(&mut self) {
-        let mut queue: Vec<u32> = Vec::with_capacity(self.cost.len());
-        let mut next = 0;
-        for c in 0..self.cost.len() as u32 {
-            if !self.open_cell(c) || self.area[c as usize] != 0 {
-                continue;
-            }
-            next += 1;
-            self.area[c as usize] = next;
-            queue.clear();
-            queue.push(c);
-            let mut head = 0;
-            while head < queue.len() {
-                let (x, y) = self.xy(queue[head]);
-                head += 1;
-                for (k, &(dx, dy)) in DIRS.iter().enumerate() {
-                    if !self.open(x + dx, y + dy)
-                        || (k >= 4 && !(self.open(x + dx, y) && self.open(x, y + dy)))
-                    {
-                        continue;
-                    }
-                    let m = self.idx(x + dx, y + dy);
-                    if self.area[m as usize] == 0 {
-                        self.area[m as usize] = next;
-                        queue.push(m);
-                    }
-                }
-            }
-        }
-    }
-
     /// Put portals where open cells face each other across sector edges:
     /// in each stretch of edge, on the pair of cells furthest from blocked
     /// ground (the middlemost of those), so routes cross where there is
-    /// most room. Returns each node's partner across its edge.
-    fn place_portals(&mut self) -> Vec<u32> {
+    /// most room. Returns each node's partner across its edge. With `old`,
+    /// the graph before a change and a box of cells holding every cell
+    /// whose clearance may have changed, edges clear of the box keep their
+    /// old portals (where they would be put again anyway).
+    fn place_portals(&mut self, old: Option<(&reblock::OldGraph, [i32; 4])>) -> Vec<u32> {
         // (cell on one side, cell on the other) for each portal.
         let mut pairs: Vec<(u32, u32)> = Vec::new();
+        let mut pair_first = Vec::with_capacity(2 * (self.sectors * self.sectors) as usize + 1);
+        pair_first.push(0);
         let clear = &self.clear;
-        let mut add_run = |a: i32, b: i32, cells: &dyn Fn(i32) -> (u32, u32)| {
-            let len = b - a;
-            let pieces = (len + PORTAL_SPAN - 1) / PORTAL_SPAN;
-            for j in 0..pieces {
-                let (pa, pb) = (a + j * len / pieces, a + (j + 1) * len / pieces);
-                let middle = (pa + pb - 1) / 2;
-                let room = |t: i32| {
-                    let (u, v) = cells(t);
-                    clear[u as usize].min(clear[v as usize])
-                };
-                let best = (pa..pb)
-                    .max_by_key(|&t| (room(t), -(t - middle).abs(), -t))
-                    .unwrap_or(middle);
-                pairs.push(cells(best));
-            }
-        };
+        let add_run =
+            |pairs: &mut Vec<(u32, u32)>, a: i32, b: i32, cells: &dyn Fn(i32) -> (u32, u32)| {
+                let len = b - a;
+                let pieces = (len + PORTAL_SPAN - 1) / PORTAL_SPAN;
+                for j in 0..pieces {
+                    let (pa, pb) = (a + j * len / pieces, a + (j + 1) * len / pieces);
+                    let middle = (pa + pb - 1) / 2;
+                    let room = |t: i32| {
+                        let (u, v) = cells(t);
+                        clear[u as usize].min(clear[v as usize])
+                    };
+                    let best = (pa..pb)
+                        .max_by_key(|&t| (room(t), -(t - middle).abs(), -t))
+                        .unwrap_or(middle);
+                    pairs.push(cells(best));
+                }
+            };
         for s in 0..self.sectors * self.sectors {
             let (x0, y0, x1, y1) = self.sector_bounds(s as u32);
             // The edge to the east neighbour, then the one to the south.
@@ -1529,33 +1863,50 @@ impl Grid {
                 } else {
                     (x0..x1, y1 - 1, y1)
                 };
-                if outer >= self.side {
-                    continue;
-                }
-                let cells = |t: i32| {
-                    if east {
-                        (self.idx(inner, t), self.idx(outer, t))
-                    } else {
-                        (self.idx(t, inner), self.idx(t, outer))
-                    }
-                };
-                let mut run = None;
-                for t in span.start..=span.end {
-                    let both = t < span.end && {
-                        let (a, b) = cells(t);
-                        self.open_cell(a) && self.open_cell(b)
-                    };
-                    match (both, run) {
-                        (true, None) => run = Some(t),
-                        (false, Some(a)) => {
-                            add_run(a, t, &cells);
-                            run = None;
+                let e = pair_first.len() - 1;
+                if outer < self.side {
+                    // Whether the cells either side of the edge are clear of the box.
+                    let clear_of = |[bx0, by0, bx1, by1]: [i32; 4]| {
+                        if east {
+                            outer < bx0 || inner >= bx1 || y1 <= by0 || y0 >= by1
+                        } else {
+                            outer < by0 || inner >= by1 || x1 <= bx0 || x0 >= bx1
                         }
-                        _ => {}
+                    };
+                    if let Some((old, _)) = old.filter(|&(_, b)| clear_of(b)) {
+                        for k in old.pair_first[e]..old.pair_first[e + 1] {
+                            let k = 2 * k as usize;
+                            pairs.push((old.node_cell[k], old.node_cell[k + 1]));
+                        }
+                    } else {
+                        let cells = |t: i32| {
+                            if east {
+                                (self.idx(inner, t), self.idx(outer, t))
+                            } else {
+                                (self.idx(t, inner), self.idx(t, outer))
+                            }
+                        };
+                        let mut run = None;
+                        for t in span.start..=span.end {
+                            let both = t < span.end && {
+                                let (a, b) = cells(t);
+                                self.open_cell(a) && self.open_cell(b)
+                            };
+                            match (both, run) {
+                                (true, None) => run = Some(t),
+                                (false, Some(a)) => {
+                                    add_run(&mut pairs, a, t, &cells);
+                                    run = None;
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
+                pair_first.push(pairs.len() as u32);
             }
         }
+        self.pair_first = pair_first;
         let mut partner = Vec::with_capacity(pairs.len() * 2);
         for (k, &(a, b)) in pairs.iter().enumerate() {
             self.node_cell.push(a);
@@ -1586,18 +1937,20 @@ impl Grid {
     /// Link each portal node to its partner across the edge and to every
     /// node it can reach inside its own sector, with the walking cost.
     fn link_portals(&mut self, partner: &[u32], search: &mut Search) {
-        let nodes = self.node_cell.len();
-        let (mut first, mut to, mut cost) = (Vec::with_capacity(nodes + 1), Vec::new(), Vec::new());
+        let costs: Vec<Vec<u32>> = (0..self.sector_first.len() - 1)
+            .map(|sec| self.sector_costs(search, sec))
+            .collect();
+        let place = reblock::places(&self.sector_first, &self.sector_nodes, partner.len());
+        let (mut first, mut to, mut cost) = (
+            Vec::with_capacity(partner.len() + 1),
+            Vec::new(),
+            Vec::new(),
+        );
         first.push(0);
         for (u, &p) in partner.iter().enumerate() {
-            to.push(p);
-            cost.push(self.step_cost(
-                self.node_cell[u],
-                self.node_cell[p as usize],
-                false,
-                GRAPH_BERTH,
-            ));
-            self.link_in_sector(search, u, &mut to, &mut cost);
+            self.link_across(u, p, &mut to, &mut cost);
+            let sec = self.sector_of(self.node_cell[u]) as usize;
+            self.link_within(u, place[u], &costs[sec], &mut to, &mut cost);
             first.push(to.len() as u32);
         }
         self.edge_first = first;
@@ -1605,26 +1958,77 @@ impl Grid {
         self.edge_cost = cost;
     }
 
-    /// Link node `u` to every node it can reach inside its own sector.
-    fn link_in_sector(
+    /// Node `u`'s first link: to its partner `p` across the sector edge.
+    fn link_across(&self, u: usize, p: u32, to: &mut Vec<u32>, cost: &mut Vec<u32>) {
+        to.push(p);
+        cost.push(self.step_cost(
+            self.node_cell[u],
+            self.node_cell[p as usize],
+            false,
+            GRAPH_BERTH,
+        ));
+    }
+
+    /// Node `u`'s links to the other nodes it can reach inside its sector,
+    /// in their order there, from the sector's [`Grid::sector_costs`];
+    /// `place` is `u`'s own place in that order.
+    fn link_within(
         &self,
-        search: &mut Search,
         u: usize,
+        place: u32,
+        costs: &[u32],
         to: &mut Vec<u32>,
         cost: &mut Vec<u32>,
     ) {
-        let cell = self.node_cell[u];
-        let sec = self.sector_of(cell);
-        search.sector(self, sec, cell, None, GRAPH_BERTH);
-        for &v in self.nodes_in(sec as usize) {
-            if v as usize == u {
-                continue;
-            }
-            if let Some(c) = search.cost_to(self, sec, self.node_cell[v as usize]) {
+        let nodes = self.nodes_in(self.sector_of(self.node_cell[u]) as usize);
+        let row = &costs[place as usize * nodes.len()..][..nodes.len()];
+        for (k, (&v, &c)) in nodes.iter().zip(row).enumerate() {
+            if k != place as usize && c != NONE {
                 to.push(v);
                 cost.push(c);
             }
         }
+    }
+
+    /// The walking cost between every two portal nodes of sector `sec`
+    /// inside it (row by row, in the sector's order; [`NONE`] where there
+    /// is no way). A way costs the same both ways, so each node's search
+    /// only looks for the nodes after it, in its own area, and stops once
+    /// it has found them.
+    fn sector_costs(&self, search: &mut Search, sec: usize) -> Vec<u32> {
+        let nodes = self.nodes_in(sec);
+        let n = nodes.len();
+        let mut costs = vec![NONE; n * n];
+        let mut wanted = Vec::with_capacity(n);
+        if n > 1 {
+            search.weigh(self, sec as u32, GRAPH_BERTH);
+        }
+        for (a, &u) in nodes.iter().enumerate() {
+            let cell = self.node_cell[u as usize];
+            let area = self.area[cell as usize];
+            wanted.clear();
+            wanted.extend(
+                nodes[a + 1..]
+                    .iter()
+                    .map(|&v| self.node_cell[v as usize])
+                    .filter(|&c| self.area[c as usize] == area),
+            );
+            if wanted.is_empty() {
+                continue;
+            }
+            search.reach(self, sec as u32, cell, &wanted);
+            for (b, &v) in nodes.iter().enumerate().skip(a + 1) {
+                let to = self.node_cell[v as usize];
+                if self.area[to as usize] != area {
+                    continue;
+                }
+                if let Some(c) = search.cost_to(self, sec as u32, to) {
+                    costs[a * n + b] = c;
+                    costs[b * n + a] = c;
+                }
+            }
+        }
+        costs
     }
 
     /// The portal nodes of sector `s`, in order.

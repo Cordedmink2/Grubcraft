@@ -208,6 +208,30 @@ fn long_winding_routes_arrive() {
 }
 
 #[test]
+fn long_routes_are_walked_without_stopping_for_the_rest() {
+    // The serpentine again: the rest of the route is searched for while
+    // the regiment walks the last stretch of the part it has, so after the
+    // first tick it never stands without a way ahead.
+    let nav = map(64, |x, y| {
+        let band = y / 16;
+        (12..16).contains(&(y % 16)) && if band % 2 == 0 { x < 112 } else { x >= 16 }
+    });
+    let mut w = world_on(64, &nav, &DRILL_UNITS);
+    let r = spawn(&mut w, 0, SKITTERS, 8, 2, SOUTH);
+    move_to(&mut w, 0, r, 8, 57);
+    let mut stood = 0;
+    for _ in 0..20 * 400 {
+        if !w.regiments.get(r).unwrap().moving {
+            break;
+        }
+        stood += usize::from(w.route(r).is_empty());
+        w.tick(&[]);
+    }
+    assert!(!w.regiments.get(r).unwrap().moving);
+    assert_eq!(stood, 0, "ticks standing without a way ahead");
+}
+
+#[test]
 fn regiments_on_blocked_ground_walk_off_it() {
     let nav = map(64, wall_with_gap);
     let mut w = world_on(64, &nav, &DRILL_UNITS);

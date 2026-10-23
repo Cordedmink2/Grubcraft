@@ -170,6 +170,57 @@ fn armies_march_round_a_building() {
 }
 
 #[test]
+fn armies_march_through_the_gaps_between_buildings() {
+    // Farmsteads in a row right across the map, `gap` tiles apart: the
+    // only ways north are the gaps (and the strips by the map's edges),
+    // and a regiment takes the gap nearest it, filing through in a
+    // column, as fast as a straight march would take within a few
+    // seconds.
+    for gap in [1, 2] {
+        let mut w = conquest(64, &[]);
+        let step = 3 + gap;
+        let mut x = 0;
+        while x + 3 <= 64 {
+            put_up(&mut w, 1, FARMSTEAD, x as i16, 30);
+            x += step;
+        }
+        // In front of the gap after the farmstead at 3 * step.
+        let mid = 3 * step + 3;
+        let r = spawn(&mut w, 0, SPEARS, mid, 50, NORTH);
+        move_to(&mut w, 0, r, mid, 12);
+        let (mut ticks, mut arrived, mut narrowest) = (0, false, u16::MAX);
+        for t in 0..60 * TICKS_PER_SECOND {
+            w.tick(&[]);
+            let v = w.regiments.get(r).unwrap();
+            narrowest = narrowest.min(v.files);
+            let mut x = 0;
+            while x + 3 <= 64 {
+                assert!(
+                    !inside(v.position, (x, 30), 3, 3),
+                    "{gap}-tile gaps: walked into a farmstead at {:?}",
+                    v.position
+                );
+                x += step;
+            }
+            if (v.position - FxVec2::from_ints(mid, 12)).length() < Fx::ONE {
+                (ticks, arrived) = (t, true);
+                break;
+            }
+        }
+        assert!(arrived, "{gap}-tile gaps: never got through");
+        // 38 tiles at 3 tiles a second is under 13 seconds.
+        assert!(
+            ticks < 20 * TICKS_PER_SECOND,
+            "{gap}-tile gaps: took {ticks} ticks"
+        );
+        assert!(
+            narrowest <= 2,
+            "{gap}-tile gaps: never narrowed ({narrowest})"
+        );
+    }
+}
+
+#[test]
 fn a_regiment_knocks_a_farmstead_down() {
     let mut w = conquest(64, &[]);
     let farm = put_up(&mut w, 1, FARMSTEAD, 30, 20);
