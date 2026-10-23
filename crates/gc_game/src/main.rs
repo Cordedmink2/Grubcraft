@@ -4215,6 +4215,8 @@ impl Running {
         }
         if let Some(sounds) = &mut self.sounds {
             sounds.reopen_if_lost();
+            // The menu hushes the wind and the fighting.
+            sounds.set_live(self.match_started && !self.menu_open);
         }
         if self.renderer.device_lost() {
             // Quitting saves the battle (`App::exiting`).

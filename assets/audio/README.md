@@ -1,6 +1,6 @@
 # Audio assets
 
-`sounds.gcsnd` is the game's whole sound bank: 27 sound effects (11 synthesised, 16 battle cries layered from recordings) and 2 music loops, compressed as IMA ADPCM (about 620 KB). The game embeds it with `include_bytes!` (`crates/gc_game/src/sounds.rs`).
+`sounds.gcsnd` is the game's whole sound bank: 27 sound effects (11 synthesised, 16 battle cries layered from recordings), 4 ambient beds and 2 music loops, compressed as IMA ADPCM (about 890 KB). The game embeds it with `include_bytes!` (`crates/gc_game/src/sounds.rs`).
 
 ## Where the sounds come from
 
@@ -33,9 +33,17 @@ Commit the rewritten `sounds.gcsnd` and its `sounds.manifest` (baker version, ba
 | `BroodCharge` / `BroodRout` / `BroodRally` / `BroodVictory` | 1.4 / 1.1 / 1.1 / 1.6 s | Brood's voice: a swarm squealing over clicking mandibles and a hiss (charge); a falling shriek (rout); climbing chitter (rally); a shriek over a buzzing roar (champion wins) |
 | `ChoirCharge` / `ChoirRout` / `ChoirRally` / `ChoirVictory` | 1.3 / 1.0 / 1.2 / 1.6 s | Shard Choir's voice: a sung open-fifth chord struck like a shout, glass and bells ringing (charge); a chord that sours and falls (rout); a rising A major chord and a climb of glass notes (rally); a wide bright chord with bells ringing out (champion wins) |
 | `CarrionCharge` / `CarrionRout` / `CarrionRally` / `CarrionVictory` | 1.5 / 1.2 / 1.3 / 1.6 s | Carrion Concord's voice: hollow moans, zombie shouts and a rattle of bone (charge); dying wails and clatter (rout); a long climbing moan (rally); a deep chorus of the grave with bones beating time (champion wins) |
+| `BedWind` | 8 s loop | Ambient bed: a low rush with a breathy upper band, swelling in gusts |
+| `BedWater` | 8 s loop | Ambient bed: a hiss with a chuckling, bubbling band and scattered glugs |
+| `BedWoods` | 8 s loop | Ambient bed: leaves and branches rustling over a faint hush |
+| `BedBattle` | 8 s loop | Ambient bed: the roar of a crowd in four vowel-like bands, surging, with low drum thumps and now and then steel ringing |
 | `UiSelect` / `UiMove` / `UiAttack` | 0.1-0.24 s | Selecting a regiment; a move order; an attack order |
 | `MusicCalm` | 19.2 s loop | Shakuhachi-style flute over a drone, sparse taiko, plucked string (D hirajoshi, 100 bpm) |
 | `MusicBattle` | 19.2 s loop | Taiko on every beat with fills, plucked ostinato, brass pad. Same length as the calm loop; the two play in step and crossfade with battle intensity |
+
+## Ambient beds
+
+The four beds are not one-shots: the mixer plays each continuously at a level, pan and muffling the game sets (`Command::Bed`), gliding to new values so nothing clicks. They are synthesised by `tools/gc_sfx/src/synth.rs` from filtered noise shaped by slow random swells, each built longer than the loop and its tail crossfaded into its head so the join cannot be heard; all four are original work with no licence to track. `crates/gc_game/src/sounds.rs` drives them: the battle roar from the regiments in contact that the player can see, and wind, water and woods from the ground (cover, water line and height) round the camera. Distance also takes the highs off every placed one-shot (`Command::Play` has a `dull` byte).
 
 ## Battle cries
 
