@@ -349,6 +349,20 @@ pub struct HudData<'a> {
     /// Tips on the building being placed or selected (Conquest); `None`
     /// draws nothing.
     pub tips: Option<TipsCard<'a>>,
+    /// The Hand over button (Field Battle and Conquest with allies); `None`
+    /// hides it.
+    pub handover: Option<HandOverButton<'a>>,
+}
+
+/// The top bar's Hand over button: who your army answers to now.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HandOverButton<'a> {
+    /// The button's text: "Hand over", or "With <ally>" while the army is away.
+    pub label: &'a str,
+    /// What a click does next, for the tooltip.
+    pub tip: &'a str,
+    /// Your army is with an ally now.
+    pub lit: bool,
 }
 
 /// The deployment phase, as this player sees it.
@@ -375,6 +389,7 @@ pub(crate) const WIDGET_PLACE_ROW: u32 = 11 << 24;
 pub(crate) const WIDGET_PLACE_SIDE: u32 = 12 << 24;
 const WIDGET_SHAPE: u32 = 13 << 24;
 pub(crate) const WIDGET_TIPS: u32 = 14 << 24;
+const WIDGET_HANDOVER: u32 = 15 << 24;
 
 /// What the mouse did since the last frame, in UI pixels.
 #[derive(Clone, Copy, Debug, Default)]
@@ -438,6 +453,9 @@ pub enum HudEvent {
     /// An army shape chip of the selection panel was clicked (its place in
     /// [`Selection::shapes`]).
     ArmyShape(usize),
+    /// The Hand over button was clicked: pass your army to the next ally, or
+    /// take it back after the last.
+    HandOver,
 }
 
 #[derive(Default)]
@@ -462,6 +480,7 @@ pub struct Hud {
 const TIP_HELP: u32 = 100;
 const TIP_GUIDE: u32 = 101;
 const TIP_PLACE: u32 = 102;
+const TIP_HANDOVER: u32 = 103;
 /// Army shape chips' tooltips use this and their place.
 const TIP_SHAPE: u32 = 110;
 
@@ -826,6 +845,47 @@ impl Hud {
                     key: "B".into(),
                     text: "Choose a troop type and a side, then click the field to put down regiments."
                         .into(),
+                    note: String::new(),
+                });
+            }
+        }
+
+        // Hand over (with allies): just left of Place.
+        if let Some(h) = data.handover {
+            let w = 34 + text_width(h.label, 1);
+            let rect = Rect::new(right - w, chip_y, w, chip_h);
+            right = rect.x - gap;
+            let hot = rect.contains(input.mouse.0, input.mouse.1);
+            let (clicked, down) = self.press.widget(
+                WIDGET_HANDOVER,
+                rect,
+                input.mouse,
+                input.left_pressed,
+                input.left_released,
+            );
+            if clicked {
+                events.push(HudEvent::HandOver);
+            }
+            let fill = match (down, hot || h.lit) {
+                (true, _) => mix(theme::WELD, theme::INK, 0.2),
+                (_, true) => mix(theme::WELD, [255, 240, 190, 255], 0.4),
+                _ => theme::WELD,
+            };
+            draw.boxed(rect, fill, 2);
+            icons::icon(
+                draw,
+                Rect::new(rect.x + 7, rect.y + 6, 12, 12),
+                Icon::Flag,
+                theme::INK,
+            );
+            draw.text_bold(rect.x + 24, text_y, 1, theme::INK, h.label);
+            if hot {
+                self.tip = Some(Tip {
+                    id: TIP_HANDOVER,
+                    anchor: rect,
+                    name: "Hand over".into(),
+                    key: String::new(),
+                    text: h.tip.to_string(),
                     note: String::new(),
                 });
             }
@@ -1715,6 +1775,7 @@ mod tests {
         powers: &'a [PowerButton<'a>],
         picker: Option<PlacePicker<'a>>,
         tips: Option<TipsCard<'a>>,
+        handover: Option<HandOverButton<'a>>,
         selection: Option<Selection<'a>>,
     }
 
@@ -1768,11 +1829,35 @@ mod tests {
             powers: extras.powers,
             picker: extras.picker,
             tips: extras.tips,
+            handover: extras.handover,
         };
         let mut draw = DrawList::default();
         let mut events = Vec::new();
         hud.frame(&mut draw, SCREEN, input, &data, &mut events);
         (events, draw)
+    }
+
+    #[test]
+    fn the_hand_over_button_shows_only_with_allies_and_sends_its_event() {
+        // It sits where Place would, left of the Guide button.
+        let click = HudInput {
+            mouse: (SCREEN.0 - 260 + 10, 12),
+            left_pressed: true,
+            left_released: true,
+            ..HudInput::default()
+        };
+        let with_ally = Extras {
+            handover: Some(HandOverButton {
+                label: "Hand over",
+                tip: "Give your army to an ally.",
+                lit: false,
+            }),
+            ..Extras::default()
+        };
+        let (events, _) = run_with(&mut Hud::default(), click, &[], &[], with_ally);
+        assert_eq!(events, vec![HudEvent::HandOver]);
+        let (events, _) = run_with(&mut Hud::default(), click, &[], &[], Extras::default());
+        assert!(events.is_empty());
     }
 
     #[test]
@@ -1863,6 +1948,7 @@ mod tests {
                 powers: &[],
                 picker: None,
                 tips: None,
+                handover: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             Hud::default().frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -1913,6 +1999,7 @@ mod tests {
                 powers: &[],
                 picker: None,
                 tips: None,
+                handover: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             hud.frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -1993,6 +2080,7 @@ mod tests {
             powers: &[],
             picker: None,
             tips: None,
+            handover: None,
         };
         let l = HudLayout::new(SCREEN);
         let over_panel = (30, l.bar.y - 40);
@@ -2435,6 +2523,7 @@ mod tests {
                     powers: &[],
                     picker: None,
                     tips: None,
+                    handover: None,
                 };
                 let input = HudInput {
                     // The last button, in the bar's bottom-right corner.
@@ -2495,6 +2584,7 @@ mod tests {
                 powers: &[],
                 picker: None,
                 tips: None,
+                handover: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             hud.frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);
@@ -2564,6 +2654,7 @@ mod tests {
             powers: &[],
             picker: None,
             tips: None,
+            handover: None,
         };
         let screen = (1280, 720);
         let (mut draw, mut events) = (DrawList::default(), Vec::new());
@@ -2620,6 +2711,7 @@ mod tests {
             powers: &[],
             picker: None,
             tips: None,
+            handover: None,
         };
         let (mut draw, mut events) = (DrawList::default(), Vec::new());
         Hud::default().frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);
