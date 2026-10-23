@@ -75,6 +75,11 @@ const HIGHLIGHT: f32 = 1.6;
 // Ground occlusion, a texel per tile baked from the heights (look.rs): 1 on
 // open ground, less in valleys and at the foot of slopes.
 @group(0) @binding(11) var ground_occlusion: texture_2d<f32>;
+// Grass001 (layer 0) and Ground054 (layer 1), mipmapped (ground.rs): rgb
+// albedo (sRGB, decoded on read), and the OpenGL tangent-space normals. They
+// share rock_sampler.
+@group(0) @binding(12) var ground_color: texture_2d_array<f32>;
+@group(0) @binding(13) var ground_normal: texture_2d_array<f32>;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -455,6 +460,72 @@ fn rock_surface(p: vec3<f32>, ng: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>) -> 
     return r;
 }
 
+// ---------------------------------------------------------------- ground
+//
+// The painted palette keeps the large-scale colour (the land's grass, the dry
+// ridges, the soil) and the ground textures put the small scale on it, as the
+// rock does: a texture's colour relative to its own mean multiplies the
+// palette, and its normal map tilts the surface. Each repeats every
+// 1 / GROUND_SCALE tiles; a second lookup, turned and stretched, is blended in
+// by a slow noise so the repeat is not seen, the blend keeping the texture's
+// contrast.
+
+const GROUND_SCALE: f32 = 0.25;
+// Linear mean colours of the two albedo maps, to turn them into ratios.
+const GRASS_MEAN: vec3<f32> = vec3<f32>(0.0603, 0.1091, 0.0226);
+const SOIL_MEAN: vec3<f32> = vec3<f32>(0.3331, 0.2588, 0.1562);
+
+struct GroundLayer {
+    ratio: vec3<f32>,
+    // The normal map's x and y (z is world +z in the ground's plane), at 0 for flat.
+    tilt: vec2<f32>,
+};
+
+fn ground_sample(layer: i32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, mean: vec3<f32>) -> GroundLayer {
+    var r: GroundLayer;
+    r.ratio = min(textureSampleGrad(ground_color, rock_sampler, uv, layer, dx, dy).rgb / mean, vec3<f32>(3.0));
+    r.tilt = textureSampleGrad(ground_normal, rock_sampler, uv, layer, dx, dy).xy * 2.0 - 1.0;
+    return r;
+}
+
+// How much of the turned lookup `ground_layer` uses at world position `p`
+// (x, z): a slow noise, exactly 0 or 1 over much of the ground.
+fn ground_blend(p: vec2<f32>) -> f32 {
+    return smoothstep(0.3, 0.7, vnoise(p * 0.045 + vec2<f32>(5.0, 17.0)));
+}
+
+// The second lookup is turned about 52 degrees and stretched 2.7 times.
+const GROUND_TURN: mat2x2<f32> = mat2x2<f32>(0.62, 0.78, -0.78, 0.62);
+const GROUND_STRETCH: f32 = 0.37;
+
+// `p` has screen derivatives `dx` and `dy`; `m` is `ground_blend(p)`.
+fn ground_layer(layer: i32, mean: vec3<f32>, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, m: f32) -> GroundLayer {
+    // Image rows run down and the normal map's green runs up, so v is -z.
+    let flip = vec2<f32>(1.0, -1.0);
+    let uv = p * flip * GROUND_SCALE;
+    let duv_x = dx * flip * GROUND_SCALE;
+    let duv_y = dy * flip * GROUND_SCALE;
+    // Where the blend is 0 or 1 only one lookup is needed.
+    var a = GroundLayer(vec3<f32>(1.0), vec2<f32>(0.0));
+    if m < 1.0 {
+        a = ground_sample(layer, uv, duv_x, duv_y, mean);
+    }
+    var b = GroundLayer(vec3<f32>(1.0), vec2<f32>(0.0));
+    if m > 0.0 {
+        let turn = GROUND_TURN * GROUND_STRETCH;
+        b = ground_sample(layer, turn * uv + vec2<f32>(0.31, 0.57), turn * duv_x, turn * duv_y, mean);
+        // Its tilt turns back with it (in the frame whose v runs up, which
+        // is the turn itself, not its inverse).
+        b.tilt = GROUND_TURN * b.tilt;
+    }
+    // Variance-preserving blend about the mean (1 for colour, 0 for tilt).
+    let k = 1.0 / sqrt((1.0 - m) * (1.0 - m) + m * m);
+    var r: GroundLayer;
+    r.ratio = max(1.0 + (mix(a.ratio, b.ratio, m) - 1.0) * k, vec3<f32>(0.0));
+    r.tilt = mix(a.tilt, b.tilt, m) * k;
+    return r;
+}
+
 @fragment
 fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     // Derivatives first, while control flow is uniform.
@@ -511,8 +582,10 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     }
     let dry = srgb_to_linear(vec3<f32>(0.62, 0.55, 0.33));
     let bone = srgb_to_linear(vec3<f32>(0.85, 0.8, 0.68));
-    var albedo = mix(soil, grass, smoothstep(0.16, 0.26, h));
-    albedo = mix(albedo, dry, smoothstep(0.45, 0.6, h));
+    let grass_in = smoothstep(0.16, 0.26, h);
+    let dry_in = smoothstep(0.45, 0.6, h);
+    var albedo = mix(soil, grass, grass_in);
+    albedo = mix(albedo, dry, dry_in);
     albedo = mix(albedo, bone, smoothstep(0.62, 0.78, h));
     // Large-scale painterly variation so flat areas aren't flat colour.
     let v = vnoise(xz * 0.08) * 0.16 + vnoise(xz * 0.5) * 0.08;
@@ -531,6 +604,33 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     }
     let fringe = smoothstep(0.1, 0.18, slope + jitter) * (1.0 - rock);
     albedo = mix(albedo, soil * (0.75 + 0.5 * vnoise(xz * 2.3)), fringe * 0.7);
+
+    // Grass where the palette is grass, soil elsewhere (dry, bone and the
+    // dirt fringe are soil's), the small scale put on the palette. Fully
+    // rock ground has none of it.
+    var nd = n;
+    if rock < 1.0 {
+        let grassy = grass_in * (1.0 - dry_in) * (1.0 - fringe * 0.7);
+        let m = ground_blend(xz);
+        var detail = GroundLayer(vec3<f32>(1.0), vec2<f32>(0.0));
+        if grassy > 0.02 {
+            detail = ground_layer(0, GRASS_MEAN, xz, dpx.xz, dpy.xz, m);
+        }
+        if grassy < 0.98 {
+            let soil_detail = ground_layer(1, SOIL_MEAN, xz, dpx.xz, dpy.xz, m);
+            detail = GroundLayer(
+                mix(soil_detail.ratio, detail.ratio, grassy),
+                mix(soil_detail.tilt, detail.tilt, grassy),
+            );
+        }
+        // Mostly its light and dark: the texture's own hues would fight the land's tint.
+        let detail_l = dot(detail.ratio, vec3<f32>(0.2126, 0.7152, 0.0722));
+        albedo = albedo * mix(vec3<f32>(detail_l), detail.ratio, 0.35);
+        // The surface, tilted by the ground's normal map (whiteout blend, the
+        // map's plane being the ground's).
+        // Steeper ground takes less of it, so it cannot turn the normal over.
+        nd = normalize(vec3<f32>(n.x + detail.tilt.x * n.y, n.y, n.z + detail.tilt.y * n.y));
+    }
 
     var c: vec3<f32>;
     if rock > 0.0 {
@@ -555,12 +655,12 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         rc = rc * mix(1.0, cavity, 0.6);
         // Dust and soil settle on the ledges.
         rc = mix(rc, soil * 0.9, smoothstep(0.82, 0.95, n.y) * 0.3);
-        let ns = normalize(mix(n, r.n, rock));
+        let ns = normalize(mix(nd, r.n, rock));
         let rough = mix(1.0, max(r.rough, 0.75), rock);
         let ao = mix(1.0, cavity * tall, rock);
         c = shade_material(mix(albedo, rc, rock), ns, in.world, rough, 0.0, ao, vec3<f32>(0.0));
     } else {
-        c = shade(albedo, n, in.world);
+        c = shade(albedo, nd, in.world);
     }
 
     // Valleys and the feet of slopes get less light.

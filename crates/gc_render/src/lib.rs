@@ -11,6 +11,7 @@
 //! surface target and per-frame camera and instance data.
 
 mod debug_font;
+mod ground;
 mod look;
 mod overlay;
 mod post;
@@ -302,6 +303,9 @@ pub struct Renderer {
     /// anisotropic sampler for them.
     rock: rock::RockTextures,
     rock_sampler: wgpu::Sampler,
+    /// The grass and soil the ground is blended from (see ground.rs); it
+    /// shares the rock's sampler.
+    ground: rock::RockTextures,
     /// Bound where the shadow map would be while the shadow map is drawn.
     no_shadow_map: wgpu::TextureView,
     post: post::PostGpu,
@@ -639,6 +643,26 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -764,6 +788,7 @@ impl Renderer {
             ..Default::default()
         });
         let rock = rock::load(&device, &queue);
+        let ground = ground::load(&device, &queue);
         let rock_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("rock"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -814,6 +839,7 @@ impl Renderer {
             adapter_info.transient_saves_memory == Some(true),
         );
         let static_gpu_bytes = rock.bytes
+            + ground.bytes
             + 2 * size_of::<Globals>() as u64
             + u64::from(shadow_side)
                 * u64::from(shadow_side)
@@ -846,6 +872,7 @@ impl Renderer {
             soft_sampler,
             rock,
             rock_sampler,
+            ground,
             no_shadow_map,
             post,
             post_targets,
@@ -1214,6 +1241,14 @@ impl Renderer {
                     wgpu::BindGroupEntry {
                         binding: 11,
                         resource: wgpu::BindingResource::TextureView(&occlusion_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 12,
+                        resource: wgpu::BindingResource::TextureView(&self.ground.color),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 13,
+                        resource: wgpu::BindingResource::TextureView(&self.ground.normal),
                     },
                 ],
             })
