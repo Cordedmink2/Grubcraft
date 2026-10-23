@@ -56,7 +56,12 @@ fn downsample(uv: vec2<f32>) -> vec3<f32> {
 // The first step down keeps only light above the threshold.
 @fragment
 fn fs_bloom_prefilter(in: Fullscreen) -> @location(0) vec4<f32> {
-    let c = downsample(in.uv);
+    var c = downsample(in.uv);
+    // A pixel that came out not-a-number or infinite must not spread over
+    // the screen through the blur.
+    if any(c != c) || any(abs(c) > vec3<f32>(1e6)) {
+        c = vec3<f32>(0.0);
+    }
     let bright = max(c.r, max(c.g, c.b));
     var soft = clamp(bright - THRESHOLD + KNEE, 0.0, 2.0 * KNEE);
     soft = soft * soft / (4.0 * KNEE + 1e-4);

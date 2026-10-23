@@ -513,6 +513,38 @@ impl Effects {
         }
     }
 
+    /// Specks of pollen and dust hanging in the light over a disc of
+    /// `radius` round `centre` (a place on the map, with `ground` giving the
+    /// height of the land), `amount` of them: warm, tiny, drifting up
+    /// and with the wind for several seconds, each flickering as it turns
+    /// to the sun. They make the air visible when the camera is low.
+    pub fn light_motes(
+        &mut self,
+        centre: Vec2,
+        radius: f32,
+        amount: f32,
+        ground: impl Fn(Vec2) -> f32,
+    ) {
+        for _ in 0..self.count(amount) {
+            let at = centre + self.rng.disc() * radius;
+            self.out.push(Particle {
+                pos: Vec3::new(at.x, ground(at) + self.rng.between(0.1, 1.8), at.y),
+                vel: Vec3::new(
+                    self.rng.between(-0.08, 0.08),
+                    self.rng.between(0.02, 0.12),
+                    self.rng.between(-0.08, 0.08),
+                ),
+                life: self.rng.between(5.0, 8.0),
+                size: [0.09, 0.06],
+                drag: 0.8,
+                shape: Shape::Glow,
+                flags: flags::ADDITIVE | flags::FLICKER | flags::WIND,
+                seed: self.rng.byte(),
+                ..fading([255, 228, 170], 230)
+            });
+        }
+    }
+
     /// What a blow throws up at `pos`, flying along `dir`: sparks when it
     /// rang on armour (`armoured`), then the faction's wound. `power` is 1
     /// for an ordinary blow, more for a crushing one.
@@ -573,6 +605,7 @@ mod tests {
         fx.spray(p, Vec3::X, [150, 20, 20], 10.0);
         fx.shards(p, Vec3::X, 10.0);
         fx.motes(p, 1.0, [150, 230, 230], 10.0);
+        fx.light_motes(Vec2::new(10.0, 10.0), 5.0, 10.0, |_| 2.0);
         for style in [
             HitStyle::Flesh,
             HitStyle::Ichor,

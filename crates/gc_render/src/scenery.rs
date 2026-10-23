@@ -115,7 +115,7 @@ pub(crate) struct SceneryGpu {
 pub(crate) fn make(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
-    format: wgpu::TextureFormat,
+    hdr: crate::Hdr,
 ) -> SceneryGpu {
     let source = shader_source();
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -152,7 +152,7 @@ pub(crate) fn make(
                 ..Default::default()
             },
             depth_stencil: Some(target.depth_state()),
-            multisample: Default::default(),
+            multisample: target.multisample(),
             fragment: fs.map(|fs| wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some(fs),
@@ -164,7 +164,7 @@ pub(crate) fn make(
         })
     };
     SceneryGpu {
-        pipeline: pipeline("scenery", "vs_scenery", Target::Color(format, "fs_scenery")),
+        pipeline: pipeline("scenery", "vs_scenery", Target::Color(hdr, "fs_scenery")),
         shadow_pipeline: pipeline("scenery shadow", "vs_scenery_depth", Target::Shadow),
         instances: device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("scenery instances"),

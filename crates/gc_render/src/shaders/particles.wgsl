@@ -135,8 +135,7 @@ fn vs_particle(p: FxIn) -> FxOut {
         alpha *= 0.8 + 0.2 * sin(g.misc.z * (11.0 + seed * 0.05) + seed * 1.7);
     }
     // Out of sight in the fog of war: hidden where the viewer cannot see.
-    let size = vec2<f32>(textureDimensions(fog_map));
-    let seen = textureSampleLevel(fog_map, soft_sampler, world.xz / size, 0.0).r;
+    let seen = seen_at(world.xz);
     alpha *= smoothstep(0.55, 0.9, seen);
     let rgb = srgb_to_linear(col.rgb) * (0.1 + 0.9 * seen);
     out.color = vec4<f32>(rgb, alpha);
@@ -153,7 +152,7 @@ fn vs_particle(p: FxIn) -> FxOut {
     );
     // Added light is not shaded.
     if (flags & FX_ADDITIVE) == 0u {
-        out.sun = g.sun_color.rgb * sunlight(world, vec3<f32>(0.0, 1.0, 0.0));
+        out.sun = g.sun_color.rgb * sunlight_soft(world, vec3<f32>(0.0, 1.0, 0.0));
         out.amb = ambient_light(vec3<f32>(0.0, 0.5, 0.0));
     }
 

@@ -380,7 +380,7 @@ pub(crate) fn make(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     world_layout: &wgpu::BindGroupLayout,
-    format: wgpu::TextureFormat,
+    hdr: crate::Hdr,
 ) -> ParticlesGpu {
     let levels = atlas();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -511,13 +511,13 @@ pub(crate) fn make(
             stencil: Default::default(),
             bias: Default::default(),
         }),
-        multisample: Default::default(),
+        multisample: hdr.multisample(),
         fragment: Some(wgpu::FragmentState {
             module: &shader,
             entry_point: Some("fs_particle"),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
-                format,
+                format: hdr.format,
                 blend: Some(wgpu::BlendState {
                     color: premultiplied,
                     alpha: premultiplied,

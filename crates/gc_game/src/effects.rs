@@ -13,6 +13,13 @@ use crate::fx_demo::{Demo, Mode};
 /// walk, more at a run.
 const FOOTSTEP_RATE: f32 = 0.25;
 const FOOTSTEP_RATE_PER_SPEED: f32 = 0.3;
+/// Light motes show when the camera is nearer than this many tiles, fading
+/// in from `MOTES_FAR`, at this many a second for each tile of ground.
+const MOTES_NEAR: f32 = 25.0;
+const MOTES_FAR: f32 = 60.0;
+const MOTES_RATE: f32 = 0.04;
+/// The most a second, wherever the camera is.
+const MOTES_MOST: f32 = 40.0;
 /// The colour of clods thrown up from the ground.
 const CLOD: [u8; 3] = [92, 74, 52];
 
@@ -76,23 +83,76 @@ impl Field {
         self.fx.debris(pos, CLOD, clods, power);
     }
 
+    /// Light motes over the ground the camera looks at (`distance` is how
+    /// far it is from it), when it is close enough to see them.
+    fn ambient(&mut self, dt: f32, focus: Vec2, distance: f32, ground: &impl Fn(Vec2) -> f32) {
+        let near = 1.0 - ((distance - MOTES_NEAR) / (MOTES_FAR - MOTES_NEAR)).clamp(0.0, 1.0);
+        if near <= 0.0 {
+            return;
+        }
+        let radius = distance * 0.45;
+        let rate = (MOTES_RATE * std::f32::consts::PI * radius * radius * near).min(MOTES_MOST);
+        self.fx
+            .light_motes(focus, radius, rate * dt.min(0.25), ground);
+    }
+
     /// Everything collected this frame, ready for
     /// `Renderer::spawn_particles`. `dt` is the effects time since the last
     /// frame (the frame time, scaled by game speed and `time_scale`), `focus`
-    /// the camera's focus (where the demo plays), `ground` the terrain
-    /// height, and `density` how much to spawn (the Graphics preset's
-    /// choice).
+    /// the camera's focus (where the demo plays) and `distance` how far the
+    /// camera is from it, `ground` the terrain height, and `density` how
+    /// much to spawn (the Graphics preset's choice).
     pub fn frame(
         &mut self,
         dt: f32,
         density: f32,
         focus: Vec2,
+        distance: f32,
         ground: impl Fn(Vec2) -> f32,
     ) -> Vec<Particle> {
         self.fx.set_density(density);
+        self.ambient(dt, focus, distance, &ground);
         if let Some(demo) = &mut self.demo {
             demo.play(&mut self.fx, dt, focus, &ground);
         }
         self.fx.take()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn motes(distance: f32) -> usize {
+        let mut field = Field::new(None);
+        // A second of effects time, in frames.
+        (0..60)
+            .map(|_| {
+                field
+                    .frame(1.0 / 60.0, 1.0, Vec2::new(50.0, 50.0), distance, |_| 3.0)
+                    .len()
+            })
+            .sum()
+    }
+
+    #[test]
+    fn light_motes_hang_in_the_air_near_a_close_camera() {
+        assert!(motes(25.0) > 0);
+        assert!(motes(40.0) > 0);
+    }
+
+    #[test]
+    fn a_far_camera_makes_none() {
+        assert_eq!(motes(MOTES_FAR), 0);
+        assert_eq!(motes(150.0), 0);
+    }
+
+    #[test]
+    fn a_slow_frame_makes_no_more_than_a_quarter_second_of_motes() {
+        let mut field = Field::new(None);
+        let n = field
+            .frame(30.0, 1.0, Vec2::new(50.0, 50.0), 25.0, |_| 0.0)
+            .len();
+        assert!(n as f32 <= MOTES_MOST * 0.25 + 1.0);
     }
 }

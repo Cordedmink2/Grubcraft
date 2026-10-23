@@ -7,12 +7,12 @@ Players judge a scene by how the light behaves long before they count polygons. 
 ## The stages
 
 1. **Light and Air (built, 2026-10-23).** See [Built: stage 1](#built-stage-1).
-2. **Clean edges.** Anti-aliasing, better soft shadows, contact shadows under soldiers, water that reflects the sky; hit flash, trampled ground and light motes.
+2. **Clean edges (built, 2026-10-24, except two items).** See [Built: stage 2](#built-stage-2). Anti-aliasing, softer sun shadows, contact shadows under soldiers, water that reflects the sky, and light motes. Hit flash belongs to [28 · Every Soldier Fights](28-soldier-combat.md) (it is a soldier's own moment) and trampled ground to [27 · Living Land](27-living-land.md) and the living-ground work (it is ground that remembers), so neither is built here.
 3. **Dust and Smoke (built, 2026-10-23).** See [Built: stage 3](#built-stage-3). One GPU particle system with a shared atlas: dust trails, hit sparks, Brood ichor, Choir crystal shards, Concord ghost-light motes, smoke, fire, embers, debris. [26 · Fortifications](26-fortifications.md) stage 7 and several other threads use it, so it comes first in wave 2.
 4. **Camera craft.** Switchable tilt-shift depth of field, sun shafts for the ride camera, charge shake, battle-start letterbox and slow motion, the director camera and replay films.
 5. **Weather and night.** Rain, snow, river fog banks at dawn; night maps lit by torches and Grub.
 
-Stages 4 and 5 are not built, and stage 2 is partly built (the camera tilt and backlit foliage came with stage 1; clean edges, hit flash, trampled ground and light motes follow). Not on the list on purpose: ray tracing, screen-space reflections, volumetric fog volumes, temporal anti-aliasing (it smears hundreds of thin spears) and real-time global illumination; each costs a lot on a Mac for little gain in a top-down game.
+Stages 4 and 5 are not built (the camera tilt and backlit foliage came with stage 1). Not on the list on purpose: ray tracing, screen-space reflections, volumetric fog volumes, temporal anti-aliasing (it smears hundreds of thin spears) and real-time global illumination; each costs a lot on a Mac for little gain in a top-down game.
 
 ## Built: stage 1
 
@@ -43,6 +43,17 @@ The light is one `Look` (`gc_render/src/look.rs`): plain numbers for the sun's d
 
 **Cost.** No new full-screen pass: the sky is a triangle inside the world pass and everything else is folded into the world and composite shaders that already ran. The bloom is a little stronger than before to suit the new curve. Memory: the occlusion texture (up to 0.6 MB) and a 48-byte grade buffer.
 
+## Built: stage 2
+
+- **Anti-aliasing.** The world pass draws the HDR image with four samples a pixel and resolves it, so the edges of spears, tree crowns, roofs and rocks are clean and thin shapes do not shimmer as the camera moves. Every world pipeline (terrain, scenery, soldiers, boxes, sky, particles) takes the sample count; the shadow map and the screen pass stay at one. On a Mac the multisampled colour and depth are transient (they live in the GPU's tile memory, zero bytes of RAM) and only the resolved image is kept; elsewhere they cost 4 × the frame's pixels × (4 + 4) bytes. Where the GPU cannot draw the HDR format multisampled the renderer falls back to no anti-aliasing. `--no-aa` turns it off (`RendererOptions::msaa`, 4 or 1); it is not yet a Graphics preset, because the presets are read after the renderer starts. Every lit varying in the world shaders is `centroid`-interpolated: without that, a pixel on the edge of a thin triangle (a blade of grass) is shaded outside the triangle, comes out as not-a-number, and the glow spreads it over the screen.
+- **Softer sun shadows.** The shadow lookup takes eight filtered taps on a fixed spiral over a disc 1.6 texels across, in place of four (`sunlight` in `world.wgsl`, `SHADOW_SOFTNESS`); the pattern is fixed so moving shadows do not crawl. Glows and particles, which only tint, take one tap (`sunlight_soft`).
+- **Contact shadows.** A soft dark patch on the ground under every soldier (`vs_contact` and `fs_contact`, one four-vertex strip per soldier from the soldier instance buffer, drawn after the soldiers, so they hide it). It works in any light, including the overcast and storm looks where the sun's shadows are faint, and under the feet where the shadow map is too coarse. It follows the ground height and fades with height lifted, with distance in the air and where fog of war hides the ground. Only soldiers drawn at the two finest levels of detail get one (farther off it is a pixel). Size `CONTACT_RADIUS` (0.34 tile at scale 1), strength `CONTACT_DARK`.
+- **Water that mirrors the sky.** The surface has gentle ripples that drift (`water_normal`), mirrors the sky colour more the lower the camera looks (Schlick-like, at least 10%), and catches the sun in glints that the glow blooms (`sky_color`, shared with the sky pass).
+- **Light motes.** Specks of pollen and dust hanging in the light near a close camera: warm, tiny, additive, drifting up and with the wind for 5 to 8 seconds (`Effects::light_motes`, raised in `gc_game/src/effects.rs`). They show below 25 tiles of camera distance and fade out by 60 (and in the ride camera, a little ahead of the rider), each following the land's height, at most 40 a second, thin with the Graphics preset like every effect, and are never made while the game is paused.
+- **Dev flag** `--distance 14..260` starts a match with the camera that far from the ground, for close-up screenshots.
+
+**Not measured:** cost and looks on a real Mac. By estimate the anti-aliasing is nearly free on Apple GPUs (tile memory, resolved on chip), contact shadows add one tiny quad per soldier (30,000 soldiers, about 0.1 ms), and the eight-tap shadow filter doubles the shadow lookups (which also run per particle vertex). `--no-aa` and `--no-shadows` measure them. Known limits: the resolve averages the HDR values before tone mapping, so very bright glints can still shimmer a little at their edge; no soft contact shadow under buildings, rocks or trees.
+
 ## Built: stage 3
 
 One particle system for every effect, in `gc_render` (`particles.rs`, `effects.rs`, `shaders/particles.wgsl`). Render only: nothing here touches the simulation, and the game never makes an effect for something the viewer cannot see.
@@ -61,7 +72,7 @@ One particle system for every effect, in `gc_render` (`particles.rs`, `effects.r
 
 ## Next in stage 1's family
 
-Not yet built, planned for the following pull request: the game choosing a look from a map's lands (dusty amber haze over the Waste, humid green mist in the Fen, cold clear air on the Highland, golden hour as the default) and a lobby "Time of day" option, a live tuning panel for tuning on the Mac, and a "Clarity" setting that turns off the vignette, grain and heavy grading for competitive play. Readability comes first: team colours, selection rings and fog of war are checked under every look.
+Not yet built, planned for the pull request after stage 2: the game choosing a look from a map's lands (dusty amber haze over the Waste, humid green mist in the Fen, cold clear air on the Highland, golden hour as the default) and a lobby "Time of day" option, a live tuning panel for tuning on the Mac, and a "Clarity" setting that turns off the vignette, grain and heavy grading for competitive play. Readability comes first: team colours, selection rings and fog of war are checked under every look.
 
 ## Overlaps with other plans
 

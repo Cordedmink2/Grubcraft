@@ -159,6 +159,9 @@ pub struct RendererOptions {
     pub shadows: bool,
     /// Bright light glows (a chain of half-size images every frame).
     pub glow: bool,
+    /// Samples a pixel for anti-aliasing: 4, or 1 for none. Falls back to 1
+    /// where the GPU cannot draw the HDR image multisampled.
+    pub msaa: u32,
 }
 
 impl Default for RendererOptions {
@@ -170,6 +173,7 @@ impl Default for RendererOptions {
             draw_blocks: true,
             shadows: true,
             glow: true,
+            msaa: 4,
         }
     }
 }
@@ -302,8 +306,9 @@ pub struct Renderer {
     options: RendererOptions,
     /// How far from the camera the shadow map reaches, in tiles.
     shadow_range: f32,
-    depth_view: wgpu::TextureView,
-    depth_bytes: u64,
+    /// The depth buffer and, with anti-aliasing, the multisampled colour.
+    world_targets: WorldTargets,
+    hdr_target: Hdr,
     globals: wgpu::Buffer,
     /// `Globals` as the sun sees the map, for the shadow pass.
     shadow_globals: wgpu::Buffer,
@@ -739,6 +744,21 @@ impl Renderer {
         } else {
             wgpu::TextureFormat::Rgba16Float
         };
+        // Anti-aliasing needs the HDR image drawn multisampled and resolved.
+        let samples = {
+            let f = adapter.get_texture_format_features(hdr_format);
+            let ok = options.msaa >= 4
+                && f.flags.sample_count_supported(4)
+                && f.flags
+                    .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE)
+                && f.allowed_usages
+                    .contains(wgpu::TextureUsages::RENDER_ATTACHMENT);
+            if ok { 4 } else { 1 }
+        };
+        let hdr_target = Hdr {
+            format: hdr_format,
+            samples,
+        };
         let terrain = |color| {
             make_pipeline(
                 &device,
@@ -754,7 +774,7 @@ impl Renderer {
                 },
             )
         };
-        let terrain_pipeline = terrain(Target::Color(hdr_format, "fs_terrain"));
+        let terrain_pipeline = terrain(Target::Color(hdr_target, "fs_terrain"));
         let terrain_shadow_pipeline = terrain(Target::Shadow);
         let block = |color, entry| {
             make_pipeline(
@@ -774,7 +794,7 @@ impl Renderer {
                 },
             )
         };
-        let block_pipeline = block(Target::Color(hdr_format, "fs_block"), "vs_block");
+        let block_pipeline = block(Target::Color(hdr_target, "fs_block"), "vs_block");
         let block_shadow_pipeline = block(Target::Shadow, "vs_block_shadow");
         // The sky: one triangle at the far plane, drawn after everything else.
         let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -794,7 +814,7 @@ impl Renderer {
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
-            multisample: Default::default(),
+            multisample: hdr_target.multisample(),
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_sky"),
@@ -809,9 +829,9 @@ impl Renderer {
             cache: None,
         });
 
-        let soldiers = soldiers::make(&device, &bind_group_layout, &shader, hdr_format);
-        let scenery = scenery::make(&device, &layout, hdr_format);
-        let particles = particles::make(&device, &queue, &bind_group_layout, hdr_format);
+        let soldiers = soldiers::make(&device, &bind_group_layout, &layout, &shader, hdr_target);
+        let scenery = scenery::make(&device, &layout, hdr_target);
+        let particles = particles::make(&device, &queue, &bind_group_layout, hdr_target);
         let shadow_texture = |label, side| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
@@ -894,9 +914,10 @@ impl Renderer {
         let overlay = make_overlay(&device, &queue, format, MAX_OVERLAY_CHARS);
         let ui = make_overlay(&device, &queue, format, MAX_UI_QUADS);
         let adapter_info = adapter.get_info();
-        let (depth_view, depth_bytes) = make_depth(
+        let world_targets = make_world_targets(
             &device,
             &config,
+            hdr_target,
             adapter_info.transient_saves_memory == Some(true),
         );
         let static_gpu_bytes = rock.bytes
@@ -920,8 +941,8 @@ impl Renderer {
             config,
             options,
             shadow_range: shadows::SHADOW_RANGE,
-            depth_view,
-            depth_bytes,
+            world_targets,
+            hdr_target,
             globals,
             shadow_globals,
             bind_group_layout,
@@ -1050,7 +1071,7 @@ impl Renderer {
     pub fn gpu_bytes(&self) -> u64 {
         self.static_gpu_bytes
             + self.terrain_gpu_bytes
-            + self.depth_bytes
+            + self.world_targets.bytes
             + self.post_targets.gpu_bytes
             + self.overlay.gpu_bytes
             + self.ui.gpu_bytes
@@ -1147,13 +1168,12 @@ impl Renderer {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
-        let (view, bytes) = make_depth(
+        self.world_targets = make_world_targets(
             &self.device,
             &self.config,
+            self.hdr_target,
             self.adapter_info.transient_saves_memory == Some(true),
         );
-        self.depth_view = view;
-        self.depth_bytes = bytes;
         self.post_targets = self.post.targets(&self.device, width, height);
     }
 
@@ -1761,12 +1781,19 @@ impl Renderer {
             draw_calls += draw_boxes(&mut pass, &self.block_shadow_pipeline);
         }
         if !bare {
+            // Multisampled, then averaged down into the HDR image, which is
+            // all that is kept; or straight into the HDR image.
+            let hdr = &self.post_targets.hdr;
+            let (view, resolve_target, store) = match &self.world_targets.color {
+                Some(multisampled) => (multisampled, Some(hdr), wgpu::StoreOp::Discard),
+                None => (hdr, None, wgpu::StoreOp::Store),
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("world"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.post_targets.hdr,
+                    view,
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: f64::from(fog_color[0]),
@@ -1774,11 +1801,11 @@ impl Renderer {
                             b: f64::from(fog_color[2]),
                             a: 1.0,
                         }),
-                        store: wgpu::StoreOp::Store,
+                        store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
+                    view: &self.world_targets.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Discard,
@@ -1803,6 +1830,7 @@ impl Renderer {
             soldiers_drawn = drawn;
             triangles = tris + scenery_tris;
             draw_calls += draw_boxes(&mut pass, &self.block_pipeline);
+            draw_calls += self.soldiers.draw_contacts(&mut pass);
             // The sky last, at the far plane: only pixels nothing covered.
             pass.set_pipeline(&self.sky_pipeline);
             pass.draw(0..3, 0..1);
@@ -1882,11 +1910,28 @@ fn scaled(width: u32, height: u32, scale: f32) -> (u32, u32) {
     (s(width), s(height))
 }
 
+/// The HDR image the world pass draws into: its format, and the samples a
+/// pixel takes (1, or 4 with anti-aliasing).
+#[derive(Clone, Copy)]
+pub(crate) struct Hdr {
+    pub format: wgpu::TextureFormat,
+    pub samples: u32,
+}
+
+impl Hdr {
+    pub(crate) fn multisample(self) -> wgpu::MultisampleState {
+        wgpu::MultisampleState {
+            count: self.samples,
+            ..Default::default()
+        }
+    }
+}
+
 /// What a world pipeline draws into.
 #[derive(Clone, Copy)]
 pub(crate) enum Target<'a> {
-    /// The HDR image (in this format), with this fragment entry point.
-    Color(wgpu::TextureFormat, &'a str),
+    /// The HDR image, with this fragment entry point.
+    Color(Hdr, &'a str),
     /// The sun's shadow map: depth only, pushed away from the sun.
     Shadow,
 }
@@ -1907,12 +1952,19 @@ impl<'a> Target<'a> {
         }
     }
 
+    pub(crate) fn multisample(self) -> wgpu::MultisampleState {
+        match self {
+            Target::Color(hdr, _) => hdr.multisample(),
+            Target::Shadow => Default::default(),
+        }
+    }
+
     /// The colour target (none for the shadow map) and fragment entry point.
     pub(crate) fn color(self) -> ([Option<wgpu::ColorTargetState>; 1], Option<&'a str>) {
         match self {
-            Target::Color(format, fs) => (
+            Target::Color(hdr, fs) => (
                 [Some(wgpu::ColorTargetState {
-                    format,
+                    format: hdr.format,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -1948,7 +2000,7 @@ fn make_pipeline(
             ..Default::default()
         },
         depth_stencil: Some(target.depth_state()),
-        multisample: Default::default(),
+        multisample: target.multisample(),
         fragment: fs.map(|fs| wgpu::FragmentState {
             module: shader,
             entry_point: Some(fs),
@@ -2110,36 +2162,63 @@ fn make_overlay(
     }
 }
 
-fn make_depth(
+/// What the world pass draws into besides the HDR image.
+struct WorldTargets {
+    depth: wgpu::TextureView,
+    /// The multisampled image resolved into the HDR image; none without
+    /// anti-aliasing.
+    color: Option<wgpu::TextureView>,
+    bytes: u64,
+}
+
+fn make_world_targets(
     device: &wgpu::Device,
     config: &wgpu::SurfaceConfiguration,
+    hdr: Hdr,
     transient_saves_memory: bool,
-) -> (wgpu::TextureView, u64) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("depth"),
-        size: wgpu::Extent3d {
-            width: config.width,
-            height: config.height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: DEPTH_FORMAT,
-        // Cleared and discarded every pass, so on Apple GPUs it can live in
-        // on-chip tile memory only (zero bytes of RAM). A no-op elsewhere.
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TRANSIENT_ATTACHMENT,
-        view_formats: &[],
-    });
-    let bytes = if transient_saves_memory {
-        0
-    } else {
-        u64::from(config.width) * u64::from(config.height) * 4
+) -> WorldTargets {
+    let image = |label, format: wgpu::TextureFormat| {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: hdr.samples,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            // Cleared and discarded every pass (the colour after it is
+            // resolved), so on Apple GPUs they can live in on-chip tile
+            // memory only (zero bytes of RAM). A no-op elsewhere.
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TRANSIENT_ATTACHMENT,
+            view_formats: &[],
+        });
+        let texel = u64::from(format.block_copy_size(None).unwrap_or(4));
+        let bytes = if transient_saves_memory {
+            0
+        } else {
+            u64::from(config.width) * u64::from(config.height) * u64::from(hdr.samples) * texel
+        };
+        (
+            texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            bytes,
+        )
     };
-    (
-        texture.create_view(&wgpu::TextureViewDescriptor::default()),
-        bytes,
-    )
+    let (depth, depth_bytes) = image("depth", DEPTH_FORMAT);
+    let (color, color_bytes) = if hdr.samples > 1 {
+        let (view, bytes) = image("multisampled hdr", hdr.format);
+        (Some(view), bytes)
+    } else {
+        (None, 0)
+    };
+    WorldTargets {
+        depth,
+        color,
+        bytes: depth_bytes + color_bytes,
+    }
 }
 
 /// Triangle-list indices for a `quads × quads` grid of `(quads+1)²` vertices.

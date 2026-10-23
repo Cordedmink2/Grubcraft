@@ -45,6 +45,12 @@ struct Globals {
     sky_horizon: vec4<f32>,
 };
 
+// Every lit varying a fragment shader reads is `@interpolate(perspective,
+// centroid)` (flat ones aside). With multisampling a pixel on the edge of a
+// thin triangle is otherwise shaded at a point outside it, where a normal or
+// a position can be extrapolated to nonsense or not-a-number, and the glow
+// would spread that over the screen. Keep to this for any new varying.
+
 // The prevailing wind blows toward this direction (x east, y south).
 const WIND_DIR = vec2<f32>(0.8, 0.6);
 
@@ -110,11 +116,32 @@ fn height_at(xz: vec2<f32>) -> f32 {
     return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
 }
 
+// The height of the ripples at `q`: two layers of noise drifting apart.
+fn ripple(q: vec2<f32>, t: f32) -> f32 {
+    return vnoise(q) + 0.5 * vnoise(q * 2.3 - vec2<f32>(t * 0.5, 0.0));
+}
+
+// The surface of water at `xz`: gentle ripples drifting with time, flatter
+// the farther away (`calm` is 1 up close, toward 0 far off).
+fn water_normal(xz: vec2<f32>, t: f32, calm: f32) -> vec3<f32> {
+    let e = 0.15;
+    let q = xz * 2.2 + vec2<f32>(t * 0.35, t * 0.21);
+    let h = ripple(q, t);
+    let hx = ripple(q + vec2<f32>(e, 0.0), t);
+    let hz = ripple(q + vec2<f32>(0.0, e), t);
+    let slope = vec2<f32>(hx - h, hz - h) / e * 0.09 * calm;
+    return normalize(vec3<f32>(-slope.x, 1.0, -slope.y));
+}
+
 // Dim and drain the colour of ground out of sight. Tile (i, j) is the texel
 // at (i, j), so a position in tiles divided by the map size is its uv.
-fn veil(c: vec3<f32>, xz: vec2<f32>) -> vec3<f32> {
+fn seen_at(xz: vec2<f32>) -> f32 {
     let size = vec2<f32>(textureDimensions(fog_map));
-    let seen = textureSampleLevel(fog_map, soft_sampler, xz / size, 0.0).r;
+    return textureSampleLevel(fog_map, soft_sampler, xz / size, 0.0).r;
+}
+
+fn veil(c: vec3<f32>, xz: vec2<f32>) -> vec3<f32> {
+    let seen = seen_at(xz);
     let out = clamp((1.0 - seen) / 0.8, 0.0, 1.0);
     let grey = vec3<f32>(dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)));
     return mix(c, grey, out * 0.5) * (0.1 + 0.9 * seen);
@@ -191,10 +218,10 @@ fn rim(n: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
     return (g.sun_color.rgb * back * 0.6 + g.sky_ambient.rgb) * f * g.sky_ambient.a;
 }
 
-// How much sunlight reaches a surface: 0 in shadow, 1 in full sun. Four
+// How much sunlight reaches a surface: 0 in shadow, 1 in full sun. Eight
 // filtered taps soften the edge over about three shadow texels, and the
 // shadow fades out at the edge of the area the map covers.
-fn sunlight(world: vec3<f32>, n: vec3<f32>) -> f32 {
+fn sunlight_taps(world: vec3<f32>, n: vec3<f32>, taps: u32) -> f32 {
     if g.shadow.y < 0.5 {
         return clouds(world.xz);
     }
@@ -204,13 +231,44 @@ fn sunlight(world: vec3<f32>, n: vec3<f32>) -> f32 {
         return clouds(world.xz);
     }
     let uv = c.xy * vec2<f32>(0.5, -0.5) + 0.5;
-    let t = 0.5 / f32(textureDimensions(shadow_map).x);
+    // Eight filtered taps spread over a disc about three texels across
+    // give a soft edge (a fixed pattern, so a moving shadow does not
+    // crawl). Light that only tints (a glow, a particle) takes the one tap
+    // in the middle.
     var lit = 0.0;
-    for (var i = 0u; i < 4u; i++) {
-        let o = vec2<f32>(select(-t, t, (i & 1u) == 1u), select(-t, t, i >= 2u));
-        lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + o, c.z);
+    if taps == 1u {
+        lit = textureSampleCompareLevel(shadow_map, shadow_sampler, uv, c.z);
+    } else {
+        let reach = SHADOW_SOFTNESS / f32(textureDimensions(shadow_map).x);
+        for (var i = 0u; i < 8u; i++) {
+            lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + SHADOW_SPIRAL[i] * reach, c.z);
+        }
+        lit *= 0.125;
     }
-    return mix(lit * 0.25, 1.0, smoothstep(g.shadow.z, 1.0, edge)) * clouds(world.xz);
+    return mix(lit, 1.0, smoothstep(g.shadow.z, 1.0, edge)) * clouds(world.xz);
+}
+
+// The radius of the shadow's soft edge, in shadow-map texels, and eight
+// points spread evenly over the unit disc (a sunflower spiral).
+const SHADOW_SOFTNESS: f32 = 1.6;
+const SHADOW_SPIRAL = array<vec2<f32>, 8>(
+    vec2<f32>(0.2500, 0.0000),
+    vec2<f32>(-0.3193, 0.2925),
+    vec2<f32>(0.0489, -0.5569),
+    vec2<f32>(0.4024, 0.5249),
+    vec2<f32>(-0.7385, -0.1306),
+    vec2<f32>(0.6996, -0.4450),
+    vec2<f32>(-0.2340, 0.8705),
+    vec2<f32>(-0.4463, -0.8593)
+);
+
+// Sunlight with the full soft edge, and with one filtered tap.
+fn sunlight(world: vec3<f32>, n: vec3<f32>) -> f32 {
+    return sunlight_taps(world, n, 8u);
+}
+
+fn sunlight_soft(world: vec3<f32>, n: vec3<f32>) -> f32 {
+    return sunlight_taps(world, n, 1u);
 }
 
 // Direct sunlight on a surface facing `n`: the cosine term, shadowed.
@@ -891,12 +949,23 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     let unfogged = 1.0 - air_amount(in.world, distance(in.world, g.camera_pos.xyz));
     c = c * mix(1.0, skyward, g.air.y * unfogged);
 
-    // Water below the water level: deep teal with a soft shoreline.
+    // Water below the water level: deep teal with a soft shoreline, a
+    // rippled surface that mirrors the sky (more the lower you look) and
+    // glints where it catches the sun.
     let depth = g.misc.x - ground;
     if depth > 0.0 {
         let water = srgb_to_linear(vec3<f32>(0.16, 0.36, 0.4));
-        let wn = vec3<f32>(0.0, 1.0, 0.0);
-        let wc = shade(water, wn, vec3<f32>(in.world.x, g.misc.x, in.world.z));
+        let wp = vec3<f32>(in.world.x, g.misc.x, in.world.z);
+        let dist = distance(wp, g.camera_pos.xyz);
+        let wn = water_normal(wp.xz, g.misc.y, 1.0 / (1.0 + dist * 0.04));
+        let v = (g.camera_pos.xyz - wp) / max(dist, 1e-4);
+        let sun = sunlight(wp, wn);
+        let lit = water * (g.sun_color.rgb * max(dot(wn, g.sun_dir.xyz), 0.0) * sun + ambient_light(wn));
+        let r = reflect(-v, wn);
+        let mirror = 0.1 + 0.9 * pow(1.0 - max(dot(v, wn), 0.0), 4.0);
+        let sky = sky_color(vec3<f32>(r.x, abs(r.y), r.z), false);
+        let glint = g.sun_color.rgb * pow(max(dot(r, g.sun_dir.xyz), 0.0), 500.0) * 10.0 * sun;
+        let wc = finish(mix(lit, sky * 0.8, mirror) + glint, wp);
         c = mix(c, wc, clamp(0.5 + depth * 1.5, 0.0, 0.92));
     }
     return vec4<f32>(veil(c, xz), 1.0);
@@ -906,9 +975,9 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
 
 struct BlockOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) world: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) color: vec4<f32>,
+    @location(0) @interpolate(perspective, centroid) world: vec3<f32>,
+    @location(1) @interpolate(perspective, centroid) normal: vec3<f32>,
+    @location(2) @interpolate(perspective, centroid) color: vec4<f32>,
 };
 
 // Unit box corners: x across the frontage, y up, z along the facing.
@@ -1093,20 +1162,20 @@ struct SoldierIn {
 
 struct SoldierOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) world: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) color: vec3<f32>,
-    @location(3) highlight: f32,
+    @location(0) @interpolate(perspective, centroid) world: vec3<f32>,
+    @location(1) @interpolate(perspective, centroid) normal: vec3<f32>,
+    @location(2) @interpolate(perspective, centroid) color: vec3<f32>,
+    @location(3) @interpolate(perspective, centroid) highlight: f32,
 };
 
 struct TexturedOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) world: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) highlight: f32,
+    @location(0) @interpolate(perspective, centroid) world: vec3<f32>,
+    @location(1) @interpolate(perspective, centroid) normal: vec3<f32>,
+    @location(2) @interpolate(perspective, centroid) highlight: f32,
     // World-space tangent; w is the bitangent's handedness.
-    @location(3) tangent: vec4<f32>,
-    @location(4) uv: vec2<f32>,
+    @location(3) @interpolate(perspective, centroid) tangent: vec4<f32>,
+    @location(4) @interpolate(perspective, centroid) uv: vec2<f32>,
     // The material's first layer in the array.
     @location(5) @interpolate(flat) layer: i32,
     @location(6) @interpolate(flat) team_color: vec3<f32>,
@@ -1406,6 +1475,55 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     return vec4<f32>(c + albedo * in.highlight * HIGHLIGHT, 1.0);
 }
 
+// ---------------------------------------------------------------- contact shadows
+//
+// Under every soldier a soft dark patch on the ground, so feet sit in the
+// grass rather than hover over it, whatever the light: the sun's shadow map
+// is too coarse for a soldier's own feet and gone altogether under an
+// overcast sky. One four-vertex strip per soldier, drawn after the soldiers.
+
+// How far the patch reaches from the feet (tiles, at scale 1), and its
+// darkest.
+const CONTACT_RADIUS: f32 = 0.34;
+const CONTACT_DARK: f32 = 0.7;
+
+struct ContactIn {
+    @builtin(vertex_index) index: u32,
+    @location(0) pos: vec2<f32>,
+    @location(1) lift: f32,
+    @location(2) scale: f32,
+};
+
+struct ContactOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) @interpolate(perspective, centroid) uv: vec2<f32>,
+    @location(1) @interpolate(flat) strength: f32,
+};
+
+@vertex
+fn vs_contact(in: ContactIn) -> ContactOut {
+    let corner = vec2<f32>(f32(in.index & 1u), f32((in.index >> 1u) & 1u)) * 2.0 - 1.0;
+    let xz = in.pos + corner * CONTACT_RADIUS * in.scale;
+    let world = vec3<f32>(xz.x, height_at(xz) + 0.015, xz.y);
+    var out: ContactOut;
+    out.clip = g.view_proj * vec4<f32>(world, 1.0);
+    out.uv = corner;
+    // Fainter the higher the soldier is lifted off the ground, into the air
+    // with distance, and out of sight in the fog of war (all measured at
+    // the soldier: the patch is too small for them to vary across it).
+    let feet = vec3<f32>(in.pos.x, world.y, in.pos.y);
+    let air = 1.0 - air_amount(feet, distance(feet, g.camera_pos.xyz));
+    out.strength = CONTACT_DARK * air * seen_at(in.pos) / (1.0 + max(in.lift, 0.0) * 6.0);
+    return out;
+}
+
+@fragment
+fn fs_contact(in: ContactOut) -> @location(0) vec4<f32> {
+    let d = dot(in.uv, in.uv);
+    let soft = 1.0 - smoothstep(0.0, 1.0, d);
+    return vec4<f32>(0.0, 0.0, 0.0, in.strength * soft);
+}
+
 // ---------------------------------------------------------------- sky
 //
 // One triangle over the screen at the far plane, drawn after everything else
@@ -1429,12 +1547,21 @@ fn vs_sky(@builtin(vertex_index) vi: u32) -> SkyOut {
     return out;
 }
 
+// The sky's colour looking along `d`, with the sun's disc or without it
+// (water mirrors the glow, not the disc: it glints instead).
+fn sky_color(d: vec3<f32>, disc: bool) -> vec3<f32> {
+    var c = mix(g.sky_horizon.rgb, g.sky_top.rgb, pow(clamp(d.y, 0.0, 1.0), 0.45));
+    let s = max(dot(d, g.sun_dir.xyz), 0.0);
+    c += g.sun_color.rgb * (pow(s, 12.0) * 0.25 + pow(s, 200.0) * 0.8);
+    if disc {
+        c += g.sun_color.rgb * smoothstep(0.9993, 0.9997, s) * 8.0;
+    }
+    return c;
+}
+
 @fragment
 fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
     let far = g.inv_view_proj * vec4<f32>(in.ndc, 1.0, 1.0);
     let d = normalize(far.xyz / far.w - g.camera_pos.xyz);
-    var c = mix(g.sky_horizon.rgb, g.sky_top.rgb, pow(clamp(d.y, 0.0, 1.0), 0.45));
-    let s = max(dot(d, g.sun_dir.xyz), 0.0);
-    c += g.sun_color.rgb * (pow(s, 12.0) * 0.25 + pow(s, 200.0) * 0.8 + smoothstep(0.9993, 0.9997, s) * 8.0);
-    return vec4<f32>(c, 1.0);
+    return vec4<f32>(sky_color(d, true), 1.0);
 }
