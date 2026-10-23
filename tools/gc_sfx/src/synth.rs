@@ -79,7 +79,7 @@ fn looped_noise(len: usize, seed: u32, mut f: impl FnMut(f32, usize) -> f32) -> 
     (0..len)
         .map(|i| {
             if i < fade {
-                let w = (i as f32 / fade as f32) * std::f32::consts::FRAC_PI_2;
+                let w = (i as f32 / fade as f32) * (TAU / 4.0);
                 raw[i] * w.sin() + raw[len + i] * w.cos()
             } else {
                 raw[i]
@@ -111,11 +111,9 @@ fn bed_wind() -> Buf {
     let gust = swell(len, rate, 0.35, 11);
     let flutter = swell(len, rate, 3.0, 12);
     let (mut low, mut hi, mut band) = (Pole2::default(), OnePole::default(), Pole2::default());
-    let mut i = 0;
-    let samples = looped_noise(len, 13, |n, _| {
+    let samples = looped_noise(len, 13, |n, i| {
         let g = (gust[i % len] + 1.0) * 0.5;
         let fl = (flutter[i % len] + 1.0) * 0.5;
-        i += 1;
         let rush = low.low(n, 180.0 + 220.0 * g, rate);
         let breath = band.low(hi.high(n, 600.0, rate), 1100.0 + 700.0 * g, rate);
         (rush * 2.2 + breath * (0.5 + 0.5 * fl)) * (0.25 + 0.75 * g * g)
@@ -136,11 +134,9 @@ fn bed_water() -> Buf {
         OnePole::default(),
         Pole2::default(),
     );
-    let mut i = 0;
-    let samples = looped_noise(len, 23, |n, _| {
+    let samples = looped_noise(len, 23, |n, i| {
         let s = (surge[i % len] + 1.0) * 0.5;
         let b = bubble[i % len].max(0.0);
-        i += 1;
         let hiss = lp_a.low(hp_a.high(n, 700.0, rate), 4200.0, rate);
         let chuckle = lp_b.low(hp_b.high(n, 350.0, rate), 1100.0, rate);
         hiss * (0.55 + 0.45 * s) + chuckle * b * b * 3.0
@@ -174,11 +170,9 @@ fn bed_woods() -> Buf {
     let gust = swell(len, rate, 0.4, 31);
     let rustle = swell(len, rate, 9.0, 32);
     let (mut hp, mut lp, mut hush) = (OnePole::default(), OnePole::default(), OnePole::default());
-    let mut i = 0;
-    let samples = looped_noise(len, 33, |n, _| {
+    let samples = looped_noise(len, 33, |n, i| {
         let g = (gust[i % len] + 1.0) * 0.5;
         let r = (rustle[i % len] + 1.0) * 0.5;
-        i += 1;
         let leaves = lp.low(hp.high(n, 2200.0, rate), 6500.0, rate);
         let low = hush.low(n, 420.0, rate);
         leaves * r * r * (0.3 + 0.7 * g) * 2.0 + low * (0.25 + 0.5 * g)
@@ -205,15 +199,13 @@ fn bed_battle() -> Buf {
             )
         })
         .collect();
-    let mut i = 0;
-    let samples = looped_noise(len, 46, |n, _| {
+    let samples = looped_noise(len, 46, |n, i| {
         let s = (surge[i % len] + 1.0) * 0.5;
         let mut sum = 0.0;
         for ((modulator, hp, lp), (centre, weight)) in shaped.iter_mut().zip(bands) {
             let v = lp.low(hp.high(n, centre * 0.7, rate), centre * 1.2, rate);
             sum += v * weight * (0.55 + 0.45 * modulator[i % len]);
         }
-        i += 1;
         sum * (0.5 + 0.5 * s)
     });
     let mut buf = bed_buf(samples);

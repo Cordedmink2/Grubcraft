@@ -603,7 +603,9 @@ impl Sounds {
     /// a rejoining player catches up or no match is on screen.
     fn beds_told(&mut self, world: &World, heard: bool, zoom: f32, roar: BedMix) {
         let tick = world.tick_count();
-        if tick.is_multiple_of(LAND_EVERY) {
+        let on = heard && self.live;
+        // The ground is not scanned while the beds are off.
+        if on && tick.is_multiple_of(LAND_EVERY) {
             let terrain = world.terrain();
             let radius = (self.hearing * LAND_REACH).min(LAND_MAX);
             self.land = land_mix(
@@ -620,7 +622,6 @@ impl Sounds {
                 radius,
             );
         }
-        let on = heard && self.live;
         let hush = zoom_hush(zoom);
         let [wind, water, woods] = self.land;
         for (bed, mix) in [

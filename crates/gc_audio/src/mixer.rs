@@ -131,6 +131,11 @@ struct Voice {
     lp: f32,
 }
 
+/// Left and right gains for a pan of -1 (left) to 1 (right).
+fn pan_gains(pan: f32) -> (f32, f32) {
+    ((1.0 - pan).min(1.0), (1.0 + pan).min(1.0))
+}
+
 /// One-pole low-pass coefficient for a `dull` byte at output rate `rate`.
 fn dull_alpha(dull: f32, rate: u32) -> f32 {
     if dull <= 0.0 {
@@ -330,14 +335,14 @@ impl Mixer {
             return;
         };
         let level = f32::from(gain) / 255.0 * EFFECT_LEVEL;
-        let pan = f32::from(pan) / 127.0;
+        let (left, right) = pan_gains(f32::from(pan) / 127.0);
         self.age = self.age.wrapping_add(1);
         self.voices[i] = Voice {
             sound,
             cursor: Cursor::start(clip),
             step: clip.rate as f32 / self.rate as f32,
-            left: level * (1.0 - pan).min(1.0),
-            right: level * (1.0 + pan).min(1.0),
+            left: level * left,
+            right: level * right,
             score,
             age: self.age,
             active: true,
@@ -396,7 +401,7 @@ impl Mixer {
             bed.dull += (dull - bed.dull) * glide;
             let alpha = dull_alpha(bed.dull, self.rate);
             let pan = bed.pan;
-            let (left, right) = ((1.0 - pan).min(1.0), (1.0 + pan).min(1.0));
+            let (left, right) = pan_gains(pan);
             // The level ramps across the block, so a change never clicks.
             let slope = (bed.level - from) / frames as f32;
             for (i, frame) in out.chunks_exact_mut(2).enumerate() {
