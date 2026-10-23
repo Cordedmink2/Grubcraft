@@ -62,7 +62,7 @@ const LOD_DISTANCES: [f32; TERRAIN_LEVELS - 1] = [128.0, 256.0, 384.0];
 const CHUNK_INSTANCE_BYTES: u64 = 12;
 /// Fixed capacity of the box instance buffer (soldiers and markers); never reallocated.
 pub const MAX_BOX_INSTANCES: usize = 65_536;
-pub use effects::{DUST, Effects, HitStyle};
+pub use effects::{DUST, Effects, GHOST, HitStyle, ICHOR};
 use look::rgba;
 pub use look::{Look, LookPreset};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};

@@ -93,6 +93,10 @@ impl Default for Effects {
 
 /// Dust: warm tan, a little lighter than the ground it was kicked from.
 pub const DUST: [u8; 3] = [196, 172, 134];
+/// The Brood's ichor: yellow-green.
+pub const ICHOR: [u8; 3] = [150, 190, 40];
+/// The Concord's ghost-light: pale green-white.
+pub const GHOST: [u8; 3] = [150, 235, 235];
 
 impl Effects {
     pub fn new(seed: u32) -> Effects {
@@ -194,6 +198,27 @@ impl Effects {
     /// building falling, a heavy foot coming down. `radius` is how far it
     /// reaches in tiles, `amount` roughly how many puffs (before density).
     pub fn dust_burst(&mut self, pos: Vec3, radius: f32, amount: f32, color: [u8; 3]) {
+        self.dust_cloud(pos, radius, amount, color);
+        // A thin shock ring on the ground for the first moment.
+        if self.density > 0.0 && amount >= 3.0 {
+            let pale = brighten(color, 1.15);
+            self.out.push(Particle {
+                pos: pos + Vec3::new(0.0, 0.08, 0.0),
+                life: 0.55,
+                size: [radius * 0.25, radius * 1.3],
+                color: [pale[0], pale[1], pale[2], 120],
+                color_end: [color[0], color[1], color[2], 0],
+                shape: Shape::Ring,
+                flags: flags::SOFT,
+                seed: self.rng.byte(),
+                ..Particle::default()
+            });
+        }
+    }
+
+    /// Puffs of dust rolling outward from `pos` like [`Effects::dust_burst`],
+    /// without its ring on the ground: for dust off a wall, in the air.
+    pub fn dust_cloud(&mut self, pos: Vec3, radius: f32, amount: f32, color: [u8; 3]) {
         for _ in 0..self.count(amount) {
             let ring = self.rng.disc();
             let out = ring.normalize_or_zero() * self.rng.between(0.3, 1.0);
@@ -212,21 +237,6 @@ impl Effects {
                 spin,
                 seed,
                 ..fading(c, 200)
-            });
-        }
-        // A thin shock ring on the ground for the first moment.
-        if self.density > 0.0 && amount >= 3.0 {
-            let pale = brighten(color, 1.15);
-            self.out.push(Particle {
-                pos: pos + Vec3::new(0.0, 0.08, 0.0),
-                life: 0.55,
-                size: [radius * 0.25, radius * 1.3],
-                color: [pale[0], pale[1], pale[2], 120],
-                color_end: [color[0], color[1], color[2], 0],
-                shape: Shape::Ring,
-                flags: flags::SOFT,
-                seed: self.rng.byte(),
-                ..Particle::default()
             });
         }
     }
@@ -361,6 +371,73 @@ impl Effects {
         }
     }
 
+    /// Chips knocked off a wall at `pos` and flung back along `back` (unit,
+    /// on the ground plane, toward whoever struck it): stone, splinters,
+    /// bone. They fall, skid and come to rest, then fade. `size` is the
+    /// biggest chip's width in tiles.
+    pub fn chips(&mut self, pos: Vec3, back: Vec2, color: [u8; 3], amount: f32, size: f32) {
+        for _ in 0..self.count(amount) {
+            let aside = Vec2::new(-back.y, back.x) * self.rng.between(-1.4, 1.4);
+            let out = back * self.rng.between(0.6, 2.6) + aside;
+            let c = self.jitter(color, 0.25);
+            let s = size * self.rng.between(0.4, 1.0);
+            let spin = self.spin(60);
+            self.out.push(Particle {
+                pos,
+                vel: Vec3::new(out.x, self.rng.between(1.2, 3.4), out.y),
+                life: self.rng.between(1.8, 3.4),
+                size: [s, s * 0.8],
+                gravity: 11.0,
+                drag: 0.3,
+                shape: Shape::Shard,
+                flags: flags::GROUND,
+                spin,
+                seed: self.rng.byte(),
+                ..fading(c, 255)
+            });
+        }
+    }
+
+    /// The smoke and glow a fire-pot leaves behind it in flight, for `dt`
+    /// seconds: call it every frame with the pot's position.
+    pub fn trail(&mut self, pos: Vec3, dt: f32) {
+        for _ in 0..self.count(34.0 * dt) {
+            let at = self.rng.disc() * 0.06;
+            let shade = self.rng.between(70.0, 120.0) as u8;
+            let shape = self.puff();
+            let (seed, spin) = (self.rng.byte(), self.spin(3));
+            self.out.push(Particle {
+                pos: pos + Vec3::new(at.x, 0.0, at.y),
+                vel: Vec3::new(0.0, self.rng.between(0.1, 0.4), 0.0),
+                life: self.rng.between(0.9, 1.6),
+                size: [0.07, self.rng.between(0.22, 0.34)],
+                color: [shade, shade, shade, 150],
+                color_end: [shade, shade, shade, 0],
+                drag: 1.2,
+                lift: 0.15,
+                shape,
+                flags: flags::WIND,
+                spin,
+                seed,
+                ..Particle::default()
+            });
+        }
+        for _ in 0..self.count(16.0 * dt) {
+            self.out.push(Particle {
+                pos,
+                vel: Vec3::new(0.0, self.rng.between(0.0, 0.3), 0.0),
+                life: self.rng.between(0.2, 0.4),
+                size: [0.12, 0.04],
+                color: [255, 170, 60, 220],
+                color_end: [255, 60, 10, 0],
+                shape: Shape::Glow,
+                flags: flags::ADDITIVE | flags::FLICKER,
+                seed: self.rng.byte(),
+                ..Particle::default()
+            });
+        }
+    }
+
     /// Drops thrown from a wound at `pos` along `dir`.
     pub fn spray(&mut self, pos: Vec3, dir: Vec3, color: [u8; 3], amount: f32) {
         for _ in 0..self.count(amount) {
@@ -446,11 +523,11 @@ impl Effects {
         match style {
             HitStyle::Flesh => self.spray(pos, dir, [150, 20, 18], 7.0 * power),
             HitStyle::Ichor => {
-                self.spray(pos, dir, [150, 190, 40], 8.0 * power);
+                self.spray(pos, dir, ICHOR, 8.0 * power);
                 self.motes(pos, 0.15, [190, 230, 80], 2.0 * power);
             }
             HitStyle::Crystal => self.shards(pos, dir, 8.0 * power),
-            HitStyle::Ghost => self.motes(pos, 0.2, [150, 235, 235], 6.0 * power),
+            HitStyle::Ghost => self.motes(pos, 0.2, GHOST, 6.0 * power),
             HitStyle::Ember => {
                 self.embers(pos, 0.15, 8.0 * power);
                 self.sparks(pos, dir, 3.0 * power);
@@ -485,11 +562,14 @@ mod tests {
         let p = Vec3::new(10.0, 2.0, 10.0);
         fx.footstep(p, Vec2::X, 3.0, DUST);
         fx.dust_burst(p, 2.0, 12.0, DUST);
+        fx.dust_cloud(p, 1.0, 6.0, DUST);
         fx.smoke(p, 1.0, 0.8, 0.5);
         fx.flames(p, 1.0, 0.5);
         fx.embers(p, 0.5, 10.0);
         fx.sparks(p, Vec3::X, 10.0);
         fx.debris(p, [120, 110, 100], 10.0, 1.0);
+        fx.chips(p, Vec2::X, [120, 110, 100], 10.0, 0.1);
+        fx.trail(p, 0.5);
         fx.spray(p, Vec3::X, [150, 20, 20], 10.0);
         fx.shards(p, Vec3::X, 10.0);
         fx.motes(p, 1.0, [150, 230, 230], 10.0);

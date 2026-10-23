@@ -7,24 +7,26 @@
 //!
 //! Only a picture. Every blow drawn is one the simulation struck, but where
 //! the chips fly, how a building shakes and how long rubble lies is chosen
-//! here and changes nothing in the match. Smoke, dust and flames are boxes
-//! that cast no shadow (a negative height, see `gc_render::BoxInstance`).
+//! here and changes nothing in the match. Dust, smoke, flames, sparks and
+//! small chips are particles (`gc_render`'s [`Effects`], handed over by
+//! [`Siege::take_particles`]); the shots in the air, the big chunks of a
+//! collapse, arrows stuck in a wall and the heaps of rubble are boxes.
 
 use std::f32::consts::{PI, TAU};
 
 use gc_data::Faction;
-use gc_render::BoxInstance;
+use gc_render::{BoxInstance, Effects, GHOST, ICHOR, Particle};
 use gc_sim::structures::{Armour, Breaker};
 use gc_sim::{PlayerId, RegimentHandle, StructureHandle};
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 
 use crate::field::{ARROW_COLOR, ARROW_SIZE, ARROWS_PER_VOLLEY};
 
-/// Chips, dust puffs and shots in the air at once, at most: when full, a
-/// new one takes the place of one at random.
-const MAX_CHIPS: usize = 1536;
-const MAX_PUFFS: usize = 1024;
+/// Chunks, shots in the air and arrows stuck in walls at once, at most:
+/// when full, a new one takes the place of one at random.
+const MAX_CHIPS: usize = 384;
 const MAX_SHOTS: usize = 256;
+const MAX_STUCK: usize = 192;
 /// Fallen buildings sinking or lying in rubble at once, at most.
 const MAX_FALLS: usize = 48;
 /// Wall points kept per regiment, where its soldiers last swung.
@@ -33,12 +35,15 @@ const TOUCHES: usize = 6;
 /// Pull of the ground on chips, in tiles a second a second (a soldier is
 /// under a tile tall).
 const GRAVITY: f32 = 6.0;
-/// A chip lies this long once down, then sinks out of sight over the last
+/// A chunk lies this long once down, then sinks out of sight over the last
 /// [`CHIP_SINK`] seconds.
 const CHIP_LIFE: f32 = 7.0;
 const CHIP_SINK: f32 = 1.5;
-/// A dust puff lasts this long.
-const PUFF_LIFE: f32 = 1.4;
+/// An arrow stays in the wall this long.
+const STUCK_SECONDS: f32 = 40.0;
+/// The longest frame the continuous effects (smoke, fire, trails) make up
+/// for, so a stall or a seek does not release a flood of particles.
+const MAX_DT: f32 = 0.25;
 /// A building jolted by a blow settles over this long.
 const JOLT_SECONDS: f32 = 0.35;
 /// A health bar shows white this long after a blow.
@@ -52,9 +57,7 @@ const SMOULDER_SECONDS: f32 = 25.0;
 const RUBBLE_SINK: f32 = 6.0;
 /// A regiment that loosed at a building this recently is still shooting.
 const SHOOTING_SECONDS: f32 = 1.2;
-/// Smoke trailed by a fire-pot in flight, and dust thrown up by a building
-/// going down, in puffs a second.
-const TRAIL_RATE: f32 = 48.0;
+/// Dust thrown up by a building going down, in puffs a second.
 const COLLAPSE_DUST_RATE: f32 = 36.0;
 /// Sounds kept for the game to play at most (more at once are lost in the
 /// din, and none pile up while nothing plays them).
@@ -68,13 +71,6 @@ const WALL_STEP: f32 = 2.4;
 /// Below these shares of its hit points a building smokes, and burns.
 const SMOKES_BELOW: f32 = 0.7;
 const BURNS_BELOW: f32 = 0.35;
-/// Smoke puffs per column, and how long each takes to rise and fade.
-const SMOKE_PUFFS: usize = 9;
-const SMOKE_LIFE: f32 = 3.2;
-/// Flames per fire.
-const FLAMES: usize = 4;
-/// A smoke column's lean with the wind, in tiles a second.
-const WIND: Vec2 = Vec2::new(0.35, 0.18);
 /// Arrows leave the bow this high (as `ARROW_HEIGHT` in the field).
 const RELEASE_HEIGHT: f32 = crate::ARROW_HEIGHT;
 
@@ -166,9 +162,26 @@ impl Kind {
     }
 }
 
+/// What kind of thing a building is made of: how blows on it look, and how
+/// it falls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Style {
+    /// Timber and thatch (Ember Clans): splinters, and it burns as it falls.
+    Timber,
+    /// Dressed stone: chips and sparks, and a heavy fall.
+    Stone,
+    /// Bone and iron (Carrion Concord): bone scatters, ghost-lights escape.
+    Bone,
+    /// Crystal (the Choir): it shatters in glittering shards.
+    Crystal,
+    /// Chitin and flesh (the Brood): ichor sprays and it deflates.
+    Shell,
+}
+
 /// What a building is made of, for its chips, dust and rubble.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stuff {
+    pub style: Style,
     /// Chip and rubble colours, picked among, with their glow (the Choir's
     /// crystal shines).
     pub colours: [[u8; 4]; 3],
@@ -182,22 +195,27 @@ pub fn stuff(faction: Option<Faction>, armour: Armour) -> Stuff {
     let dust = [168, 156, 136, 0];
     match (faction, armour) {
         (Some(Faction::Brood), _) | (_, Armour::Living) => Stuff {
+            style: Style::Shell,
             colours: [[92, 58, 70, 0], [128, 96, 64, 0], [70, 48, 60, 0]],
             dust: [120, 104, 84, 0],
         },
         (Some(Faction::Choir), _) => Stuff {
+            style: Style::Crystal,
             colours: [[150, 190, 214, 70], [196, 216, 230, 70], stone],
             dust: [190, 200, 206, 0],
         },
         (Some(Faction::CarrionConcord), _) => Stuff {
+            style: Style::Bone,
             colours: [[214, 204, 178, 0], [96, 92, 86, 0], wood],
             dust: [150, 146, 136, 0],
         },
         (_, Armour::Fortified) => Stuff {
+            style: Style::Stone,
             colours: [stone, [104, 100, 94, 0], [150, 146, 136, 0]],
             dust,
         },
         _ => Stuff {
+            style: Style::Timber,
             colours: [wood, stone, [176, 160, 132, 0]],
             dust,
         },
@@ -245,6 +263,12 @@ impl Look {
 
     fn size(&self) -> Vec2 {
         self.max - self.min
+    }
+
+    /// Its footprint, in square tiles.
+    fn area(&self) -> f32 {
+        let size = self.size();
+        size.x * size.y
     }
 }
 
@@ -309,9 +333,14 @@ pub fn stand_at(wall: &Look, pos: Vec2, facing: Vec2, lean: f32, draw_back: f32)
     }
 }
 
-/// A box that casts no shadow: smoke, dust and flames.
-fn shadowless([w, h, d]: [f32; 3]) -> [f32; 3] {
-    [w, -h.abs(), d]
+/// A colour without its glow.
+fn rgb([r, g, b, _]: [u8; 4]) -> [u8; 3] {
+    [r, g, b]
+}
+
+/// Point `at` on the map, `y` high: where the renderer puts a particle.
+fn up(at: Vec2, y: f32) -> Vec3 {
+    Vec3::new(at.x, y, at.y)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -328,17 +357,14 @@ struct Chip {
     rest: Option<f32>,
 }
 
+/// An arrow stuck in a wall.
 #[derive(Clone, Copy, Debug)]
-struct Puff {
+struct Stuck {
+    structure: StructureHandle,
     pos: Vec2,
     y: f32,
-    vel: Vec2,
-    rise: f32,
-    size: f32,
-    colour: [u8; 4],
-    facing: Vec2,
+    dir: Vec2,
     born: f32,
-    life: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -423,7 +449,7 @@ pub struct Siege {
     looks: Vec<Option<Look>>,
     jolts: Vec<Jolt>,
     chips: Vec<Chip>,
-    puffs: Vec<Puff>,
+    stuck: Vec<Stuck>,
     shots: Vec<Shot>,
     falls: Vec<Fall>,
     /// By regiment slot: when it last struck a building.
@@ -434,6 +460,10 @@ pub struct Siege {
     /// building last frame.
     touches: Vec<Option<Touches>>,
     noises: Vec<Noise>,
+    /// Dust, sparks, smoke and fire collected for the frame.
+    fx: Effects,
+    /// The last frame's length, for the effects that go on and on.
+    dt: f32,
 }
 
 impl Siege {
@@ -444,14 +474,28 @@ impl Siege {
             looks: Vec::new(),
             jolts: Vec::new(),
             chips: Vec::with_capacity(MAX_CHIPS),
-            puffs: Vec::with_capacity(MAX_PUFFS),
+            stuck: Vec::with_capacity(MAX_STUCK),
             shots: Vec::with_capacity(MAX_SHOTS),
             falls: Vec::with_capacity(MAX_FALLS),
             struck: vec![None; regiments],
             lean: vec![0.0; regiments],
             touches: vec![None; regiments],
             noises: Vec::new(),
+            fx: Effects::new(0x51e6_e000),
+            dt: 0.0,
         }
+    }
+
+    /// How much of every particle effect to spawn (the Graphics preset's
+    /// choice), 1 for all of it.
+    pub fn set_density(&mut self, density: f32) {
+        self.fx.set_density(density);
+    }
+
+    /// The dust, sparks, smoke and fire made since this was last called,
+    /// ready for `Renderer::spawn_particles`.
+    pub fn take_particles(&mut self) -> Vec<Particle> {
+        self.fx.take()
     }
 
     /// Forget everything (a new match, or a seek).
@@ -573,41 +617,74 @@ impl Siege {
             Some(k) => self.jolts[k] = jolt,
             None => self.jolts.push(jolt),
         }
-        let y = look.base + height;
-        let side = Vec2::new(-dir.y, dir.x);
-        for _ in 0..force.chips {
-            let vel = -dir * (1.0 + self.roll().abs() * 2.5) + side * (self.roll() * 2.0);
-            let vy = 1.5 + self.roll().abs() * 3.0;
-            let size = if force.big {
-                0.12 + self.roll().abs() * 0.22
-            } else {
-                0.06 + self.roll().abs() * 0.08
-            };
-            let colour = look.stuff.colours[self.pick(3)];
-            let spin = self.roll() * 12.0;
-            self.chip(at - dir * 0.15, y, vel, vy, size, colour, spin);
+        self.blow_fx(look, kind, at, look.base + height, dir);
+    }
+
+    /// What a blow of `kind` throws up at `at`, `y` high on the wall,
+    /// travelling along `dir`: dust, chips and, by what the wall is made
+    /// of, sparks, splinters, shards or ichor.
+    fn blow_fx(&mut self, look: &Look, kind: Kind, at: Vec2, y: f32, dir: Vec2) {
+        let force = kind.force();
+        let back = -dir;
+        let off = at + back * 0.15;
+        let p = up(off, y);
+        let away = up(back, 0.3);
+        let n = force.chips as f32;
+        let size = if force.big { 0.2 } else { 0.1 };
+        let colours = look.stuff.colours;
+        match look.stuff.style {
+            Style::Crystal => self.fx.shards(p, away, n + 2.0),
+            Style::Shell => {
+                self.fx.spray(p, away, ICHOR, n * 0.8);
+                self.fx.chips(p, back, rgb(colours[0]), n * 0.4, size);
+            }
+            style => {
+                for (k, c) in colours.iter().enumerate() {
+                    self.fx
+                        .chips(p, back, rgb(*c), n / 3.0 + 0.4 * k as f32, size);
+                }
+                match style {
+                    Style::Stone => self.fx.sparks(p, away, if force.big { 6.0 } else { 2.0 }),
+                    Style::Bone => self.fx.motes(p, 0.2, GHOST, 1.5),
+                    _ => {}
+                }
+            }
         }
-        for _ in 0..force.puffs {
-            let drift = -dir * (0.4 + self.roll().abs() * 0.6) + side * (self.roll() * 0.6);
-            let size = if force.big { 0.8 } else { 0.45 };
-            let life = PUFF_LIFE * (0.8 + self.roll().abs() * 0.4);
-            self.puff(
-                at - dir * 0.3,
-                y - 0.2,
-                drift,
-                0.35,
-                size,
-                look.stuff.dust,
-                life,
-            );
+        // A heavy blow knocks real chunks off, which lie where they fall.
+        if force.big {
+            for _ in 0..(force.chips / 3).max(1) {
+                let vel = back * (1.0 + self.roll().abs() * 2.5) + dir.perp() * (self.roll() * 2.0);
+                let vy = 1.5 + self.roll().abs() * 3.0;
+                let size = 0.12 + self.roll().abs() * 0.22;
+                let colour = look.stuff.colours[self.pick(3)];
+                let spin = self.roll() * 12.0;
+                self.chip(off, y, vel, vy, size, colour, spin);
+            }
         }
+        let (radius, puffs) = if force.big { (0.8, 1.5) } else { (0.35, 1.0) };
+        self.fx
+            .dust_cloud(p, radius, force.puffs as f32 * puffs, rgb(look.stuff.dust));
         if kind == Kind::Fire {
             // The shot bursts in flame.
-            for _ in 0..4 {
-                let drift = Vec2::new(self.roll(), self.roll()) * 0.5;
-                let glow = [255, 150 + (self.roll().abs() * 70.0) as u8, 40, 230];
-                self.puff(at - dir * 0.2, y, drift, 0.9, 0.5, glow, 0.6);
-            }
+            self.fx.flames(p, 0.35, 0.4);
+            self.fx.embers(p, 0.2, 7.0);
+            self.fx.smoke(p, 0.4, 0.9, 0.3);
+        }
+        // Arrows stay in timber, flesh and bone.
+        if kind == Kind::Arrows
+            && matches!(look.stuff.style, Style::Timber | Style::Shell | Style::Bone)
+            // Not into a building already coming down.
+            && self.look(look.handle).is_some()
+        {
+            let k = self.pick(MAX_STUCK);
+            let stuck = Stuck {
+                structure: look.handle,
+                pos: at,
+                y,
+                dir,
+                born: self.time,
+            };
+            push_capped(&mut self.stuck, MAX_STUCK, k, stuck);
         }
     }
 
@@ -644,13 +721,15 @@ impl Siege {
             *l = None;
         }
         self.jolts.retain(|j| j.handle != structure);
+        self.stuck.retain(|a| a.structure != structure);
     }
 
-    /// A building starts down: a burst of chips from every side, and the
-    /// crash.
+    /// A building starts down: a burst of chunks and dust from every side,
+    /// by what it is made of, and the crash.
     fn collapse(&mut self, look: Look) {
         let centre = look.centre();
-        let n = (12.0 + look.size().x * look.size().y).min(40.0) as usize;
+        let area = look.area();
+        let n = (6.0 + area / 2.0).min(16.0) as usize;
         for k in 0..n {
             let dir = Vec2::from_angle(k as f32 * 2.4 + self.roll());
             let y = look.base + look.top * (0.3 + self.roll().abs() * 0.5);
@@ -661,13 +740,147 @@ impl Siege {
             let edge = look.nearest(centre + dir * 100.0);
             self.chip(edge, y, vel, vy, size, look.stuff.colours[k % 3], spin);
         }
+        let middle = up(centre, look.base + look.top * 0.5);
+        let foot = up(centre, look.base);
+        let reach = look.size().max_element().clamp(1.5, 6.0);
+        let pieces = (12.0 + area).min(48.0);
+        let colours = look.stuff.colours;
+        self.fx.dust_burst(
+            foot,
+            reach * 0.8,
+            10.0 + area.min(20.0),
+            rgb(look.stuff.dust),
+        );
+        match look.stuff.style {
+            Style::Timber => {
+                for c in colours {
+                    self.fx.debris(middle, rgb(c), pieces / 3.0, 1.2);
+                }
+                self.fx.embers(middle, reach * 0.4, 30.0);
+            }
+            Style::Stone => {
+                for c in colours {
+                    self.fx.debris(middle, rgb(c), pieces / 2.0, 1.4);
+                }
+                self.fx.sparks(middle, Vec3::Y, 8.0);
+            }
+            Style::Bone => {
+                for c in colours {
+                    self.fx.debris(middle, rgb(c), pieces / 3.0, 1.2);
+                }
+                self.fx.motes(middle, reach * 0.4, GHOST, 24.0);
+            }
+            Style::Crystal => {
+                // It shatters: shards in every direction.
+                for k in 0..6 {
+                    let dir = up(Vec2::from_angle(k as f32 * 1.05), 0.6);
+                    self.fx.shards(middle, dir, pieces);
+                }
+            }
+            Style::Shell => {
+                for k in 0..4 {
+                    let dir = up(Vec2::from_angle(k as f32 * 1.6), 0.7);
+                    self.fx.spray(middle, dir, ICHOR, pieces / 3.0);
+                }
+                self.fx.debris(middle, rgb(colours[0]), pieces / 3.0, 1.0);
+            }
+        }
         self.noise(Sound::Collapse, centre);
+    }
+
+    /// A random point over `look`'s footprint, `y` high.
+    fn over(&mut self, look: &Look, y: f32) -> Vec3 {
+        let at = look.min + (Vec2::new(self.roll(), self.roll()) * 0.5 + 0.5) * look.size();
+        up(at, y)
+    }
+
+    /// A building going down, for the frame just played: dust rolling off
+    /// all along its footprint (a wall's length too), and by what it is
+    /// made of, flames, ghost-lights, glitter or ichor.
+    fn falling(&mut self, look: &Look) {
+        let ground = look.base;
+        let dt = self.dt;
+        for _ in 0..self.spawns(COLLAPSE_DUST_RATE, dt) {
+            let (rise, swell) = (self.roll().abs(), self.roll().abs());
+            let at = self.over(look, ground + rise * look.top * 0.4);
+            self.fx
+                .dust_cloud(at, 0.9 + swell * 0.5, 1.0, rgb(look.stuff.dust));
+        }
+        let top = ground + look.top * 0.5;
+        for _ in 0..self.spawns(14.0, dt) {
+            let at = self.over(look, top);
+            match look.stuff.style {
+                Style::Timber => {
+                    self.fx.flames(at, 0.7, 0.2);
+                    self.fx.embers(at, 0.2, 2.0);
+                }
+                Style::Bone => self.fx.motes(at, 0.3, GHOST, 2.0),
+                Style::Crystal => self.fx.shards(at, Vec3::Y, 3.0),
+                Style::Shell => self.fx.spray(at, Vec3::Y, ICHOR, 2.0),
+                Style::Stone => {}
+            }
+        }
+    }
+
+    /// The smoke and fire of the damaged buildings among `shown` that
+    /// `visible` (a sphere in the camera's view) takes in, and of rubble
+    /// still smouldering, for the frame just played: more columns as a
+    /// building gets worse, flames and embers once it burns.
+    pub fn emit_damage(
+        &mut self,
+        shown: impl Iterator<Item = StructureHandle>,
+        visible: impl Fn(Vec3, f32) -> bool,
+    ) {
+        let dt = self.dt;
+        for h in shown {
+            let Some(look) = self.look(h).filter(|l| l.hp < SMOKES_BELOW).copied() else {
+                continue;
+            };
+            let roof = look.base + look.top * 0.8;
+            let centre = look.centre();
+            if !visible(up(centre, roof), look.top + 6.0) {
+                continue;
+            }
+            let area = look.area();
+            let spots = 1 + u32::from(area >= 4.0) + u32::from(area >= 12.0);
+            let fire = look.hp < BURNS_BELOW;
+            let damage = (SMOKES_BELOW - look.hp) / SMOKES_BELOW;
+            let seed = h.index.wrapping_mul(0x2545_F491) ^ u32::from(h.generation);
+            let thick = 0.35 + damage * if fire { 0.55 } else { 0.3 };
+            // The second and third column only once worse hurt.
+            for spot in (0..spots).filter(|&k| damage >= 0.25 * k as f32) {
+                let off = Vec2::new(hash(seed, spot, 4), hash(seed, spot, 5)) * look.size() * 0.3;
+                let at = up(centre + off, roof);
+                self.fx
+                    .smoke(at, thick * 0.7, if fire { 0.85 } else { 0.3 }, dt);
+                if fire {
+                    self.fx.flames(at - Vec3::Y * 0.15, 0.45, dt);
+                    self.fx.embers(at, 0.3, 2.5 * dt);
+                }
+            }
+        }
+        for f in &self.falls {
+            let age = self.time - f.born - COLLAPSE_SECONDS * 0.5;
+            if !(0.0..SMOULDER_SECONDS).contains(&age) {
+                continue;
+            }
+            let at = up(f.look.centre(), f.look.base + 0.4);
+            if !visible(at, 3.0) {
+                continue;
+            }
+            let thick = 0.7 * (1.0 - age / SMOULDER_SECONDS);
+            self.fx.smoke(at, thick * 0.7, 0.8, dt);
+            if f.look.stuff.style == Style::Timber && age < SMOULDER_SECONDS * 0.4 {
+                self.fx.flames(at, 0.4, dt);
+            }
+        }
     }
 
     /// Start a frame `dt` seconds after the last; `ground` is the height
     /// of the ground at a point.
     pub fn advance(&mut self, dt: f32, ground: impl Fn(Vec2) -> f32) {
         self.time += dt;
+        self.dt = dt.min(MAX_DT);
         let now = self.time;
         self.chips.retain_mut(|c| {
             if let Some(rest) = c.rest {
@@ -691,7 +904,7 @@ impl Siege {
             }
             true
         });
-        self.puffs.retain(|p| now - p.born < p.life);
+        self.stuck.retain(|s| now - s.born < STUCK_SECONDS);
         // Shots that came down land; fire-pots trail smoke.
         let mut k = 0;
         while k < self.shots.len() {
@@ -700,9 +913,7 @@ impl Siege {
             if t < 1.0 {
                 if s.kind == Kind::Fire {
                     let (pos, y) = s.at(0, t);
-                    for _ in 0..self.spawns(TRAIL_RATE, dt) {
-                        self.puff(pos, y, Vec2::ZERO, 0.3, 0.3, [70, 66, 62, 0], 0.9);
-                    }
+                    self.fx.trail(up(pos, y), self.dt);
                 }
                 k += 1;
                 continue;
@@ -732,14 +943,7 @@ impl Siege {
                 self.falls[f].burst = true;
                 self.collapse(look);
             }
-            for _ in 0..self.spawns(COLLAPSE_DUST_RATE, dt) {
-                let around = Vec2::from_angle(self.roll() * PI);
-                let edge = look.nearest(look.centre() + around * 100.0);
-                let y = look.base + self.roll().abs() * look.top * 0.4;
-                let vel = around * (0.6 + self.roll().abs());
-                let size = 0.9 + self.roll().abs() * 0.8;
-                self.puff(edge + around * 0.3, y, vel, 0.5, size, look.stuff.dust, 2.2);
-            }
+            self.falling(&look);
         }
         self.falls
             .retain(|f| now - f.born < COLLAPSE_SECONDS + RUBBLE_SECONDS);
@@ -848,23 +1052,11 @@ impl Siege {
         })
     }
 
-    /// Draw the chips, dust, shots, rubble and the smoke and fire of the
-    /// damaged buildings among `shown`, as boxes; `ground` is the height
-    /// of the ground at a point. Adds nothing past `limit` boxes in `out`;
-    /// smoke and fire first, as they show the damage from afar.
-    pub fn push(
-        &self,
-        shown: impl Iterator<Item = StructureHandle>,
-        ground: impl Fn(Vec2) -> f32,
-        limit: usize,
-        out: &mut Vec<BoxInstance>,
-    ) {
+    /// Draw the chunks, shots, stuck arrows and rubble, as boxes; `ground`
+    /// is the height of the ground at a point. Adds nothing past `limit`
+    /// boxes in `out`.
+    pub fn push(&self, ground: impl Fn(Vec2) -> f32, limit: usize, out: &mut Vec<BoxInstance>) {
         let limit = limit.max(out.len());
-        for h in shown {
-            if let Some(look) = self.look(h).filter(|l| l.hp < SMOKES_BELOW) {
-                self.burn(look, &ground, out);
-            }
-        }
         let now = self.time;
         for s in &self.shots {
             let t = ((now - s.born) / s.flight).clamp(0.0, 1.0);
@@ -888,6 +1080,15 @@ impl Siege {
                 });
             }
         }
+        for a in &self.stuck {
+            out.push(BoxInstance {
+                pos: a.pos.to_array(),
+                facing: a.dir.to_array(),
+                size: ARROW_SIZE,
+                color: ARROW_COLOR,
+                lift: a.y - ground(a.pos),
+            });
+        }
         for c in &self.chips {
             // One lying still is on the ground already.
             let lift = match c.rest {
@@ -904,29 +1105,15 @@ impl Siege {
                 lift,
             });
         }
-        for p in &self.puffs {
-            let age = now - p.born;
-            let t = age / p.life;
-            // Swells, then thins away.
-            let size = p.size * (0.5 + t * 1.2) * (1.0 - t * t * t);
-            let pos = p.pos + p.vel * age;
-            out.push(BoxInstance {
-                pos: pos.to_array(),
-                facing: p.facing.to_array(),
-                size: shadowless([size, size * 0.8, size]),
-                color: p.colour,
-                lift: p.y + p.rise * age - ground(pos),
-            });
-        }
         for f in &self.falls {
-            self.rubble(f, &ground, out);
+            self.rubble(f, out);
         }
         out.truncate(limit);
     }
 
     /// A fallen building's rubble, once its model is half sunk: a heap,
     /// smouldering at first, that sinks away in the end.
-    fn rubble(&self, f: &Fall, ground: &impl Fn(Vec2) -> f32, out: &mut Vec<BoxInstance>) {
+    fn rubble(&self, f: &Fall, out: &mut Vec<BoxInstance>) {
         let age = self.time - f.born - COLLAPSE_SECONDS * 0.5;
         if age < 0.0 {
             return;
@@ -934,7 +1121,7 @@ impl Siege {
         let sink = ((age - (RUBBLE_SECONDS - RUBBLE_SINK)) / RUBBLE_SINK).clamp(0.0, 1.0);
         let look = &f.look;
         let size = look.size();
-        let n = (size.x * size.y * 1.2).clamp(8.0, 30.0) as usize;
+        let n = (look.area() * 1.2).clamp(8.0, 30.0) as usize;
         for k in 0..n {
             let r = |axis| hash(f.seed, k as u32, axis) * 0.5 + 0.5;
             let at = look.min + Vec2::new(r(0), r(1)) * size;
@@ -951,95 +1138,6 @@ impl Siege {
                 size: [w, h.max(0.02), w * 0.8],
                 color: look.stuff.colours[k % 3],
                 lift: -0.05 - 0.3 * sink,
-            });
-        }
-        if age < SMOULDER_SECONDS {
-            let thick = 0.7 * (1.0 - age / SMOULDER_SECONDS);
-            let at = look.centre();
-            self.smoke(f.seed, at, look.base + 0.4, thick, false, ground, out);
-        }
-    }
-
-    /// The smoke from a damaged building's roof, and its fire once it is
-    /// badly damaged: more columns as it gets worse.
-    fn burn(&self, look: &Look, ground: &impl Fn(Vec2) -> f32, out: &mut Vec<BoxInstance>) {
-        let h = look.handle;
-        let area = look.size().x * look.size().y;
-        let spots = 1 + u32::from(area >= 4.0) + u32::from(area >= 12.0);
-        let fire = look.hp < BURNS_BELOW;
-        let damage = (SMOKES_BELOW - look.hp) / SMOKES_BELOW;
-        let seed = h.index.wrapping_mul(0x2545_F491) ^ u32::from(h.generation);
-        let roof = look.base + look.top * 0.8;
-        let thick = 0.35 + damage * if fire { 0.55 } else { 0.3 };
-        // The second and third column only once worse hurt.
-        for spot in (0..spots).filter(|&k| damage >= 0.25 * k as f32) {
-            let off = Vec2::new(hash(seed, spot, 4), hash(seed, spot, 5)) * look.size() * 0.3;
-            let at = look.centre() + off;
-            self.smoke(seed ^ spot, at, roof, thick, fire, ground, out);
-            if fire {
-                self.flames(seed ^ spot, at, roof, ground, out);
-            }
-        }
-    }
-
-    /// A column of smoke from `at`, `y` high: `thick` sizes its puffs, and
-    /// a fire's is darker.
-    #[allow(clippy::too_many_arguments)]
-    fn smoke(
-        &self,
-        seed: u32,
-        at: Vec2,
-        y: f32,
-        thick: f32,
-        fire: bool,
-        ground: &impl Fn(Vec2) -> f32,
-        out: &mut Vec<BoxInstance>,
-    ) {
-        let grey: u8 = if fire { 64 } else { 110 };
-        for k in 0..SMOKE_PUFFS {
-            let r = |axis| hash(seed, k as u32, axis);
-            let offset = k as f32 / SMOKE_PUFFS as f32 + r(6) * 0.05;
-            let t = (self.time / SMOKE_LIFE + offset).fract();
-            let size = thick * (0.45 + t * 1.3) * (1.0 - t * t);
-            let pos = at + WIND * (t * SMOKE_LIFE) + Vec2::new(r(7), r(8)) * 0.2;
-            let shade = grey.saturating_add((t * 60.0) as u8);
-            out.push(BoxInstance {
-                pos: pos.to_array(),
-                facing: Vec2::from_angle(t * 2.0 + k as f32).to_array(),
-                size: shadowless([size, size * 0.85, size]),
-                color: [shade, shade, shade.saturating_add(4), 0],
-                lift: y + t * SMOKE_LIFE * 0.8 - ground(pos),
-            });
-        }
-    }
-
-    /// Flames licking up from `at`, `y` high.
-    fn flames(
-        &self,
-        seed: u32,
-        at: Vec2,
-        y: f32,
-        ground: &impl Fn(Vec2) -> f32,
-        out: &mut Vec<BoxInstance>,
-    ) {
-        let now = self.time;
-        for k in 0..FLAMES {
-            let r = |axis| hash(seed, k as u32, axis);
-            let phase = r(9) * 6.0;
-            let flicker = 0.75 + 0.25 * (now * 11.0 + phase).sin() * (now * 7.3 + phase).cos();
-            let size = (0.3 + 0.15 * k as f32 % 0.45) * flicker;
-            let pos = at + Vec2::new(r(10), r(11)) * 0.35;
-            let color = if k % 2 == 0 {
-                [255, 150, 40, 255]
-            } else {
-                [255, 206, 90, 255]
-            };
-            out.push(BoxInstance {
-                pos: pos.to_array(),
-                facing: Vec2::from_angle(now * 2.0 + phase).to_array(),
-                size: shadowless([size, size * 1.6, size]),
-                color,
-                lift: y - 0.15 + 0.1 * (now * 5.0 + phase).sin() - ground(pos),
             });
         }
     }
@@ -1068,32 +1166,6 @@ impl Siege {
         };
         let k = self.pick(MAX_CHIPS);
         push_capped(&mut self.chips, MAX_CHIPS, k, chip);
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn puff(
-        &mut self,
-        pos: Vec2,
-        y: f32,
-        vel: Vec2,
-        rise: f32,
-        size: f32,
-        colour: [u8; 4],
-        life: f32,
-    ) {
-        let puff = Puff {
-            pos,
-            y,
-            vel,
-            rise,
-            size,
-            colour,
-            facing: Vec2::from_angle(self.roll() * PI),
-            born: self.time,
-            life,
-        };
-        let k = self.pick(MAX_PUFFS);
-        push_capped(&mut self.puffs, MAX_PUFFS, k, puff);
     }
 
     /// A value in [-1, 1), different each call.
@@ -1174,6 +1246,19 @@ mod tests {
         0.0
     }
 
+    fn shards(s: &mut Siege) -> Vec<Particle> {
+        let mut all = s.take_particles();
+        all.retain(|p| p.shape == gc_render::Shape::Shard);
+        all
+    }
+
+    /// How many of `ps` glow (fire, sparks, shards, ghost-lights).
+    fn additive(ps: &[Particle]) -> usize {
+        ps.iter()
+            .filter(|p| p.flags & gc_render::particle_flags::ADDITIVE != 0)
+            .count()
+    }
+
     #[test]
     fn a_blow_shakes_the_building_and_chips_fly_off_toward_the_attacker() {
         let mut s = Siege::new(8);
@@ -1181,9 +1266,12 @@ mod tests {
         s.remember(look(h, 1.0));
         s.struck(h, blade(Vec2::new(12.0, 16.0)));
         assert!(s.flash(h) > 0.9);
-        assert_eq!(s.chips.len(), 2);
+        // A small blow throws splinters and dust, no chunks.
+        assert!(s.chips.is_empty());
+        let made = shards(&mut s);
+        assert!(!made.is_empty());
         assert!(
-            s.chips.iter().all(|c| c.vel.y > 0.0),
+            made.iter().all(|p| p.vel.z > 0.0),
             "back toward the attacker"
         );
         assert_eq!(
@@ -1192,14 +1280,27 @@ mod tests {
         );
         s.advance(0.05, flat);
         assert_ne!(s.jolt(h), (Vec2::ZERO, 0.0));
-        // It settles, and the chips come to rest on the ground.
+        // It settles.
         for _ in 0..100 {
             s.advance(0.05, flat);
         }
         assert_eq!(s.jolt(h), (Vec2::ZERO, 0.0));
         assert_eq!(s.flash(h), 0.0);
+    }
+
+    #[test]
+    fn a_heavy_blow_knocks_chunks_off_that_lie_then_go() {
+        let mut s = Siege::new(8);
+        let h = handle(0);
+        s.remember(look(h, 1.0));
+        let mut ram = blade(Vec2::new(12.0, 16.0));
+        ram.kind = Kind::Ram;
+        s.struck(h, ram);
+        assert_eq!(s.chips.len(), 3);
+        for _ in 0..100 {
+            s.advance(0.05, flat);
+        }
         assert!(s.chips.iter().all(|c| c.rest.is_some() && c.y == 0.0));
-        // And are gone once they have lain long enough.
         for _ in 0..200 {
             s.advance(0.05, flat);
         }
@@ -1215,23 +1316,16 @@ mod tests {
         s.untouch(a.handle, h);
         s.touch(a.handle, Vec2::new(11.0, 13.0));
         s.struck(h, a);
-        assert!(
-            s.chips
-                .iter()
-                .all(|c| (c.pos - Vec2::new(11.0, 13.15)).length() < 0.01)
-        );
+        let near = |p: &Particle| (p.pos.x - 11.0).abs() < 0.01 && (p.pos.z - 13.15).abs() < 0.01;
+        let made = shards(&mut s);
+        assert!(!made.is_empty() && made.iter().all(near));
         // Swings noted at another building's wall don't count here.
         let other = handle(1);
         s.remember(look(other, 1.0));
-        s.chips.clear();
         s.untouch(a.handle, h);
         s.touch(a.handle, Vec2::new(11.0, 13.0));
         s.struck(other, a);
-        assert!(
-            s.chips
-                .iter()
-                .all(|c| (c.pos - Vec2::new(11.0, 13.15)).length() > 0.01)
-        );
+        assert!(!shards(&mut s).iter().any(near));
     }
 
     #[test]
@@ -1249,7 +1343,7 @@ mod tests {
         for _ in 0..20 {
             s.advance(0.0, flat);
         }
-        assert!(s.puffs.is_empty());
+        assert!(s.take_particles().is_empty());
         assert_eq!(s.sinking().next().map(|f| f.lift), Some(0.0));
         assert!(s.drain_noises().next().is_none());
         for _ in 0..60 {
@@ -1272,18 +1366,38 @@ mod tests {
         assert_eq!(s.shots.len(), 1);
         assert!(s.chips.is_empty(), "not there yet");
         let mut out = Vec::new();
-        s.push(core::iter::empty(), flat, 1000, &mut out);
+        s.push(flat, 1000, &mut out);
         assert_eq!(out.len(), ARROWS_PER_VOLLEY);
         for _ in 0..30 {
             s.advance(0.05, flat);
         }
         assert!(s.shots.is_empty());
-        assert_eq!(s.chips.len(), ARROWS_PER_VOLLEY);
+        // They stay in the timber.
+        assert_eq!(s.stuck.len(), ARROWS_PER_VOLLEY);
         assert!(s.drain_noises().any(|n| n.sound == Sound::Arrows));
+        s.advance(STUCK_SECONDS, flat);
+        assert!(s.stuck.is_empty());
         for _ in 0..30 {
             s.advance(0.05, flat);
         }
         assert!(!s.shooting(a.handle));
+    }
+
+    #[test]
+    fn arrows_do_not_hang_in_the_air_over_a_fallen_building() {
+        let mut s = Siege::new(8);
+        let h = handle(0);
+        s.remember(look(h, 1.0));
+        let mut a = blade(Vec2::new(12.0, 16.0));
+        a.kind = Kind::Arrows;
+        a.seen = false;
+        s.struck(h, a);
+        assert_eq!(s.stuck.len(), ARROWS_PER_VOLLEY);
+        s.fallen(h);
+        assert!(s.stuck.is_empty());
+        // Shots landing while it goes down stick in nothing.
+        s.struck(h, a);
+        assert!(s.stuck.is_empty());
     }
 
     #[test]
@@ -1292,16 +1406,20 @@ mod tests {
         let h = handle(0);
         let count = |s: &mut Siege, hp: f32| {
             s.remember(look(h, hp));
-            let mut out = Vec::new();
-            s.push([h].into_iter(), flat, 10_000, &mut out);
-            let glowing = out.iter().filter(|b| b.color[3] == 255).count();
-            (out.len(), glowing)
+            s.advance(0.5, flat);
+            let _ = s.take_particles();
+            s.emit_damage([h].into_iter(), |_, _| true);
+            let made = s.take_particles();
+            (made.len(), additive(&made))
         };
         assert_eq!(count(&mut s, 0.9), (0, 0));
         let (smoke, fire) = count(&mut s, 0.5);
         assert!(smoke > 0 && fire == 0);
         let (more, fire) = count(&mut s, 0.1);
         assert!(more > smoke && fire > 0);
+        // None for a building the camera does not see.
+        s.emit_damage([h].into_iter(), |_, _| false);
+        assert!(s.take_particles().is_empty());
     }
 
     #[test]
@@ -1318,7 +1436,7 @@ mod tests {
         s.advance(COLLAPSE_SECONDS, flat);
         assert_eq!(s.sinking().count(), 0);
         let mut out = Vec::new();
-        s.push(core::iter::empty(), flat, 10_000, &mut out);
+        s.push(flat, 10_000, &mut out);
         assert!(out.len() >= 8, "rubble");
         // A blow told after it fell finds nothing to hit.
         s.struck(h, blade(Vec2::new(12.0, 16.0)));
@@ -1327,6 +1445,33 @@ mod tests {
             s.advance(1.0, flat);
         }
         assert!(s.falls.is_empty());
+    }
+
+    #[test]
+    fn every_kind_of_building_falls_its_own_way() {
+        let fall = |faction, armour| {
+            let mut s = Siege::new(8);
+            let h = handle(0);
+            let mut l = look(h, 0.1);
+            l.stuff = stuff(Some(faction), armour);
+            s.remember(l);
+            s.fallen(h);
+            s.advance(0.1, flat);
+            s.take_particles()
+        };
+        let clans = fall(Faction::EmberClans, Armour::Structure);
+        let stone = fall(Faction::EmberClans, Armour::Fortified);
+        let bones = fall(Faction::CarrionConcord, Armour::Structure);
+        let crystal = fall(Faction::Choir, Armour::Structure);
+        let shell = fall(Faction::Brood, Armour::Living);
+        for made in [&clans, &stone, &bones, &crystal, &shell] {
+            assert!(made.len() > 30, "{} particles", made.len());
+        }
+        // Timbers burn, crystal glitters, stone only throws dust and rock.
+        assert!(additive(&clans) > additive(&stone));
+        assert!(additive(&crystal) > additive(&stone));
+        assert!(additive(&bones) > additive(&stone));
+        assert_eq!(additive(&shell), 0);
     }
 
     #[test]
