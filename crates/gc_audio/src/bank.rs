@@ -70,6 +70,14 @@ pub enum SoundId {
     CarrionRally = 27,
     /// A Carrion Concord regiment's champion wins the pre-battle duel; the regiment roars.
     CarrionVictory = 28,
+    /// Bed (loops): wind over open ground.
+    BedWind = 29,
+    /// Bed (loops): running and lapping water.
+    BedWater = 30,
+    /// Bed (loops): leaves and branches in woods.
+    BedWoods = 31,
+    /// Bed (loops): the far roar of many soldiers fighting.
+    BedBattle = 32,
 }
 
 impl SoundId {
@@ -102,7 +110,7 @@ impl SoundId {
         ],
     ];
 
-    pub const COUNT: usize = 29;
+    pub const COUNT: usize = 33;
 
     pub const ALL: [SoundId; SoundId::COUNT] = [
         SoundId::ArrowRelease,
@@ -134,6 +142,18 @@ impl SoundId {
         SoundId::CarrionRout,
         SoundId::CarrionRally,
         SoundId::CarrionVictory,
+        SoundId::BedWind,
+        SoundId::BedWater,
+        SoundId::BedWoods,
+        SoundId::BedBattle,
+    ];
+
+    /// The ambient beds, in the order [`Bed`](crate::queue::Command::Bed) numbers them.
+    pub const BEDS: [SoundId; 4] = [
+        SoundId::BedWind,
+        SoundId::BedWater,
+        SoundId::BedWoods,
+        SoundId::BedBattle,
     ];
 
     pub fn from_u8(v: u8) -> Option<SoundId> {
@@ -142,6 +162,12 @@ impl SoundId {
 
     pub fn is_music(self) -> bool {
         matches!(self, SoundId::MusicCalm | SoundId::MusicBattle)
+    }
+
+    /// Whether this is an ambient bed: a loop the mixer plays continuously
+    /// at a level it is told, not a one-shot.
+    pub fn is_bed(self) -> bool {
+        SoundId::BEDS.contains(&self)
     }
 
     /// The battle cry of a faction (0 Ember Clans, 1 Brood, 2 Shard Choir,
