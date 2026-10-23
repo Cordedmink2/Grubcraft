@@ -5444,6 +5444,7 @@ impl Running {
                         command: gc_sim::Command::SpawnStructure {
                             building: id,
                             tile: (tile.0 as i16, tile.1 as i16),
+                            turn: 0,
                         },
                     });
                     for &(soldiers, across, back) in attackers {
@@ -5522,6 +5523,14 @@ impl Running {
             let footprint = Vec2::new(f32::from(s.width), f32::from(s.depth)) / 2.0;
             let walls = (model.zip(self.art.as_ref()))
                 .and_then(|(m, art)| art.looks.walls(m))
+                // Turned a quarter, its model's walls run the other way.
+                .map(|w| {
+                    if s.turn % 2 == 1 {
+                        Vec2::new(w.y, w.x)
+                    } else {
+                        w
+                    }
+                })
                 .filter(|w| w.min_element() > 0.25)
                 .map_or(footprint, |w| w.min(footprint));
             self.siege.remember(siege::Look {
