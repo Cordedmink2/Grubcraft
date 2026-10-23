@@ -41,6 +41,8 @@ struct SceneryOut {
     @location(7) @interpolate(flat) kind: u32,
     // How green the baked colour is, 0 (bark) to 1 (leaf), before the tint.
     @location(8) leaf: f32,
+    // Close-range occlusion baked into the vertex, 0 (open) to 1 (shut).
+    @location(9) occ: f32,
 };
 
 // How the wind pushes things at `xz` right now: a unit-ish vector along the
@@ -88,6 +90,7 @@ fn vs_scenery(v: SceneryIn) -> SceneryOut {
     out.normal_local = v.normal.xyz;
     out.facing = v.facing;
     out.kind = v.kind;
+    out.occ = max(v.normal.w, 0.0);
     out.leaf = smoothstep(0.0, 0.06, v.color.g - max(v.color.r, v.color.b) * 0.95);
     return out;
 }
@@ -121,6 +124,11 @@ const TREE_REACH: f32 = 70.0;
 // Texture repeats a tile of model space.
 const BARK_SCALE: f32 = 1.4;
 const FOLIAGE_SCALE: f32 = 5.0;
+// How dark a fully shut vertex goes (the creases between a crown's lobes).
+const OCCLUDED_DARK: f32 = 0.85;
+// How hard a leaf texture's relief tilts the surface (1 is the map as drawn;
+// more makes the crown's grain catch the light harder).
+const LEAF_RELIEF: f32 = 1.3;
 const STONE_SCALE: f32 = 5.0;
 // Linear mean colours of the albedo maps, to turn them into ratios.
 const BARK_BROAD_MEAN: vec3<f32> = vec3<f32>(0.2285, 0.2208, 0.2026);
@@ -260,7 +268,7 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
             if leaf > 0.02 {
                 let f = single_plane(2, MOSS_MEAN, FOLIAGE_SCALE, in.local, nl, dpx, dpy);
                 ratio = mix(ratio, muted(f.ratio, 0.5), leaf);
-                detailed = normalize(nl + (f.normal - nl) * 0.8);
+                detailed = normalize(nl + (f.normal - nl) * LEAF_RELIEF);
             }
             if leaf < 0.98 {
                 var b: Surface;
@@ -279,6 +287,7 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
         let xz = left * detailed.x + in.facing * detailed.z;
         n = normalize(vec3<f32>(xz.x, detailed.y, xz.y));
     }
+    albedo *= 1.0 - OCCLUDED_DARK * in.occ;
     var c = shade(albedo, n, in.world);
     // Leaves and blades pass light on: with the sun behind them they glow,
     // yellower than they are lit from the front.

@@ -15,7 +15,7 @@ use crate::{Config, Options};
 
 /// Bump when a change to the baker changes the bytes it bakes from the same
 /// sources, so every committed pack is flagged for a re-bake.
-pub const BAKER_VERSION: u32 = 1;
+pub const BAKER_VERSION: u32 = 2;
 
 const FORMAT: &str = "1";
 const NOT_IN_REPO: &str = "not in the repo";

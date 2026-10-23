@@ -3,10 +3,10 @@
 # Hashes are XXH3-128. Sources marked "not in the repo" live in the project's
 # shared folder; CI cannot check them, so a change to one shows only in a re-bake.
 manifest = 1
-baker = gc_scenebake 1
+baker = gc_scenebake 2
 schema = 1
 config = 7de08fced503a715d7bb425c1047a02e
-pack = 0206736a1365b450e51effb079c1683e
+pack = b1dde1ce86ae34ccf5e63151b4cb5103
 pack_bytes = 931184
 source shared:grubcraft/scenery/oak-a/oak-a.glb = 09d8a0f2518d3fa4b1988e782e69bb99 not in the repo
 source shared:grubcraft/scenery/oak-b/oak-b.glb = 874d5489d29b2de9a04169a2172b9e97 not in the repo

@@ -23,6 +23,7 @@
 //! development; the manifest then lacks them and `--check` fails).
 
 mod manifest;
+mod occlusion;
 
 use std::path::{Path, PathBuf};
 
@@ -39,6 +40,16 @@ const REACH: f32 = 8.0;
 /// The highest a vertex can be stored (positions are `i16` steps of
 /// 1/`POSITION_SCALE` tile); x and z are held to `REACH`, well inside.
 const TOP: f32 = i16::MAX as f32 / POSITION_SCALE;
+/// How far, in tiles, the close-range occlusion looks, by family: about the
+/// size of a lobe of a crown, a bush's leaf clump, a tuft or a rock's facet.
+fn occlusion_reach(family: Family) -> f32 {
+    match family {
+        Family::Tree => 0.8,
+        Family::Bush => 0.5,
+        Family::Grass => 0.15,
+        Family::Rock => 0.5,
+    }
+}
 /// Parts may sink this far below the ground.
 const SINK: f32 = 0.35;
 /// Crown width limits, with a little slack (warnings only).
@@ -423,8 +434,9 @@ fn bake_model(cfg: &ModelConfig, levels: &[Mesh; LODS]) -> Result<Baked, String>
             return Err("has more than 65,536 vertices over its levels".into());
         }
         lods[k] = [indices.len() as u32, m.indices.len() as u32];
+        let occlusion = occlusion::bake(m, occlusion_reach(cfg.family));
         indices.extend(m.indices.iter().map(|&i| (base as u32 + i) as u16));
-        for i in 0..m.pos.len() {
+        for (i, &occ) in occlusion.iter().enumerate() {
             let p = m.pos[i];
             let q = |v: f32| (v * POSITION_SCALE).round().clamp(-32768.0, 32767.0) as i16;
             let n = m.normal[i];
@@ -436,7 +448,7 @@ fn bake_model(cfg: &ModelConfig, levels: &[Mesh; LODS]) -> Result<Baked, String>
             vertices.push(SceneryVertex {
                 pos: [q(p.x), q(p.y), q(p.z)],
                 _pad: 0,
-                normal: [sn(n.x), sn(n.y), sn(n.z), 0],
+                normal: [sn(n.x), sn(n.y), sn(n.z), sn(occ)],
                 color: [srgb_byte(c[0]), srgb_byte(c[1]), srgb_byte(c[2]), wind],
             });
         }
@@ -622,7 +634,7 @@ mod tests {
         assert_eq!(v[0].color, [188, 188, 188, 0]);
         assert_eq!(v[2].color[3], 128);
         assert_eq!(v[2].pos, [0, 4096, 0]);
-        assert_eq!(v[2].normal, [0, 127, 0, 0]);
+        assert_eq!(v[2].normal[..3], [0, 127, 0]);
     }
 
     #[test]

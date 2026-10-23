@@ -118,8 +118,10 @@ impl SceneryModelRecord {
 pub struct SceneryVertex {
     /// Position in 1/[`POSITION_SCALE`] tiles; x across, y up, z forward.
     pub pos: [i16; 3],
+    /// Still spare.
     pub _pad: i16,
-    /// Unit normal scaled to ±127; the fourth byte is padding.
+    /// Unit normal scaled to ±127; the fourth byte is close-range ambient
+    /// occlusion, 0 (open) to 127 (shut), which the shader darkens by.
     pub normal: [i8; 4],
     /// sRGB colour with ambient occlusion painted in. Alpha is the wind: how
     /// far this vertex moves in a full gust, in 1/255 of [`SWAY_MAX`] tiles.
