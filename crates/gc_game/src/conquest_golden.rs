@@ -65,6 +65,8 @@ const SHRINES_AT: u32 = 5 * TICKS_PER_SECOND;
 const SHRINES: u8 = 12;
 /// When each side's tower goes up.
 const TOWER_AT: u32 = 15 * TICKS_PER_SECOND;
+/// The quarter turns each side's tower is put up at.
+const TOWER_TURN: u8 = 1;
 /// Soldiers and workers each side trains up to.
 const FIGHTERS: usize = 6;
 const WORKERS: usize = 8;
@@ -469,6 +471,7 @@ impl Match {
                         regiment: w,
                         building: k.barracks,
                         tile,
+                        turn: 0,
                     }));
                     spend(&mut bank, k.barracks_cost);
                 }
@@ -524,6 +527,9 @@ impl Match {
                         regiment: w,
                         building: k.house,
                         tile,
+                        // A half turn keeps the footprint the site was
+                        // found for (format 26's turned tags).
+                        turn: 2,
                     }));
                     spend(&mut bank, k.house_cost);
                 }
@@ -542,6 +548,7 @@ impl Match {
                         regiment: w,
                         building: k.spare,
                         tile,
+                        turn: 0,
                     }));
                     spend(&mut bank, k.spare_cost);
                 }
@@ -630,11 +637,12 @@ impl Match {
                 main.depth.into(),
             ];
             let tile = conquest::ring(foot, 3)
-                .find(|&t| self.world.can_build(b, t).is_ok())
+                .find(|&t| self.world.can_build(b, t, TOWER_TURN).is_ok())
                 .expect("room for a tower");
             out.push(order(Command::SpawnStructure {
                 building: b,
                 tile: (tile.0 as i16, tile.1 as i16),
+                turn: TOWER_TURN,
             }));
         }
         if self.sides[usize::from(p)].focused {
@@ -681,6 +689,7 @@ impl Match {
                 out.push(order(Command::SpawnStructure {
                     building: c.resonator,
                     tile,
+                    turn: 0,
                 }));
             }
             side.chord = true;
@@ -740,12 +749,13 @@ impl Match {
             let (bx, by) = (behind.x.floor_int(), behind.y.floor_int());
             let tile = conquest::ring([bx, by, 1, 1], 0)
                 .take(400)
-                .find(|&t| self.world.can_build(c.shrine, t).is_ok())
+                .find(|&t| self.world.can_build(c.shrine, t, 0).is_ok())
                 .map(|(x, y)| (x as i16, y as i16))
                 .expect("room for a Shrine behind the main building");
             out.push(order(Command::SpawnStructure {
                 building: c.shrine,
                 tile,
+                turn: 0,
             }));
             self.sides[usize::from(p)].shrines += 1;
         }
@@ -843,7 +853,7 @@ pub(crate) fn site(world: &World, k: &Kit, p: PlayerId, b: BuildingId) -> Option
         i32::from(main.depth),
     ];
     conquest::ring(foot, 3)
-        .find(|&t| world.can_lay(p, b, t).is_ok())
+        .find(|&t| world.can_lay(p, b, t, 0).is_ok())
         .map(|(x, y)| (x as i16, y as i16))
 }
 
@@ -859,7 +869,7 @@ fn chord_sites(world: &World, k: &Kit, p: PlayerId, b: BuildingId) -> Option<[(i
     let near = |(x, y): (i32, i32)| {
         conquest::ring([x, y, 1, 1], 0)
             .take(64)
-            .find(|&t| world.can_build(b, t).is_ok())
+            .find(|&t| world.can_build(b, t, 0).is_ok())
     };
     [(0, 1), (0, -1), (1, 0), (-1, 0)]
         .into_iter()

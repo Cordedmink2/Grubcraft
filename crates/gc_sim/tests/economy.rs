@@ -160,7 +160,8 @@ fn put_up(w: &mut World, player: u8, building: u16, x: i16, y: i16) -> Structure
         player,
         Command::SpawnStructure {
             building,
-            tile: (x, y)
+            tile: (x, y),
+            turn: 0,
         }
     ));
     let s = w.structures().unwrap();
@@ -491,15 +492,20 @@ fn sent_again_to_its_seep_a_worker_keeps_filling() {
 #[test]
 fn nothing_is_built_on_a_seep() {
     let mut w = conquest(&[grub(32, 22, 7500)], 100);
-    assert_eq!(w.can_build(HOUSE, (31, 21)), Err(Refusal::Node));
-    assert_eq!(w.can_build(HOUSE, (30, 22)), Err(Refusal::Node), "too near");
-    assert_eq!(w.can_build(HOUSE, (36, 22)), Ok(()));
+    assert_eq!(w.can_build(HOUSE, (31, 21), 0), Err(Refusal::Node));
+    assert_eq!(
+        w.can_build(HOUSE, (30, 22), 0),
+        Err(Refusal::Node),
+        "too near"
+    );
+    assert_eq!(w.can_build(HOUSE, (36, 22), 0), Ok(()));
     assert!(!order(
         &mut w,
         0,
         Command::SpawnStructure {
             building: HOUSE,
-            tile: (31, 21)
+            tile: (31, 21),
+            turn: 0,
         }
     ));
 }

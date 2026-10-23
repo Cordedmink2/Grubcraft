@@ -28,9 +28,11 @@
 //!
 //! Usage: gc_artbake [--config assets-src/models.ron] [--shared DIR]
 //!                   [--out assets/models.pak] [--report | --check]
+//!        gc_artbake --detail [--out assets/detail.pak] [--check]  (the shared detail textures)
 //! `--report` prints each model's most common colours, for choosing team colours.
 //! `--check` bakes nothing: it checks `--out` and its manifest.
 
+mod detail;
 mod manifest;
 mod textures;
 
@@ -38,6 +40,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
+use gc_assets::detail::{DetailTag, tiles_code};
 use gc_assets::model::{
     BONE_TEXELS_PER_ROW, BONES_PER_VERTEX, ClipKind, ClipRecord, LODS, MAX_BONES, MAX_MATERIALS,
     ModelRecord, ModelTables, ModelVertex, NAME_BYTES, POSITION_SCALE, f16_bits,
@@ -105,6 +108,12 @@ struct ModelConfig {
     /// game culls and picks a level of detail by.
     #[serde(default)]
     keep_origin: bool,
+    /// Surface detail (docs/31): read each face's surface classes from the
+    /// glTF's `COLOR_0` (red and green are the two classes, a fifteenth
+    /// each, blue the mix) and repeat the shared detail textures about this
+    /// many tiles (metres) apart. Left out, the model wears none.
+    #[serde(default)]
+    detail_tile: Option<f32>,
 }
 
 fn default_team_tolerance() -> f32 {
@@ -118,6 +127,8 @@ struct Options {
     out: PathBuf,
     report: bool,
     check: bool,
+    /// Bake or check the shared detail textures instead of a model pack.
+    detail: bool,
 }
 
 impl Options {
@@ -142,7 +153,9 @@ fn main() {
         out: root.join("assets/models.pak"),
         report: false,
         check: false,
+        detail: false,
     };
+    let mut out_given = false;
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -154,17 +167,32 @@ fn main() {
                 opts.check = true;
                 continue;
             }
+            "--detail" => {
+                opts.detail = true;
+                continue;
+            }
             _ => {}
         }
         let Some(value) = args.next() else { usage() };
         match flag.as_str() {
             "--config" => opts.config = value.into(),
             "--shared" => opts.shared = value.into(),
-            "--out" => opts.out = value.into(),
+            "--out" => {
+                opts.out = value.into();
+                out_given = true;
+            }
             _ => usage(),
         }
     }
-    let result = if opts.check {
+    if opts.detail && !out_given {
+        opts.out = root.join("assets/detail.pak");
+    }
+    let detail_dir = opts.repo_src.join("detail");
+    let result = if opts.detail && opts.check {
+        detail::check(&detail_dir, &opts.out)
+    } else if opts.detail {
+        detail::run(&detail_dir, &opts.out)
+    } else if opts.check {
         manifest::check(&opts)
     } else {
         run(&opts)
@@ -176,7 +204,9 @@ fn main() {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: gc_artbake [--config FILE] [--shared DIR] [--out FILE] [--report | --check]");
+    eprintln!(
+        "usage: gc_artbake [--config FILE] [--shared DIR] [--out FILE] [--report | --check]\n       gc_artbake --detail [--out FILE] [--check]"
+    );
     std::process::exit(2);
 }
 
@@ -274,6 +304,9 @@ struct Vert {
     tangent: Vec4,
     uv: Vec2,
     color: [u8; 3],
+    /// The surface classes and mix, from the source's `COLOR_0` (the repeat
+    /// code is added once the model's size is known).
+    detail: DetailTag,
     /// Heaviest bone first; weights sum to 1.
     bones: [(u8, f32); BONES_PER_VERTEX],
 }
@@ -605,6 +638,10 @@ fn bake_model(
             };
             let tangents: Option<Vec<Vec4>> =
                 reader.read_tangents().map(|t| t.map(Vec4::from).collect());
+            let tags: Option<Vec<DetailTag>> = cfg
+                .detail_tile
+                .and_then(|_| reader.read_colors(0))
+                .map(|c| c.into_rgba_f32().map(detail_tag).collect());
             // Every vertex's (joint, weight) pairs, from both sets of four an
             // exporter may write.
             let mut influences: Vec<Vec<(u16, f32)>> = Vec::new();
@@ -661,6 +698,7 @@ fn bake_model(
                     tangent,
                     uv: uvs[k],
                     color: color.round().to_array().map(|c| c.clamp(0.0, 255.0) as u8),
+                    detail: tags.as_ref().map_or(DetailTag::default(), |t| t[k]),
                     bones,
                 });
             }
@@ -719,6 +757,20 @@ fn bake_model(
             .transform_vector3(v.tangent.truncate())
             .normalize_or_zero();
         v.tangent = t.extend(v.tangent.w);
+    }
+
+    if cfg.detail_tile.is_some() && verts.iter().all(|v| v.detail.class_a == 0) {
+        return Err(
+            "detail_tile is set but no face names a surface class (the glTF needs COLOR_0)".into(),
+        );
+    }
+    // Detail repeats: how many metres of surface one unit of the texture
+    // atlas covers, over how far one repeat reaches.
+    if let Some(tile) = cfg.detail_tile {
+        let code = tiles_code(atlas_metres(&verts, &indices) / tile.max(1e-3));
+        for v in &mut verts {
+            v.detail.tiles = code;
+        }
     }
 
     // 3. Quantise and weld identical vertices.
@@ -882,6 +934,45 @@ fn bake_model(
     })
 }
 
+/// A face's detail tag from its `COLOR_0` (see `ModelConfig::detail_tile`).
+fn detail_tag(rgba: [f32; 4]) -> DetailTag {
+    let fifteenth = |c: f32| (c.clamp(0.0, 1.0) * 15.0).round() as u8;
+    DetailTag {
+        class_a: fifteenth(rgba[0]),
+        class_b: fifteenth(rgba[1]),
+        mix: fifteenth(rgba[2]),
+        tiles: 0,
+    }
+}
+
+/// The metres of surface one whole texture atlas covers across, typically:
+/// the median over the model's triangles, weighted by their area, of the
+/// square root of a triangle's area against its area in texture space. The
+/// median keeps the faces the baker shrinks (a plinth below the ground, which
+/// is almost never seen) from deciding it.
+fn atlas_metres(verts: &[Vert], indices: &[u32]) -> f32 {
+    let mut ratios: Vec<(f32, f32)> = indices
+        .chunks_exact(3)
+        .filter_map(|t| {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| &verts[i as usize]);
+            let area = (b.pos - a.pos).cross(c.pos - a.pos).length() * 0.5;
+            let (e1, e2) = (b.uv - a.uv, c.uv - a.uv);
+            let uv_area = (e1.x * e2.y - e1.y * e2.x).abs() * 0.5;
+            (area > 1e-9 && uv_area > 1e-12).then(|| ((area / uv_area).sqrt(), area))
+        })
+        .collect();
+    ratios.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let half: f32 = ratios.iter().map(|r| r.1).sum::<f32>() * 0.5;
+    let mut seen = 0.0;
+    for (ratio, area) in &ratios {
+        seen += area;
+        if seen >= half {
+            return *ratio;
+        }
+    }
+    0.0
+}
+
 /// The triangles of `indices` grouped into separate parts: sets joined by
 /// shared positions (texture seams don't split a part).
 fn parts(indices: &[u32], verts: &[ModelVertex]) -> Vec<Vec<u32>> {
@@ -949,14 +1040,19 @@ fn quantise(
         material: 0,
         bones,
         weights,
-        normal: [n(v.normal.x), n(v.normal.y), n(v.normal.z), 0],
+        normal: [
+            n(v.normal.x),
+            n(v.normal.y),
+            n(v.normal.z),
+            v.detail.classes_byte() as i8,
+        ],
         tangent: [
             n(v.tangent.x),
             n(v.tangent.y),
             n(v.tangent.z),
             n(v.tangent.w),
         ],
-        color: [v.color[0], v.color[1], v.color[2], 255],
+        color: [v.color[0], v.color[1], v.color[2], v.detail.params_byte()],
         uv: [unorm16(v.uv.x), unorm16(v.uv.y)],
     }
 }
@@ -1189,6 +1285,43 @@ mod tests {
         assert_eq!((bones, weights), ([5, 0, 0, 0], [255, 0, 0, 0]));
     }
 
+    #[test]
+    fn a_colour_names_two_classes_and_a_mix() {
+        let tag = detail_tag([3.0 / 15.0, 11.0 / 15.0, 0.5, 1.0]);
+        assert_eq!(
+            (tag.class_a, tag.class_b, tag.mix, tag.tiles),
+            (3, 11, 8, 0)
+        );
+        assert_eq!(detail_tag([0.0; 4]), DetailTag::default());
+        assert_eq!(detail_tag([2.0, -1.0, 9.0, 0.0]).class_a, 15);
+    }
+
+    #[test]
+    fn the_atlas_size_is_the_median_not_the_plinth() {
+        let quad = |size: f32, uv: f32, at: f32| -> Vec<Vert> {
+            [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
+                .iter()
+                .map(|&(x, y)| Vert {
+                    pos: Vec3::new(x * size, y * size, at),
+                    normal: Vec3::Z,
+                    tangent: Vec4::ZERO,
+                    uv: Vec2::new(x * uv, y * uv),
+                    color: [0; 3],
+                    detail: DetailTag::default(),
+                    bones: rigid_skin(0),
+                })
+                .collect()
+        };
+        // Two big faces covering 2 metres per 0.5 of atlas, and one tiny
+        // shrunken face (the plinth) that would say 100.
+        let mut verts = quad(2.0, 0.5, 0.0);
+        verts.extend(quad(2.0, 0.5, 1.0));
+        verts.extend(quad(1.0, 0.01, 2.0));
+        let indices: Vec<u32> = (0..9).collect();
+        let m = atlas_metres(&verts, &indices);
+        assert!((m - 4.0).abs() < 1e-3, "{m}");
+    }
+
     /// The repo's own CC0 alien bug (it was the Skitterlings' stand-in until
     /// the Brood's own models replaced it; it stays as the baker's test model),
     /// baked in memory with the budgets it had in `models.ron`.
@@ -1201,6 +1334,7 @@ mod tests {
             out: PathBuf::new(),
             report: false,
             check: false,
+            detail: false,
         };
         let mut config: Config = ron::from_str(
             r#"(models: [(

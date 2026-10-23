@@ -116,7 +116,7 @@ const ALBEDO: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_a
 const NORMAL: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_normal.png");
 const ROUGH: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_rough.png");
 
-/// The rock textures.
+/// The rock textures (also the ground's: see ground.rs).
 pub struct RockTextures {
     pub color: wgpu::TextureView,
     pub normal: wgpu::TextureView,
@@ -125,20 +125,20 @@ pub struct RockTextures {
 
 /// How a mip level is made from the one above.
 #[derive(Clone, Copy)]
-enum Mip {
+pub(crate) enum Mip {
     /// sRGB colour (averaged as light) with linear data in alpha.
     Color,
     /// A tangent-space normal map: averaged as vectors, then renormalised.
     Normal,
 }
 
-struct Image {
-    side: u32,
+pub(crate) struct Image {
+    pub side: u32,
     channels: usize,
     data: Vec<u8>,
 }
 
-fn decode(bytes: &[u8]) -> Option<Image> {
+pub(crate) fn decode(bytes: &[u8]) -> Option<Image> {
     let mut reader = png::Decoder::new(bytes).read_info().ok()?;
     let mut data = vec![0; reader.output_buffer_size()];
     let info = reader.next_frame(&mut data).ok()?;
@@ -163,7 +163,7 @@ fn decode(bytes: &[u8]) -> Option<Image> {
 }
 
 /// RGBA8 texels of `rgb` with `alpha` (a gray image) in the fourth channel.
-fn pack(rgb: &Image, alpha: Option<&Image>) -> Option<Vec<u8>> {
+pub(crate) fn pack(rgb: &Image, alpha: Option<&Image>) -> Option<Vec<u8>> {
     if rgb.channels < 3 || alpha.is_some_and(|a| a.side != rgb.side || a.channels != 1) {
         return None;
     }
@@ -176,7 +176,7 @@ fn pack(rgb: &Image, alpha: Option<&Image>) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn to_linear(v: u8) -> f32 {
+pub(crate) fn to_linear(v: u8) -> f32 {
     let c = f32::from(v) / 255.0;
     if c <= 0.04045 {
         c / 12.92
@@ -237,13 +237,15 @@ fn halve(texels: &[u8], side: u32, mip: Mip) -> Vec<u8> {
     out
 }
 
-fn upload(
+/// A mipmapped texture of `layers` images (a 2D texture for one, an array for
+/// more) of `side` texels a side, and the bytes of GPU memory it takes.
+pub(crate) fn upload(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     label: &str,
     format: wgpu::TextureFormat,
     side: u32,
-    texels: Vec<u8>,
+    layers: Vec<Vec<u8>>,
     mip: Mip,
 ) -> (wgpu::TextureView, u64) {
     let levels = side.ilog2() + 1;
@@ -252,7 +254,7 @@ fn upload(
         size: wgpu::Extent3d {
             width: side,
             height: side,
-            depth_or_array_layers: 1,
+            depth_or_array_layers: layers.len() as u32,
         },
         mip_level_count: levels,
         sample_count: 1,
@@ -262,35 +264,41 @@ fn upload(
         view_formats: &[],
     });
     let mut bytes = 0;
-    let mut texels = texels;
-    let mut s = side;
-    for level in 0..levels {
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: level,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &texels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(s * 4),
-                rows_per_image: Some(s),
-            },
-            wgpu::Extent3d {
-                width: s,
-                height: s,
-                depth_or_array_layers: 1,
-            },
-        );
-        bytes += texels.len() as u64;
-        if s > 1 {
-            texels = halve(&texels, s, mip);
-            s /= 2;
+    for (layer, mut texels) in layers.into_iter().enumerate() {
+        let mut s = side;
+        for level in 0..levels {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: level,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: layer as u32,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &texels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(s * 4),
+                    rows_per_image: Some(s),
+                },
+                wgpu::Extent3d {
+                    width: s,
+                    height: s,
+                    depth_or_array_layers: 1,
+                },
+            );
+            bytes += texels.len() as u64;
+            if s > 1 {
+                texels = halve(&texels, s, mip);
+                s /= 2;
+            }
         }
     }
     (
+        // (With more than one layer, a default view is an array's.)
         texture.create_view(&wgpu::TextureViewDescriptor::default()),
         bytes,
     )
@@ -310,7 +318,7 @@ pub fn load(device: &wgpu::Device, queue: &wgpu::Queue) -> RockTextures {
         "rock albedo",
         wgpu::TextureFormat::Rgba8UnormSrgb,
         side,
-        color,
+        vec![color],
         Mip::Color,
     );
     let (normal, b) = upload(
@@ -319,7 +327,7 @@ pub fn load(device: &wgpu::Device, queue: &wgpu::Queue) -> RockTextures {
         "rock normal",
         wgpu::TextureFormat::Rgba8Unorm,
         side,
-        normals,
+        vec![normals],
         Mip::Normal,
     );
     RockTextures {

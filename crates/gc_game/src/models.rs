@@ -3,6 +3,7 @@
 //! the build script and embedded in the executable, and the choice of
 //! which animation frame each soldier shows.
 
+use gc_assets::detail::Detail;
 use gc_assets::model::{ClipKind, ClipRecord, Models};
 use gc_assets::{Aligned, Pack};
 
@@ -15,6 +16,16 @@ static PACK: &Aligned<[u8]> = &Aligned(*include_bytes!(concat!(env!("OUT_DIR"), 
 pub fn load() -> Result<Models<'static>, String> {
     let pack = Pack::parse(&PACK.0).map_err(|e| format!("embedded model pack: {e}"))?;
     Models::from_pack(&pack).map_err(|e| format!("embedded model pack: {e}"))
+}
+
+static DETAIL: &Aligned<[u8]> = &Aligned(*include_bytes!("../../../assets/detail.pak"));
+
+/// The embedded surface detail textures (`assets/detail.pak`), layered over
+/// the models' own. A failure means the committed pack is broken, so the
+/// models draw without detail.
+pub fn load_detail() -> Result<Detail<'static>, String> {
+    let pack = Pack::parse(&DETAIL.0).map_err(|e| format!("embedded detail pack: {e}"))?;
+    Detail::from_pack(&pack).map_err(|e| format!("embedded detail pack: {e}"))
 }
 
 /// What a soldier is doing, which picks the clip he plays.

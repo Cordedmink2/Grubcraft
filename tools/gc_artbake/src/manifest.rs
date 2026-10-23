@@ -22,11 +22,52 @@ use crate::{Config, Options};
 /// sources, so every committed pack is flagged for a re-bake.
 pub const BAKER_VERSION: u32 = 1;
 
-const FORMAT: &str = "1";
+pub(crate) const FORMAT: &str = "1";
 const NOT_IN_REPO: &str = "not in the repo";
 
-fn manifest_path(opts: &Options) -> PathBuf {
-    opts.out.with_extension("manifest")
+/// The manifest that sits beside the pack at `out`.
+pub(crate) fn manifest_path(out: &Path) -> PathBuf {
+    out.with_extension("manifest")
+}
+
+/// What a check finds out of date, with the comparison every manifest row
+/// shares.
+pub(crate) struct Stale<'a> {
+    manifest: &'a Manifest,
+    pub found: Vec<String>,
+}
+
+impl<'a> Stale<'a> {
+    pub fn new(manifest: &'a Manifest) -> Self {
+        Stale {
+            manifest,
+            found: Vec::new(),
+        }
+    }
+
+    /// Note `what` when the manifest's `key` is not `now`.
+    pub fn expect(&mut self, what: &str, key: &str, now: String) {
+        let then = self.manifest.get(key).unwrap_or("(missing)");
+        if then != now {
+            self.found
+                .push(format!("{what} is `{now}` but the manifest has `{then}`"));
+        }
+    }
+
+    /// The rows every pack's manifest has: format, baker, schema, and the
+    /// pack's own hash and size.
+    pub fn pack(&mut self, out: &Path, baker: String, schema: u32) {
+        self.expect("manifest format", "manifest", FORMAT.into());
+        self.expect("baker", "baker", baker);
+        self.expect("schema", "schema", schema.to_string());
+        match read(out) {
+            Ok(pack) => {
+                self.expect("pack hash", "pack", hash_hex(&pack));
+                self.expect("pack size", "pack_bytes", pack.len().to_string());
+            }
+            Err(e) => self.found.push(e),
+        }
+    }
 }
 
 /// Every source file the config names, each once: models, then their maps.
@@ -46,7 +87,7 @@ fn sources(config: &Config) -> Vec<&str> {
     all
 }
 
-fn read(path: &Path) -> Result<Vec<u8>, String> {
+pub(crate) fn read(path: &Path) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -83,14 +124,14 @@ pub fn write(
         `cargo run -p gc_artbake -- --check` in CI. Do not edit by hand.\n\
         Hashes are XXH3-128. Sources marked \"not in the repo\" live in the project's\n\
         shared folder; CI cannot check them, so a change to one shows only in a re-bake.";
-    let path = manifest_path(opts);
+    let path = manifest_path(&opts.out);
     std::fs::write(&path, m.render(header)).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Compare the committed pack with its manifest, `models.ron` and the
 /// sources the repository holds.
 pub fn check(opts: &Options) -> Result<(), String> {
-    let path = manifest_path(opts);
+    let path = manifest_path(&opts.out);
     let text = std::fs::read_to_string(&path).map_err(|e| {
         format!(
             "{}: {e} (run `cargo run -p gc_artbake --release` to write it)",
@@ -103,31 +144,22 @@ pub fn check(opts: &Options) -> Result<(), String> {
     let config: Config =
         ron::from_str(&config_text).map_err(|e| format!("{}: {e}", opts.config.display()))?;
 
-    let mut stale: Vec<String> = Vec::new();
-    let mut expect = |what: &str, key: &str, now: String| {
-        let then = m.get(key).unwrap_or("(missing)");
-        if then != now {
-            stale.push(format!("{what} is `{now}` but the manifest has `{then}`"));
-        }
-    };
-    expect("manifest format", "manifest", FORMAT.into());
-    expect("baker", "baker", format!("gc_artbake {BAKER_VERSION}"));
-    expect("model schema", "schema", MODEL_SCHEMA.to_string());
-    expect("models.ron hash", "config", config_hash(&config_text));
-    match read(&opts.out) {
-        Ok(pack) => {
-            expect("pack hash", "pack", hash_hex(&pack));
-            expect("pack size", "pack_bytes", pack.len().to_string());
-        }
-        Err(e) => stale.push(e),
-    }
+    let mut stale = Stale::new(&m);
+    stale.pack(
+        &opts.out,
+        format!("gc_artbake {BAKER_VERSION}"),
+        MODEL_SCHEMA,
+    );
+    stale.expect("models.ron hash", "config", config_hash(&config_text));
 
     let (mut compared, mut unchecked) = (0, 0);
     let wanted = sources(&config);
     for src in &wanted {
         let key = format!("source {src}");
         let Some(value) = m.get(&key) else {
-            stale.push(format!("{src} is in the config but not in the manifest"));
+            stale
+                .found
+                .push(format!("{src} is in the config but not in the manifest"));
             continue;
         };
         let then = value.split(' ').next().unwrap_or_default();
@@ -141,20 +173,22 @@ pub fn check(opts: &Options) -> Result<(), String> {
             }
             // A repo file that is missing, or any file that can't be read.
             Err(e) => {
-                stale.push(format!("{src}: {}: {e}", file.display()));
+                stale.found.push(format!("{src}: {}: {e}", file.display()));
                 continue;
             }
         };
         compared += 1;
         if hash_hex(&bytes) != then {
-            stale.push(format!("{src} has changed since the pack was baked"));
+            stale
+                .found
+                .push(format!("{src} has changed since the pack was baked"));
         }
     }
     for (key, _) in m.entries() {
         if let Some(src) = key.strip_prefix("source ")
             && !wanted.contains(&src)
         {
-            stale.push(format!(
+            stale.found.push(format!(
                 "{src} is in the manifest but no longer in the config"
             ));
         }
@@ -164,13 +198,13 @@ pub fn check(opts: &Options) -> Result<(), String> {
         "{}: {compared} sources compared, {unchecked} shared sources not checked (not in this checkout)",
         path.display()
     );
-    if stale.is_empty() {
+    if stale.found.is_empty() {
         return Ok(());
     }
     Err(format!(
         "{} is stale:\n  {}\nRe-bake with `cargo run -p gc_artbake --release -- --config {} --out {}` (it needs the shared sources) and commit the pack and its manifest together.",
         opts.out.display(),
-        stale.join("\n  "),
+        stale.found.join("\n  "),
         opts.config.display(),
         opts.out.display(),
     ))

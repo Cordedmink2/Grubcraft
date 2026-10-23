@@ -143,6 +143,7 @@ fn put_up(w: &mut World, building: BuildingId, tile: (i32, i32)) {
     let command = Command::SpawnStructure {
         building,
         tile: (tile.0 as i16, tile.1 as i16),
+        turn: 0,
     };
     assert!(order(w, command), "building {building} at {tile:?} refused");
 }
@@ -305,7 +306,7 @@ fn a_spot_is_one_the_simulation_accepts() {
     let stats = house_stats();
     let keep = lanes_to_nodes(&w);
     let tile = spot_for(&w, ME, HOUSE, &stats, hall_centre(), &keep).expect("room for a house");
-    assert_eq!(w.can_lay(ME, HOUSE, tile), Ok(()));
+    assert_eq!(w.can_lay(ME, HOUSE, tile, 0), Ok(()));
 
     let before = w.structures().unwrap().len();
     let grub_before = w.bank(ME).unwrap().grub;
@@ -316,6 +317,7 @@ fn a_spot_is_one_the_simulation_accepts() {
                 regiment: worker,
                 building: HOUSE,
                 tile: (tile.0 as i16, tile.1 as i16),
+                turn: 0,
             }
         ),
         "the worker's Build at {tile:?} was refused"
@@ -375,12 +377,13 @@ fn spots_never_overlap_an_enemy_building() {
         command: Command::SpawnStructure {
             building: HOUSE,
             tile: (33, 24),
+            turn: 0,
         },
     };
     assert_eq!(w.tick(&[enemy]).commands_applied, 1);
     let stats = house_stats();
     let tile = spot_for(&w, ME, HOUSE, &stats, Vec2::new(34.5, 25.5), &[]).unwrap();
-    assert_eq!(w.can_lay(ME, HOUSE, tile), Ok(()));
+    assert_eq!(w.can_lay(ME, HOUSE, tile, 0), Ok(()));
     assert!(!overlaps(foot_at(tile, &stats), [33, 24, 3, 3], 0));
 }
 
@@ -475,6 +478,7 @@ fn houses_laid_by_a_worker_are_kept_clear_of_too() {
                     regiment: worker,
                     building: HOUSE,
                     tile: (tile.0 as i16, tile.1 as i16),
+                    turn: 0,
                 }
             ),
             "Build of house {n} at {tile:?} refused"
@@ -549,7 +553,7 @@ fn near_the_map_edge_is_none_or_valid() {
     ] {
         if let Some(tile) = spot_for(&w, ME, HOUSE, &stats, near, &[]) {
             assert_eq!(
-                w.can_lay(ME, HOUSE, tile),
+                w.can_lay(ME, HOUSE, tile, 0),
                 Ok(()),
                 "near {near:?}: {tile:?}"
             );
@@ -567,7 +571,7 @@ fn a_corner_spot_is_pulled_onto_the_map() {
     let tile = spot_for(&w, ME, HOUSE, &house_stats(), Vec2::new(0.0, 0.0), &[])
         .expect("the corner is open ground");
     assert!(tile.0 >= 0 && tile.1 >= 0);
-    assert_eq!(w.can_lay(ME, HOUSE, tile), Ok(()));
+    assert_eq!(w.can_lay(ME, HOUSE, tile, 0), Ok(()));
 }
 
 /// With a lake across the place wanted, the spot is on dry ground beside
@@ -580,7 +584,7 @@ fn blocked_ground_is_never_built_on() {
     let stats = house_stats();
     let tile = spot_for(&w, ME, HOUSE, &stats, Vec2::new(22.0, 22.0), &[])
         .expect("dry ground within reach");
-    assert_eq!(w.can_lay(ME, HOUSE, tile), Ok(()));
+    assert_eq!(w.can_lay(ME, HOUSE, tile, 0), Ok(()));
     let f = foot_at(tile, &stats);
     let wet = (f[0]..f[0] + f[2]).any(|x| (f[1]..f[1] + f[3]).any(|y| lake(x, y)));
     assert!(!wet, "{f:?} is in the lake");
@@ -611,7 +615,7 @@ fn a_full_map_gives_none() {
     let stats = house_stats();
     let near = Vec2::new(28.0, 22.0);
     let t = spot_for(&w, ME, HOUSE, &stats, near, &[]).expect("room for one house");
-    assert_eq!(w.can_lay(ME, HOUSE, t), Ok(()));
+    assert_eq!(w.can_lay(ME, HOUSE, t, 0), Ok(()));
     put_up(&mut w, HOUSE, t);
     // The only room is used; a second house has none.
     assert_eq!(spot_for(&w, ME, HOUSE, &stats, near, &[]), None);
@@ -646,6 +650,7 @@ fn nothing_once_the_last_grub_is_spent() {
             regiment: worker,
             building: HOUSE,
             tile: (tile.0 as i16, tile.1 as i16),
+            turn: 0,
         }
     ));
     assert_eq!(spot_for(&w, ME, HOUSE, &stats, hall_centre(), &keep), None);

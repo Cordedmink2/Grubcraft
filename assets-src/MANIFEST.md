@@ -1022,3 +1022,12 @@ b8f571527019ec203a4cabe83c765a719bedf65f19ab49dd3960d6d7be4a835e  rock035_albedo
 f8a349e092a2f6079e8ad554ce41cdc512f6d42d8cfd072921d19f2d8cb36a4b  rock035_normal.png
 e75ae4879124912d3b82b1c4df5628344678ad35e6f4d41c289bd889a234def2  rock035_rough.png
 ```
+
+`grass001_albedo.png`, `grass001_normal.png`, `ground054_albedo.png` and `ground054_normal.png` (2026-10-23) are baked at 512x512 from `ambientcg/Grass001.zip` and `ambientcg/Ground054.zip` (CC0, ambientCG) by `tools/ground_textures/bake.py`: the `_Color.jpg` and `_NormalGL.jpg` maps of the 1K JPG sets, resized with Pillow LANCZOS (normals renormalised), saved as 8-bit RGB with `optimize=True`.
+
+```
+2f11156c686509d63e565a608f405bdbed02994f9e2641c62f194c523bb89f88  grass001_albedo.png
+fbba2a3f5cd8a394a062055be96dd5f027d7e86baaeb2a8e70d2b701ebcc9b20  grass001_normal.png
+b05e52f6e96412965e64eeda2865da1ab026d8e39ac38e6fbdd1f246f2e30f69  ground054_albedo.png
+485b8cfed94ca8cbdfa062e5fb13458f5bb35f5679d619d08538f18cae5ddbea  ground054_normal.png
+```

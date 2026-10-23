@@ -1,0 +1,38 @@
+# Written by `cargo run -p gc_artbake --release -- --detail` beside detail.pak and
+# checked by `cargo run -p gc_artbake -- --detail --check` in CI. Do not edit by hand.
+# Hashes are XXH3-128.
+manifest = 1
+baker = gc_artbake detail 1
+schema = 1
+pack = 8a6c2db952edd04da8c671b98976283c
+pack_bytes = 2621360
+source stone_d.png = ebf790046365f560eb2d612f03fc0774
+source stone_n.png = 5389dd8a532d4df48be5dd9e23bbe629
+source brick_d.png = 09ffaa47115679050f7d98ae0879b20a
+source brick_n.png = 3b2d0a448614d8b863066c02020c3596
+source wood_d.png = 848040f4d37a9039d5d4640956afe6f7
+source wood_n.png = c5f4bbfe20ba09391b97ca851e936970
+source planks_d.png = d8c9d22ecf7fd3415ab83552fe4bba05
+source planks_n.png = 358181e9b415005e4d84c2f4f66201ff
+source plaster_d.png = b3964eda08f46a28f80cdbb100529e37
+source plaster_n.png = 822ced2a79527cd30997c22263d0d339
+source tile_d.png = 3bf469427ef78baa66a6f0678a077902
+source tile_n.png = 611fe8f1273043c50d5ed24da57b2512
+source cloth_d.png = be53f5903a49359816aa028c2f9840db
+source cloth_n.png = c1592cb9474c0173dd352dd06bb3dbb1
+source leather_d.png = 401621674bbaddef85b63283a799e406
+source leather_n.png = 200cc7191b21d1dc84370e7772300a73
+source iron_d.png = 4650e203b66b3e7f24a9d4e9b3c8ea04
+source iron_n.png = a479b9ddb4c47cd1d807f882a8460fe1
+source bronze_d.png = 6cabe47dda34d6387df0b0482da073fe
+source bronze_n.png = 80e2800ec6e90efb7d73001e14c1afdd
+source bone_d.png = 2c3eca1a97bef7fb4336fadae43d02e6
+source bone_n.png = dd233d4762e7fe780cffb354ab4d1836
+source chitin_d.png = 6da38eb471f3f8b6d7f19ba59705e696
+source chitin_n.png = a7d2ef04f0d52604ed00b618448cb9d4
+source organic_d.png = 1c3971861e1526f259dc5c5a2f3a21fd
+source organic_n.png = 5b3e7793e1c8ae0ec997be3e1cb8fd68
+source crystal_d.png = 813fa10f0cdf1fae402378d3de6de2df
+source crystal_n.png = 86ced9edfc0626a82e15fbd1183781b8
+source earth_d.png = 7d8bde506cc6cf5d6aef31f518d8ddd8
+source earth_n.png = 526536c4c4a383189f11aba2b3c82c74

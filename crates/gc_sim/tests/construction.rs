@@ -167,7 +167,8 @@ fn put_up(w: &mut World, player: u8, building: u16, x: i16, y: i16) -> Structure
         player,
         Command::SpawnStructure {
             building,
-            tile: (x, y)
+            tile: (x, y),
+            turn: 0,
         }
     ));
     at(w, i32::from(x), i32::from(y)).unwrap()
@@ -200,6 +201,7 @@ fn lay(w: &mut World, r: RegimentHandle, building: u16, x: i16, y: i16) -> Optio
             regiment: r,
             building,
             tile: (x, y),
+            turn: 0,
         },
     )
     .then(|| at(w, i32::from(x), i32::from(y)).unwrap())
@@ -386,18 +388,18 @@ fn calling_off_a_foundation_gives_back_three_quarters() {
     run(&mut w, 1);
     assert_eq!(w.building_target(r), None);
     // Its ground is free again.
-    assert_eq!(w.can_lay(0, BARRACKS, (30, 20)), Ok(()));
+    assert_eq!(w.can_lay(0, BARRACKS, (30, 20), 0), Ok(()));
 }
 
 #[test]
 fn what_may_be_laid_follows_tier_and_price() {
     let mut w = conquest(100);
     // A main building needs no tier; the rest need a finished one.
-    assert_eq!(w.can_lay(0, HALL, (20, 20)), Ok(()));
-    assert_eq!(w.can_lay(0, BARRACKS, (30, 20)), Err(Refusal::Tier));
+    assert_eq!(w.can_lay(0, HALL, (20, 20), 0), Ok(()));
+    assert_eq!(w.can_lay(0, BARRACKS, (30, 20), 0), Err(Refusal::Tier));
     // Upgrades go up on the building they upgrade.
-    assert_eq!(w.can_lay(0, KEEP, (20, 20)), Err(Refusal::Unknown));
-    assert_eq!(w.can_lay(1, HALL, (20, 40)), Err(Refusal::Price));
+    assert_eq!(w.can_lay(0, KEEP, (20, 20), 0), Err(Refusal::Unknown));
+    assert_eq!(w.can_lay(1, HALL, (20, 40), 0), Err(Refusal::Price));
     let theirs = spawn(&mut w, 1, WORKER, 30, 42);
     assert!(!order(
         &mut w,
@@ -405,7 +407,8 @@ fn what_may_be_laid_follows_tier_and_price() {
         Command::Build {
             regiment: theirs,
             building: HALL,
-            tile: (20, 40)
+            tile: (20, 40),
+            turn: 0,
         }
     ));
     assert_eq!(w.bank(1).unwrap().grub, 100);
@@ -415,12 +418,12 @@ fn what_may_be_laid_follows_tier_and_price() {
     // A hall going up gives no tier.
     let r = spawn(&mut w, 0, WORKER, 30, 22);
     lay(&mut w, r, HALL, 20, 20).unwrap();
-    assert_eq!(w.can_lay(0, BARRACKS, (30, 30)), Err(Refusal::Tier));
+    assert_eq!(w.can_lay(0, BARRACKS, (30, 30), 0), Err(Refusal::Tier));
     put_up(&mut w, 0, HALL, 40, 20);
-    assert_eq!(w.can_lay(0, BARRACKS, (30, 30)), Ok(()));
-    assert_eq!(w.can_lay(0, TOWER, (30, 30)), Err(Refusal::Tier));
+    assert_eq!(w.can_lay(0, BARRACKS, (30, 30), 0), Ok(()));
+    assert_eq!(w.can_lay(0, TOWER, (30, 30), 0), Err(Refusal::Tier));
     // Placement still comes first.
-    assert_eq!(w.can_lay(0, BARRACKS, (41, 21)), Err(Refusal::Built));
+    assert_eq!(w.can_lay(0, BARRACKS, (41, 21), 0), Err(Refusal::Built));
 }
 
 #[test]
@@ -463,6 +466,36 @@ fn a_hall_trains_a_worker_that_marches_to_its_rally_point() {
     run(&mut w, 20 * SECOND);
     let there = w.regiments.iter().find(|r| r.owner == 0).unwrap().position;
     assert!((there - rally).length() < gc_fixed::Fx::from_int(2));
+}
+
+#[test]
+fn a_turned_hall_trains_out_of_its_turned_front_facing_out() {
+    let mut w = conquest(100);
+    // A quarter turn puts its front on its west side.
+    assert!(order(
+        &mut w,
+        0,
+        Command::SpawnStructure {
+            building: HALL,
+            tile: (20, 20),
+            turn: 1,
+        }
+    ));
+    let hall = at(&w, 20, 20).unwrap();
+    assert!(order(
+        &mut w,
+        0,
+        Command::Train {
+            structure: hall,
+            unit: WORKER
+        }
+    ));
+    until(&mut w, 1000, |w| count(w, WORKER) == 1);
+    let new = w.regiments.iter().find(|r| r.owner == 0).unwrap();
+    // Two tiles off the middle of its west side, facing west.
+    let door = FxVec2::new(gc_fixed::Fx::from_int(18), gc_fixed::Fx::from_ratio(45, 2));
+    assert!((new.position - door).length() < gc_fixed::Fx::from_int(1));
+    assert_eq!(new.facing, gc_fixed::Angle::HALF);
 }
 
 #[test]
@@ -647,7 +680,7 @@ fn a_hall_upgrades_to_a_keep_and_its_owner_to_tier_two() {
             unit: WORKER
         }
     ));
-    assert_eq!(w.can_lay(0, TOWER, (40, 40)), Ok(()));
+    assert_eq!(w.can_lay(0, TOWER, (40, 40), 0), Ok(()));
     assert!(
         !order(&mut w, 0, Command::Upgrade { structure: hall }),
         "no tier 3"
