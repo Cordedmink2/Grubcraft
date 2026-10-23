@@ -44,7 +44,7 @@ const FLANK_DAMAGE: f32 = Side::Flank.damage_percent() as f32 / 100.0;
 /// The battle's pace: how hard blows and volleys land, and how fast the
 /// steady morale drains run, against their full values.
 const MELEE_PACE: f32 = combat::BATTLE_PACE_PERCENT as f32 / 100.0;
-const VOLLEY_PACE: f32 = combat::VOLLEY_PACE_PERCENT as f32 / 100.0;
+pub(crate) const VOLLEY_PACE: f32 = combat::VOLLEY_PACE_PERCENT as f32 / 100.0;
 /// Morale drains in the sim, points per second.
 const OUTNUMBERED_2: f32 = morale::OUTNUMBERED_2 as f32 * MELEE_PACE;
 const OUTNUMBERED_3: f32 = morale::OUTNUMBERED_3 as f32 * MELEE_PACE;
@@ -158,6 +158,21 @@ impl Force {
 
     pub fn is_empty(&self) -> bool {
         self.hp <= 0.0
+    }
+
+    /// The same force with a tower of `hp` hit points shooting `dps` hit
+    /// points a second for it, as far as `range` tiles
+    /// (docs/26-fortifications.md): as one more archer regiment that never
+    /// routs and has to be knocked down, so towers alone are a force too.
+    /// (The force has one range, so its archers are taken to reach as far
+    /// as the tower.)
+    pub fn with_tower(mut self, dps: f32, range: f32, hp: f32) -> Force {
+        self.ranged += dps;
+        self.range = self.range.max(range);
+        self.hp += hp;
+        self.hp_full += hp;
+        self.stalwart_hp += hp;
+        self
     }
 
     /// The same force fighting down a slope at its foe (docs/05-combat.md,
@@ -404,7 +419,42 @@ fn hurt(s: &mut Fighting, f: &Force, damage: f32, drain: f32, t: f32) {
 
 #[cfg(test)]
 mod tests {
-    use super::hit_chance;
+    use super::*;
+
+    /// Two even blocks of spearmen.
+    fn spears() -> Force {
+        Force {
+            hp: 240.0,
+            hp_full: 240.0,
+            morale: 60.0,
+            soldiers: 24.0,
+            melee_regiments: 1.0,
+            front_damage: 16.0,
+            front_damage_attack: 16.0 * 25.0,
+            defence: 40.0,
+            speed: 3.0,
+            ..Force::default()
+        }
+    }
+
+    #[test]
+    fn a_tower_behind_the_defenders_turns_an_even_fight() {
+        let approach = Approach {
+            gap: 15.0,
+            closing: 1.5,
+        };
+        let even = estimate(&spears(), &spears(), approach).margin;
+        let towered = estimate(&spears(), &spears().with_tower(4.25, 30.0, 0.0), approach).margin;
+        // Towers alone are no walkover.
+        let alone = estimate(
+            &spears(),
+            &Force::default().with_tower(8.5, 30.0, 2000.0),
+            approach,
+        );
+        assert!(alone.margin < 1.0, "{alone:?}");
+        assert!(even.abs() < 0.2, "{even}");
+        assert!(towered < even - 0.1, "{towered} against {even}");
+    }
 
     #[test]
     fn hit_chance_is_the_sims() {

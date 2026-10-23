@@ -933,6 +933,12 @@ impl Running {
                     tuning: mine_up
                         .then(|| tuning_of(&self.world, &self.buildings, &s))
                         .flatten(),
+                    // Your own tower told to shoot a regiment first.
+                    shooting: mine_up
+                        .then(|| self.world.structures()?.focus_of(s.handle))
+                        .flatten()
+                        .and_then(|h| self.world.regiments.get(h))
+                        .map(|r| self.units.names[r.unit as usize].as_str()),
                     tips_open,
                 }
             });

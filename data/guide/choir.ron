@@ -89,11 +89,11 @@
         ),
         (
             name: "Bell Tower",
-            summary: "A beam tower that hits ground and air. Every 20 seconds it tolls and silences enemy abilities within 10 tiles for 5 seconds, which shuts down hero spells and unit powers at your gates. Needs power, so keep it inside a field.",
+            summary: "A beam tower that hits ground and air. When enemies come within 10 tiles it tolls (at most once every 20 seconds) and silences their faction powers there for 5 seconds, which shuts down hero spells and unit powers at your gates. Needs power, so keep it inside a field.",
             notes: [],
             tips: [
                 (icon: Alarm, text: "Place it where enemy heroes will push, since its toll silences their abilities within 10 tiles."),
-                (icon: Charge, text: "Time your charges for right after a toll, while enemy hero spells and unit powers are silenced."),
+                (icon: Charge, text: "Time your charges for right after a toll, while enemy hero spells and faction powers are silenced."),
                 (icon: Hammer, text: "Keep it inside a powered field, since it needs power, and it hits air as well as ground."),
             ],
         ),

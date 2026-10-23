@@ -285,6 +285,50 @@ impl Running {
         }
     }
 
+    /// Whether `s` is a finished building of yours that shoots.
+    fn own_tower(&self, s: &StructureView) -> bool {
+        s.owner == self.sandbox.side
+            && s.finished()
+            && (self.buildings.stats.get(usize::from(s.building)))
+                .is_some_and(|b| b.attack.is_some())
+    }
+
+    /// The regiment your tower `h` was told to shoot first, if any.
+    pub fn tower_focus(&self, h: StructureHandle) -> Option<RegimentHandle> {
+        self.world.structures()?.focus_of(h)
+    }
+
+    /// A right-click with one of your finished towers selected: it shoots
+    /// the enemy regiment clicked (`body` if one was hit, else the one at
+    /// `at`) first, or chooses for itself again if the click was on open
+    /// ground. Returns whether the tower took it.
+    pub fn tower_right_click(&mut self, body: Option<RegimentHandle>, at: Option<Vec2>) -> bool {
+        if !self.conquest_match() || self.watching.is_some() {
+            return false;
+        }
+        let Some(structure) = self.picked_structure() else {
+            return false;
+        };
+        if !(self.world.structures().and_then(|s| s.get(structure)))
+            .is_some_and(|s| self.own_tower(&s))
+        {
+            return false;
+        }
+        let side = self.sandbox.side;
+        let target = body
+            .filter(|&h| {
+                (self.world.regiments.get(h)).is_some_and(|r| self.world.hostile(side, r.owner))
+                    && self.world.sees(side, h)
+            })
+            .or_else(|| at.and_then(|p| self.enemy_at(p)));
+        if target.is_some() {
+            self.attack_mark = target.map(|h| (h, std::time::Instant::now()));
+            self.ui_sound(sounds::UiSound::Attack);
+        }
+        self.order(Command::FocusTower { structure, target });
+        true
+    }
+
     /// A right-click in Conquest that means more than a move: the rally
     /// point of a selected building that trains, or workers (and only
     /// workers) sent to a seep, a vein or one of your buildings. Returns

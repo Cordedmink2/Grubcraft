@@ -212,7 +212,7 @@
             hp: 1000,
             armour: Fortified,
             footprint: (2, 2),
-            flags: [AntiAir],
+            flags: [AntiAir, Toll],
             attack: Some((range: 30.0, damage: 5, reload: 2.0, shots: 2)),
             effect: "Two crossbows that shoot at ground and air. Every 4 damage it deals earns 1 Grub.",
         ),

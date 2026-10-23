@@ -872,6 +872,20 @@ impl Economy {
 
     /// `hundredths` of a Grub goes into player `p`'s store, cut by their
     /// upkeep.
+    /// `p` earns `grub` Grub other than by gathering (a Tollgate's toll),
+    /// less upkeep as gathered Grub is.
+    pub(crate) fn earn_grub(
+        &mut self,
+        p: PlayerId,
+        grub: u32,
+        regs: &Regiments,
+        kinds: &[ConquestUnit],
+    ) {
+        if grub > 0 {
+            self.deposit_grub(p, grub * GRUB_SCALE, regs, kinds, &mut None);
+        }
+    }
+
     fn deposit_grub(
         &mut self,
         p: PlayerId,

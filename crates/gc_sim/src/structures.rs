@@ -195,6 +195,12 @@ pub const HONOR: u16 = 128;
 /// Concord: its owner's caravans can trade at it, at half rate (see
 /// [`crate::economy`]).
 pub const TRADE_POST: u16 = 256;
+/// Concord: its tower earns its owner a Grub for every
+/// [`crate::towers::TOLL_HP`] hit points it takes.
+pub const TOLL: u16 = 512;
+/// Choir: its tower tolls a bell that silences enemy powers near it (see
+/// [`crate::towers`]).
+pub const SILENCES: u16 = 1024;
 /// The furthest a field or tuning reaches, in tiles.
 pub const MAX_REACH: u8 = 30;
 
@@ -231,7 +237,8 @@ pub struct BuildingStats {
     /// What it adds to its owner's supply cap.
     pub supply: u8,
     /// `DROP_OFF_*`, [`POWERS_FIELD`], [`ANTI_AIR`], [`LARVAE`], [`VEINS`],
-    /// [`NEEDS_POWER`], [`HONOR`] and [`TRADE_POST`] bits.
+    /// [`NEEDS_POWER`], [`HONOR`], [`TRADE_POST`], [`TOLL`] and
+    /// [`SILENCES`] bits.
     pub flags: u16,
     pub attack: Option<TowerAttack>,
     /// How far its field of power ([`POWERS_FIELD`]) or its root-veins
@@ -551,6 +558,17 @@ pub struct Structures {
     seen: Vec<u8>,
     /// Fog of war: buildings are known only once seen.
     fog: bool,
+    /// Towers, by slot (see [`crate::towers`]): ticks until the next
+    /// volley, the regiment its owner told it to shoot, hit points toward
+    /// a Tollgate's next Grub, ticks until a Bell Tower may toll again, and
+    /// ticks of its silence left.
+    pub(crate) reload: Vec<u16>,
+    pub(crate) focus: Vec<Option<RegimentHandle>>,
+    pub(crate) toll: Vec<u8>,
+    pub(crate) bell: Vec<u16>,
+    pub(crate) silence: Vec<u16>,
+    /// Bells tolled in the last tick, for the events.
+    pub(crate) tolled: Vec<StructureHandle>,
 }
 
 /// The match's building table, each made sane, and with no tier upgrade
@@ -623,6 +641,12 @@ impl Structures {
             consumed: Vec::with_capacity(regiments),
             seen: vec![0; n],
             fog: false,
+            reload: vec![0; n],
+            focus: vec![None; n],
+            toll: vec![0; n],
+            bell: vec![0; n],
+            silence: vec![0; n],
+            tolled: Vec::with_capacity(n),
         }
     }
 
@@ -1013,6 +1037,11 @@ impl Structures {
         self.haste_left[i] = 0;
         self.haste_percent[i] = 0;
         self.seen[i] = if self.fog { 1 << owner } else { u8::MAX };
+        self.reload[i] = 0;
+        self.focus[i] = None;
+        self.toll[i] = 0;
+        self.bell[i] = 0;
+        self.silence[i] = 0;
         nav.set_built(self.footprint(i), true, regs);
         Some(self.handle(i))
     }
@@ -1092,6 +1121,11 @@ impl Structures {
     fn remove(&mut self, i: usize, nav: &mut Nav, regs: &Regiments) {
         nav.set_built(self.footprint(i), false, regs);
         self.free_slot(i);
+    }
+
+    /// Whether building slot `i` is a tower (it has an attack).
+    pub(crate) fn is_tower(&self, i: usize) -> bool {
+        self.stats_of(i).attack.is_some()
     }
 
     /// Mark slot `i` free, its ground already given back.
@@ -1373,6 +1407,9 @@ impl Structures {
             h.u16(self.haste_left[i]);
             if self.haste_left[i] > 0 {
                 h.u8(self.haste_percent[i]);
+            }
+            if self.stats_of(i).attack.is_some() {
+                self.hash_tower(i, h);
             }
         }
         h.u32(self.build_percent);

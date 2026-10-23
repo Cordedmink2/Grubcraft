@@ -73,7 +73,7 @@ fn battle() -> World {
 #[test]
 fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
     let mut world = battle();
-    let mut in_flight: HashMap<VolleyId, RegimentHandle> = HashMap::new();
+    let mut in_flight: HashMap<VolleyId, gc_sim::Shooter> = HashMap::new();
     let (mut loosed, mut landed, mut contacts, mut wavered) = (0, 0, 0, 0);
     let mut arrows_killed = 0;
     for _ in 0..2400 {
@@ -121,7 +121,7 @@ fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
                     assert!(world.regiments.owner(foe).is_some());
                 }
                 Event::Ambush(_) => {}
-                Event::Fallen { .. } | Event::Consumed { .. } => {
+                Event::Fallen { .. } | Event::Consumed { .. } | Event::Tolled { .. } => {
                     unreachable!("no buildings in a battle")
                 }
             }

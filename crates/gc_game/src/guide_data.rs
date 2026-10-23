@@ -116,6 +116,8 @@ enum BuildingFlag {
     Veins,
     NeedsPower,
     Honor,
+    Toll,
+    Silences,
     #[serde(other)]
     Other,
 }
@@ -492,6 +494,8 @@ fn building_flag_text(f: BuildingFlag, b: &RBuilding) -> Option<String> {
         BuildingFlag::Veins => format!("Spreads root-veins {} tiles", b.field),
         BuildingFlag::NeedsPower => "Needs power".into(),
         BuildingFlag::Honor => "Earns Honor".into(),
+        BuildingFlag::Toll => "Earns 1 Grub per 4 damage it deals".into(),
+        BuildingFlag::Silences => "Tolls: silences enemy powers within 10 tiles".into(),
         BuildingFlag::Other => return None,
     })
 }

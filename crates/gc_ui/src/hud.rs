@@ -2932,6 +2932,7 @@ mod tests {
                 rooted: None,
                 powered: None,
                 tuning: None,
+                shooting: None,
                 tips_open: None,
             }),
             ..Extras::default()

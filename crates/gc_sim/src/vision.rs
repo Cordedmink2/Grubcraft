@@ -256,6 +256,11 @@ impl Vision {
         self.posts.iter().map(|p| (p.owner, p.block, p.sight))
     }
 
+    /// The parties that share `party`'s sight: itself and its allies.
+    pub(crate) fn allies_of(&self, party: PlayerId) -> u8 {
+        self.allies.get(usize::from(party)).copied().unwrap_or(0)
+    }
+
     /// Whether `party` sees the regiment in slot `i`, owned by `owner`: in
     /// sight, and not hidden by cover.
     pub(crate) fn sees(&self, party: PlayerId, i: usize, owner: PlayerId) -> bool {
@@ -343,8 +348,10 @@ impl Vision {
 
         // Ambushes, judged on what each side saw before this tick: volleys
         // loosed from hiding, then charges out of it.
+        // (A tower that shoots is known to its target's side as it looses,
+        // see [`crate::towers`].)
         for &(_, shooter, target) in combat.loosed() {
-            let Some(i) = regs.resolve(shooter) else {
+            let Some(i) = shooter.regiment().and_then(|h| regs.resolve(h)) else {
                 continue;
             };
             self.revealed[i] = VOLLEY_REVEAL_TICKS;

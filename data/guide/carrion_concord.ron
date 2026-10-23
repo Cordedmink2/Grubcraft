@@ -98,7 +98,7 @@
         ),
         (
             name: "Tollgate",
-            summary: "Two crossbows that shoot ground and air, and every 4 damage they deal earns you 1 Grub. It is Fortified. Build one at your seeps and gates: it pays for itself while it kills, but it will not stop a real army.",
+            summary: "Two crossbows that shoot ground and air (siege engines first, then whoever attacks your buildings, then the nearest; right-click an enemy with it selected to pick its target), and every 4 damage they deal earns you 1 Grub. It is Fortified. Build one at your seeps and gates: it pays for itself while it kills, but it will not stop a real army.",
             notes: [],
             tips: [
                 (icon: Grub, text: "Build it at seeps and gates where enemies pass, so its shots earn Grub while it fights."),

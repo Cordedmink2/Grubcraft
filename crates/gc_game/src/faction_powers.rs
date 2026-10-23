@@ -210,6 +210,9 @@ pub fn pressed(aim: Aim, power: u8, selected: &[RegimentHandle]) -> Vec<Command>
 /// Said when a summons has no room round the Shrine clicked.
 const NO_ROOM: &str = "No room round that Shrine.";
 
+/// Why a power can't land where an enemy Bell Tower has tolled.
+const SILENCED: &str = "Silenced by a Bell Tower.";
+
 /// The order that plants a power on the ground at `at` (in tiles).
 pub fn planted(power: u8, at: gc_fixed::FxVec2) -> Command {
     Command::UsePower {
@@ -326,7 +329,10 @@ impl Running {
             self.say(hold_message(hold, cooling, self.meter_name(power)));
         } else if let Some(aim) = self.power_aim(power) {
             if aim.at_once() {
-                self.orders(pressed(aim, power, &self.selected));
+                let commands = pressed(aim, power, &self.selected);
+                if !self.silenced(&commands) {
+                    self.orders(commands);
+                }
             } else if let Some(text) = self.power_prompt(power) {
                 self.hud.armed = Some(Armed::Power(power));
                 self.say(text);
@@ -411,8 +417,25 @@ impl Running {
         if commands.is_empty() {
             return;
         }
+        if self.silenced(&commands) {
+            return;
+        }
         self.orders(commands);
         self.hud.armed = None;
+    }
+
+    /// Whether any of these power orders would be silenced by an enemy
+    /// Bell Tower; if so the player is told, and none should be sent.
+    fn silenced(&mut self, commands: &[Command]) -> bool {
+        let side = self.sandbox.side;
+        let silenced = commands.iter().any(|c| match *c {
+            Command::UsePower { target, .. } => self.world.power_silenced(side, target),
+            _ => false,
+        });
+        if silenced {
+            self.say(SILENCED.into());
+        }
+        silenced
     }
 
     /// What a click would haste: one of your regiments, else one of your

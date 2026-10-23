@@ -4,12 +4,12 @@
 //! where it last saw them; it never knows of one it hasn't seen. The
 //! battle estimator then weighs that army against its own.
 
-use gc_sim::structures::{Role, StructureHandle};
+use gc_sim::structures::{Role, StructureHandle, TowerAttack};
 use glam::Vec2;
 
 use super::{Sense, steward};
-use crate::estimator::{Approach, Force, estimate};
-use crate::perception::{Seen, TICKS, v2};
+use crate::estimator::{Approach, Force, VOLLEY_PACE, estimate};
+use crate::perception::{Seen, TICKS, fx, v2};
 use crate::personality::Faction;
 
 /// How a fight is taken to start, for weighing armies before one: the
@@ -19,12 +19,36 @@ const APPROACH: Approach = Approach {
     closing: 1.5,
 };
 
+/// A tower this far beyond its range from a building still shoots into a
+/// fight for it, in tiles: an army attacking a base spreads round it.
+const TOWER_FIGHT: f32 = 8.0;
+
 /// An enemy building its side has seen and still stands.
 pub struct Sighted {
     pub handle: StructureHandle,
     pub at: Vec2,
     pub role: Role,
     pub owner: u8,
+    /// A finished tower's shooting (towers fire, docs/26-fortifications.md).
+    pub attack: Option<TowerAttack>,
+    /// Hit points it has left.
+    pub hp: u32,
+}
+
+impl Sighted {
+    /// How far from its middle a tower shoots, in tiles (0 for a building
+    /// that doesn't).
+    pub fn range(&self) -> f32 {
+        self.attack.map_or(0.0, |a| fx(a.range))
+    }
+
+    /// Hit points a second its volleys take, at the sim's volley pace.
+    pub fn dps(&self) -> f32 {
+        self.attack.map_or(0.0, |a| {
+            f32::from(a.shots) * f32::from(a.damage) * TICKS / f32::from(a.reload_ticks.max(1))
+                * VOLLEY_PACE
+        })
+    }
 }
 
 /// Every enemy building its side has seen and still stands.
@@ -36,12 +60,14 @@ pub fn enemy_buildings(s: &Sense) -> Vec<Sighted> {
     st.iter()
         .filter(|v| s.view.hostile(s.party, v.owner) && v.seen_by(s.party))
         .filter_map(|v| {
-            let role = table.get(usize::from(v.building))?.role;
+            let b = table.get(usize::from(v.building))?;
             Some(Sighted {
                 handle: v.handle,
                 at: v2(v.centre()),
-                role,
+                role: b.role,
                 owner: v.owner,
+                attack: b.attack.filter(|_| v.finished()),
+                hp: v.hp,
             })
         })
         .collect()
@@ -166,6 +192,26 @@ pub fn odds<'a>(
 ) -> f32 {
     let ours = Force::of(s.view, ours);
     let theirs = Force::of(s.view, theirs);
+    estimate(&ours, &theirs, APPROACH).margin
+}
+
+/// [`odds`] for a fight at enemy building `at`: the enemy towers among
+/// `seen` (its [`enemy_buildings`]) that would reach the fight there shoot
+/// with `theirs`.
+pub fn odds_at<'a>(
+    s: &Sense,
+    ours: impl IntoIterator<Item = &'a Seen>,
+    theirs: impl IntoIterator<Item = &'a Seen>,
+    at: Vec2,
+    seen: &[Sighted],
+) -> f32 {
+    let ours = Force::of(s.view, ours);
+    let mut theirs = Force::of(s.view, theirs);
+    for t in seen {
+        if t.attack.is_some() && t.at.distance(at) <= t.range() + TOWER_FIGHT {
+            theirs = theirs.with_tower(t.dps(), t.range(), t.hp as f32);
+        }
+    }
     estimate(&ours, &theirs, APPROACH).margin
 }
 

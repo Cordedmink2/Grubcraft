@@ -212,6 +212,7 @@ Counters are multipliers between 0.7× and 1.5×, never hard immunities, so a we
 
 ## Structures in combat
 
+- **Towers shoot** (built 2026-10-24): a finished tower looses its shots each reload at an enemy in range, focus target first, then siege engines, then regiments attacking its side's buildings, then the nearest; every shot lands. See [26 · Fortifications](26-fortifications.md#build-plan).
 - Structures have armour types: **Fortified** (main buildings, towers, walls), **Structure** (production) and **Living** (Brood). Blows against structures always land. Most regiments deal half damage to Fortified, artillery and heroes deal full damage, and siege units deal ×3.0 (×2.0 to the other two). The full table and every building's hit points are in [21 · Buildings](21-buildings.md#damage-against-buildings).
 - Infantry can damage structures, slowly. Clan archers with Fire Arrows deal burning damage; Concord Debt Collectors steal Grub on hit.
 - **Built (2026-10-16):** melee regiments strike a building once a second with their front rank (spears also their second rank, at half). Swords cramped in close order hit buildings as weakly as they hit regiments. Shooters loose a volley each reload, and every arrow in it hits. Blows always land. A regiment that can't find a way to its building gives up after three tries that bring it no nearer.

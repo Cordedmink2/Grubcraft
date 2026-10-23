@@ -29,6 +29,8 @@ const _: () = assert!(
         && record::BUILDING_NEEDS_POWER == gc_sim::structures::NEEDS_POWER
         && record::BUILDING_HONOR == gc_sim::structures::HONOR
         && record::BUILDING_TRADE_POST == gc_sim::structures::TRADE_POST
+        && record::BUILDING_TOLL == gc_sim::structures::TOLL
+        && record::BUILDING_SILENCES == gc_sim::structures::SILENCES
         && record::MAX_REACH_TILES == gc_sim::structures::MAX_REACH
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );
@@ -342,7 +344,7 @@ pub fn crew_spots(centre: Vec2, width: u8, depth: u8) -> [(Vec2, Vec2); UPGRADE_
 }
 
 /// How tall a building of this role is drawn, in tiles.
-fn height_of(role: Role) -> f32 {
+pub fn height_of(role: Role) -> f32 {
     match role {
         Role::Wall => WALL_HEIGHT,
         Role::Main => MAIN_HEIGHT,

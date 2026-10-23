@@ -13,7 +13,9 @@
 //! chosen building down, centred on the cursor, and [ and ] choose which.
 //! Delete (or Backspace) takes the building under the cursor, else the
 //! selected regiments, off the field; Shift + Delete clears it. Right-click
-//! an enemy building to send the selected regiments against it. P pauses; - and = slow the game down to a tenth
+//! an enemy building to send the selected regiments against it. In Conquest, with one of your
+//! finished towers selected, right-click an enemy regiment to make the tower shoot it first, or open
+//! ground to let it choose again. P pauses; - and = slow the game down to a tenth
 //! or speed it up to four times. T opens the stats panel for the chosen type:
 //! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
 //! and regiments on the field change at once (on whichever table the sandbox
@@ -1930,6 +1932,11 @@ impl Running {
                     .is_none()
                     .then(|| self.body_under_cursor(false))
                     .flatten();
+                // A tower picks its target; it has nothing to rally.
+                if drag.is_none() && self.tower_right_click(body, plain) {
+                    self.input.right_down = None;
+                    return;
+                }
                 if body.is_none() && plain.is_some_and(|p| self.conquest_right_click(p)) {
                     self.input.right_down = None;
                     return;
@@ -2752,6 +2759,8 @@ impl Running {
             .attack_mark
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
             .map(|(h, _)| h);
+        // A selected tower's chosen target stays marked while it holds.
+        let tower_target = self.picked_structure().and_then(|h| self.tower_focus(h));
         let cull = self.renderer.cull(view_proj);
         if let Some(art) = &mut self.art {
             art.begin(eye, forward, pixel_scale, cull);
@@ -2799,7 +2808,10 @@ impl Running {
             let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
             // No plate under the regiment we ride with: the eye is inside it
             // and the plate would fill the view.
-            if seen && (selected || marked == Some(r.handle)) && ridden != Some(r.handle) {
+            if seen
+                && (selected || marked == Some(r.handle) || tower_target == Some(r.handle))
+                && ridden != Some(r.handle)
+            {
                 self.instances.push(BoxInstance {
                     pos: pos.to_array(),
                     facing: facing.to_array(),
@@ -3188,6 +3200,11 @@ impl Running {
                     listener,
                     !catching_up,
                     |h| reveal || world.sees(viewer, h),
+                    |h| {
+                        reveal
+                            || (world.structures().and_then(|s| s.get(h)))
+                                .is_some_and(|v| v.seen_by(viewer))
+                    },
                     |unit| {
                         let i = usize::from(unit);
                         Some(sounds::Voice {
@@ -3383,7 +3400,11 @@ impl Running {
                 continue;
             }
             // Gone, or its slot taken by another regiment, is not shooting.
-            if let Some(r) = self.world.regiments.get(v.shooter) {
+            if let Some(r) = v
+                .shooter
+                .regiment()
+                .and_then(|h| self.world.regiments.get(h))
+            {
                 self.shooting[r.handle.index as usize] = true;
             }
         }
@@ -4568,6 +4589,21 @@ impl Running {
     fn push_arrows(&mut self, now: f32) {
         let terrain = self.world.terrain();
         for v in self.world.volleys() {
+            // A tower's arrows leave from the top of its model and come down
+            // to the usual height by the end of the flight.
+            let start = v
+                .shooter
+                .tower()
+                .and_then(|h| self.world.structures()?.get(h))
+                .and_then(|s| {
+                    let drawn = self.art.as_ref().and_then(|art| {
+                        let look = art.looks.model_of(&s)?;
+                        Some(art.looks.top(look))
+                    });
+                    let role = self.buildings.stats.get(usize::from(s.building));
+                    drawn.or(role.map(|b| buildings::height_of(b.role)))
+                })
+                .map(|top| top.max(ARROW_HEIGHT));
             let flight_ticks = (v.impact_tick - v.launch_tick).max(1) as f32;
             let flown = ((now - v.launch_tick as f32) / flight_ticks).clamp(0.0, 1.0);
             let flight = field::Flight::new(v.launch_tick, v.from, v.aim, |p| {
@@ -4582,7 +4618,8 @@ impl Running {
                     facing: flight.dir.to_array(),
                     size: [0.05, 0.05, 0.7],
                     color: [70, 52, 36, 0],
-                    lift: ARROW_HEIGHT + flight.arc(t),
+                    lift: start.map_or(ARROW_HEIGHT, |top| top + (ARROW_HEIGHT - top) * t)
+                        + flight.arc(t),
                 });
             }
         }

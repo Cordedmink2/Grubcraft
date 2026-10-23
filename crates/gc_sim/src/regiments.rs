@@ -813,7 +813,14 @@ impl Regiments {
     /// Take `amount` hit points off the regiment, from the back ranks forward:
     /// the last slot loses hit points first, and each soldier who falls takes
     /// the next one's place in the damage. Returns soldiers lost.
-    pub(crate) fn take_damage(&mut self, i: usize, mut amount: u32) -> u16 {
+    pub(crate) fn take_damage(&mut self, i: usize, amount: u32) -> u16 {
+        self.take_damage_hp(i, amount).0
+    }
+
+    /// [`Regiments::take_damage`], also telling the hit points taken (less
+    /// than `amount` when the regiment had fewer left).
+    pub(crate) fn take_damage_hp(&mut self, i: usize, mut amount: u32) -> (u16, u32) {
+        let asked = amount;
         let before = self.models[i];
         let hp = &mut self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize];
         let mut bled = 0u16;
@@ -832,7 +839,7 @@ impl Regiments {
         }
         let lost = before - self.models[i];
         self.bleed(i, bled, lost);
-        lost
+        (lost, asked - amount)
     }
 
     /// Take `damage` hit points off soldier `k` of regiment `i`. Each time

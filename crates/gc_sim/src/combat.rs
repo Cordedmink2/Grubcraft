@@ -27,10 +27,11 @@ use core::cell::Cell;
 
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
-use crate::events::{Event, VolleyId};
+use crate::events::{Event, Shooter, VolleyId};
 use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_PINNED, SHOCK_REAR, WAVERING_DAMAGE_PERCENT};
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments, Strike, hash_handle};
+use crate::structures::StructureHandle;
 use crate::terrain::Terrain;
 use crate::vision::{OFF_GUARD_DAMAGE_PERCENT, Vision};
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
@@ -364,7 +365,10 @@ pub struct Combat {
     volleys: Volleys,
     /// Volleys loosed this tick: (volley, shooter, target), for vision
     /// and the tick's events.
-    loosed: Vec<(VolleyId, RegimentHandle, RegimentHandle)>,
+    loosed: Vec<(VolleyId, Shooter, RegimentHandle)>,
+    /// Tower volleys that came down this tick: the tower, and the hit
+    /// points they took (a Tollgate's earnings, see [`crate::towers`]).
+    tower_hits: Vec<(StructureHandle, u32)>,
     /// Volleys that came down this tick, for the tick's events (kept only
     /// while `tell`: a rehearsal's world tells no one).
     landed: Vec<Event>,
@@ -433,9 +437,10 @@ struct Volleys {
     alive: Vec<bool>,
     owner: Vec<PlayerId>,
     target: Vec<RegimentHandle>,
-    /// Who loosed it: only told to viewers (it changes nothing in play, so
-    /// it isn't hashed).
-    shooter: Vec<RegimentHandle>,
+    /// Who loosed it. Which regiment is only told to viewers (it changes
+    /// nothing in play, so it isn't hashed); a tower's volley is aimed
+    /// shot by shot and earns a Tollgate its toll, so towers are hashed.
+    shooter: Vec<Shooter>,
     from: Vec<FxVec2>,
     aim: Vec<FxVec2>,
     launch: Vec<u32>,
@@ -446,12 +451,25 @@ struct Volleys {
     free: Vec<u32>,
 }
 
+/// A volley about to be loosed (see [`Combat::loose`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Shot {
+    pub shooter: Shooter,
+    pub owner: PlayerId,
+    pub from: FxVec2,
+    pub shots: u16,
+    /// Hit points each shot that lands takes.
+    pub damage: u16,
+    /// Percent of shots that land.
+    pub accuracy: u8,
+}
+
 /// One volley in flight, for presentation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VolleyView {
     pub id: VolleyId,
-    /// The regiment that loosed it (it may have fallen since).
-    pub shooter: RegimentHandle,
+    /// The regiment or tower that loosed it (it may have fallen since).
+    pub shooter: Shooter,
     pub owner: PlayerId,
     pub from: FxVec2,
     pub aim: FxVec2,
@@ -497,7 +515,7 @@ impl Combat {
                 alive: vec![false; MAX_VOLLEYS],
                 owner: vec![0; MAX_VOLLEYS],
                 target: vec![none; MAX_VOLLEYS],
-                shooter: vec![none; MAX_VOLLEYS],
+                shooter: vec![Shooter::Regiment(none); MAX_VOLLEYS],
                 from: vec![FxVec2::ZERO; MAX_VOLLEYS],
                 aim: vec![FxVec2::ZERO; MAX_VOLLEYS],
                 launch: vec![0; MAX_VOLLEYS],
@@ -507,7 +525,8 @@ impl Combat {
                 accuracy: vec![0; MAX_VOLLEYS],
                 free: (0..MAX_VOLLEYS as u32).rev().collect(),
             },
-            loosed: Vec::with_capacity(regiment_capacity),
+            loosed: Vec::with_capacity(MAX_VOLLEYS),
+            tower_hits: Vec::with_capacity(MAX_VOLLEYS),
             landed: Vec::with_capacity(MAX_VOLLEYS),
             blows: Vec::with_capacity(regiment_capacity * MAX_BLOWS_PER_REGIMENT),
             tell: true,
@@ -532,8 +551,47 @@ impl Combat {
     }
 
     /// The volleys loosed in the last tick: (volley, shooter, target).
-    pub(crate) fn loosed(&self) -> &[(VolleyId, RegimentHandle, RegimentHandle)] {
+    pub(crate) fn loosed(&self) -> &[(VolleyId, Shooter, RegimentHandle)] {
         &self.loosed
+    }
+
+    /// The tower volleys that came down in the last tick: the tower, and
+    /// the hit points they took.
+    pub(crate) fn tower_hits(&self) -> &[(StructureHandle, u32)] {
+        &self.tower_hits
+    }
+
+    /// Loose `shot` at regiment slot `j`: it flies at [`MISSILE_SPEED`] to
+    /// where the target stands now. False when every volley is in flight.
+    pub(crate) fn loose(&mut self, regs: &Regiments, j: usize, shot: Shot, tick: u32) -> bool {
+        let Some(v) = self.volleys.free.pop() else {
+            return false;
+        };
+        let v = v as usize;
+        let aim = regs.position[j];
+        let flight = ((aim - shot.from).length().raw() / MISSILE_SPEED.raw()).max(1) as u32;
+        let target = regs.handle(j);
+        self.loosed.push((
+            VolleyId {
+                slot: v as u32,
+                launch_tick: tick,
+            },
+            shot.shooter,
+            target,
+        ));
+        let vs = &mut self.volleys;
+        vs.alive[v] = true;
+        vs.shooter[v] = shot.shooter;
+        vs.owner[v] = shot.owner;
+        vs.target[v] = target;
+        vs.from[v] = shot.from;
+        vs.aim[v] = aim;
+        vs.launch[v] = tick;
+        vs.impact[v] = tick + flight;
+        vs.shots[v] = shot.shots;
+        vs.damage[v] = shot.damage;
+        vs.accuracy[v] = shot.accuracy;
+        true
     }
 
     /// The volleys that came down in the last tick, as events.
@@ -624,7 +682,13 @@ impl Combat {
     /// may come within `range` of `p` (a superset: callers check the real
     /// distance and whether it is hostile). A regiment can be visited more
     /// than once.
-    fn near_enemies(&self, p: FxVec2, range: Fx, friend: PlayerId, mut f: impl FnMut(usize)) {
+    pub(crate) fn near_enemies(
+        &self,
+        p: FxVec2,
+        range: Fx,
+        friend: PlayerId,
+        mut f: impl FnMut(usize),
+    ) {
         let (x0, y0, x1, y1) = Self::cells(p, range);
         let skip = friend as usize % OWNER_SLOTS;
         for y in y0..=y1 {
@@ -1371,6 +1435,7 @@ impl Combat {
         self.loosed.clear();
         self.landed.clear();
         self.blows.clear();
+        self.tower_hits.clear();
         // Melee.
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
@@ -1526,37 +1591,18 @@ impl Combat {
                 regs.target_facing[i] = Some(want);
                 continue;
             }
-            let Some(v) = self.volleys.free.pop() else {
+            let shot = Shot {
+                shooter: Shooter::Regiment(regs.handle(i)),
+                owner: regs.owner[i],
+                from: regs.position[i],
+                shots: regs.models[i],
+                damage: stats.missile_damage,
+                accuracy: (u64::from(stats.accuracy) * heart_percent(regs.morale_state[i]) / 100)
+                    as u8,
+            };
+            if !self.loose(regs, j, shot, tick) {
                 continue;
-            };
-            let v = v as usize;
-            let flight = (to.length().raw() / MISSILE_SPEED.raw()).max(1) as u32;
-            let target = RegimentHandle {
-                index: j as u32,
-                generation: regs.generation[j],
-            };
-            let shooter = RegimentHandle {
-                index: i as u32,
-                generation: regs.generation[i],
-            };
-            let id = VolleyId {
-                slot: v as u32,
-                launch_tick: tick,
-            };
-            self.loosed.push((id, shooter, target));
-            let vs = &mut self.volleys;
-            vs.alive[v] = true;
-            vs.shooter[v] = shooter;
-            vs.owner[v] = regs.owner[i];
-            vs.target[v] = target;
-            vs.from[v] = regs.position[i];
-            vs.aim[v] = regs.position[j];
-            vs.launch[v] = tick;
-            vs.impact[v] = tick + flight;
-            vs.shots[v] = regs.models[i];
-            vs.damage[v] = stats.missile_damage;
-            vs.accuracy[v] =
-                (u64::from(stats.accuracy) * heart_percent(regs.morale_state[i]) / 100) as u8;
+            }
             regs.reload[i] = stats.reload_ticks.max(1);
         }
 
@@ -1591,10 +1637,16 @@ impl Combat {
                 }
                 continue;
             }
-            let area = i64::from((block.half_width * block.half_depth).raw()) * 4;
-            let density = (i64::from(regs.models[j]) * REFERENCE_AREA_PER_SOLDIER * 100
-                / area.max(1))
-            .clamp(25, 125) as u64;
+            // A tower's shots are aimed one by one, so how close the target
+            // stands makes no odds; a regiment's volley falls on the block.
+            let tower = vs.shooter[v].tower();
+            let density = if tower.is_some() {
+                100
+            } else {
+                let area = i64::from((block.half_width * block.half_depth).raw()) * 4;
+                (i64::from(regs.models[j]) * REFERENCE_AREA_PER_SOLDIER * 100 / area.max(1))
+                    .clamp(25, 125) as u64
+            };
             let side = block.side_facing(vs.from[v]);
             // Arrows from the front mostly glance off a shield wall, and
             // trees catch some of those loosed into or out of a wood.
@@ -1613,7 +1665,10 @@ impl Combat {
                 / (100 * 100)
                 * VOLLEY_PACE_PERCENT
                 / 100;
-            let lost = deal(regs, units, j, expected, side, rng);
+            let (lost, hp) = deal(regs, units, j, expected, side, rng);
+            if let Some(t) = tower {
+                self.tower_hits.push((t, hp));
+            }
             if self.tell {
                 self.landed.push(landed(lost));
             }
@@ -1653,11 +1708,7 @@ impl Combat {
         }
         let mut best: Option<(u64, usize)> = None;
         // Look as far as high ground could carry, then check each.
-        let reach = if terrain.is_flat() {
-            range
-        } else {
-            Terrain::range_from_high_ground(range)
-        };
+        let reach = terrain.reach(range);
         self.near_enemies(me, reach, owner, |j| {
             if !regs.alive[j]
                 || !stances.hostile(owner, regs.owner[j])
@@ -1670,8 +1721,9 @@ impl Combat {
                 return;
             }
             let d = (regs.position[j] - me).length_sq_raw();
-            let r = i64::from(terrain.range(range, me, regs.position[j]).raw());
-            if d <= (r * r) as u64 && best.is_none_or(|(bd, bj)| (d, j) < (bd, bj)) {
+            if terrain.in_range(range, me, regs.position[j])
+                && best.is_none_or(|(bd, bj)| (d, j) < (bd, bj))
+            {
                 best = Some((d, j));
             }
         });
@@ -1696,6 +1748,10 @@ impl Combat {
             h.u16(v.shots[i]);
             h.u16(v.damage[i]);
             h.u8(v.accuracy[i]);
+            if let Shooter::Tower(t) = v.shooter[i] {
+                h.u32(t.index);
+                h.u16(t.generation);
+            }
         }
     }
 }
@@ -1721,9 +1777,9 @@ pub fn heart_percent(state: MoraleState) -> u64 {
 }
 
 /// Apply `expected` damage (in 1/256 hit points) to regiment `j`, rolled
-/// within ±25%, landing on its `side`. When a rank empties the block steps
-/// forward half a rank, so its front stays where it was (the rear thins; the
-/// front rank holds).
+/// within ±25%, landing on its `side`; the soldiers lost, and the hit
+/// points taken. When a rank empties the block steps forward half a rank,
+/// so its front stays where it was (the rear thins; the front rank holds).
 fn deal(
     regs: &mut Regiments,
     units: &[UnitStats],
@@ -1731,13 +1787,13 @@ fn deal(
     expected: u64,
     side: Side,
     rng: &mut Pcg32,
-) -> u16 {
+) -> (u16, u32) {
     struck_on(regs, j, side);
     let whole = carry(regs, j, roll(expected, rng));
     let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
-    let lost = regs.take_damage(j, whole.min(u64::from(u32::MAX)) as u32);
+    let taken = regs.take_damage_hp(j, whole.min(u64::from(u32::MAX)) as u32);
     step_up(regs, units, j, ranks_before);
-    lost
+    taken
 }
 
 /// Marks regiment `j` as struck on `side`, for its next morale check.

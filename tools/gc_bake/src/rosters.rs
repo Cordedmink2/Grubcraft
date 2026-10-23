@@ -117,6 +117,12 @@ pub enum BuildingFlag {
     /// Concord: a trade post its owner's caravans run to, at half rate
     /// (docs/03, "Economy: trade routes and tithes").
     TradePost,
+    /// Concord: its tower earns Grub for the damage it deals (docs/26,
+    /// "Towers").
+    Toll,
+    /// Choir: its tower tolls, silencing enemy powers near it (docs/26,
+    /// "Towers").
+    Silences,
 }
 
 #[derive(Deserialize)]

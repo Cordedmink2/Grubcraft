@@ -18,7 +18,7 @@ pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Pack path of the faction powers table (the faction meters' abilities).
 pub const POWERS_PATH: &str = "data/powers";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 7;
+pub const BUILDING_SCHEMA: u32 = 8;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
 pub const CONQUEST_UNIT_SCHEMA: u32 = 5;
@@ -102,8 +102,14 @@ pub const BUILDING_HONOR: u16 = 128;
 /// Concord: a trade post its owner's caravans can run to, at half rate
 /// (schema 7; the field is 16 bits wide from then on).
 pub const BUILDING_TRADE_POST: u16 = 256;
+/// Concord: its tower earns its owner Grub for the damage it deals
+/// (schema 8).
+pub const BUILDING_TOLL: u16 = 512;
+/// Choir: its tower tolls a bell that silences enemy powers near it
+/// (schema 8).
+pub const BUILDING_SILENCES: u16 = 1024;
 /// Every flag there is; a record with any other bit set is refused.
-const BUILDING_FLAGS: u16 = (BUILDING_TRADE_POST << 1) - 1;
+const BUILDING_FLAGS: u16 = (BUILDING_SILENCES << 1) - 1;
 
 /// [`BuildingRecord::tunes`]: the nodes a building tunes (schema 4).
 pub const TUNES_NOTHING: u8 = 0;

@@ -23,13 +23,38 @@ pub struct VolleyId {
     pub launch_tick: u32,
 }
 
+/// Who loosed a volley: a regiment, or a tower (docs/26-fortifications.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Shooter {
+    Regiment(RegimentHandle),
+    Tower(StructureHandle),
+}
+
+impl Shooter {
+    /// The regiment that loosed it, if a regiment did.
+    pub fn regiment(self) -> Option<RegimentHandle> {
+        match self {
+            Shooter::Regiment(h) => Some(h),
+            Shooter::Tower(_) => None,
+        }
+    }
+
+    /// The tower that loosed it, if a tower did.
+    pub fn tower(self) -> Option<StructureHandle> {
+        match self {
+            Shooter::Tower(h) => Some(h),
+            Shooter::Regiment(_) => None,
+        }
+    }
+}
+
 /// Something that happened in the last tick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     /// `shooter` loosed a volley at `target`.
     Loosed {
         volley: VolleyId,
-        shooter: RegimentHandle,
+        shooter: Shooter,
         target: RegimentHandle,
     },
     /// A volley came down where it was aimed, and `lost` of its target's
@@ -57,6 +82,9 @@ pub enum Event {
     },
     /// An ambush was sprung.
     Ambush(Ambush),
+    /// A Bell Tower tolled: enemy powers can't be used near it for a while
+    /// (see [`crate::towers`]).
+    Tolled { structure: StructureHandle },
     /// A building was brought down (its handle is no longer live).
     Fallen { structure: StructureHandle },
     /// A worker was used up to start a building growing (the Brood's
@@ -110,15 +138,19 @@ impl Events {
         }
     }
 
-    /// Room for one event per building too (Conquest).
+    /// Room for two events per building too (Conquest): one falling, one
+    /// tolling.
     pub(crate) fn reserve(&mut self, structures: usize) {
         // `reserve` counts from the length, not the capacity.
-        let room = self.list.capacity() - self.list.len() + structures;
+        let room = self.list.capacity() - self.list.len() + 2 * structures;
         self.list.reserve(room);
     }
 
-    /// Tell of the buildings brought down in the tick just played.
-    pub(crate) fn fallen(&mut self, fallen: &[StructureHandle]) {
+    /// Tell of the bells tolled and the buildings brought down in the tick
+    /// just played.
+    pub(crate) fn fallen(&mut self, tolled: &[StructureHandle], fallen: &[StructureHandle]) {
+        self.list
+            .extend(tolled.iter().map(|&structure| Event::Tolled { structure }));
         self.list
             .extend(fallen.iter().map(|&structure| Event::Fallen { structure }));
     }

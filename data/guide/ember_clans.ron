@@ -139,7 +139,7 @@
         ),
         (
             name: "Watchtower",
-            summary: "Two archers that shoot ground and air. A cheap deterrent for seeps and approaches: it will not stop an army, but it punishes lone raiders and flyers. It is Fortified, so rams and fire still beat it.",
+            summary: "Two archers that shoot ground and air: siege engines first, then whoever attacks your buildings, then the nearest. Right-click an enemy with it selected to pick its target. A cheap deterrent for seeps and approaches: it will not stop an army, but it punishes lone raiders and flyers. It is Fortified, so rams and fire still beat it.",
             notes: [],
             tips: [
                 (icon: Alarm, text: "Place it at seeps and approaches to punish lone raiders and flyers, since it will not stop an army."),

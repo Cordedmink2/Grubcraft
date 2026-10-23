@@ -108,6 +108,9 @@ pub struct StructurePanel<'a> {
     pub powered: Option<bool>,
     /// A building of yours that tunes seeps or veins (None for any other).
     pub tuning: Option<Tuning>,
+    /// A tower of yours told to shoot a regiment first: that regiment's name
+    /// (None for any other building, or a tower choosing for itself).
+    pub shooting: Option<&'a str>,
     /// Whether it has tips, and whether they are showing: draws the info
     /// button on its card (None for a building with no tips).
     pub tips_open: Option<bool>,
@@ -510,9 +513,13 @@ fn draw_structure_card(draw: &mut DrawList, r: Rect, s: &StructurePanel) {
         };
         (t.line(), color)
     });
+    let shooting = s
+        .shooting
+        .filter(|_| s.building.is_none())
+        .map(|name| (format!("Shooting: {name}"), theme::INK));
     let chars = (inner.w / CELL_W).max(1) as usize;
     let mut y = portrait.bottom() + 6;
-    for (text, color) in state.into_iter().chain(tuning) {
+    for (text, color) in state.into_iter().chain(tuning).chain(shooting) {
         for line in wrap(&text, chars) {
             if y + CELL_H > inner.bottom() {
                 return;

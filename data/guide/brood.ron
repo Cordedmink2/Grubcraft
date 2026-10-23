@@ -88,7 +88,7 @@
         ),
         (
             name: "Spine Mound",
-            summary: "Flings spines at ground and air. A cheap static guard for vein edges, Pustules and your Hive. It is Living, so it regrows while on root-veins, but it will not stop an army. Pair with Shellbacks and Chitin Guard.",
+            summary: "Flings spines at ground and air: siege engines first, then whoever attacks your buildings, then the nearest. Right-click an enemy with it selected to pick its target. A cheap static guard for vein edges, Pustules and your Hive. It is Living, so it regrows while on root-veins, but it will not stop an army. Pair with Shellbacks and Chitin Guard.",
             notes: [],
             tips: [
                 (icon: Heart, text: "Build them on root-veins, where the Living mound regrows between fights."),

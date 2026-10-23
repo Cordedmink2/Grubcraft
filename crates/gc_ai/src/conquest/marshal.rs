@@ -701,9 +701,10 @@ impl Marshal {
     /// distance.
     fn best_odds(&mut self, s: &Sense, army: &[&Seen], from: Vec2) -> Option<(Vec2, f32)> {
         let mut nearest: Vec<(u8, Vec2)> = Vec::new();
+        let seen = enemy_buildings(s);
         // Only enemies whose army it has seen: odds against an army it
         // knows nothing of would be a guess.
-        for b in enemy_buildings(s) {
+        for b in &seen {
             if spymaster::army_of(s, b.owner).next().is_none() {
                 continue;
             }
@@ -716,8 +717,8 @@ impl Marshal {
         let weighed: Vec<(u8, Vec2, f32)> = nearest
             .into_iter()
             .map(|(o, at)| {
-                let margin =
-                    spymaster::odds(s, army.iter().copied(), spymaster::defenders(s, o, at));
+                let theirs = spymaster::defenders(s, o, at);
+                let margin = spymaster::odds_at(s, army.iter().copied(), theirs, at, &seen);
                 (o, at, margin)
             })
             .collect();

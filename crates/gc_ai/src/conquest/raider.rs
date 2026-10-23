@@ -36,8 +36,9 @@ const LOST_SHARE: f32 = 0.5;
 const KEEP_SHARE: f32 = 0.5;
 /// Workers in sight this near the party are attacked.
 const CHASE: f32 = 40.0;
-/// A place this near an enemy tower is covered by it.
-const TOWER_REACH: f32 = 18.0;
+/// A place this much further from an enemy tower than its range is still
+/// covered by it (workers run, raiders chase).
+const TOWER_MARGIN: f32 = 4.0;
 /// A place this near an enemy fighter it knows of is guarded.
 const GUARD_REACH: f32 = 22.0;
 /// A worker it remembers is not worth a trip once a raider has come this
@@ -390,7 +391,7 @@ impl Raider {
                     && !self.avoided(r.pos)
             })
             .collect();
-        let open = |r: &&Seen| towers.iter().all(|t| t.distance(r.pos) > TOWER_REACH);
+        let open = |r: &&Seen| towers.iter().all(|t| !t.covers(r.pos));
         if prey.iter().any(open) {
             prey.retain(|r| open(r));
         }
@@ -530,12 +531,31 @@ impl Raider {
     }
 }
 
-/// Where the enemy towers it has seen stand.
-fn towers(s: &Sense) -> Vec<Vec2> {
+/// An enemy tower it has seen: where it stands, and how far round it is
+/// covered by its shooting.
+#[derive(Clone, Copy, Debug)]
+struct Tower {
+    at: Vec2,
+    reach: f32,
+}
+
+impl Tower {
+    fn covers(&self, at: Vec2) -> bool {
+        self.at.distance(at) <= self.reach
+    }
+}
+
+/// The enemy towers it has seen that shoot.
+fn towers(s: &Sense) -> Vec<Tower> {
     spymaster::enemy_buildings(s)
         .iter()
-        .filter(|b| b.role == Role::Defence)
-        .map(|b| b.at)
+        .filter(|b| b.attack.is_some())
+        .map(|b| Tower {
+            at: b.at,
+            // As far as it could shoot from high ground.
+            reach: b.range() * gc_sim::terrain::DOWNHILL_RANGE_PERCENT as f32 / 100.0
+                + TOWER_MARGIN,
+        })
         .collect()
 }
 
@@ -554,7 +574,7 @@ fn is_expansion(role: Role, at: Vec2, starts: &[Vec2]) -> bool {
 /// first; failing those, the least covered. Returns its index in `spots`.
 fn choose(
     spots: &[Spot],
-    towers: &[Vec2],
+    towers: &[Tower],
     foes: &[Vec2],
     focus: Option<u8>,
     from: Vec2,
@@ -570,7 +590,7 @@ fn choose(
     let clearance = |at: Vec2| -> f32 {
         let t = towers
             .iter()
-            .map(|p| p.distance(at) - TOWER_REACH)
+            .map(|t| t.at.distance(at) - t.reach)
             .fold(f32::MAX, f32::min);
         let f = foes
             .iter()
@@ -610,6 +630,24 @@ mod tests {
 
     const HOME_AT: Vec2 = Vec2::new(0.0, 0.0);
 
+    /// A tower covering 18 tiles round it.
+    fn tower(x: f32, y: f32) -> Tower {
+        Tower {
+            at: Vec2::new(x, y),
+            reach: 18.0,
+        }
+    }
+
+    #[test]
+    fn a_shooting_tower_covers_its_range_and_a_little_more() {
+        let t = Tower {
+            at: HOME_AT,
+            reach: 30.0 + TOWER_MARGIN,
+        };
+        assert!(t.covers(Vec2::new(33.0, 0.0)));
+        assert!(!t.covers(Vec2::new(35.0, 0.0)));
+    }
+
     #[test]
     fn it_goes_for_the_nearest_workers_when_nothing_covers_them() {
         let spots = [spot(100.0, 0.0, 1), spot(40.0, 0.0, 1), spot(70.0, 0.0, 1)];
@@ -629,15 +667,15 @@ mod tests {
     fn it_keeps_away_from_towers_and_fighters() {
         let spots = [spot(40.0, 0.0, 1), spot(70.0, 0.0, 1), spot(120.0, 0.0, 1)];
         // A tower covers the nearest: the next is taken.
-        let tower = [Vec2::new(45.0, 0.0)];
-        assert_eq!(choose(&spots, &tower, &[], None, HOME_AT), Some(1));
+        let covers_near = [tower(45.0, 0.0)];
+        assert_eq!(choose(&spots, &covers_near, &[], None, HOME_AT), Some(1));
         // Soldiers by that one too: the far one.
         let foes = [Vec2::new(75.0, 5.0)];
-        assert_eq!(choose(&spots, &tower, &foes, None, HOME_AT), Some(2));
+        assert_eq!(choose(&spots, &covers_near, &foes, None, HOME_AT), Some(2));
         // Safe workers of another enemy don't outrank the focus's covered ones.
         let two = [spot(40.0, 0.0, 1), spot(120.0, 0.0, 2)];
         assert_eq!(
-            choose(&two, &[Vec2::new(120.0, 0.0)], &[], Some(2), HOME_AT),
+            choose(&two, &[tower(120.0, 0.0)], &[], Some(2), HOME_AT),
             Some(1)
         );
     }
@@ -645,7 +683,7 @@ mod tests {
     #[test]
     fn with_everything_covered_it_takes_the_least_covered() {
         let spots = [spot(40.0, 0.0, 1), spot(80.0, 0.0, 1)];
-        let towers = [Vec2::new(40.0, 5.0), Vec2::new(80.0, 15.0)];
+        let towers = [tower(40.0, 5.0), tower(80.0, 15.0)];
         assert_eq!(choose(&spots, &towers, &[], None, HOME_AT), Some(1));
     }
 

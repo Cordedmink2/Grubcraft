@@ -7,7 +7,9 @@ use gc_fixed::{Fx, FxVec2};
 use gc_sim::economy::{NodeSetup, Resource, SEEP_GRUB};
 use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
-use gc_sim::structures::{Armour, DROP_OFF_GRUB, DROP_OFF_MARROW, NEEDS_POWER, POWERS_FIELD, Role};
+use gc_sim::structures::{
+    Armour, DROP_OFF_GRUB, DROP_OFF_MARROW, NEEDS_POWER, POWERS_FIELD, Role, SILENCES, TowerAttack,
+};
 use gc_sim::{
     BuildingStats, Capacities, Command, ConquestSetup, ConquestUnit, MAX_PARTIES, MatchSetup,
     Meter, PlayerCommand, PowerEffect, PowerStats, PowerTarget, Refusal, RegimentHandle,
@@ -27,6 +29,8 @@ const SIPHON: u16 = 3;
 const CHOIR_HALL: u16 = 4;
 /// A tier 2 main building, for Phase Shift.
 const KEEP: u16 = 5;
+/// A Bell Tower: it tolls when enemies come near, silencing their powers.
+const BELL: u16 = 6;
 /// Trained at the Choir Hall.
 const CHOIR_UNIT: u16 = 2;
 
@@ -115,8 +119,9 @@ fn building(role: Role, armour: Armour, side: u8, hp: u16, flags: u16) -> Buildi
 }
 
 /// The building table: the Hall, a Housing that powers a field, a
-/// Resonator, a Siphon, a Choir Hall that needs power, and a tier 2 Keep.
-fn buildings() -> [BuildingStats; 6] {
+/// Resonator, a Siphon, a Choir Hall that needs power, a tier 2 Keep and a
+/// Bell Tower.
+fn buildings() -> [BuildingStats; 7] {
     [
         BuildingStats {
             supply: 40,
@@ -149,6 +154,15 @@ fn buildings() -> [BuildingStats; 6] {
         BuildingStats {
             tier: 2,
             ..building(Role::Main, Armour::Fortified, 5, 3000, 0)
+        },
+        BuildingStats {
+            attack: Some(TowerAttack {
+                range: Fx::from_int(30),
+                damage: 1,
+                reload_ticks: 40,
+                shots: 1,
+            }),
+            ..building(Role::Defence, Armour::Fortified, 2, 900, SILENCES)
         },
     ]
 }
@@ -771,4 +785,37 @@ fn the_same_commands_give_the_same_state_hash_every_tick() {
     assert_eq!(a, b, "two worlds, the same commands");
     let c = play(false);
     assert_ne!(a.last(), c.last(), "without Overclock, another state");
+}
+
+/// Near an enemy Bell Tower that has tolled, a power on a regiment is
+/// refused and costs nothing; once the silence is over it works.
+#[test]
+fn a_bell_tower_silences_powers_used_near_it() {
+    let mut w = chorded(&[]);
+    put_up(&mut w, 1, BELL, 50, 50);
+    let near = spawn(&mut w, 0, CHOIR_UNIT, 51, 58);
+    align(&mut w);
+    run(&mut w, 25 * 60);
+    let haste = |h| Command::UsePower {
+        power: OVERCLOCK,
+        target: PowerTarget::Regiment(h),
+    };
+    // The bell tolled as the regiment came, 20 s and more ago, and again
+    // since: wait for a toll, then use the power.
+    while !w.silenced(0, position(&w, near)) {
+        w.tick(&[]);
+    }
+    let before = resonance_of(&w, 0);
+    assert!(before >= 20, "{before} points");
+    assert_eq!(tick_one(&mut w, 0, haste(near)).commands_rejected, 1);
+    // Nothing spent (a point may have come in meanwhile).
+    assert!(resonance_of(&w, 0) >= before);
+    assert_eq!(w.regiment_haste(near), 0);
+    while w.silenced(0, position(&w, near)) {
+        w.tick(&[]);
+    }
+    assert!(
+        order(&mut w, 0, haste(near)),
+        "works once the silence is over"
+    );
 }

@@ -185,6 +185,23 @@ impl Terrain {
         }
     }
 
+    /// Whether `to` is within `range` of a shooter at `from`, further
+    /// downhill (see [`Terrain::range`]).
+    pub fn in_range(&self, range: Fx, from: FxVec2, to: FxVec2) -> bool {
+        let r = i64::from(self.range(range, from, to).raw());
+        (to - from).length_sq_raw() <= (r * r) as u64
+    }
+
+    /// How far round a shooter with `range` a target could be on this
+    /// ground: as far as high ground could carry, on a map with any.
+    pub fn reach(&self, range: Fx) -> Fx {
+        if self.is_flat() {
+            range
+        } else {
+            Self::range_from_high_ground(range)
+        }
+    }
+
     /// The longest `range` can reach, from high ground.
     pub fn range_from_high_ground(range: Fx) -> Fx {
         Fx::from_raw((i64::from(range.raw()) * i64::from(DOWNHILL_RANGE_PERCENT) / 100) as i32)

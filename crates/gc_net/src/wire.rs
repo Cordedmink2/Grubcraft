@@ -376,6 +376,17 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(21);
             w.u8(to);
         }
+        Command::FocusTower { structure, target } => {
+            w.u8(24);
+            w.structure(structure);
+            match target {
+                None => w.u8(0),
+                Some(h) => {
+                    w.u8(1);
+                    w.handle(h);
+                }
+            }
+        }
         Command::UsePower { power, target } => {
             w.u8(22);
             w.u8(power);
@@ -497,6 +508,14 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             on: r.bool()?,
         },
         21 => Command::HandOver { to: r.u8()? },
+        24 => Command::FocusTower {
+            structure: r.structure()?,
+            target: match r.u8()? {
+                0 => None,
+                1 => Some(r.handle()?),
+                _ => return None,
+            },
+        },
         22 => Command::UsePower {
             power: r.u8()?,
             target: match r.u8()? {
@@ -716,6 +735,20 @@ mod tests {
                 on: false,
             },
             Command::HandOver { to: 2 },
+            Command::FocusTower {
+                structure: StructureHandle {
+                    index: 9,
+                    generation: 3,
+                },
+                target: Some(h(4, 1)),
+            },
+            Command::FocusTower {
+                structure: StructureHandle {
+                    index: 9,
+                    generation: 3,
+                },
+                target: None,
+            },
             Command::UsePower {
                 power: 3,
                 target: PowerTarget::Shift {

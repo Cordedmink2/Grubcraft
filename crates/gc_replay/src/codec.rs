@@ -342,6 +342,17 @@ impl Writer {
                 self.u8(21);
                 self.u8(to);
             }
+            Command::FocusTower { structure, target } => {
+                self.u8(24);
+                self.structure(structure);
+                match target {
+                    None => self.u8(0),
+                    Some(h) => {
+                        self.u8(1);
+                        self.handle(h);
+                    }
+                }
+            }
             Command::UsePower { power, target } => {
                 self.u8(22);
                 self.u8(power);
@@ -722,6 +733,14 @@ impl<'a> Reader<'a> {
                 on: self.bool()?,
             },
             21 => Command::HandOver { to: self.u8()? },
+            24 => Command::FocusTower {
+                structure: self.structure()?,
+                target: match self.u8()? {
+                    0 => None,
+                    1 => Some(self.handle()?),
+                    _ => return None,
+                },
+            },
             22 => Command::UsePower {
                 power: self.u8()?,
                 target: match self.u8()? {
@@ -868,6 +887,23 @@ mod tests {
                     index: 900,
                     generation: 7,
                 },
+            },
+            Command::FocusTower {
+                structure: StructureHandle {
+                    index: 4,
+                    generation: 2,
+                },
+                target: Some(RegimentHandle {
+                    index: 11,
+                    generation: 6,
+                }),
+            },
+            Command::FocusTower {
+                structure: StructureHandle {
+                    index: 4,
+                    generation: 2,
+                },
+                target: None,
             },
             Command::Train {
                 structure: StructureHandle {

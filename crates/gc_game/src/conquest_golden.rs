@@ -5,6 +5,8 @@
 //! soldiers and helps build it, lays a second and calls it off, upgrades
 //! its main building, trains soldiers, rallies them and sends them at the
 //! other side's main building; at the end the host takes a building away.
+//! Each side's host puts up a tower by its main building, and the tower is
+//! told to shoot the first enemy regiment it can see in range.
 //! The second side also puts up three of the Choir's Resonators in a chord
 //! and spends the Resonance it charges on the Choir's powers: Overclock on
 //! its main building, Phase Shift for two soldiers, and Overclock on a
@@ -59,6 +61,8 @@ const CHORD_AT: u32 = 10 * TICKS_PER_SECOND;
 /// When the first side's Shrines go up, one a tick, and how many.
 const SHRINES_AT: u32 = 5 * TICKS_PER_SECOND;
 const SHRINES: u8 = 12;
+/// When each side's tower goes up.
+const TOWER_AT: u32 = 15 * TICKS_PER_SECOND;
 /// Soldiers and workers each side trains up to.
 const FIGHTERS: usize = 6;
 const WORKERS: usize = 8;
@@ -80,6 +84,8 @@ pub(crate) struct Kit {
     pub fighter: UnitId,
     pub house: BuildingId,
     pub spare: BuildingId,
+    /// Its cheapest tier-1 tower.
+    pub tower: Option<BuildingId>,
     /// What a worker, a soldier and the upgrade cost: Grub, Marrow and
     /// supply.
     pub worker_cost: [u32; 3],
@@ -138,6 +144,9 @@ impl Kit {
             .first()
             .copied();
         let fighter = trains(barracks, false).unwrap_or(worker);
+        let tower = ids(&|i| table.stats[i].attack.is_some() && table.stats[i].tier <= 1)
+            .into_iter()
+            .min_by_key(|&b| (stats(b).cost_grub, b));
         let building_cost = |b: u16| {
             [
                 u32::from(stats(b).cost_grub),
@@ -162,6 +171,7 @@ impl Kit {
             fighter,
             house,
             spare,
+            tower,
             worker_cost: unit_cost(worker),
             caravan_cost: caravan.map_or([u32::MAX; 3], unit_cost),
             barracks_cost: building_cost(barracks),
@@ -189,6 +199,8 @@ struct Side {
     /// Shrines put up, and how many Edicts are done.
     shrines: u8,
     edicts: u8,
+    /// Its tower has been told whom to shoot.
+    focused: bool,
 }
 
 /// The Clans' Shrine and their three built Edicts, as the first side plays
@@ -573,6 +585,7 @@ impl Match {
             }
             self.sides[usize::from(p)].charged = seen || target.is_none();
         }
+        self.tower(p, out);
         if p == 1 {
             self.powers(p, out);
         } else {
@@ -586,6 +599,54 @@ impl Match {
             out.push(order(Command::RemoveStructure {
                 structure: b.handle,
             }));
+        }
+    }
+
+    /// Side `p`'s tower: put up by the host by its main building, then
+    /// told to shoot the first enemy regiment it sees in range.
+    fn tower(&mut self, p: PlayerId, out: &mut Vec<PlayerCommand>) {
+        let t = self.world.tick_count();
+        let k = self.kits[usize::from(p)];
+        let Some(b) = k.tower else {
+            return;
+        };
+        let order = |command| PlayerCommand { player: p, command };
+        if t == TOWER_AT {
+            let main = self.main_of(p).expect("a main building");
+            let foot: Foot = [
+                main.tile.0,
+                main.tile.1,
+                i32::from(main.width),
+                main.depth.into(),
+            ];
+            let tile = conquest::ring(foot, 3)
+                .find(|&t| self.world.can_build(b, t).is_ok())
+                .expect("room for a tower");
+            out.push(order(Command::SpawnStructure {
+                building: b,
+                tile: (tile.0 as i16, tile.1 as i16),
+            }));
+        }
+        if self.sides[usize::from(p)].focused {
+            return;
+        }
+        let Some(tower) = own(&self.world, p, Some(b)).first().copied() else {
+            return;
+        };
+        let range = (self.world.structures())
+            .and_then(|s| s.buildings()[usize::from(b)].attack)
+            .map_or(Fx::ZERO, |a| a.range);
+        let foe = (self.world.regiments.iter()).find(|r| {
+            r.owner != p
+                && self.world.sees(p, r.handle)
+                && (r.position - tower.centre()).length() < range
+        });
+        if let Some(foe) = foe {
+            out.push(order(Command::FocusTower {
+                structure: tower.handle,
+                target: Some(foe.handle),
+            }));
+            self.sides[usize::from(p)].focused = true;
         }
     }
 
