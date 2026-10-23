@@ -59,6 +59,11 @@ pub fn all() -> Vec<Rendered> {
     clips.push(bed(SoundId::BedWater, bed_water()));
     clips.push(bed(SoundId::BedWoods, bed_woods()));
     clips.push(bed(SoundId::BedBattle, bed_battle()));
+    // The sounds of attacking buildings.
+    clips.push(sfx(SoundId::WallHit, 0.85, wall_hit()));
+    clips.push(sfx(SoundId::SiegeImpact, 0.9, siege_impact()));
+    clips.push(sfx(SoundId::SiegeLaunch, 0.85, siege_launch()));
+    clips.push(sfx(SoundId::Collapse, 0.9, collapse()));
     clips
 }
 
@@ -612,6 +617,296 @@ fn shatter() -> Buf {
     b
 }
 
+// ---------------------------------------------------------- siege effects
+//
+// Building-attack sounds. They share a few small parts: a dull thud, a woody
+// knock, a sharp crack, a stick-slip creak and a sprinkle of debris.
+
+/// A dull, heavy blow: a sine that drops in pitch (`freq` is where it
+/// settles) over a low-passed knock of noise.
+fn thud(buf: &mut Buf, at: f32, amp: f32, freq: f32, tau: f32, seed: u32) {
+    let rate = buf.rate;
+    let mut phase = 0.0f32;
+    let mut lp = Pole2::default();
+    buf.at(
+        at,
+        |t, rng| {
+            phase += TAU * freq * (1.0 + 0.9 * decay(t, 0.05)) / rate;
+            let body = phase.sin() * decay(t, tau);
+            let knock = lp.low(rng.noise(), freq * 6.0, rate) * decay(t, 0.03) * 0.8;
+            amp * (body + knock)
+        },
+        tau * 6.0,
+        seed,
+    );
+}
+
+/// A woody "tok": two inharmonic partials of struck timber and a breath of
+/// noise.
+fn knock(buf: &mut Buf, at: f32, freq: f32, amp: f32, seed: u32) {
+    let rate = buf.rate;
+    let mut lp = OnePole::default();
+    buf.at(
+        at,
+        |t, rng| {
+            let tone = (TAU * freq * t).sin() * decay(t, 0.045)
+                + 0.5 * (TAU * freq * 1.58 * t).sin() * decay(t, 0.03);
+            let air = lp.low(rng.noise(), freq * 3.0, rate) * decay(t, 0.012);
+            amp * (tone * 0.8 + air * 0.6)
+        },
+        0.3,
+        seed,
+    );
+}
+
+/// A sharp crack of wood or stone giving way: a burst of bright noise.
+fn crack(buf: &mut Buf, at: f32, amp: f32, seed: u32) {
+    let rate = buf.rate;
+    let mut hp = OnePole::default();
+    let mut lp = Pole2::default();
+    buf.at(
+        at,
+        |t, rng| {
+            let n = lp.low(hp.high(rng.noise(), 1500.0, rate), 6500.0, rate);
+            amp * n * decay(t, 0.008) * 1.6
+        },
+        0.06,
+        seed,
+    );
+}
+
+/// One small hard fragment landing: a click of noise over a very short ring.
+fn tick(buf: &mut Buf, at: f32, freq: f32, amp: f32, tau: f32, seed: u32) {
+    let rate = buf.rate;
+    let mut lp = OnePole::default();
+    buf.at(
+        at,
+        |t, rng| {
+            let ring = (TAU * freq * t).sin() * decay(t, tau);
+            let click = lp.low(rng.noise(), freq * 2.0, rate) * decay(t, tau * 0.5);
+            amp * (ring * 0.5 + click)
+        },
+        tau * 8.0,
+        seed,
+    );
+}
+
+/// `count` fragments falling between `from` and `to` seconds, thick at first
+/// and thinning out, their pitch picked between `band.0` and `band.1` Hz.
+fn debris(buf: &mut Buf, from: f32, to: f32, count: u32, amp: f32, band: (f32, f32), seed: u32) {
+    let mut rng = Rng(seed);
+    let mut unit = move || rng.noise() * 0.5 + 0.5;
+    for i in 0..count {
+        let u = unit();
+        let when = from + (to - from) * u.powf(1.7);
+        let freq = band.0 * (band.1 / band.0).powf(unit());
+        let a = amp * (0.35 + 0.65 * unit()) * (1.0 - 0.6 * u);
+        let tau = 0.004 + 0.01 * unit();
+        tick(buf, when, freq, a, tau, seed + 1 + i);
+    }
+}
+
+/// Timber groaning under load: a rough tone sliding from `f0` to `f1` Hz,
+/// scraping in stick-slip pulses (`pulses` per second) with a wandering pitch.
+fn creak(buf: &mut Buf, at: f32, dur: f32, (f0, f1): (f32, f32), amp: f32, pulses: f32, seed: u32) {
+    let rate = buf.rate;
+    let mut phase = 0.0f32;
+    let mut wander = OnePole::default();
+    let mut lp = Pole2::default();
+    buf.at(
+        at,
+        |t, rng| {
+            let j = wander.low(rng.noise(), 25.0, rate) * 6.0;
+            let f = (f0 + (f1 - f0) * (t / dur)) * (1.0 + j);
+            phase += TAU * f / rate;
+            let slip = 1.0 - ((pulses * t + 0.3 * j) % 1.0).abs();
+            let scrape = 0.3 + 0.7 * slip * slip;
+            let tone = lp.low(harmonics(phase, 12, 0.9) + rng.noise() * 0.4, f * 9.0, rate);
+            amp * tone * scrape * adsr(t, dur * 0.15, dur * 0.3, dur)
+        },
+        dur,
+        seed,
+    );
+}
+
+/// A blade or club striking a wall: short, dry and neutral, so several
+/// soldiers' blows a second can overlap without smearing.
+fn wall_hit() -> Buf {
+    let mut b = Buf::new(0.4, SFX_RATE);
+    // The dull body of the blow and the woody note of the planks.
+    thud(&mut b, 0.0, 1.0, 95.0, 0.07, 40);
+    knock(&mut b, 0.0, 330.0, 0.5, 41);
+    // The splintery crack, and a few splinters flicking off.
+    crack(&mut b, 0.0, 0.8, 42);
+    for (i, (at, amp)) in [(0.014, 0.5), (0.031, 0.35), (0.052, 0.4), (0.078, 0.22)]
+        .into_iter()
+        .enumerate()
+    {
+        tick(
+            &mut b,
+            at,
+            1800.0 + 450.0 * i as f32,
+            amp,
+            0.004,
+            43 + i as u32,
+        );
+    }
+    // A little grit falling.
+    debris(&mut b, 0.06, 0.27, 14, 0.25, (1200.0, 3200.0), 60);
+    b
+}
+
+/// A boulder or siege shot slamming into a building.
+fn siege_impact() -> Buf {
+    let mut b = Buf::new(0.9, SFX_RATE);
+    let rate = b.rate;
+    // The deep boom, and the structure answering a moment later.
+    thud(&mut b, 0.0, 1.3, 48.0, 0.2, 70);
+    thud(&mut b, 0.0, 0.7, 85.0, 0.09, 71);
+    thud(&mut b, 0.14, 0.35, 62.0, 0.12, 72);
+    // The slam of the shot itself.
+    let mut slam = Pole2::default();
+    b.at(
+        0.0,
+        |t, rng| slam.low(rng.noise(), 1500.0, rate) * decay(t, 0.03) * 1.1,
+        0.15,
+        73,
+    );
+    // The crunch: timber snapping and stone breaking, sputtering.
+    let mut hp = OnePole::default();
+    let mut lp = Pole2::default();
+    let (mut gate, mut held) = (1.0f32, 0u32);
+    b.at(
+        0.0,
+        |t, rng| {
+            if held == 0 {
+                gate = if rng.noise() > 0.1 { 1.0 } else { 0.15 };
+                held = 180;
+            }
+            held -= 1;
+            let n = lp.low(hp.high(rng.noise(), 300.0, rate), 3200.0, rate);
+            n * gate * decay(t, 0.1) * 0.55
+        },
+        0.4,
+        74,
+    );
+    for (i, at) in [0.012, 0.045, 0.08, 0.13].into_iter().enumerate() {
+        crack(&mut b, at, 0.7 - 0.12 * i as f32, 75 + i as u32);
+    }
+    for (i, (at, f, amp)) in [(0.03, 220.0, 0.5), (0.09, 150.0, 0.4), (0.17, 280.0, 0.3)]
+        .into_iter()
+        .enumerate()
+    {
+        knock(&mut b, at, f, amp, 80 + i as u32);
+    }
+    debris(&mut b, 0.01, 0.38, 22, 0.5, (350.0, 2500.0), 100);
+    // Rubble trickling down after.
+    debris(&mut b, 0.25, 0.8, 10, 0.4, (180.0, 500.0), 200);
+    debris(&mut b, 0.3, 0.88, 40, 0.26, (500.0, 3200.0), 300);
+    b
+}
+
+/// A catapult or siege engine firing: the creak of the frame, the heavy
+/// whump of the arm and the whoosh of the shot rushing away.
+fn siege_launch() -> Buf {
+    let mut b = Buf::new(0.7, SFX_RATE);
+    let rate = b.rate;
+    // The frame groans as the arm is loosed.
+    creak(&mut b, 0.0, 0.3, (170.0, 260.0), 0.5, 24.0, 120);
+    // The whump of the arm, and its clunk against the stop.
+    thud(&mut b, 0.27, 1.0, 68.0, 0.13, 121);
+    knock(&mut b, 0.29, 190.0, 0.55, 122);
+    knock(&mut b, 0.29, 120.0, 0.4, 123);
+    // The whoosh: noise whose band sweeps upwards as the shot flies off.
+    let mut hp = OnePole::default();
+    let mut lp = Pole2::default();
+    b.at(
+        0.27,
+        |t, rng| {
+            let c = 500.0 + 2000.0 * (t / 0.43);
+            let n = lp.low(hp.high(rng.noise(), c, rate), c * 2.5, rate);
+            n * adsr(t, 0.08, 0.25, 0.43) * 1.5
+        },
+        0.43,
+        124,
+    );
+    b
+}
+
+/// A building coming down.
+fn collapse() -> Buf {
+    let mut b = Buf::new(2.6, SFX_RATE);
+    let rate = b.rate;
+    // The groan: beams complaining deep down, and a higher one over it, with
+    // cracks as they give.
+    creak(&mut b, 0.0, 0.9, (62.0, 48.0), 0.9, 11.0, 400);
+    creak(&mut b, 0.15, 0.7, (150.0, 105.0), 0.45, 17.0, 401);
+    for (i, (at, amp)) in [
+        (0.06, 0.5),
+        (0.17, 0.6),
+        (0.24, 0.5),
+        (0.33, 0.7),
+        (0.42, 1.2),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        crack(&mut b, at, amp, 410 + i as u32);
+    }
+    knock(&mut b, 0.42, 160.0, 0.5, 420);
+    // The roar of masonry and timber: a rumble and a darker and darker rush,
+    // swelling fast, then dying away.
+    let mut rumble = Pole2::default();
+    let mut rush = Pole2::default();
+    let mut hp = OnePole::default();
+    b.at(
+        0.35,
+        |t, rng| {
+            let n = rng.noise();
+            let swell = (t / 0.35).min(1.0);
+            let env = swell
+                * swell
+                * (3.0 - 2.0 * swell)
+                * decay((t - 0.2).max(0.0), 0.75)
+                * ((2.2 - t) / 0.8).clamp(0.0, 1.0);
+            let wob = 1.0 + 0.25 * (TAU * 7.3 * t).sin() + 0.15 * (TAU * 11.9 * t + 1.0).sin();
+            let low = rumble.low(n, 110.0, rate) * 4.0;
+            let top = rush.low(
+                hp.high(n, 120.0, rate),
+                250.0 + 1800.0 * decay(t, 0.8),
+                rate,
+            );
+            (low * 0.8 + top * 1.1) * env * wob
+        },
+        2.2,
+        430,
+    );
+    // Heavy thuds inside it, with timbers knocking, each smaller than the last.
+    for (i, (at, amp, f, tau)) in [
+        (0.50, 1.0, 52.0, 0.22),
+        (0.82, 0.85, 44.0, 0.25),
+        (1.12, 0.95, 58.0, 0.20),
+        (1.48, 0.60, 48.0, 0.20),
+        (1.85, 0.45, 55.0, 0.18),
+        (2.20, 0.30, 50.0, 0.15),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        thud(&mut b, at, amp, f, tau, 440 + i as u32);
+    }
+    for (i, (at, f)) in [(0.95, 140.0), (1.25, 210.0), (1.65, 170.0), (2.0, 250.0)]
+        .into_iter()
+        .enumerate()
+    {
+        knock(&mut b, at, f, 0.35, 450 + i as u32);
+    }
+    // Settling: stones and splinters trickling down.
+    debris(&mut b, 0.7, 2.0, 16, 0.5, (150.0, 600.0), 500);
+    debris(&mut b, 1.0, 2.55, 120, 0.3, (500.0, 3500.0), 600);
+    b
+}
+
 fn rally() -> Buf {
     let mut b = Buf::new(1.15, SFX_RATE);
     // Two rising notes: a fifth up, held.
@@ -846,7 +1141,7 @@ mod tests {
                 assert!((seconds - BED_SECONDS).abs() < 0.01, "{:?}", c.id);
             } else {
                 assert!(!c.looped);
-                assert!((0.05..2.0).contains(&seconds), "{:?} is {seconds}s", c.id);
+                assert!((0.05..3.0).contains(&seconds), "{:?} is {seconds}s", c.id);
             }
         }
     }

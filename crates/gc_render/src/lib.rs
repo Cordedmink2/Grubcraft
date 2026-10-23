@@ -123,7 +123,9 @@ pub struct BoxInstance {
     pub pos: [f32; 2],
     /// Unit vector the box faces.
     pub facing: [f32; 2],
-    /// Width (across the facing), height and depth in tiles.
+    /// Width (across the facing), height and depth in tiles. A negative
+    /// height is drawn as positive, but the box casts no shadow (smoke,
+    /// dust and flames).
     pub size: [f32; 3],
     /// Team colour (rgb) and selection highlight (a).
     pub color: [u8; 4],
@@ -719,13 +721,13 @@ impl Renderer {
         };
         let terrain_pipeline = terrain(Target::Color(hdr_format, "fs_terrain"));
         let terrain_shadow_pipeline = terrain(Target::Shadow);
-        let block = |color| {
+        let block = |color, entry| {
             make_pipeline(
                 &device,
                 &layout,
                 &shader,
                 "boxes",
-                "vs_block",
+                entry,
                 color,
                 wgpu::VertexBufferLayout {
                     array_stride: size_of::<BoxInstance>() as u64,
@@ -737,8 +739,8 @@ impl Renderer {
                 },
             )
         };
-        let block_pipeline = block(Target::Color(hdr_format, "fs_block"));
-        let block_shadow_pipeline = block(Target::Shadow);
+        let block_pipeline = block(Target::Color(hdr_format, "fs_block"), "vs_block");
+        let block_shadow_pipeline = block(Target::Shadow, "vs_block_shadow");
         // The sky: one triangle at the far plane, drawn after everything else.
         let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sky"),

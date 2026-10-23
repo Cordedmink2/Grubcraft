@@ -37,6 +37,8 @@ const _: () = assert!(
 
 /// Height of a wall, of most buildings and of a main building, in tiles.
 const WALL_HEIGHT: f32 = 1.5;
+/// A building model's walls are what stands in its lowest share.
+const WALL_SHARE: f32 = 0.3;
 const HEIGHT: f32 = 3.0;
 const MAIN_HEIGHT: f32 = 5.0;
 /// A building at no hit points would be this much of its colour; at full
@@ -180,6 +182,11 @@ impl Table {
         (i32::from(id) + step).rem_euclid(self.len().max(1) as i32) as BuildingId
     }
 
+    /// Building `id`'s faction.
+    pub fn faction(&self, id: BuildingId) -> Option<Faction> {
+        self.factions.get(usize::from(id)).copied()
+    }
+
     /// A type's name.
     pub fn name(&self, id: BuildingId) -> &str {
         self.names.get(usize::from(id)).map_or("", String::as_str)
@@ -270,10 +277,32 @@ pub struct Looks {
     /// By model, the top of a still model (a building's look) in tiles
     /// above its floor, or `None` for a rigged soldier.
     tops: Vec<Option<f32>>,
+    /// By model, how far a still model's walls reach from its middle
+    /// across and along the map, in tiles: the eaves and roof left out.
+    walls: Vec<Option<Vec2>>,
 }
 
 impl Looks {
     pub fn new(table: &Table, models: &Models<'_>) -> Looks {
+        let scale = gc_assets::model::POSITION_SCALE;
+        // A still model's top, and how far its walls (what stands in the
+        // lowest part of it) reach from its middle.
+        let (tops, walls) = (models.models.iter())
+            .map(|m| {
+                let first = m.first_vertex as usize;
+                let vertices = &models.vertices[first..first + m.vertex_count as usize];
+                if !m.is_still() {
+                    return (None, None);
+                }
+                let top = vertices.iter().map(|v| v.pos[1]).max().unwrap_or(0).max(0);
+                let low = (f32::from(top) * WALL_SHARE) as i16;
+                let half = (vertices.iter().filter(|v| v.pos[1] <= low))
+                    .fold(Vec2::ZERO, |h, v| {
+                        h.max(Vec2::new(f32::from(v.pos[0]), f32::from(v.pos[2])).abs())
+                    });
+                (Some(f32::from(top) / scale), Some(half / scale))
+            })
+            .unzip();
         Looks {
             stages: (table.names.iter())
                 .map(|name| core::array::from_fn(|k| models.by_name(&stage_name(name, k))))
@@ -281,17 +310,15 @@ impl Looks {
             crews: (table.factions.iter())
                 .map(|&f| models.by_name(worker_of(f)))
                 .collect(),
-            tops: (models.models.iter())
-                .map(|m| {
-                    let first = m.first_vertex as usize;
-                    let vertices = &models.vertices[first..first + m.vertex_count as usize];
-                    m.is_still().then(|| {
-                        let top = vertices.iter().map(|v| v.pos[1]).max().unwrap_or(0);
-                        f32::from(top.max(0)) / gc_assets::model::POSITION_SCALE
-                    })
-                })
-                .collect(),
+            tops,
+            walls,
         }
+    }
+
+    /// How far still model `model`'s walls reach from its middle, across
+    /// and along the map, in tiles.
+    pub fn walls(&self, model: usize) -> Option<Vec2> {
+        self.walls.get(model).copied().flatten()
     }
 
     /// Whether `model` is a still model (a building's look).
@@ -433,8 +460,9 @@ pub fn shown_to(side: PlayerId, reveal_all: bool) -> impl Fn(&StructureView) -> 
 
 /// Draw every standing building that `shown` allows: a box in its owner's
 /// colour, dimmer as its hit points fall, and a bar over it once it is
-/// damaged. `across` is the way the camera looks along the ground, so the
-/// bars face it.
+/// damaged, white for a moment as a blow lands (`flash`, 0 to 1).
+/// `across` is the way the camera looks along the ground, so the bars face
+/// it.
 #[allow(clippy::too_many_arguments)]
 pub fn push(
     world: &World,
@@ -443,6 +471,7 @@ pub fn push(
     team: impl Fn(PlayerId) -> [u8; 3],
     shown: impl Fn(&StructureView) -> bool,
     modelled: impl Fn(&StructureView) -> Option<f32>,
+    flash: impl Fn(StructureHandle) -> f32,
     across: Vec2,
     out: &mut Vec<BoxInstance>,
 ) {
@@ -485,7 +514,7 @@ pub fn push(
             pos: (centre - right * ((len - fill) / 2.0)).to_array(),
             facing: across.to_array(),
             size: [fill, BAR_THICK + BAR_FRAME, BAR_DEPTH + BAR_FRAME],
-            color: bar_colour(frac),
+            color: flashed(bar_colour(frac), flash(s.handle)),
             lift: lift - BAR_FRAME / 2.0,
         });
     }
@@ -1120,6 +1149,12 @@ fn bar_colour(frac: f32) -> [u8; 4] {
     } else {
         [225, 60, 40, 40]
     }
+}
+
+/// `colour` lit toward white by `flash` (0 to 1), glowing as it goes.
+fn flashed([r, g, b, a]: [u8; 4], flash: f32) -> [u8; 4] {
+    let up = |c: u8| (f32::from(c) + (255.0 - f32::from(c)) * flash.clamp(0.0, 1.0)) as u8;
+    [up(r), up(g), up(b), up(a)]
 }
 
 /// The ghost of a building about to be placed with its north-west tile at

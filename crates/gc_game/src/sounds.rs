@@ -973,6 +973,21 @@ impl Sounds {
             .play_muffled(sound, gain * near * near, pan, priority, 1.0 - near);
     }
 
+    /// A siege's sound, where it happened (see [`crate::siege`]): blows
+    /// on walls, siege engines firing and their shots landing, a building
+    /// coming down, which carries far.
+    pub fn siege(&self, noise: crate::siege::Noise) {
+        use crate::siege::Sound;
+        let (sound, gain, reach, priority) = match noise.sound {
+            Sound::WallHit => (SoundId::WallHit, 0.6, 1.0, PRI_BLOWS),
+            Sound::Arrows => (SoundId::ArrowImpact, 0.6, 1.0, PRI_ARROWS),
+            Sound::Launch => (SoundId::SiegeLaunch, 0.8, 1.3, PRI_ARROWS),
+            Sound::Impact => (SoundId::SiegeImpact, 1.0, 1.5, PRI_MORALE),
+            Sound::Collapse => (SoundId::Collapse, 1.0, 2.2, PRI_MORALE),
+        };
+        self.play_at(sound, noise.at, gain, reach, priority);
+    }
+
     /// An ambush sprung on or by the side you command: a war-drum roll and
     /// a horn, loud wherever the camera is, panned towards it.
     pub fn ambush(&self, at: Vec2) {

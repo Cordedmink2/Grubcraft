@@ -245,12 +245,20 @@ fn a_regiment_knocks_a_farmstead_down() {
     // once it is there.
     let mut fell = None;
     let mut first_blow = None;
+    let mut was = 600;
     for t in 0..90 * TICKS_PER_SECOND {
         w.tick(&[]);
-        let hp = w.structures().unwrap().get(farm).map(|v| v.hp);
-        if first_blow.is_none() && hp.is_some_and(|hp| hp < 600) {
+        let hp = w.structures().unwrap().get(farm).map_or(0, |v| v.hp);
+        if first_blow.is_none() && hp < 600 {
             first_blow = Some(t);
         }
+        // Each blow is told, and only blows: the bar drops when one is.
+        let struck = w.events().contains(&Event::Struck {
+            structure: farm,
+            by: r,
+        });
+        assert_eq!(struck, hp < was, "tick {t}: {was} to {hp}");
+        was = hp;
         if w.events().contains(&Event::Fallen { structure: farm }) {
             fell = Some(t);
             break;

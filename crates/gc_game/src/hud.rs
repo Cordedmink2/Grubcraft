@@ -303,8 +303,9 @@ impl HudState {
         });
     }
 
-    /// Notice your regiments losing men or breaking, from what the
-    /// simulation told of the last tick (`events`). Called once a sim tick.
+    /// Notice your regiments losing men or breaking, and your buildings
+    /// struck, from what the simulation told of the last tick (`events`).
+    /// Called once a sim tick.
     pub fn watch(&mut self, world: &gc_sim::World, side: PlayerId, events: &[Event]) {
         let tick = world.tick_count();
         // A new side, or a new world (its clock starts over): forget the old.
@@ -316,6 +317,16 @@ impl HudState {
         self.notes
             .retain(|n| tick.saturating_sub(n.last) <= NOTE_LIFE);
         for e in events {
+            // A building of ours under attack points where it stands.
+            if let Event::Struck { structure, .. } = *e {
+                let ours = (world.structures().and_then(|all| all.get(structure)))
+                    .filter(|b| b.owner == side);
+                if let Some(b) = ours {
+                    let at = crate::buildings::centre_of(b.tile, b.width, b.depth);
+                    self.note(AlertKind::Attack, at, tick);
+                }
+                continue;
+            }
             let (regiment, kind) = match *e {
                 Event::Losses { regiment, .. } => (regiment, AlertKind::Attack),
                 Event::Morale { regiment, from, to } if to.broken() && !from.broken() => {

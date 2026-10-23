@@ -583,6 +583,9 @@ pub struct Structures {
     siege_stalls: Vec<u8>,
     /// Buildings brought down in the last tick, for the events.
     pub(crate) fallen: Vec<StructureHandle>,
+    /// Blows struck on buildings in the last tick, and by whom, for the
+    /// events (one a regiment at most).
+    pub(crate) struck: Vec<(StructureHandle, RegimentHandle)>,
     /// Workers used up in the last tick by the buildings they started.
     pub(crate) consumed: Vec<(RegimentHandle, StructureHandle)>,
     /// The parties that have seen each building, its owner first: in fog of
@@ -671,6 +674,7 @@ impl Structures {
             siege_gap: vec![Fx::ZERO; regiments],
             siege_stalls: vec![0; regiments],
             fallen: Vec::with_capacity(n),
+            struck: Vec::with_capacity(regiments),
             consumed: Vec::with_capacity(regiments),
             seen: vec![0; n],
             fog: false,
@@ -1244,6 +1248,7 @@ impl Structures {
         nav: &mut Nav,
     ) {
         self.fallen.clear();
+        self.struck.clear();
         self.consumed.clear();
         self.upgrades();
         self.crew.fill(0);
@@ -1322,6 +1327,7 @@ impl Structures {
                 .get(usize::from(regs.unit[r]))
                 .map_or(Breaker::Regiment, |k| k.breaker);
             self.blow(regs, unit, breaker, r, s);
+            self.struck.push((target, regs.handle(r)));
             if self.hp[s] == 0 {
                 self.fallen.push(target);
                 self.remove(s, nav, regs);

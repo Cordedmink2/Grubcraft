@@ -778,7 +778,8 @@ impl World {
             return false;
         }
         self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
-        self.events.reserve(setup.structures as usize);
+        self.events
+            .reserve(setup.structures as usize, self.regiments.capacity());
         // A match played for a victory is won only that way; the sandbox's
         // buildings leave holding the field as it was, and everything in
         // sight.
@@ -1281,7 +1282,7 @@ impl World {
             );
             if let Some(conquest) = &self.conquest {
                 let s = &conquest.structures;
-                self.events.fallen(&s.tolled, &s.fallen);
+                self.events.fallen(&s.tolled, &s.struck, &s.fallen);
             }
         }
         self.tick += 1;

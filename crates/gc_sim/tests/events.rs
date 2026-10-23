@@ -121,7 +121,10 @@ fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
                     assert!(world.regiments.owner(foe).is_some());
                 }
                 Event::Ambush(_) => {}
-                Event::Fallen { .. } | Event::Consumed { .. } | Event::Tolled { .. } => {
+                Event::Fallen { .. }
+                | Event::Struck { .. }
+                | Event::Consumed { .. }
+                | Event::Tolled { .. } => {
                     unreachable!("no buildings in a battle")
                 }
             }

@@ -1,6 +1,6 @@
 # Audio assets
 
-`sounds.gcsnd` is the game's whole sound bank: 27 sound effects (11 synthesised, 16 battle cries layered from recordings), 4 ambient beds and 2 music loops, compressed as IMA ADPCM (about 890 KB). The game embeds it with `include_bytes!` (`crates/gc_game/src/sounds.rs`).
+`sounds.gcsnd` is the game's whole sound bank: 31 sound effects (15 synthesised, 16 battle cries layered from recordings), 4 ambient beds and 2 music loops, compressed as IMA ADPCM (about 945 KB). The game embeds it with `include_bytes!` (`crates/gc_game/src/sounds.rs`).
 
 ## Where the sounds come from
 
@@ -37,6 +37,10 @@ Commit the rewritten `sounds.gcsnd` and its `sounds.manifest` (baker version, ba
 | `BedWater` | 8 s loop | Ambient bed: a hiss with a chuckling, bubbling band and scattered glugs |
 | `BedWoods` | 8 s loop | Ambient bed: leaves and branches rustling over a faint hush |
 | `BedBattle` | 8 s loop | Ambient bed: the roar of a crowd in four vowel-like bands, surging, with low drum thumps and now and then steel ringing |
+| `WallHit` | 0.40 s | A melee blow lands on a building (a dull woody thunk, a short splintery crack, a little grit falling; dry and brief so many can overlap) |
+| `SiegeImpact` | 0.90 s | A siege engine's or artillery shot hits a building (a deep boom, a crunch of timber and stone, rubble trickling down) |
+| `SiegeLaunch` | 0.70 s | A siege engine or artillery piece fires at a building (a wooden creak, the heavy whump of the arm, a rushing whoosh) |
+| `Collapse` | 2.60 s | A building is brought down (a cracking groan, a rumbling roar of masonry and timber with heavy thuds, settling into trickling debris) |
 | `UiSelect` / `UiMove` / `UiAttack` | 0.1-0.24 s | Selecting a regiment; a move order; an attack order |
 | `MusicCalm` | 19.2 s loop | Shakuhachi-style flute over a drone, sparse taiko, plucked string (D hirajoshi, 100 bpm) |
 | `MusicBattle` | 19.2 s loop | Taiko on every beat with fills, plucked ostinato, brass pad. Same length as the calm loop; the two play in step and crossfade with battle intensity |

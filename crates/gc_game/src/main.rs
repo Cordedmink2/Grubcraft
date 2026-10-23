@@ -42,8 +42,8 @@
 //! to send the selection there) and an army tray of regiment cards (click to
 //! select, Shift-click to toggle, double-click to centre). The command grid
 //! has Q (move) and W (attack), each followed by a left-click, and R (formation).
-//! Badges on the screen edge point at your regiments under attack, ambushes and
-//! routs that are out of view; click one or press Space to look there.
+//! Badges on the screen edge point at your regiments and buildings under attack,
+//! ambushes and routs that are out of view; click one or press Space to look there.
 //! Shift+H previews the hero panel (there are no heroes yet).
 //! Orders: left-click one of your regiments to select it, or left-drag a box around
 //! several; Shift adds or removes. Right-click the ground to march the
@@ -156,6 +156,7 @@ mod roster;
 mod sandbox;
 mod scenery;
 mod showroom;
+mod siege;
 mod sounds;
 mod viewer;
 
@@ -177,6 +178,7 @@ use gc_sim::arrange::Shape;
 use gc_sim::events::Event;
 use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
+use gc_sim::structures::Breaker;
 use gc_sim::{
     BuildingId, BuildingStats, Capacities, Formation, LOOSE_DEFENCE, MatchSetup, MoraleState,
     PlayerCommand, PlayerId, RegimentHandle, StructureHandle, StructureView, TIGHT_DEFENCE, UnitId,
@@ -306,6 +308,19 @@ const BLOCKED_COLOR: [u8; 4] = [70, 16, 22, 0];
 const BLOCKED_MARK: [f32; 3] = [0.3, 0.04, 0.3];
 /// Raised a little so steep ground doesn't hide it.
 const BLOCKED_LIFT: f32 = 0.1;
+/// How near a building a regiment's centre stands, past half its depth, to
+/// be at the wall (the simulation lets its front rank reach about two tiles
+/// from it).
+const WALL_REACH: f32 = 3.4;
+/// A building `--siege` puts up: its name, where (from the camera's focus),
+/// and its attackers: unit, and how far across and south of it they start.
+type SceneBuilding = (&'static str, Vec2, &'static [(&'static str, f32, f32)]);
+
+/// How far off `--siege` looks at its siege.
+const SIEGE_SCENE_DISTANCE: f32 = 42.0;
+/// How far a ram draws back between its blows, in tiles.
+const RAM_DRAW: f32 = 0.5;
+
 /// Arrows leave the bow and land at about this height above the ground.
 const ARROW_HEIGHT: f32 = 0.9;
 
@@ -371,6 +386,8 @@ struct Options {
     viewer: Option<String>,
     /// The light and grade to open with (`--look golden-hour`); F9 cycles it.
     look: gc_render::LookPreset,
+    /// Open on a siege staged in the sandbox, to look at (`--siege`).
+    siege: bool,
     render: RendererOptions,
 }
 
@@ -394,6 +411,7 @@ fn parse_args() -> Options {
         showroom_clip: None,
         viewer: None,
         look: gc_render::LookPreset::default(),
+        siege: false,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -408,6 +426,11 @@ fn parse_args() -> Options {
         }
         if flag == "--sandbox" {
             opts.sandbox = true;
+            continue;
+        }
+        if flag == "--siege" {
+            opts.siege = true;
+            opts.menu = Some(false);
             continue;
         }
         if flag == "--host" {
@@ -614,6 +637,11 @@ struct Running {
     puppets: Puppets,
     /// Spent arrows stuck in the ground and the fallen.
     arrows: field::Arrows,
+    /// Blows on buildings, shots at them, and buildings coming down.
+    siege: siege::Siege,
+    /// How far `--siege` has staged its siege: 0 to place it, 1 to order
+    /// the attacks.
+    siege_scene: Option<u8>,
     /// Soldier models; None if the embedded pack failed to load (boxes then).
     art: Option<Art>,
     /// Soldiers have given way to one banner block per regiment (zoomed out).
@@ -743,6 +771,9 @@ struct UnitTable {
     /// Each type's place in an arranged army, from its class; empty for the
     /// Field types, which have none (their stats decide).
     roles: Vec<gc_sim::arrange::Role>,
+    /// Each type's blows on buildings, from its class; empty for the Field
+    /// types, which are all plain regiments.
+    breakers: Vec<Breaker>,
 }
 
 impl UnitTable {
@@ -762,6 +793,7 @@ impl UnitTable {
                 units.iter().map(|u| m.by_name(u.name())).collect()
             }),
             roles: Vec::new(),
+            breakers: Vec::new(),
         }
     }
 }
@@ -920,6 +952,31 @@ fn swing(first: bool) -> Action {
     } else {
         Action::Attack2
     }
+}
+
+/// Regiment `by` as the siege draws its blow on a building; `seen` says
+/// whether the viewer can see it, `ground` the height of the ground at a
+/// point.
+fn attacker_of(
+    world: &World,
+    units: &UnitTable,
+    by: RegimentHandle,
+    seen: bool,
+    ground: impl Fn(Vec2) -> f32,
+) -> Option<siege::Attacker> {
+    let r = world.regiments.get(by)?;
+    let stats = units.stats.get(usize::from(r.unit))?;
+    let breaker = units.breakers.get(usize::from(r.unit)).copied();
+    let (frontage, _) = stats.block_size_in(r.formation, r.files, r.models);
+    let at = from_fx_vec(r.position);
+    Some(siege::Attacker {
+        handle: by,
+        at,
+        ground: ground(at),
+        kind: siege::Kind::of(stats.range.raw() > 0, breaker.unwrap_or_default()),
+        frontage: fx_to_f32(frontage),
+        seen,
+    })
 }
 
 /// What a soldier is doing out of a duel, from his puppet and his regiment.
@@ -1177,6 +1234,11 @@ impl App {
             .iter()
             .map(|u| army_shape::role_of(u.class()))
             .collect();
+        other_units.breakers = game_data
+            .conquest_units
+            .iter()
+            .map(|u| conquest::unit_of(u).breaker)
+            .collect();
         // A Field Battle army buys roster troops at points from their cost.
         other_units.points = game_data
             .conquest_units
@@ -1357,6 +1419,8 @@ impl App {
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
             arrows: field::Arrows::new(field::MAX_STUCK),
+            siege: siege::Siege::new(capacities.regiments as usize),
+            siege_scene: None,
             art,
             commander: false,
             shooting: vec![false; capacities.regiments as usize],
@@ -1472,6 +1536,10 @@ impl App {
             if let Some(choice) = opts.conquest {
                 let setup = conquest::quick_conquest(choice, r.menu.settings(), opts.seed);
                 r.start_match(MatchKind::Battle(setup));
+            }
+            if opts.siege {
+                r.start_match(MatchKind::Sandbox { roster: true });
+                r.siege_scene = Some(0);
             }
         }
         Ok(())
@@ -2672,6 +2740,7 @@ impl Running {
         let dt = gap.min(Duration::from_millis(250));
         self.last_frame = now;
         self.update_camera(dt.as_secs_f32());
+        self.stage_siege();
 
         // Fixed-rate simulation; render interpolates between the last two
         // ticks. Pause and slow motion scale game time, not the camera.
@@ -2783,6 +2852,9 @@ impl Running {
             self.push_placement_ghost();
             self.push_building_ghost();
             self.push_power_aim();
+            let hm = &self.heightmap;
+            (self.siege).advance(game_dt.as_secs_f32(), |p| hm.drawn_height(p.x, p.y));
+            self.note_building_looks();
             self.push_buildings();
         }
         self.puppets.advance(game_dt.as_secs_f32());
@@ -3003,9 +3075,32 @@ impl Running {
                 let buckets = &mut art.buckets;
                 let heightmap = &self.heightmap;
                 let clips = &art.clips;
-                let shooting = self.shooting[r.handle.index as usize];
                 let time = self.puppets.time();
                 let highlight = if selected { 70 } else { 0 };
+                // Soldiers at a building they attack face it: blades close
+                // up to the wall and swing at it, archers shoot.
+                let siege = &mut self.siege;
+                let wall = (self.world.siege_target(r.handle))
+                    .and_then(|h| siege.look(h).copied())
+                    .filter(|_| !block.routing && !r.engaged);
+                let melee = stats.range.raw() == 0;
+                let at_wall = wall
+                    .is_some_and(|w| melee && !r.moving && w.gap(pos) <= depth / 2.0 + WALL_REACH);
+                let lean = siege.lean(r.handle, at_wall, game_dt.as_secs_f32());
+                // A ram draws back between blows and swings in to land each.
+                let breaker = self.units.breakers.get(usize::from(r.unit)).copied();
+                let ram = siege::Kind::of(!melee, breaker.unwrap_or_default()) == siege::Kind::Ram;
+                let draw_back = siege
+                    .since_struck(r.handle)
+                    .filter(|_| ram && at_wall)
+                    .map_or(0.0, |t| {
+                        RAM_DRAW * (t.min(1.0) * std::f32::consts::PI).sin()
+                    });
+                if let Some(w) = wall {
+                    siege.untouch(r.handle, w.handle);
+                }
+                let shooting = self.shooting[r.handle.index as usize]
+                    || (wall.is_some() && !melee && siege.shooting(r.handle));
                 // Builders at a building going up (or being mended) turn
                 // to it and swing their tools.
                 let site = (self.world.building_target(r.handle))
@@ -3017,6 +3112,22 @@ impl Running {
                     });
                 self.puppets
                     .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
+                        let mut s = s;
+                        // At the wall: the ranks step up to it, and the front
+                        // one swings.
+                        let mut battering = None;
+                        if let Some(w) = wall.filter(|_| s.fight.is_none() && s.speed <= 0.6) {
+                            if melee && lean > 0.0 {
+                                let stand = siege::stand_at(&w, s.pos, s.facing, lean, draw_back);
+                                (s.pos, s.facing) = (stand.pos, stand.facing);
+                                if let Some(near) = stand.swing {
+                                    battering = Some(near);
+                                    siege.touch(r.handle, near);
+                                }
+                            } else if !melee && shooting {
+                                s.facing = (w.centre() - s.pos).normalize_or(s.facing);
+                            }
+                        }
                         let ground = heightmap.height_at(s.pos.x, s.pos.y);
                         let at = glam::Vec3::new(s.pos.x, ground, s.pos.y);
                         let Some(lod) = view.place(height, at) else {
@@ -3036,7 +3147,7 @@ impl Running {
                             working.map_or(s.facing, |c| (c - s.pos).normalize_or(s.facing));
                         let pose = match s.fight {
                             Some(fight) => clips.fight(model, fight, seconds),
-                            None if working.is_some() => clips
+                            None if working.is_some() || battering.is_some() => clips
                                 .pose(model, swing(s.phase < 0.5), seconds)
                                 .map(|p| (p, false)),
                             None => {
@@ -3108,6 +3219,7 @@ impl Running {
         }
         if !viewing {
             self.push_arrows(now);
+            self.push_siege();
             self.push_routes();
         }
         if self.lens && !self.minds.is_empty() && !viewing {
@@ -4014,6 +4126,7 @@ impl Running {
         self.sim_clock = Duration::ZERO;
         self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
         self.arrows = field::Arrows::new(field::MAX_STUCK);
+        self.siege.clear();
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
@@ -4594,6 +4707,8 @@ impl Running {
                 self.arrows.loosed(v.id, v.from, v.shots);
             }
         }
+        // Buildings whose blows this tick were shown.
+        let mut shown = Vec::new();
         for e in self.world.events() {
             match *e {
                 Event::Landed {
@@ -4609,11 +4724,61 @@ impl Running {
                 Event::Losses { regiment, .. } if self.world.regiments.get(regiment).is_none() => {
                     self.puppets.wiped(regiment);
                 }
+                Event::Struck { structure, by } => {
+                    let side = self.sandbox.side;
+                    let seen = self.reveal_all || self.world.sees(side, by);
+                    // A blow under fog on a building not your side's is
+                    // neither seen nor heard.
+                    let friendly = (self.siege.look(structure))
+                        .is_some_and(|l| !self.world.hostile(side, l.owner));
+                    let hm = &self.heightmap;
+                    let ground = |p: Vec2| hm.drawn_height(p.x, p.y);
+                    let a = attacker_of(&self.world, &self.units, by, seen, ground);
+                    if let Some(a) = a.filter(|_| seen || friendly) {
+                        self.siege.struck(structure, a);
+                        shown.push(structure);
+                    }
+                }
+                // Nor is its fall, unless the blow that felled it was.
+                Event::Fallen { structure } => {
+                    let side = self.sandbox.side;
+                    let friendly = (self.siege.look(structure))
+                        .is_some_and(|l| !self.world.hostile(side, l.owner));
+                    if self.reveal_all || friendly || shown.contains(&structure) {
+                        self.siege.fallen(structure);
+                    } else {
+                        self.siege.forget(structure);
+                    }
+                }
                 _ => {}
             }
         }
         for b in self.world.blows() {
             self.puppets.struck(b);
+        }
+    }
+
+    /// The sieges on screen (see [`siege`]): shots at buildings, chips and
+    /// dust, smoke and fire, and rubble. Their sounds play here too.
+    fn push_siege(&mut self) {
+        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
+        let standing = self
+            .world
+            .structures()
+            .into_iter()
+            .flat_map(|all| all.iter().filter(move |v| shown(v)).map(|v| v.handle));
+        let hm = &self.heightmap;
+        self.siege.push(
+            standing,
+            |p| hm.drawn_height(p.x, p.y),
+            gc_render::MAX_BOX_INSTANCES - BOX_ROOM_AFTER_CORPSES,
+            &mut self.instances,
+        );
+        let catching_up = self.online.is_some() && self.menu.net().catching_up();
+        for noise in self.siege.drain_noises() {
+            if let Some(sounds) = self.sounds.as_ref().filter(|_| !catching_up) {
+                sounds.siege(noise);
+            }
         }
     }
 
@@ -4652,8 +4817,8 @@ impl Running {
                 self.instances.push(BoxInstance {
                     pos: flight.at(k, t).to_array(),
                     facing: flight.dir.to_array(),
-                    size: [0.05, 0.05, 0.7],
-                    color: [70, 52, 36, 0],
+                    size: field::ARROW_SIZE,
+                    color: field::ARROW_COLOR,
                     lift: start.map_or(ARROW_HEIGHT, |top| top + (ARROW_HEIGHT - top) * t)
                         + flight.arc(t),
                 });
@@ -5108,6 +5273,7 @@ impl Running {
         let look = self.active_camera().forward();
         let across = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
         let (hm, parties, art) = (&self.heightmap, &self.parties, &self.art);
+        let siege = &self.siege;
         let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
         buildings::push(
             &self.world,
@@ -5119,6 +5285,7 @@ impl Running {
                 let art = art.as_ref()?;
                 Some(art.looks.top(art.looks.model_of(s)?))
             },
+            |h| siege.flash(h),
             across,
             &mut self.instances,
         );
@@ -5225,8 +5392,170 @@ impl Running {
         self.renderer.set_scenery_frame(instances, batches);
     }
 
+    /// `--siege`: Ember Clans troops of every kind attack buildings in
+    /// front of the camera (blades a hall, archers a farmstead, a ram a
+    /// watchtower, rocket carts the hall, a Concord engine a tenement).
+    fn stage_siege(&mut self) {
+        // Building, where (from the camera's focus), and its attackers:
+        // unit, and how far south of the building they start.
+        const SCENE: [SceneBuilding; 4] = [
+            (
+                "Clan Hall",
+                Vec2::new(0.0, -12.0),
+                &[
+                    ("Katana Samurai", -3.0, 8.0),
+                    ("Yari Ashigaru", 4.0, 8.0),
+                    ("Ember Rocket Cart", 0.0, 32.0),
+                ],
+            ),
+            (
+                "Farmstead",
+                Vec2::new(-18.0, -6.0),
+                &[("Yumi Ashigaru", 0.0, 16.0)],
+            ),
+            (
+                "Watchtower",
+                Vec2::new(18.0, -6.0),
+                &[("Battering Ram", 0.0, 6.0)],
+            ),
+            (
+                "Tenement",
+                Vec2::new(-34.0, -10.0),
+                &[("Mausoleum Engine", 0.0, 9.0)],
+            ),
+        ];
+        let Some(step) = self.siege_scene else {
+            return;
+        };
+        let unit = |name: &str| self.units.names.iter().position(|n| n == name);
+        let building = |name: &str| {
+            (0..self.buildings.len() as BuildingId).find(|&id| self.buildings.name(id) == name)
+        };
+        let focus = self.camera.focus.round();
+        let north = gc_fixed::Angle::of_vec(fx_vec(Vec2::NEG_Y));
+        match step {
+            0 => {
+                for (name, at, attackers) in SCENE {
+                    let Some(id) = building(name) else { continue };
+                    let stats = self.buildings.stats[usize::from(id)];
+                    let tile = buildings::tile_for(focus + at, stats.width, stats.depth);
+                    self.human_orders.push(PlayerCommand {
+                        player: 1,
+                        command: gc_sim::Command::SpawnStructure {
+                            building: id,
+                            tile: (tile.0 as i16, tile.1 as i16),
+                            turn: 0,
+                        },
+                    });
+                    for &(soldiers, across, back) in attackers {
+                        let Some(unit) = unit(soldiers) else { continue };
+                        let half = f32::from(stats.depth) / 2.0;
+                        self.human_orders.push(PlayerCommand {
+                            player: 0,
+                            command: gc_sim::Command::SpawnRegiment {
+                                unit: unit as UnitId,
+                                position: fx_vec(focus + at + Vec2::new(across, half + back)),
+                                facing: north,
+                            },
+                        });
+                    }
+                }
+                // Close enough to see the blows, and the placer out of the
+                // way.
+                self.camera.distance = SIEGE_SCENE_DISTANCE;
+                self.hud.placer = false;
+                self.sandbox.placing = false;
+                self.siege_scene = Some(1);
+            }
+            1 if self.world.structures().is_some_and(|s| !s.is_empty()) => {
+                let mut orders = Vec::new();
+                for s in self
+                    .world
+                    .structures()
+                    .into_iter()
+                    .flat_map(gc_sim::Structures::iter)
+                {
+                    let name = self.buildings.name(s.building);
+                    let Some((_, _, attackers)) = SCENE.iter().find(|(n, ..)| *n == name) else {
+                        continue;
+                    };
+                    for r in self.world.regiments.iter().filter(|r| r.owner == 0) {
+                        let soldiers = &self.units.names[usize::from(r.unit)];
+                        if attackers.iter().any(|(n, ..)| n == soldiers) {
+                            orders.push(PlayerCommand {
+                                player: 0,
+                                command: gc_sim::Command::AttackStructure {
+                                    regiment: r.handle,
+                                    structure: s.handle,
+                                },
+                            });
+                        }
+                    }
+                }
+                self.human_orders.extend(orders);
+                self.siege_scene = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Note how every building the viewer is shown is drawn, for the blows
+    /// on it and its fall (see [`siege`]).
+    fn note_building_looks(&mut self) {
+        let Some(structures) = self.world.structures() else {
+            return;
+        };
+        let hm = &self.heightmap;
+        let ground = |x, z| hm.drawn_height(x, z);
+        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
+        for s in structures.iter().filter(|s| shown(s)) {
+            let Some(stats) = self.buildings.stats.get(usize::from(s.building)) else {
+                continue;
+            };
+            let model = self.art.as_ref().and_then(|art| art.looks.model_of(&s));
+            let top = match (model, &self.art) {
+                (Some(m), Some(art)) => art.looks.top(m),
+                _ => buildings::height_of(stats.role),
+            };
+            let (centre, base, lift) = buildings::model_spot(&s, &ground);
+            // Blows land on the model's walls, where they stand within the
+            // footprint.
+            let footprint = Vec2::new(f32::from(s.width), f32::from(s.depth)) / 2.0;
+            let walls = (model.zip(self.art.as_ref()))
+                .and_then(|(m, art)| art.looks.walls(m))
+                // Turned a quarter, its model's walls run the other way.
+                .map(|w| {
+                    if s.turn % 2 == 1 {
+                        Vec2::new(w.y, w.x)
+                    } else {
+                        w
+                    }
+                })
+                .filter(|w| w.min_element() > 0.25)
+                .map_or(footprint, |w| w.min(footprint));
+            self.siege.remember(siege::Look {
+                handle: s.handle,
+                min: centre - walls,
+                max: centre + walls,
+                base,
+                top,
+                model,
+                lift,
+                owner: s.owner,
+                colour: color_of(&self.parties, s.owner),
+                stuff: siege::stuff(self.buildings.faction(s.building), stats.armour),
+                hp: if s.finished() {
+                    s.hp as f32 / s.max_hp.max(1) as f32
+                } else {
+                    1.0
+                },
+            });
+        }
+    }
+
     /// Every standing building that has models, at its construction
-    /// stage, and the crews on tier upgrades (after `Art::begin`).
+    /// stage, shaken by the blows on it, the crews on tier upgrades, and
+    /// fallen buildings sinking (after `Art::begin`).
     fn push_building_models(&mut self) {
         let picked = self.picked_structure();
         let (Some(art), Some(structures)) = (&mut self.art, self.world.structures()) else {
@@ -5234,13 +5563,32 @@ impl Running {
         };
         let hm = &self.heightmap;
         // As the skinning shader clamps it, so the lift lands where meant.
-        let ground = |x, z| hm.height_at(x, z).max(hm.water_level() - 0.05);
+        let ground = |x, z| hm.drawn_height(x, z);
         let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
         let time = self.puppets.time();
+        for fall in self.siege.sinking() {
+            let height = art.looks.top(fall.model);
+            let at = Vec3::new(fall.pos.x, ground(fall.pos.x, fall.pos.y), fall.pos.y);
+            let still = art.clips.pose(fall.model, Action::Idle, time);
+            if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
+                let [r, g, b] = fall.colour;
+                art.buckets[fall.model * LODS + lod].push(SoldierInstance {
+                    pos: fall.pos.to_array(),
+                    facing: [0.0, 1.0],
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [r, g, b, gc_render::TONE_NEUTRAL],
+                    lift: fall.lift,
+                    scale: 1.0,
+                });
+            }
+        }
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
             if let Some(model) = art.looks.model_of(&s) {
                 let (centre, top, lift) = buildings::model_spot(&s, &ground);
+                let (shake, rise) = self.siege.jolt(s.handle);
+                let (centre, lift) = (centre + shake, lift + rise);
                 let at = Vec3::new(centre.x, top, centre.y);
                 let still = art.clips.pose(model, Action::Idle, time);
                 let height = art.looks.top(model);
