@@ -78,6 +78,18 @@ pub enum SoundId {
     BedWoods = 31,
     /// Bed (loops): the far roar of many soldiers fighting.
     BedBattle = 32,
+    /// A blade or club striking a wall or door: a woody thunk, a splintery
+    /// crack and a little grit falling. Short and dry so many can overlap.
+    WallHit = 33,
+    /// A boulder or siege shot slamming into a building: a deep boom, a
+    /// crunch of timber and stone and rubble trickling down.
+    SiegeImpact = 34,
+    /// A catapult or siege engine firing: a creak, the heavy whump of the
+    /// arm and a rushing whoosh.
+    SiegeLaunch = 35,
+    /// A building coming down: a cracking groan, a rumbling roar of masonry
+    /// and timber with heavy thuds, settling into trickling debris.
+    Collapse = 36,
 }
 
 impl SoundId {
@@ -110,7 +122,7 @@ impl SoundId {
         ],
     ];
 
-    pub const COUNT: usize = 33;
+    pub const COUNT: usize = 37;
 
     pub const ALL: [SoundId; SoundId::COUNT] = [
         SoundId::ArrowRelease,
@@ -146,6 +158,10 @@ impl SoundId {
         SoundId::BedWater,
         SoundId::BedWoods,
         SoundId::BedBattle,
+        SoundId::WallHit,
+        SoundId::SiegeImpact,
+        SoundId::SiegeLaunch,
+        SoundId::Collapse,
     ];
 
     /// The ambient beds, in the order [`Bed`](crate::queue::Command::Bed) numbers them.
