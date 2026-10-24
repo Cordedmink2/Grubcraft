@@ -1,6 +1,6 @@
 # 25 · Scenery models
 
-Scenery is the trees, bushes, grass and rocks that dress the field. This document covers its 3D models (26 placed by land, the two gathering spots of Conquest, the two stumps felled trees leave, and the two log piles beside halls): what they are, the lands they grow on, how they are made and packed, and what they do not do. The look itself is described in [09 · Art and Audio](09-art-and-audio.md).
+Scenery is the trees, bushes, grass and rocks that dress the field. This document covers its 3D models (26 placed by land, five more placed by habitat on grown maps, the two gathering spots of Conquest, the two stumps felled trees leave, and the two log piles beside halls): what they are, the lands they grow on, how they are made and packed, and what they do not do. The look itself is described in [09 · Art and Audio](09-art-and-audio.md).
 
 ## What it is
 
@@ -43,6 +43,11 @@ Lands are the land sets in `crates/gc_game/src/scenery.rs`. Height is the `heigh
 | `crag` | rock | Highland | 2.41 | 800 | 260 | 80 | 39 |
 | `slab` | rock | Highland, Waste | 0.53 | 210 | 140 | 48 | 39 |
 | `bone-ribs` | rock | Waste | 1.74 | 538 | 338 | 116 | 34 |
+| `stump` | rock | Grown maps: old-growth, fern hollow, birch fringe, glade (see [Habitat dressing](#habitat-dressing)) | 0.69 | 423 | 339 | 115 | 6 |
+| `fallen-log` | rock | Grown maps: the same woods | 0.54 | 530 | 338 | 116 | 16 |
+| `alder` | tree | Grown maps: alder carr, peat bog, and wet shores | 4.29 | 940 | 872 | 291 | 60 |
+| `sedge` | grass | Grown maps: sedge tussock, wet meadow, alder carr, peat bog, and wet shores | 0.56 | 120 | 50 | 18 | 8 |
+| `scree` | rock | Grown maps: scree, bare rock, tree line | 0.17 | 640 | 338 | 116 | 20 |
 | `grub-seep` | rock | Conquest gathering spot, not placed by land | 0.36 | 942 | 339 | 80 | 39 |
 | `marrow-vein` | rock | Conquest gathering spot, not placed by land | 1.10 | 755 | 301 | 90 | 40 |
 | `stump-broad` | rock | Left where a felled broadleaf stood, not placed by land | 0.49 | 537 | 339 | 115 | 6 |
@@ -65,6 +70,17 @@ Woods are the cover tiles marked as woods. On about 55 in 100 of them a tree sta
 - **Tall grass** cover (grass a unit can stand waist-deep in) gets tall grass on every land except Fen, where it gets reeds.
 
 Bushes, rocks and lone trees keep off near sites. The radius depends on the site: 24 tiles round a start, 9 round the Heart, 8 round a village, town or bazaar, and 3 to 7 for the smaller sites. Grass and pebbles grow right up to them.
+
+## Habitat dressing
+
+Added by Living Land stage 4 ([27](27-living-land.md#biome-depth)). On a grown map (one whose `Map.habitat` holds a byte per tile) each tile's habitat adds a few models on top of what its land already gets. A map without habitats (Classic, recipes, painted maps) draws no random numbers for this and places exactly what it did before. It is decoration only, never near a site (the same clearing radii as bushes and rocks, so never round a start), never on a cliff tile and never under water.
+
+- **`stump`** (a weathered cut stump, grey top, moss, a few roots) and **`fallen-log`** (a mossy trunk 2.7 long with broken branch stubs, a pale cut end and a root curl): old growth at 5 and 3 tiles in 100, fern hollow and birch fringe at 2.5 and 2, glade and scrub edge about 1 in 100.
+- **`alder`** (a narrow upright tree with dark leaves on a thin grey trunk): alder carr on about 2 tiles in 10, a few on peat bog, and along the shore of any of the wet habitats (+1 in 10).
+- **`sedge`** (an arching tussock of yellow-green blades with dry tips): sedge tussock about 1 a tile, wet meadow 1 in 4 tiles, alder carr 3 in 10, peat bog 15 in 100, and on the shore of those habitats 3 more in 10.
+- **`scree`** (eight loose stones in a 1.5 tile scatter): scree habitat 1 in 4 tiles, bare rock 15 in 100, tree line 4 in 100, heather moor 2 in 100.
+
+On a 768 tile grown map (seed 3, Wild) that is 4,782 stumps, 3,260 logs, 4,535 alders, 22,293 sedge and 10,431 scree, 45,301 in all of 516,272 instances. `habitat_dressing_stays_modest_on_a_big_grown_map` holds it under 50,000 and `habitats_dress_the_ground_they_name` checks each habitat's models, the site clearing and the plain map. The five are placed by `Placer::habitat_dressing` in `crates/gc_game/src/scenery.rs`. Stumps and logs are not the stumps felled trees leave ([Stumps](#stumps)).
 
 ## Gathering spots
 
@@ -101,7 +117,7 @@ The cloth is baked near-white and tinted with the owner's colour (halved, a thir
 
 ## Pipeline
 
-1. **Blender scripts.** The models are built in Blender from code, using Blender's Python module (`bpy`), in the shared folder `/mnt/project-files/design/scenery/source/`. `skit.py` is the shared kit. `trees.py`, `trees_more.py`, `bushes.py`, `grass.py` and `rocks.py` build the models of each family, `seep.py` and `vein.py` the gathering spots, `stumps.py` the stumps, `logpile.py` the log pile and heap, and `banners.py` the morale standards. `bpy` installs from PyPI (`pip install bpy`), so no Blender application is needed. Each script takes `--only <name>` to rebuild a single model, and `SKIT_NO_REVIEW=1` skips the review render (the whole family rebuilds in a few minutes).
+1. **Blender scripts.** The models are built in Blender from code, using Blender's Python module (`bpy`), in the shared folder `/mnt/project-files/design/scenery/source/`. `skit.py` is the shared kit. `trees.py`, `trees_more.py`, `bushes.py`, `grass.py` and `rocks.py` build the models of each family, `seep.py` and `vein.py` the gathering spots, `stumps.py` the stumps, `living.py` the five habitat models (stump, fallen log, alder, sedge, scree), `logpile.py` the log pile and heap, and `banners.py` the morale standards. `bpy` installs from PyPI (`pip install bpy`), so no Blender application is needed. Each script takes `--only <name>` to rebuild a single model, and `SKIT_NO_REVIEW=1` skips the review render (the whole family rebuilds in a few minutes).
    - **The stronger bake** (2026-10-24, idea 21 part 4, [31](31-surface-detail.md#the-stronger-bake-idea-21-part-4)): `publish()` ends with `skit.dapple`, which varies every level of a model's colour by place: value by up to 7% and hue by up to 3%, from soft 3D noise on the position (about 0.6 tiles a lump), seeded by the model's name. The buildings do it per part; a scenery model is one mesh with hand-made levels, and noise on the position is the same on every level, so a crown does not change shade as it changes level. A vertex's hue is left alone if the shift would turn it from leaf to bark, which the game tells by colour. The change is deliberately small (a lump is a few shades off its neighbour, as a wall's blocks are). The crevice pass of the buildings' bake is the close-range occlusion the pack already has, and a normal gain does not apply: scenery has no baked normal maps, only the shader's relief (`LEAF_RELIEF`). The ones the game can't rebuild, the log pile, the hamlet props, the gathering spots and the banners, are not re-baked. `SKIT_NO_DAPPLE=1` turns it off.
 2. **The glb.** Each model is written to `/mnt/project-files/assets-src/grubcraft/scenery/<name>/<name>.glb`. The file holds four joined meshes, `<name>_LOD0` to `<name>_LOD3`, with the origin at the base and vertex colours only. Beside it sit `facts.json` (name, family, height, radius and triangles per level) and `review.png`, which shows the four levels at one scale.
 3. **The model list.** `assets-src/scenery.ron` lists every model in pack order: its name, its glb (`shared:grubcraft/scenery/<name>/<name>.glb`), its family and its sway.
@@ -122,10 +138,10 @@ Added 2026-10-23, render only, without re-baking the pack. The shader (`scenery.
 
 | Surface | Models | Texture |
 |---|---|---|
-| Broadleaf bark and leaves | `oak-a`, `oak-b`, `birch`, `willow`, `stump-broad` | Bark001 (bark), Moss002 (leaves) |
+| Broadleaf bark and leaves | `oak-a`, `oak-b`, `birch`, `willow`, `alder`, `stump-broad`, `stump`, `fallen-log` | Bark001 (bark), Moss002 (leaves) |
 | Conifer bark and needles, dead wood | `pine-a`, `pine-b`, `thicket-fir`, `crag-pine`, `snag`, `stump-conifer` | Bark014 (bark), Moss002 (needles) |
-| Foliage | every bush and every grass | Moss002 |
-| Stone | `boulder`, `crag`, `slab` | Rock035, the same as the cliffs |
+| Foliage | every bush and every grass (including `sedge`) | Moss002 |
+| Stone | `boulder`, `crag`, `slab`, `scree` | Rock035, the same as the cliffs |
 | Mossy stone | `mossy-boulder` | Rock035, with Moss002 on what faces up |
 | None | `pebbles`, `bone-spire`, `bone-ribs`, gathering spots, banners, `log-pile`, `log-heap` | |
 

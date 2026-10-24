@@ -315,6 +315,10 @@ fn scaled(n: usize, t: i32) -> i32 {
     (i64::from(t) * n as i64 / 512) as i32
 }
 
+/// How many places with room a site weighs before it picks the one its
+/// kind likes best.
+const SITE_CHOICES: usize = 12;
+
 /// How far round each start the land is kept a flat open clearing, in
 /// whole tiles on an `n`-tile map.
 fn clear_radius(n: usize) -> i32 {
@@ -773,6 +777,52 @@ pub fn describe(tiles: i32, seed: u64, wildness: Wildness, fairness: Fairness) -
         (Kind::CreepCamp, "The lair", lairs),
         (Kind::Shrine, "The standing stones", 1),
     ];
+    // How much a site of each kind likes a spot: villages water (a lake
+    // shore, where rivers meet), the old fort the ground standing over its
+    // surroundings, lairs deep woods far from any start, the standing
+    // stones the highest ground. The company camp takes the first place
+    // with room.
+    let height = |p: Pos| i32::from(map.heights[(p.1 * tiles + p.0) as usize]);
+    let count = |p: Pos, r: i32, f: &dyn Fn(usize) -> bool| {
+        (-r..=r)
+            .flat_map(|dy| (-r..=r).map(move |dx| (p.0 + dx, p.1 + dy)))
+            .filter(|&q| (0..tiles).contains(&q.0) && (0..tiles).contains(&q.1))
+            .filter(|&q| dist2(q, p) <= r * r && f((q.1 * tiles + q.0) as usize))
+            .count() as i32
+    };
+    let reason = |label: &str, p: Pos| match label {
+        "Grubfolk village" => count(p, 10, &|i| map.heights[i] < map.water),
+        "The old fort" => {
+            let ring: i32 = [
+                (10, 0),
+                (-10, 0),
+                (0, 10),
+                (0, -10),
+                (7, 7),
+                (-7, 7),
+                (7, -7),
+                (-7, -7),
+            ]
+            .iter()
+            .map(|&(dx, dy)| {
+                height((
+                    (p.0 + dx).clamp(0, tiles - 1),
+                    (p.1 + dy).clamp(0, tiles - 1),
+                ))
+            })
+            .sum();
+            height(p) - ring / 8
+        }
+        "The lair" => {
+            let woods = count(p, 10, &|i| {
+                map.cover.get(i) == Some(&(gc_sim::Cover::Wood as u8))
+            });
+            let far = starts.iter().map(|&s| dist2(s, p)).min().unwrap_or(0);
+            woods + gc_fixed::isqrt_u64(far as u64) as i32 / 2
+        }
+        "The standing stones" => height(p),
+        _ => 0,
+    };
     'kinds: for (kind, label, count) in sites {
         for _ in 0..count {
             let ok = |at: Pos, taken: &[(Pos, i32)]| {
@@ -784,32 +834,35 @@ pub fn describe(tiles: i32, seed: u64, wildness: Wildness, fairness: Fairness) -
                     })
                     && room(at, 3)
             };
-            let mut found = None;
+            // Sites go where the land gives a reason (docs/27, Settlers):
+            // of the places with room, the one its kind likes best.
+            let mut choices: Vec<(i32, Pos)> = Vec::new();
             for _ in 0..96 {
                 let at = (
                     8 + rng.below((tiles - 16) as u32) as i32,
                     8 + rng.below((tiles / 2 - 12) as u32) as i32,
                 );
                 if ok(at, &taken) {
-                    found = Some(at);
-                    break;
+                    choices.push((reason(label, at), at));
+                    if choices.len() == SITE_CHOICES {
+                        break;
+                    }
                 }
             }
+            // Best first (of equals, the first found); under Measured the
+            // best that has a partner in the south.
+            choices.sort_by_key(|&(score, _)| std::cmp::Reverse(score));
+            let inside = |q: Pos| (8..tiles - 8).contains(&q.0) && (8..tiles - 8).contains(&q.1);
+            let spots = choices.iter().find_map(|&(_, at)| {
+                if !measured {
+                    return Some(vec![at]);
+                }
+                let mut with = taken.clone();
+                with.push((at, reach));
+                partner(at, partner_reach, &|q| inside(q) && ok(q, &with)).map(|o| vec![at, o])
+            });
             // (No room for one is no room for the rest.)
-            let Some(at) = found else { break 'kinds };
-            let mut spots = vec![at];
-            if measured {
-                taken.push((at, reach));
-                let inside =
-                    |q: Pos| (8..tiles - 8).contains(&q.0) && (8..tiles - 8).contains(&q.1);
-                let Some(other) = partner(at, partner_reach, &|q| inside(q) && ok(q, &taken))
-                else {
-                    taken.pop();
-                    break 'kinds;
-                };
-                taken.pop();
-                spots.push(other);
-            }
+            let Some(spots) = spots else { break 'kinds };
             for at in spots {
                 taken.push((at, reach));
                 def.objects.push(Object {

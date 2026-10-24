@@ -15,6 +15,7 @@
 use gc_assets::scenery::{Family, LODS};
 use gc_assets::{Aligned, Pack};
 use gc_map::def::Land;
+use gc_map::grown::Habitat;
 use gc_map::{Kind as Site, Map};
 use gc_render::{Cull, MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
 use glam::{Vec2, Vec3};
@@ -156,6 +157,11 @@ catalogue! {
     BannerWavering "banner-wavering" Tree 1 true NONE,
     BannerRouting "banner-routing" Tree 1 true NONE,
     BannerShattered "banner-shattered" Tree 1 true NONE,
+    Stump "stump" Rock 1 true BROADLEAF,
+    FallenLog "fallen-log" Rock 1 true BROADLEAF,
+    Alder "alder" Tree 0 true BROADLEAF,
+    Sedge "sedge" Grass 2 false FOLIAGE,
+    Scree "scree" Rock 2 false STONE,
 }
 
 impl Model {
@@ -402,6 +408,9 @@ pub struct Terrain<'a> {
     pub thicket: &'a [bool],
     /// `Land` bytes, one per tile (empty: meadow).
     pub land: &'a [u8],
+    /// `Habitat` bytes, one per tile, on a grown map (empty: no habitats, and
+    /// none of the habitat dressing is placed).
+    pub habitat: &'a [u8],
     /// Tile heights and the water line in the same units (empty: flat,
     /// dry).
     pub heights: &'a [u16],
@@ -439,6 +448,7 @@ impl<'a> Terrain<'a> {
             cover: &map.cover,
             thicket: &map.thicket,
             land: &map.land,
+            habitat: &map.habitat,
             heights: &map.heights,
             water: map.water,
             sites: map.objects.iter().map(|o| (o.kind, o.at)).collect(),
@@ -1173,6 +1183,66 @@ impl Placer<'_> {
     }
 
     /// One tile's scenery.
+    /// A grown map's habitat dressing, visual only and sparse: stumps and
+    /// fallen logs in the old woods, alders and sedge where it is wet,
+    /// scree on the loose stone. Nothing near a site (`clear`) and nothing
+    /// on a cliff, and a tile draws from `rng` only on a grown map, so maps
+    /// without habitats place exactly what they did before.
+    fn habitat_dressing(&mut self, t: &Tile, habitat: Habitat, clear: bool, rng: &mut Rng) {
+        use Habitat::*;
+        if clear || t.ground == CLIFF {
+            return;
+        }
+        let (stump, log) = match habitat {
+            OldGrowth => (0.05, 0.03),
+            FernHollow | BirchFringe => (0.025, 0.02),
+            Glade | ScrubEdge => (0.01, 0.008),
+            _ => (0.0, 0.0),
+        };
+        let (alder, sedge) = match habitat {
+            AlderCarr => (0.2, 0.3),
+            SedgeTussock => (0.0, 0.5),
+            PeatBog => (0.02, 0.15),
+            WetMeadow => (0.0, 0.25),
+            _ => (0.0, 0.0),
+        };
+        // The wet edge of a stream or pool: alders and sedge along it.
+        let wet = matches!(habitat, AlderCarr | PeatBog | SedgeTussock | WetMeadow);
+        let (alder, sedge) = if t.shore && wet {
+            (alder + 0.1, sedge + 0.3)
+        } else {
+            (alder, sedge)
+        };
+        let scree = match habitat {
+            Scree => 0.25,
+            BareRock => 0.15,
+            TreeLine => 0.04,
+            HeatherMoor => 0.02,
+            _ => 0.0,
+        };
+        if stump > 0.0 && rng.chance(stump) {
+            self.put(Stump, t, rng, 0.8, 1.3, 0.25);
+        }
+        if log > 0.0 && rng.chance(log) {
+            self.put(FallenLog, t, rng, 0.8, 1.2, 0.3);
+        }
+        if alder > 0.0 && rng.chance(alder) {
+            self.put(Alder, t, rng, 0.8, 1.2, 0.2);
+        }
+        if sedge > 0.0 {
+            let count = rng.count(sedge);
+            for _ in 0..count {
+                self.put(Sedge, t, rng, 0.8, 1.3, 0.1);
+            }
+        }
+        if scree > 0.0 {
+            let count = rng.count(scree);
+            for _ in 0..count {
+                self.put(Model::Scree, t, rng, 0.7, 1.4, 0.2);
+            }
+        }
+    }
+
     fn tile(&mut self, t: &Tile, cover: u8, thicket: bool, clear: bool, rng: &mut Rng) {
         self.cliff_rocks(t, clear, rng);
         let set = t.set;
@@ -1299,6 +1369,10 @@ fn build_chunk(
             let thicket = t.thicket.get(i) == Some(&true);
             let mut rng = Rng::tile(seed, x, y);
             placer.tile(&tile, cover, thicket, clear[i], &mut rng);
+            if t.habitat.len() == (n * n) as usize {
+                let habitat = Habitat::from_u8(t.habitat[i]);
+                placer.habitat_dressing(&tile, habitat, clear[i], &mut rng);
+            }
         }
     }
     if flat {
@@ -1384,6 +1458,7 @@ mod tests {
         cover: Vec<u8>,
         thicket: Vec<bool>,
         land: Vec<u8>,
+        habitat: Vec<u8>,
         heights: Vec<u16>,
         sites: Vec<(Site, (i32, i32))>,
     }
@@ -1405,6 +1480,7 @@ mod tests {
                 cover,
                 thicket: Vec::new(),
                 land: Vec::new(),
+                habitat: Vec::new(),
                 heights: vec![1000; (N * N) as usize],
                 sites: Vec::new(),
             }
@@ -1417,6 +1493,7 @@ mod tests {
                     cover: &self.cover,
                     thicket: &self.thicket,
                     land: &self.land,
+                    habitat: &self.habitat,
                     heights: &self.heights,
                     water: 500,
                     ground: ground_of(&self.heights),
@@ -1892,5 +1969,83 @@ mod tests {
         // The cliff rocks stay within their budget: a chunk each at most.
         let chunks = (512 / CHUNK) as usize * (512 / CHUNK) as usize;
         assert!(cliffs <= chunks * CLIFF_ROCKS_PER_CHUNK as usize);
+    }
+
+    const DRESSING: [&str; 5] = ["stump", "fallen-log", "alder", "sedge", "scree"];
+
+    /// Habitat dressing: each habitat grows its own models, sparsely, and
+    /// never near a site; a map without habitats gets none of it.
+    #[test]
+    fn habitats_dress_the_ground_they_name() {
+        let m = models();
+        let mut w = World::new();
+        w.habitat = vec![Habitat::Grassland as u8; (N * N) as usize];
+        for (h, x0, x1) in [
+            (Habitat::OldGrowth, 0, 16),
+            (Habitat::SedgeTussock, 16, 32),
+            (Habitat::AlderCarr, 32, 40),
+            (Habitat::Scree, 40, 56),
+        ] {
+            for y in 0..N as usize {
+                for x in x0..x1 {
+                    w.habitat[y * N as usize + x] = h as u8;
+                }
+            }
+        }
+        w.sites = vec![(Site::Village, (60, 60))];
+        let items = all(&w.build(5, &m));
+        let count = |name: &str, x0: f32, x1: f32| {
+            items
+                .iter()
+                .filter(|(p, n)| *n == name && p[0] >= x0 && p[0] < x1)
+                .count()
+        };
+        assert!(count("stump", 0.0, 16.0) > 0 && count("fallen-log", 0.0, 16.0) > 0);
+        assert!(count("sedge", 16.0, 32.0) > 100);
+        assert!(count("alder", 32.0, 40.0) > 0);
+        assert!(count("scree", 40.0, 56.0) > 100);
+        // Only where they belong.
+        assert_eq!(
+            count("stump", 16.0, 64.0) + count("fallen-log", 16.0, 64.0),
+            0
+        );
+        assert_eq!(count("scree", 0.0, 40.0) + count("scree", 56.0, 64.0), 0);
+        assert_eq!(count("alder", 0.0, 32.0) + count("alder", 40.0, 64.0), 0);
+        // Sparse in the old woods.
+        assert!(count("stump", 0.0, 16.0) + count("fallen-log", 0.0, 16.0) < 16 * 64 / 8);
+        // Nothing within a village's clearing.
+        let near = items
+            .iter()
+            .filter(|(p, n)| DRESSING.contains(n) && (p[0] - 60.5).hypot(p[1] - 60.5) < 7.0);
+        assert_eq!(near.count(), 0);
+        // A map without habitats has none of them.
+        let plain = all(&World::new().build(5, &m));
+        assert!(!plain.iter().any(|(_, n)| DRESSING.contains(n)));
+    }
+
+    /// The instance counts of a 768-tile grown map's habitat dressing stay
+    /// modest.
+    #[test]
+    fn habitat_dressing_stays_modest_on_a_big_grown_map() {
+        let def = gc_map::grown::describe(
+            768,
+            3,
+            gc_map::wilds::Wildness::Wild,
+            gc_map::grown::Fairness::Mirrored,
+        );
+        let map = Map::from_def(&def);
+        assert_eq!(map.habitat.len(), 768 * 768);
+        let items = all(&Scenery::new(&map, 3, &models()));
+        let mut total = 0;
+        for name in DRESSING {
+            let n = items.iter().filter(|(_, m)| *m == name).count();
+            eprintln!("768 grown: {name} {n}");
+            total += n;
+        }
+        eprintln!(
+            "768 grown: {} instances in all, dressing {total}",
+            items.len()
+        );
+        assert!(total < 50_000, "{total}");
     }
 }

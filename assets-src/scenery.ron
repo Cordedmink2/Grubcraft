@@ -53,5 +53,11 @@
         (name: "banner-wavering", source: "shared:grubcraft/scenery/banner-wavering/banner-wavering.glb", family: "tree", sway: 0.2),
         (name: "banner-routing", source: "shared:grubcraft/scenery/banner-routing/banner-routing.glb", family: "tree", sway: 0.2),
         (name: "banner-shattered", source: "shared:grubcraft/scenery/banner-shattered/banner-shattered.glb", family: "tree", sway: 0.2),
+        // Living Land stage 4: dressing by habitat (docs/27, docs/25).
+        (name: "stump", source: "shared:grubcraft/scenery/stump/stump.glb", family: "rock", sway: 0.0),
+        (name: "fallen-log", source: "shared:grubcraft/scenery/fallen-log/fallen-log.glb", family: "rock", sway: 0.0),
+        (name: "alder", source: "shared:grubcraft/scenery/alder/alder.glb", family: "tree", sway: 0.12),
+        (name: "sedge", source: "shared:grubcraft/scenery/sedge/sedge.glb", family: "grass", sway: 0.1),
+        (name: "scree", source: "shared:grubcraft/scenery/scree/scree.glb", family: "rock", sway: 0.0),
     ],
 )
