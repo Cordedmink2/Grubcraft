@@ -37,7 +37,7 @@ mod manifest;
 mod rig;
 mod textures;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
@@ -68,6 +68,18 @@ const PART_ERROR: f32 = 0.2;
 #[derive(Deserialize)]
 struct Config {
     models: Vec<ModelConfig>,
+    /// Tagged moves several models take, by name (see [`MoveSet`]).
+    #[serde(default)]
+    move_sets: BTreeMap<String, MoveSet>,
+}
+
+/// Tagged moves from one glTF (a fight library) that models on different
+/// skeletons take with `move_sets`, as if each named them in its own
+/// `moves` with `moves_from`; each gets its own copy, on its own skeleton.
+#[derive(Deserialize)]
+struct MoveSet {
+    from: String,
+    moves: Vec<MoveConfig>,
 }
 
 #[derive(Deserialize)]
@@ -121,12 +133,21 @@ struct ModelConfig {
     #[serde(default)]
     moves: Vec<MoveConfig>,
     /// A glTF holding the tagged moves' animations, when they are kept
-    /// apart from the model (a fight library): it must carry the model's
-    /// very rig, every joint of the same name in the same rest pose, and its
-    /// animations play on the model's joints by name. Left out, the moves
-    /// are the model's own animations.
+    /// apart from the model (a fight library): its animations play on the
+    /// model's joints by name, so it must carry the model's rig (see
+    /// [`library_rig`]). Left out, the moves are the model's own animations.
     #[serde(default)]
     moves_from: Option<String>,
+    /// Named [`MoveSet`]s the model takes too.
+    #[serde(default)]
+    move_sets: Vec<String>,
+    /// Joints the model's own clips keep in its hands though they hang
+    /// from elsewhere (a Concord pike or shield hangs from the chest, and
+    /// the arms reach for it), each to the hand joint that holds it. In
+    /// moves from a library, which lacks them, the hand then carries the
+    /// joint as the model's Idle holds it, rather than leaving it at rest.
+    #[serde(default)]
+    held_by: BTreeMap<String, String>,
     /// What the model holds, named as in `gc_assets::anim::Weapon`
     /// ("TwoHanded" for a katana): the picker then prefers the skeleton's
     /// moves made for that weapon over the plain clips. Only for a model
@@ -381,7 +402,20 @@ fn bake_pack(config: &Config, opts: &Options) -> Result<(Vec<u8>, ModelTables), 
             Some(src) => Some(resolve(src).map_err(|e| format!("{}: {e}", m.name))?),
             None => None,
         };
-        let mut baked = bake_model(m, &path, albedo.as_ref().map(|a| &a.0), library.as_deref())
+        let sets = m
+            .move_sets
+            .iter()
+            .map(|name| {
+                let set = config
+                    .move_sets
+                    .get(name)
+                    .ok_or_else(|| format!("no move set {name:?}"))?;
+                Ok((resolve(&set.from)?, set.moves.as_slice()))
+            })
+            .collect::<Result<Vec<_>, String>>()
+            .map_err(|e| format!("{}: {e}", m.name))?;
+        let albedo_img = albedo.as_ref().map(|a| &a.0);
+        let mut baked = bake_model(m, &path, albedo_img, library.as_deref(), &sets)
             .map_err(|e| format!("{} ({}): {e}", m.name, path.display()))?;
         if opts.report {
             report(&baked);
@@ -705,6 +739,7 @@ fn bake_model(
     path: &Path,
     albedo: Option<&Image>,
     library: Option<&Path>,
+    sets: &[(PathBuf, &[MoveConfig])],
 ) -> Result<BakedModel, String> {
     let src = load(path)?;
     let doc = &src.doc;
@@ -1074,70 +1109,61 @@ fn bake_model(
             })
             .collect()
     });
-    // Tagged moves come from the model's own glTF, or from a library on its
-    // rig with its nodes mapped onto the model's joints.
-    let library = library
-        .map(|p| -> Result<_, String> {
-            let lib = load(p).map_err(|e| format!("moves_from {}: {e}", p.display()))?;
-            let to_model = same_rig(&rig, &joints, &Skeleton::new(&lib.doc))
-                .map_err(|e| format!("moves_from {}: {e}", p.display()))?;
-            Ok((lib, to_model))
-        })
-        .transpose()?;
-    let (moves_src, to_model) = match &library {
-        Some((lib, to_model)) => (lib, Some(to_model)),
-        None => (&src, None),
-    };
-    let moves_get = |b: gltf::Buffer<'_>| moves_src.buffers.get(b.index()).map(Vec::as_slice);
-    let moves_node = |n: usize| to_model.map_or(Some(n), |m| m.get(&n).copied());
+    // Tagged moves come from the model's own glTF (`moves` without
+    // `moves_from`), or from a library on its rig with its nodes mapped onto
+    // the model's joints: its own `moves`, then its move sets', grouped by
+    // the glTF they come from so each is read once.
+    let mut by_source: Vec<(Option<&Path>, Vec<&MoveConfig>)> = Vec::new();
+    let all = std::iter::once((library, cfg.moves.as_slice()))
+        .chain(sets.iter().map(|(p, m)| (Some(p.as_path()), *m)));
+    for (from, moves) in all {
+        match by_source.iter_mut().find(|(f, _)| *f == from) {
+            Some((_, had)) => had.extend(moves),
+            None => by_source.push((from, moves.iter().collect())),
+        }
+    }
+    by_source.retain(|(_, moves)| !moves.is_empty());
+    let tagged = !by_source.is_empty();
+    let held = held_joints(cfg, &rig, &sampled)?;
     let posed_clips = match posed_clips {
         Some(mut posed) => {
-            for m in &cfg.moves {
-                let tags = m.tags()?;
-                let loops = tags.flags & gc_assets::anim::LOOPS != 0;
-                let anim = anim_named(&moves_src.doc, &m.anim)?;
-                // A kill plays as made (its pair records where it meets);
-                // an attack is retimed so its blow lands at BLOW_AT.
-                let kill = matches!(
-                    tags.act,
-                    gc_assets::anim::Act::Kill | gc_assets::anim::Act::Killed
-                );
-                let retime = if kill { None } else { m.contact };
-                let globals =
-                    sample_clip(&anim, moves_node, loops, retime, &skel, &joints, moves_get)?;
-                let pair = match (&m.pair, m.contact) {
-                    (Some(name), Some(contact)) => {
-                        let share = contact * SAMPLE_FPS / (globals.len() - 1).max(1) as f32;
-                        if !(share > 0.0 && share < 1.0) {
-                            return Err(format!(
-                                "move {:?}: contact {contact} s is outside the animation",
-                                m.anim
-                            ));
+            for (from, moves) in by_source {
+                let lib = from
+                    .map(|p| -> Result<_, String> {
+                        let at = |e: String| format!("moves from {}: {e}", p.display());
+                        let lib = load(p).map_err(at)?;
+                        let lib_skel = Skeleton::new(&lib.doc);
+                        let to_model = library_rig(&rig, &joints, &skel, &lib_skel).map_err(at)?;
+                        if let Some(&(j, _, _)) = held
+                            .iter()
+                            .find(|(j, _, _)| to_model.values().any(|&n| n == joints[*j]))
+                        {
+                            return Err(at(format!(
+                                "it moves {:?} itself, which the model's hand holds",
+                                rig.names[j]
+                            )));
                         }
-                        Some(rig::PairHalf {
-                            name: name.clone(),
-                            reach: m.reach,
-                            contact: share,
-                        })
-                    }
-                    _ => None,
+                        Ok((lib, to_model))
+                    })
+                    .transpose()?;
+                let (moves_src, to_model) = match &lib {
+                    Some((lib, to_model)) => (lib, Some(to_model)),
+                    None => (&src, None),
                 };
-                let mut frames = pose_frames(&globals)
-                    .ok_or_else(|| format!("move {:?} squashes or shears a joint", m.anim))?;
-                if m.additive {
-                    rig::make_additive(&mut frames);
+                for m in moves {
+                    let tags = m.tags()?;
+                    let mut globals = sampled_move(m, tags, moves_src, to_model, &skel, &joints)?;
+                    if to_model.is_some() {
+                        for frame in &mut globals {
+                            carry(frame, &held, &rig.parent);
+                        }
+                    }
+                    posed.push(posed_move(m, tags, globals, pose_frames)?);
                 }
-                posed.push(rig::PosedClip {
-                    kind: None,
-                    name: m.anim.clone(),
-                    tags,
-                    frames,
-                    pair,
-                });
             }
             Some(posed)
         }
-        None if !cfg.moves.is_empty() => {
+        None if tagged => {
             return Err("tagged moves need a model posed from a shared skeleton".into());
         }
         None => None,
@@ -1466,12 +1492,17 @@ fn anim_named<'a>(doc: &'a gltf::Document, name: &str) -> Result<gltf::Animation
 }
 
 /// For a move library on a model's rig (`model`, whose joints are the nodes
-/// `joints`): each library node that is one of its joints, by name, to that
-/// joint's node. The library's rig must equal the model's, as models sharing
-/// a skeleton do (`rig::Rig`), or its moves would not fit the model.
-fn same_rig(
+/// `joints` of `skel`): each library node that is one of its joints, by
+/// name, to that joint's node. The joints the two share must hang from one
+/// another and rest alike in both, as on models sharing a skeleton
+/// (`rig::Rig`), or the library's moves would not fit the model. Beyond
+/// them the model may have joints the library lacks (a weapon, a floating
+/// crystal), which hold their rest, and the library joints the model lacks
+/// (fingers), which are left out, but none that a shared joint hangs from.
+fn library_rig(
     model: &rig::Rig,
     joints: &[usize],
+    skel: &Skeleton,
     lib: &Skeleton,
 ) -> Result<HashMap<usize, usize>, String> {
     let mut by_name: HashMap<&str, usize> = HashMap::new();
@@ -1480,26 +1511,175 @@ fn same_rig(
             return Err(format!("two nodes are named {n:?}"));
         }
     }
-    let lib_joints = model
+    // Per model joint, the library's node of that name.
+    let theirs: Vec<Option<usize>> = model
         .names
         .iter()
-        .map(|n| {
-            by_name
-                .get(n.as_str())
-                .copied()
-                .ok_or_else(|| format!("no joint {n:?}"))
-        })
-        .collect::<Result<Vec<usize>, String>>()?;
-    let lib_rig = rig::Rig::new(
-        &lib_joints,
-        &lib.parent,
-        &lib.names,
-        &lib.globals(&lib.rest),
-    );
-    if lib_rig != *model {
+        .map(|n| by_name.get(n.as_str()).copied())
+        .collect();
+    let shared: Vec<usize> = (0..joints.len()).filter(|&j| theirs[j].is_some()).collect();
+    if shared.is_empty() {
+        return Err("it has none of the model's joints".into());
+    }
+    for &j in &shared {
+        let up = model.parent[j].map(|p| theirs[p].ok_or(p));
+        match up {
+            Some(Err(p)) => {
+                return Err(format!(
+                    "the model's {:?} hangs from {:?}, which it lacks",
+                    model.names[j], model.names[p]
+                ));
+            }
+            Some(Ok(p)) if lib.parent[theirs[j].unwrap()] != Some(p) => {
+                return Err(format!(
+                    "its {:?} hangs from another joint than the model's",
+                    model.names[j]
+                ));
+            }
+            _ => {}
+        }
+    }
+    // The library's channels replace the model's joints' own (local) rest,
+    // so those must match too, not only where the joints end up: a root
+    // under an armature of another scale would otherwise move wrongly.
+    let near = |a: &Trs, b: &Trs| {
+        a.t.abs_diff_eq(b.t, 1e-4) && a.r.dot(b.r).abs() > 1.0 - 1e-6 && a.s.abs_diff_eq(b.s, 1e-4)
+    };
+    if let Some(&j) = shared
+        .iter()
+        .find(|&&j| !near(&lib.rest[theirs[j].unwrap()], &skel.rest[joints[j]]))
+    {
+        return Err(format!(
+            "its {:?} rests otherwise than the model's under its parent",
+            model.names[j]
+        ));
+    }
+    let sub = |nodes: &[usize], s: &Skeleton| {
+        rig::Rig::new(nodes, &s.parent, &s.names, &s.globals(&s.rest))
+    };
+    let lib_nodes: Vec<usize> = shared.iter().map(|&j| theirs[j].unwrap()).collect();
+    let model_nodes: Vec<usize> = shared.iter().map(|&j| joints[j]).collect();
+    if sub(&lib_nodes, lib) != sub(&model_nodes, skel) {
         return Err("its rig is not the model's (parents or rest pose differ)".into());
     }
-    Ok(lib_joints.into_iter().zip(joints.iter().copied()).collect())
+    Ok(lib_nodes.into_iter().zip(model_nodes).collect())
+}
+
+/// Each joint the model's hands hold (`held_by`), its hand and where the
+/// hand holds it in the first frame of the model's Idle.
+fn held_joints(
+    cfg: &ModelConfig,
+    rig: &rig::Rig,
+    sampled: &[(ClipKind, String, Vec<Vec<Mat4>>)],
+) -> Result<Vec<(usize, usize, Mat4)>, String> {
+    let at = |name: &str| {
+        rig.names
+            .iter()
+            .position(|n| n == name)
+            .ok_or_else(|| format!("held_by: no joint {name:?}"))
+    };
+    cfg.held_by
+        .iter()
+        .map(|(joint, hand)| {
+            let (j, h) = (at(joint)?, at(hand)?);
+            if hangs_from(&rig.parent, h, j) {
+                return Err(format!("held_by: {hand:?} hangs from {joint:?}"));
+            }
+            let idle = sampled
+                .iter()
+                .find(|(k, _, _)| *k == ClipKind::Idle)
+                .ok_or("held_by needs an Idle clip")?;
+            let frame = &idle.2[0];
+            Ok((j, h, frame[h].inverse() * frame[j]))
+        })
+        .collect()
+}
+
+/// Whether joint `k` is joint `j` or hangs from it.
+fn hangs_from(parent: &[Option<usize>], mut k: usize, j: usize) -> bool {
+    loop {
+        if k == j {
+            return true;
+        }
+        match parent[k] {
+            Some(p) => k = p,
+            None => return false,
+        }
+    }
+}
+
+/// Move each held joint, and the joints hanging from it, with its hand.
+fn carry(frame: &mut [Mat4], held: &[(usize, usize, Mat4)], parent: &[Option<usize>]) {
+    for &(j, hand, grip) in held {
+        let change = frame[hand] * grip * frame[j].inverse();
+        for (k, m) in frame.iter_mut().enumerate() {
+            if hangs_from(parent, k, j) {
+                *m = change * *m;
+            }
+        }
+    }
+}
+
+/// The joints' globals in each frame of tagged move `m` from `src`
+/// (`to_model` maps a library's nodes onto the model's).
+fn sampled_move(
+    m: &MoveConfig,
+    tags: rig::Tags,
+    src: &Source,
+    to_model: Option<&HashMap<usize, usize>>,
+    skel: &Skeleton,
+    joints: &[usize],
+) -> Result<Vec<Vec<Mat4>>, String> {
+    let loops = tags.flags & gc_assets::anim::LOOPS != 0;
+    let anim = anim_named(&src.doc, &m.anim)?;
+    // A kill plays as made (its pair records where it meets); an attack is
+    // retimed so its blow lands at BLOW_AT.
+    let kill = matches!(
+        tags.act,
+        gc_assets::anim::Act::Kill | gc_assets::anim::Act::Killed
+    );
+    let retime = if kill { None } else { m.contact };
+    let node = |n: usize| to_model.map_or(Some(n), |m| m.get(&n).copied());
+    let get = |b: gltf::Buffer<'_>| src.buffers.get(b.index()).map(Vec::as_slice);
+    sample_clip(&anim, node, loops, retime, skel, joints, get)
+}
+
+/// Tagged move `m`, sampled as `globals`, posed on the model's joints.
+fn posed_move(
+    m: &MoveConfig,
+    tags: rig::Tags,
+    globals: Vec<Vec<Mat4>>,
+    pose_frames: impl Fn(&[Vec<Mat4>]) -> Option<Vec<Vec<rig::JointPose>>>,
+) -> Result<rig::PosedClip, String> {
+    let pair = match (&m.pair, m.contact) {
+        (Some(name), Some(contact)) => {
+            let share = contact * SAMPLE_FPS / (globals.len() - 1).max(1) as f32;
+            if !(share > 0.0 && share < 1.0) {
+                return Err(format!(
+                    "move {:?}: contact {contact} s is outside the animation",
+                    m.anim
+                ));
+            }
+            Some(rig::PairHalf {
+                name: name.clone(),
+                reach: m.reach,
+                contact: share,
+            })
+        }
+        _ => None,
+    };
+    let mut frames = pose_frames(&globals)
+        .ok_or_else(|| format!("move {:?} squashes or shears a joint", m.anim))?;
+    if m.additive {
+        rig::make_additive(&mut frames);
+    }
+    Ok(rig::PosedClip {
+        kind: None,
+        name: m.anim.clone(),
+        tags,
+        frames,
+        pair,
+    })
 }
 
 /// Each joint's global matrix (in the source's space) for each frame.
@@ -1797,7 +1977,7 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let (_, _, cfg) = bake_alien_bug();
         let path = root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb");
-        let baked = bake_model(&cfg, &path, None, None).unwrap();
+        let baked = bake_model(&cfg, &path, None, None, &[]).unwrap();
         let posed = baked
             .posed
             .as_ref()
@@ -1838,8 +2018,8 @@ mod tests {
         let path = root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb");
         let (_, _, mut cfg) = bake_alien_bug();
         cfg.moves = ron::from_str(r#"[(anim: "Attack.001", act: "Parry")]"#).unwrap();
-        let own = bake_model(&cfg, &path, None, None).unwrap();
-        let from = bake_model(&cfg, &path, None, Some(&path)).unwrap();
+        let own = bake_model(&cfg, &path, None, None, &[]).unwrap();
+        let from = bake_model(&cfg, &path, None, Some(&path), &[]).unwrap();
         let (own, from) = (own.posed.unwrap(), from.posed.unwrap());
         let (a, b) = (own.clips.last().unwrap(), from.clips.last().unwrap());
         assert_eq!(a.name, b.name);
@@ -1931,31 +2111,66 @@ mod tests {
     }
 
     #[test]
-    fn a_library_on_another_rig_is_refused() {
+    fn a_library_on_another_rig_is_refused_but_one_lacking_a_loose_joint_is_not() {
         let (_, skel, joints, rig) = bug_rig();
-        let to_model = same_rig(&rig, &joints, &skel).unwrap();
+        let to_model = library_rig(&rig, &joints, &skel, &skel).unwrap();
         assert!(joints.iter().all(|j| to_model[j] == *j));
         let mut turned = Skeleton::new(&bug_rig().0.doc);
         turned.rest[joints[1]].r = Quat::from_rotation_y(0.3) * turned.rest[joints[1]].r;
         assert!(
-            same_rig(&rig, &joints, &turned)
+            library_rig(&rig, &joints, &skel, &turned)
                 .unwrap_err()
-                .contains("rest pose")
+                .contains("rests otherwise")
         );
-        let mut renamed = Skeleton::new(&bug_rig().0.doc);
-        renamed.names[joints[2]] = "Elsewhere".into();
+        // A joint nothing hangs from (a weapon's) may be the model's alone:
+        // it holds its rest.
+        let leaf = (0..joints.len())
+            .find(|&j| !rig.parent.contains(&Some(j)))
+            .unwrap();
+        let mut loose = Skeleton::new(&bug_rig().0.doc);
+        loose.names[joints[leaf]] = "Elsewhere".into();
+        let to_model = library_rig(&rig, &joints, &skel, &loose).unwrap();
+        assert_eq!(to_model.len(), joints.len() - 1);
+        assert!(!to_model.contains_key(&joints[leaf]));
+        // But not one the others hang from.
+        let mut rootless = Skeleton::new(&bug_rig().0.doc);
+        let root = rig.parent.iter().position(Option::is_none).unwrap();
+        rootless.names[joints[root]] = "Elsewhere".into();
         assert!(
-            same_rig(&rig, &joints, &renamed)
+            library_rig(&rig, &joints, &skel, &rootless)
                 .unwrap_err()
-                .contains("no joint")
+                .contains("which it lacks")
         );
         let mut twice = Skeleton::new(&bug_rig().0.doc);
         twice.names[joints[3]] = twice.names[joints[2]].clone();
         assert!(
-            same_rig(&rig, &joints, &twice)
+            library_rig(&rig, &joints, &skel, &twice)
                 .unwrap_err()
                 .contains("two nodes")
         );
+    }
+
+    #[test]
+    fn a_held_weapon_moves_with_its_hand_and_takes_its_grip_along() {
+        // Chest, hand on it, a weapon hanging from the chest, a grip on it.
+        let parent = [None, Some(0), Some(0), Some(2)];
+        let at = |x: f32, y: f32| Mat4::from_translation(Vec3::new(x, y, 0.0));
+        let grip = at(0.0, -0.1);
+        let swing = Mat4::from_rotation_z(0.8);
+        let mut frame = [
+            Mat4::IDENTITY,
+            at(1.0, 2.0) * swing,
+            at(0.0, 1.0),
+            at(0.0, 1.3),
+        ];
+        let (weapon, held_grip) = (frame[2], frame[3]);
+        carry(&mut frame, &[(2, 1, grip)], &parent);
+        assert!(frame[2].abs_diff_eq(frame[1] * grip, 1e-6));
+        // The grip keeps its place on the weapon; the hand and chest stay.
+        let on_weapon = weapon.inverse() * held_grip;
+        assert!(frame[3].abs_diff_eq(frame[2] * on_weapon, 1e-5));
+        assert!(frame[0] == Mat4::IDENTITY && frame[1] == at(1.0, 2.0) * swing);
+        assert!(hangs_from(&parent, 3, 0) && !hangs_from(&parent, 1, 2));
     }
 
     #[test]
@@ -1970,7 +2185,7 @@ mod tests {
             ]"#,
         )
         .unwrap();
-        let baked = bake_model(&cfg, &path, None, None).unwrap();
+        let baked = bake_model(&cfg, &path, None, None, &[]).unwrap();
         let mut t = ModelTables::default();
         let mut anim = rig::AnimBuilder::default();
         baked.append_to(&mut t, &mut anim, "Alien Bug").unwrap();
@@ -2006,7 +2221,7 @@ mod tests {
         }
 
         cfg.moves[0].act = "Somersault".into();
-        let err = bake_model(&cfg, &path, None, None).err().unwrap();
+        let err = bake_model(&cfg, &path, None, None, &[]).err().unwrap();
         assert!(err.contains("unknown act"), "{err}");
     }
 

@@ -13,7 +13,11 @@
 // separate glTF on its rig (a fight library). An attack's `contact` is the
 // second its blow lands; both halves of a matched kill (acts Kill, Killed)
 // have one and name their `pair`, and the killer's half its `reach`, the
-// distance between the two men in the glTF's units. The bake also writes
+// distance between the two men in the glTF's units. Pair names hold across
+// the whole pack: every killer's half of a name meets every victim's half of
+// it, on any skeleton. `move_sets` (named at the end) are moves several
+// models take, and `held_by` names joints a model's hands hold (see there).
+// The bake also writes
 // assets/models.manifest, which `gc_artbake --check` compares with this file
 // and the sources in CI: re-bake and commit both after editing here.
 (
@@ -44,6 +48,7 @@
             // Ember Clans roster art: made in Blender on the Farmer body and
             // rig like the Yari Ashigaru; the katana rides the right wrist.
             source: "shared:grubcraft/ember/katana-samurai/katana-samurai.glb",
+            move_sets: ["Kill victims"],
             height: 1.6,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash",
@@ -76,12 +81,10 @@
                 (anim: "F_Katana_Cut_A", act: "Attack", weapon: "TwoHanded", contact: Some(0.4)),
                 // Matched kills (docs/33, stage 5): each pair made together in
                 // Blender, the victim `reach` metres in front of the killer.
+                // The victims' halves are the "Kill victims" set below.
                 (anim: "K_Katana_Thrust_Kill", act: "Kill", weapon: "TwoHanded", contact: Some(0.467), pair: Some("Katana_Thrust"), reach: Some(1.538)),
-                (anim: "K_Katana_Thrust_Killed", act: "Killed", contact: Some(0.467), pair: Some("Katana_Thrust")),
                 (anim: "K_Katana_Cut_Kill", act: "Kill", weapon: "TwoHanded", contact: Some(0.4), pair: Some("Katana_Cut"), reach: Some(1.438)),
-                (anim: "K_Katana_Cut_Killed", act: "Killed", contact: Some(0.4), pair: Some("Katana_Cut")),
                 (anim: "K_Spear_Thrust_Kill", act: "Kill", weapon: "Spear", contact: Some(0.333), pair: Some("Spear_Thrust"), reach: Some(3.754)),
-                (anim: "K_Spear_Thrust_Killed", act: "Killed", contact: Some(0.333), pair: Some("Spear_Thrust")),
             ],
         ),
         (
@@ -251,6 +254,7 @@
             // tall eboshi and a gohei wand. Casting clips come from
             // Quaternius's Wizard; a 63rd bone turns the talisman wheel.
             source: "shared:grubcraft/ember/onmyoji/onmyoji.glb",
+            move_sets: ["Kill victims"],
             height: 1.25,
             clips: {
                 "Idle": "Idle_Staff", "Walk": "Walk_Staff", "Run": "Run_Staff", "Attack": "Staff_Strike",
@@ -332,6 +336,7 @@
             // clips come from Quaternius's Ranger, mirrored onto this rig;
             // a 63rd bone draws the string and shows the nocked arrow.
             source: "shared:grubcraft/ember/yumi-ashigaru/yumi-ashigaru.glb",
+            move_sets: ["Kill victims"],
             height: 1.09,
             clips: {
                 "Idle": "Idle_Bow", "Walk": "Walk_Bow", "Run": "Run_Bow", "Attack": "Bash",
@@ -351,6 +356,7 @@
             name: "Tuner",
             // Choir roster art (worker: a slight crystal builder with a tuning hammer and a floating resonator crystal).
             source: "shared:grubcraft/choir/tuner/tuner.glb",
+            move_sets: ["Kill victims"],
             height: 1.27,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
@@ -368,6 +374,7 @@
             name: "Shardlings",
             // Choir roster art (line infantry: a crystal blade grown from the right forearm, a faceted buckler).
             source: "shared:grubcraft/choir/shardlings/shardlings.glb",
+            move_sets: ["Kill victims"],
             height: 1.342,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
@@ -385,6 +392,7 @@
             name: "Prism Lancers",
             // Choir roster art (violet prism head and a beam lance with a fork-held emitter).
             source: "shared:grubcraft/choir/prism-lancers/prism-lancers.glb",
+            move_sets: ["Kill victims"],
             height: 1.282,
             clips: {
                 "Idle": "Idle_Gun", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave", "Shoot": "Gun_Shoot",
@@ -453,6 +461,7 @@
             name: "Conductor",
             // Choir roster art (tall crystal priest with a tuning-fork staff, a robe of hanging shards and a ring of circling crystals).
             source: "shared:grubcraft/choir/conductor/conductor.glb",
+            move_sets: ["Kill victims"],
             height: 1.342,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
@@ -487,6 +496,7 @@
             name: "The Maestro",
             // Choir roster art (hero: violet tailcoat of shards, a turning crown of tuning forks, a crystal baton).
             source: "shared:grubcraft/choir/the-maestro/the-maestro.glb",
+            move_sets: ["Kill victims"],
             height: 1.303,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
@@ -504,6 +514,7 @@
             name: "The Refractor",
             // Choir roster art (hero: prism head, three floating lens discs and a heavy prism lance).
             source: "shared:grubcraft/choir/the-refractor/the-refractor.glb",
+            move_sets: ["Kill victims"],
             height: 1.294,
             clips: {
                 "Idle": "Idle_Gun", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave", "Shoot": "Gun_Shoot",
@@ -521,6 +532,7 @@
             name: "The Hollow Bell",
             // Choir roster art (hero: a great hollow glass bell for a lower body, floating on motes, with a clapper mace).
             source: "shared:grubcraft/choir/the-hollow-bell/the-hollow-bell.glb",
+            move_sets: ["Kill victims"],
             height: 1.318,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
@@ -538,6 +550,8 @@
         (
             name: "Ledger Clerk",
             source: "shared:grubcraft/concord/ledger-clerk/ledger-clerk.glb",
+            move_sets: ["Kill victims"],
+            held_by: {"Weapon": "Wrist.R"},
             height: 1.294,
             clips: {
                 "Idle": "Clerk_Idle", "Walk": "Clerk_Walk", "Run": "Clerk_Run", "Attack": "Clerk_Attack", "Hit": "Clerk_Hit", "Die": "Clerk_Die", "Cheer": "Clerk_Cheer",
@@ -570,6 +584,8 @@
         (
             name: "Bone Pikes",
             source: "shared:grubcraft/concord/bone-pikes/bone-pikes.glb",
+            move_sets: ["Kill victims"],
+            held_by: {"Weapon": "Wrist.R"},
             height: 1.858,
             clips: {
                 "Idle": "Pikes_Idle", "Walk": "Pikes_Walk", "Run": "Pikes_Run", "Attack": "Pikes_Attack", "Attack2": "Pikes_Attack2", "Block": "Pikes_Block", "Hit": "Pikes_Hit", "Die": "Pikes_Die", "Cheer": "Pikes_Cheer",
@@ -586,6 +602,8 @@
         (
             name: "Crossbow Auditors",
             source: "shared:grubcraft/concord/crossbow-auditors/crossbow-auditors.glb",
+            move_sets: ["Kill victims"],
+            held_by: {"Weapon": "Wrist.R"},
             height: 1.243,
             clips: {
                 "Idle": "Auditor_Idle", "Walk": "Auditor_Walk", "Run": "Auditor_Run", "Shoot": "Auditor_Shoot", "Attack": "Auditor_Attack", "Hit": "Auditor_Hit", "Die": "Auditor_Die", "Cheer": "Auditor_Cheer",
@@ -602,6 +620,8 @@
         (
             name: "Gravewardens",
             source: "shared:grubcraft/concord/gravewardens/gravewardens.glb",
+            move_sets: ["Kill victims"],
+            held_by: {"Weapon": "Wrist.R", "Shield": "Wrist.L"},
             height: 1.266,
             clips: {
                 "Idle": "Wardens_Idle", "Walk": "Wardens_Walk", "Run": "Wardens_Run", "Attack": "Wardens_Attack", "Attack2": "Wardens_Attack2", "Block": "Wardens_Block", "Hit": "Wardens_Hit", "Die": "Wardens_Die", "Cheer": "Wardens_Cheer",
@@ -634,6 +654,8 @@
         (
             name: "Lantern Wraiths",
             source: "shared:grubcraft/concord/lantern-wraiths/lantern-wraiths.glb",
+            move_sets: ["Kill victims"],
+            held_by: {"Weapon": "Wrist.R"},
             height: 1.192,
             clips: {
                 "Idle": "Wraith_Idle", "Walk": "Wraith_Walk", "Run": "Wraith_Run", "Attack": "Wraith_Attack", "Hit": "Wraith_Hit", "Die": "Wraith_Die", "Cheer": "Wraith_Cheer",
@@ -666,6 +688,7 @@
         (
             name: "The Insolvent",
             source: "shared:grubcraft/concord/the-insolvent/the-insolvent.glb",
+            move_sets: ["Kill victims"],
             height: 1.232,
             clips: {
                 "Idle": "Insolvent_Idle", "Walk": "Insolvent_Walk", "Run": "Insolvent_Run", "Attack": "Insolvent_Attack", "Attack2": "Insolvent_Attack2", "Hit": "Insolvent_Hit", "Die": "Insolvent_Die", "Cheer": "Insolvent_Cheer",
@@ -682,6 +705,7 @@
         (
             name: "Bound Dead",
             source: "shared:grubcraft/concord/bound-dead/bound-dead.glb",
+            move_sets: ["Kill victims"],
             height: 1.1,
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Punch_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
@@ -698,6 +722,8 @@
         (
             name: "Grubfolk Militia",
             source: "shared:grubcraft/concord/grubfolk-militia/grubfolk-militia.glb",
+            move_sets: ["Kill victims"],
+            held_by: {"Weapon": "Wrist.R", "Shield": "Wrist.L"},
             height: 1.378,
             clips: {
                 "Idle": "Militia_Idle", "Walk": "Militia_Walk", "Run": "Militia_Run", "Attack": "Militia_Attack", "Block": "Militia_Block", "Hit": "Militia_Hit", "Die": "Militia_Die", "Cheer": "Militia_Cheer",
@@ -714,6 +740,8 @@
         (
             name: "The Magnate",
             source: "shared:grubcraft/concord/the-magnate/the-magnate.glb",
+            move_sets: ["Kill victims"],
+            held_by: {"Weapon": "Wrist.R"},
             height: 1.199,
             clips: {
                 "Idle": "Magnate_Idle", "Walk": "Magnate_Walk", "Run": "Magnate_Run", "Attack": "Magnate_Attack", "Hit": "Magnate_Hit", "Die": "Magnate_Die", "Cheer": "Magnate_Cheer",
@@ -730,6 +758,8 @@
         (
             name: "The Undertaker",
             source: "shared:grubcraft/concord/the-undertaker/the-undertaker.glb",
+            move_sets: ["Kill victims"],
+            held_by: {"Weapon": "Wrist.R"},
             height: 1.273,
             clips: {
                 "Idle": "Undertaker_Idle", "Walk": "Undertaker_Walk", "Run": "Undertaker_Run", "Attack": "Undertaker_Attack", "Attack2": "Undertaker_Attack2", "Hit": "Undertaker_Hit", "Die": "Undertaker_Die", "Cheer": "Undertaker_Cheer",
@@ -746,6 +776,8 @@
         (
             name: "The Usurer",
             source: "shared:grubcraft/concord/the-usurer/the-usurer.glb",
+            move_sets: ["Kill victims"],
+            held_by: {"Weapon": "Wrist.R", "Shield": "Wrist.L"},
             height: 1.275,
             clips: {
                 "Idle": "Usurer_Idle", "Walk": "Usurer_Walk", "Run": "Usurer_Run", "Attack": "Usurer_Attack", "Attack2": "Usurer_Attack2", "Block": "Usurer_Block", "Hit": "Usurer_Hit", "Die": "Usurer_Die", "Cheer": "Usurer_Cheer",
@@ -1002,4 +1034,22 @@
             )),
         ),
     ],
+    // Moves several models take (`move_sets`), each a copy on its own
+    // skeleton: a fight library plays on any rig sharing the Ember men's
+    // joints by name and rest pose (every Choir and Concord fighter on
+    // foot, the Onmyoji and the Yumi Ashigaru), and the joints a model
+    // has beyond them hold their rest, or with `held_by` move with the hand
+    // that holds them in the model's Idle (a Concord weapon hangs from the
+    // chest). The victims' halves of the matched kills, so a katana or
+    // spear man can kill any of them (docs/33, stage 5).
+    move_sets: {
+        "Kill victims": (
+            from: "shared:grubcraft/fight-library/ember-men/ember-men-moves-2.glb",
+            moves: [
+                (anim: "K_Katana_Thrust_Killed", act: "Killed", contact: Some(0.467), pair: Some("Katana_Thrust")),
+                (anim: "K_Katana_Cut_Killed", act: "Killed", contact: Some(0.4), pair: Some("Katana_Cut")),
+                (anim: "K_Spear_Thrust_Killed", act: "Killed", contact: Some(0.333), pair: Some("Spear_Thrust")),
+            ],
+        ),
+    },
 )

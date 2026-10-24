@@ -311,6 +311,19 @@ impl Clips {
         kills
     }
 
+    /// A half of a matched kill for `model` to show (the showroom): the
+    /// killer's half of its first kill, else the victim's half of the first
+    /// made for its skeleton.
+    pub fn kill_half(&self, model: usize) -> Option<MoveClip> {
+        if let Some(k) = self.kills.get(model)?.first() {
+            return Some(self.pairs[k.id as usize].kill);
+        }
+        let (victim, _) = (*self.body.get(model)?)?;
+        let mut all = self.kills.iter().flatten();
+        let k = all.find(|k| k.victim == victim)?;
+        Some(self.pairs[k.id as usize].killed)
+    }
+
     /// The move `model` plays for `action`.
     pub fn clip(&self, model: usize, action: Action) -> Option<MoveClip> {
         self.by_model.get(model)?.actions[action as usize]
@@ -619,6 +632,35 @@ mod tests {
                 );
                 // A man's length apart for a katana, a spear's for a spear.
                 assert!((0.8..4.5).contains(&p.reach), "{killer}: {}", p.reach);
+            }
+        }
+        // The victims' halves were given to every Choir and Concord man on
+        // foot, on rigs of their own that share the men's joints.
+        for victim in [
+            "The Onmyoji",
+            "Yumi Ashigaru",
+            "Tuner",
+            "Shardlings",
+            "Prism Lancers",
+            "Conductor",
+            "The Maestro",
+            "The Refractor",
+            "The Hollow Bell",
+            "Ledger Clerk",
+            "Bone Pikes",
+            "Crossbow Auditors",
+            "Gravewardens",
+            "Lantern Wraiths",
+            "The Insolvent",
+            "Bound Dead",
+            "Grubfolk Militia",
+            "The Magnate",
+            "The Undertaker",
+            "The Usurer",
+        ] {
+            for killer in ["Katana Samurai", "Yari Ashigaru"] {
+                let p = kill(killer, victim).unwrap_or_else(|| panic!("{killer} on {victim}"));
+                assert_eq!(p.kill.frames, p.killed.frames);
             }
         }
         // The two katana kills both come up as the seed varies.

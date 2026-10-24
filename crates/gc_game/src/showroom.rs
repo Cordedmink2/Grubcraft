@@ -40,14 +40,16 @@ const _: () = assert!(NEAREST < MIN_DISTANCE);
 /// What a model shows: one of the clips soldiers play, a fall, a march
 /// (walking legs under an attacking upper body, to show the pose pass's
 /// masked layers; a model still on bone rows only walks) or a look (idle,
-/// looking round and up and down; a model on bone rows only idles). See
-/// docs/33.
+/// looking round and up and down; a model on bone rows only idles) or a
+/// half of a matched kill (a killer's, else a victim's; a model with none
+/// idles). See docs/33.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Clip {
     Play(Action),
     Die,
     March,
     Look,
+    Kill,
 }
 
 impl Clip {
@@ -69,10 +71,14 @@ impl Clip {
             "die" => Clip::Die,
             "march" => Clip::March,
             "look" => Clip::Look,
+            "kill" => Clip::Kill,
             _ => return None,
         })
     }
 }
+
+/// How long a kill's last frame holds before it plays again.
+const KILL_HOLD_FRAMES: u32 = 18;
 
 /// The clip playing `time` seconds in, and how many seconds into it: the
 /// `hold` clip looping (a fall plays once and holds), or with none held,
@@ -128,6 +134,19 @@ pub(crate) fn pose(clips: &Clips, model: usize, hold: Option<Clip>, time: f32) -
             }
             Some(s)
         }
+        // Played through, held a moment, and again.
+        (Clip::Kill, t) => match clips.kill_half(model) {
+            Some(half) => {
+                let frames = (half.frames + KILL_HOLD_FRAMES) as f32;
+                Some(shown((
+                    half.at_frame((t * half.fps).rem_euclid(frames)),
+                    false,
+                )))
+            }
+            None => clips
+                .pose(model, Action::Idle, t)
+                .map(|p| shown((p, false))),
+        },
         (Clip::Look, t) => {
             let mut s = shown((clips.pose(model, Action::Idle, t)?, false));
             // Round to either side and back, nodding more quickly.
@@ -514,7 +533,7 @@ mod tests {
         // Every model has a pose in every clip.
         for m in 0..models.models.len() {
             for clip in [
-                "idle", "walk", "attack", "shoot", "cheer", "die", "march", "look",
+                "idle", "walk", "attack", "shoot", "cheer", "die", "march", "look", "kill",
             ] {
                 assert!(pose(&clips, m, Clip::parse(clip), 1.3).is_some());
             }

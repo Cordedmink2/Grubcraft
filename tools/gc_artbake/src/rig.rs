@@ -401,15 +401,18 @@ pub(crate) struct AnimBuilder {
     /// row: a tagged move keeps a record of its own even on the frames of a
     /// plain clip, so the picker's library holds it.
     moves: HashMap<(u16, u8, Tags, u32), u32>,
-    /// Matched kills by skeleton and pair name.
-    pairs: BTreeMap<(u16, String), Halves>,
+    /// Matched kills by pair name: the halves found so far, on any
+    /// skeleton.
+    pairs: BTreeMap<String, Vec<Half>>,
 }
 
-/// The halves of a matched kill found so far: each one's move and contact.
-#[derive(Default)]
-struct Halves {
-    kill: Option<(u32, f32)>,
-    killed: Option<(u32, f32)>,
+/// A half of a matched kill: its skeleton, move, contact and (the killer's)
+/// reach.
+#[derive(Clone, Copy, PartialEq)]
+struct Half {
+    skeleton: u16,
+    index: u32,
+    contact: f32,
     reach: Option<f32>,
 }
 
@@ -512,24 +515,33 @@ impl AnimBuilder {
     }
 
     /// Note move `index` as a half of kill `half` on `skeleton`; models
-    /// sharing the skeleton may name the same half again, but never another.
+    /// sharing the skeleton may name the same half again, but never another
+    /// (so two models on one skeleton that carry a held weapon differently
+    /// cannot both take a victim's half: their frames differ).
     fn add_half(&mut self, skeleton: u16, half: &PairHalf, index: u32) -> Result<(), String> {
-        let entry = self.pairs.entry((skeleton, half.name.clone())).or_default();
-        let clash = |what| format!("pair {:?} has two {what} halves", half.name);
-        let this = (index, half.contact);
-        let (slot, what) = match half.reach {
-            Some(_) => (&mut entry.kill, "killer's"),
-            None => (&mut entry.killed, "victim's"),
+        let this = Half {
+            skeleton,
+            index,
+            contact: half.contact,
+            reach: half.reach,
         };
-        match slot {
-            Some(had) if *had != this => return Err(clash(what)),
-            _ => *slot = Some(this),
-        }
-        if let Some(reach) = half.reach {
-            match entry.reach {
-                Some(had) if had != reach => return Err(clash("killer's")),
-                _ => entry.reach = Some(reach),
+        let halves = self.pairs.entry(half.name.clone()).or_default();
+        let same_side =
+            |h: &&Half| h.skeleton == skeleton && h.reach.is_some() == half.reach.is_some();
+        match halves.iter().find(same_side) {
+            Some(had) if *had == this => {}
+            Some(_) => {
+                let what = if half.reach.is_some() {
+                    "killer's"
+                } else {
+                    "victim's"
+                };
+                return Err(format!(
+                    "pair {:?} has two {what} halves on one skeleton",
+                    half.name
+                ));
             }
+            None => halves.push(this),
         }
         Ok(())
     }
@@ -537,24 +549,30 @@ impl AnimBuilder {
     /// Lay every skeleton's block of frames out in `t`, and pair the halves
     /// of each kill.
     pub fn finish(self, t: &mut AnimTables) -> Result<(), String> {
-        for ((_, name), halves) in &self.pairs {
-            let (Some((kill, contact)), Some((killed, theirs)), Some(reach)) =
-                (halves.kill, halves.killed, halves.reach)
-            else {
+        // Every killer's half of a kill meets every victim's, on whatever
+        // skeletons each was given.
+        for (name, halves) in &self.pairs {
+            let (kills, killed): (Vec<&Half>, Vec<&Half>) =
+                halves.iter().partition(|h| h.reach.is_some());
+            if kills.is_empty() || killed.is_empty() {
                 return Err(format!("pair {name:?} lacks a half"));
-            };
-            if t.moves[kill as usize].frames != t.moves[killed as usize].frames {
-                return Err(format!("pair {name:?}: its halves differ in length"));
             }
-            if contact != theirs {
-                return Err(format!("pair {name:?}: its halves differ in contact"));
+            for k in &kills {
+                for v in &killed {
+                    if t.moves[k.index as usize].frames != t.moves[v.index as usize].frames {
+                        return Err(format!("pair {name:?}: its halves differ in length"));
+                    }
+                    if k.contact != v.contact {
+                        return Err(format!("pair {name:?}: its halves differ in contact"));
+                    }
+                    t.pairs.push(PairRecord {
+                        kill: k.index,
+                        killed: v.index,
+                        reach: k.reach.unwrap_or_default(),
+                        contact: k.contact,
+                    });
+                }
             }
-            t.pairs.push(PairRecord {
-                kill,
-                killed,
-                reach,
-                contact,
-            });
         }
         for (s, block) in t.skeletons.iter_mut().zip(self.blocks) {
             s.first_pose = t.frames.len() as u32;
@@ -646,6 +664,78 @@ mod tests {
         assert_eq!(t.moves[1].kind, NO_KIND);
         assert_eq!(t.moves[0].first_row, t.moves[1].first_row);
         assert_eq!(t.frames.len(), 1);
+    }
+
+    #[test]
+    fn a_kill_meets_its_victims_on_every_skeleton_they_were_given() {
+        use gc_assets::anim::Act;
+        let still = JointPose {
+            r: Quat::IDENTITY,
+            t: Vec3::ZERO,
+            s: 1.0,
+        };
+        // Three models on three rigs: a killer and two victims, one of them
+        // given the victim's half twice (as two models sharing it would).
+        let posed = |names: &[&str], halves: &[(Act, Option<f32>)]| {
+            let mut r = rig(names, &[None]);
+            r.parent = vec![None; names.len()];
+            Posed {
+                post: vec![Mat4::IDENTITY; names.len() + 1],
+                rig: r,
+                pre: Mat4::IDENTITY,
+                clips: halves
+                    .iter()
+                    .map(|&(act, reach)| PosedClip {
+                        kind: None,
+                        name: format!("{act:?}"),
+                        tags: Tags {
+                            act,
+                            ..Tags::of_kind(ClipKind::Die)
+                        },
+                        frames: vec![vec![still; names.len()]; 5],
+                        pair: Some(PairHalf {
+                            name: "Thrust".into(),
+                            reach,
+                            contact: 0.5,
+                        }),
+                    })
+                    .collect(),
+                weapon: gc_assets::anim::Weapon::Any,
+            }
+        };
+        let killed = (Act::Killed, None);
+        let (mut t, mut b) = (AnimTables::default(), AnimBuilder::default());
+        b.add(
+            &mut t,
+            0,
+            &posed(&["Body"], &[(Act::Kill, Some(1.5)), killed]),
+        )
+        .unwrap();
+        b.add(&mut t, 1, &posed(&["Body", "Weapon"], &[killed, killed]))
+            .unwrap();
+        b.add(&mut t, 2, &posed(&["Root"], &[killed])).unwrap();
+        b.finish(&mut t).unwrap();
+        let victims: Vec<u16> = t
+            .pairs
+            .iter()
+            .map(|p| t.moves[p.killed as usize].skeleton)
+            .collect();
+        assert_eq!(victims, [0, 1, 2]);
+        assert!(
+            t.pairs
+                .iter()
+                .all(|p| p.kill == t.pairs[0].kill && p.reach == 1.5)
+        );
+
+        // Two killer's halves of one name on one skeleton clash.
+        let (mut t, mut b) = (AnimTables::default(), AnimBuilder::default());
+        let mut two = posed(&["Body"], &[(Act::Kill, Some(1.5)), (Act::Kill, Some(2.0))]);
+        two.clips[1].frames.push(vec![still]);
+        assert!(
+            b.add(&mut t, 0, &two)
+                .unwrap_err()
+                .contains("two killer's halves")
+        );
     }
 
     #[test]

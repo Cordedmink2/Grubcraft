@@ -76,6 +76,12 @@ fn sources(config: &Config) -> Vec<&str> {
     for m in &config.models {
         all.push(&m.source);
         all.extend(m.moves_from.as_deref());
+        all.extend(
+            m.move_sets
+                .iter()
+                .filter_map(|s| config.move_sets.get(s))
+                .map(|s| s.from.as_str()),
+        );
         if let Some(t) = &m.textures {
             let maps = [Some(&t.albedo), t.team.as_ref(), t.normal.as_ref()]
                 .into_iter()

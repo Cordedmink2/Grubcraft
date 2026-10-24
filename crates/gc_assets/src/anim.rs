@@ -393,15 +393,15 @@ pub struct FitRecord {
 
 /// A matched kill: the killer's half (an [`Act::Kill`] move) and the
 /// victim's ([`Act::Killed`]), as long as each other, sampled alike and
-/// meeting at `contact`. Unlike an attack a kill is not retimed, so it
-/// plays as made. 16 bytes.
+/// meeting at `contact`; the two may be on different skeletons. Unlike an
+/// attack a kill is not retimed, so it plays as made. 16 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct PairRecord {
     pub kill: u32,
     pub killed: u32,
     /// How far apart the two men stand, origin to origin, the victim facing
-    /// the killer, in the skeleton's space (the killer's size, from his
+    /// the killer, in the killer's skeleton's space (the killer's size, from his
     /// first fix, turns it into tiles).
     pub reach: f32,
     /// How far through both halves (0 to 1, as `MoveClip::at` counts) the
