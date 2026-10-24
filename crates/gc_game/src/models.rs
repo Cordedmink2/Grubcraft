@@ -698,6 +698,29 @@ mod tests {
             (katana.strike.act, katana.strike.weapon),
             (Act::Finish, Weapon::TwoHanded)
         );
+        // The puppets time a man's finishers by his first: they share a
+        // length.
+        for m in 0..models.models.len() {
+            let lengths: Vec<f32> = (0..4)
+                .filter_map(|seed| clips.finisher(m, seed))
+                .map(|f| f.strike.seconds())
+                .collect();
+            assert!(
+                lengths.windows(2).all(|w| w[0] == w[1]),
+                "model {m}: {lengths:?}"
+            );
+        }
+        // And the fight draws them.
+        let at = |seed| {
+            clips
+                .fight(by("Katana Samurai"), Move::Finish { at: 0.5, seed }, 0.0)
+                .unwrap()
+                .0
+        };
+        assert_eq!(
+            at(0).rows,
+            fin("Katana Samurai", 0).unwrap().strike.at(0.5).rows
+        );
         let spear = fin("Yari Ashigaru", 0).unwrap();
         assert_eq!(spear.strike.weapon, Weapon::Spear);
         // A man's length or so away for a katana, much further for a yari,

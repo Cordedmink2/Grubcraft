@@ -438,9 +438,10 @@ pub enum Move {
     Guard,
     /// Swinging at his man; `alt` picks his second attack.
     Swing { at: f32, alt: bool },
-    /// Striking down at a man on the ground (a finisher), as far through
-    /// as a swing: its blow lands at `BLOW_AT`. `seed` picks which of his
-    /// finishers, the same all through one.
+    /// Striking down at a man on the ground with a move made for it (a
+    /// finisher), `at` through it: its blow lands at `BLOW_AT`. `seed`
+    /// picks which of his finishers, the same all through one. (A man
+    /// without one swings, bent over him: see [`Soldier::stoop`].)
     Finish { at: f32, seed: u32 },
     /// Turning a blow aside with his weapon.
     Parry(f32),
@@ -472,7 +473,7 @@ pub struct KillTiming {
 }
 
 /// The matched kills each pair of unit types can play, by their index in
-/// one table of [`KillTiming`]s.
+/// one table of [`KillTiming`]s, and each unit type's finisher.
 #[derive(Default)]
 pub struct Kills {
     timing: Vec<KillTiming>,
@@ -559,8 +560,9 @@ struct Killing {
     /// The way from the spot he strikes from, if set (a general coming in
     /// beside his man); else from wherever he is.
     from: Vec2,
-    /// Finishing with a move made for it: its length (seconds).
-    strike: Option<f32>,
+    /// Finishing with a move made for it: its length (seconds), and the
+    /// seed that picks which of his finishers.
+    strike: Option<(f32, u32)>,
 }
 
 impl Killing {
@@ -1668,7 +1670,7 @@ impl Puppets {
         let k = &self.killing[i];
         k.pair
             .map(|(_, t)| t)
-            .or(k.strike.map(|seconds| KillTiming {
+            .or(k.strike.map(|(seconds, _)| KillTiming {
                 seconds,
                 contact: BLOW_AT,
                 reach: k.gap,
@@ -2172,15 +2174,10 @@ impl Puppets {
                 _ if champion.is_some_and(|(d, side)| d.cheering(side)) => Some(Move::Cheer),
                 (Some((Act::Kill, f)), _) => Some(match self.pair_of(i) {
                     Some((pair, _)) => Move::Kill { pair, at: f },
-                    None if self.killing[i].finish => Move::Finish {
-                        // Played once through, or as a bent swing.
-                        at: if self.killing[i].strike.is_some() {
-                            f
-                        } else {
-                            kill_swing(f)
-                        },
-                        seed: self.act[i].1.to_bits() >> 8,
-                    },
+                    // A finisher made for it plays once through.
+                    None if let Some((_, seed)) = self.killing[i].strike => {
+                        Move::Finish { at: f, seed }
+                    }
                     None => Move::Swing {
                         at: kill_swing(f),
                         alt: false,
@@ -2445,10 +2442,14 @@ impl Puppets {
                             strike: lying
                                 .then(|| self.kills.finisher(self.unit[kr]))
                                 .flatten()
-                                .map(|(_, seconds)| seconds),
+                                .map(|(_, seconds)| {
+                                    let seed = unit_hash(block.handle, pick, salt ^ 1);
+                                    (seconds, (seed * u32::MAX as f32) as u32)
+                                }),
                         };
                         if hero.is_some() {
-                            let length = (self.kill_timing(killer))
+                            let length = self
+                                .kill_timing(killer)
                                 .map_or(Act::Kill.seconds(), |k| k.seconds);
                             self.brandish[killer] = self.time + length + HERO_BRANDISH;
                         }
@@ -3983,7 +3984,7 @@ mod tests {
                 landed.get_or_insert(p.pos[k].distance(lay));
             }
         }
-        assert!(struck);
+        assert_eq!(struck, strike);
         if strike {
             assert_eq!(stooped, 0.0);
         } else {
