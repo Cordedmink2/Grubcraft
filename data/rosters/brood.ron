@@ -226,6 +226,19 @@
             flags: [Gate],
             effect: "Chitin jaws that part for your own and allied regiments. Put it on your Resin Ridge and it replaces that stretch.",
         ),
+        (
+            name: "Chitin Maw",
+            role: Wall,
+            tier: 1,
+            upgrades_from: Some("Maw Gate"),
+            cost: (grub: 45, marrow: 0),
+            build_time: 20.0,
+            hp: 1350,
+            armour: Living,
+            footprint: (1, 3),
+            flags: [Gate],
+            effect: "Grows a Maw Gate into a plated arch with a ridge of chitin on top: half as tough again, and archers or foot can man the ridge. It grows on its own.",
+        ),
     ],
     units: [
         (

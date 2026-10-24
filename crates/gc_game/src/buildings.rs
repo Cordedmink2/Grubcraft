@@ -111,6 +111,19 @@ const LEVEL_TEAM_TINT: u32 = 35;
 const WALL_SHARE: f32 = 0.3;
 /// A gate's jamb posts stand a little over its walls' height.
 const POST_RISE: f32 = 0.3;
+/// How high above the ground a gatehouse's deck is, in tiles: where men
+/// stand on it, and where a gatehouse drawn as boxes is roofed. The
+/// gatehouse models are built to this height.
+pub const GATEHOUSE_DECK: f32 = 2.0;
+/// How far outside a building its upgrade crew stand, in tiles.
+const CREW_GAP: f32 = 0.4;
+/// How thick the deck slab of a gatehouse drawn as boxes is, in tiles.
+const DECK_THICK: f32 = 0.25;
+/// How far a ladder's foot stands from the middle of the wall it leans on
+/// (half a tile, and a hair more).
+const LADDER_STANDOFF: f32 = 0.52;
+/// How far apart the three ladders against a wall tile stand, in tiles.
+const LADDER_APART: f32 = 0.9;
 /// How far along the wall a gate's jamb post reaches, in tiles.
 const POST_LEN: f32 = 0.5;
 /// How thick a gate's door leaves are, in tiles.
@@ -297,6 +310,19 @@ impl Table {
             .is_some_and(|s| s.flags & gc_sim::structures::LINE != 0)
     }
 
+    /// Whether `building` is a gate or a gatehouse.
+    pub fn is_gate(&self, building: BuildingId) -> bool {
+        (self.stats.get(usize::from(building)))
+            .is_some_and(|s| s.flags & gc_sim::structures::GATE != 0)
+    }
+
+    /// Whether `building` is a gatehouse: a gate that upgrades from
+    /// another, with a walkway on top.
+    pub fn is_gatehouse(&self, building: BuildingId) -> bool {
+        (self.stats.get(usize::from(building)))
+            .is_some_and(|s| s.flags & gc_sim::structures::GATE != 0 && s.upgrades_from.is_some())
+    }
+
     /// Whether `building` is a wall grown along veins with no worker.
     pub fn is_grown(&self, building: BuildingId) -> bool {
         (self.stats.get(usize::from(building)))
@@ -304,12 +330,23 @@ impl Table {
     }
 
     /// The gate that goes with the wall `building`: the first gate of its
-    /// faction, if the faction has one (the Choir has none).
+    /// faction (not a gatehouse), if the faction has one (the Choir has
+    /// none).
     pub fn gate_for(&self, building: BuildingId) -> Option<BuildingId> {
         let faction = self.faction(building)?;
-        (self.stats.iter().zip(&self.factions))
-            .position(|(s, &f)| f == faction && s.flags & gc_sim::structures::GATE != 0)
-            .map(|i| i as BuildingId)
+        (0..self.stats.len() as BuildingId).find(|&i| {
+            self.factions[usize::from(i)] == faction && self.is_gate(i) && !self.is_gatehouse(i)
+        })
+    }
+
+    /// How high above the ground a man stands on a wall piece of type
+    /// `building` (`open`: its door is open to everyone).
+    pub fn stand_height(&self, building: BuildingId, open: bool) -> f32 {
+        if self.is_gatehouse(building) {
+            GATEHOUSE_DECK
+        } else {
+            wall_stand_height(self.wall_look(building, open))
+        }
     }
 
     /// How a drawn wall of type `building` looks (`open`: its door is open
@@ -509,9 +546,24 @@ impl Looks {
 
 /// Where the upgrade crew of a `width` by `depth` footprint centred on
 /// `centre` stand, and the way each faces: one at the front (south) edge and
-/// one on each side, turned to the walls.
+/// one on each side, turned to the walls. A long thin footprint (a gate in
+/// its wall) has them on its two long sides, as its ends are wall.
 pub fn crew_spots(centre: Vec2, width: u8, depth: u8) -> [(Vec2, Vec2); UPGRADE_CREW] {
-    let (hw, hd) = (f32::from(width) / 2.0 + 0.4, f32::from(depth) / 2.0 + 0.4);
+    let (hw, hd) = (
+        f32::from(width) / 2.0 + CREW_GAP,
+        f32::from(depth) / 2.0 + CREW_GAP,
+    );
+    if depth >= width.saturating_mul(3) || width >= depth.saturating_mul(3) {
+        let along = long_axis(width, depth);
+        // Across the way, to the side of the building.
+        let out = Vec2::new(along.y, along.x);
+        let (long, thin) = (width.max(depth), width.min(depth));
+        let (half_long, half_thin) = (f32::from(long) / 2.0, f32::from(thin) / 2.0);
+        return [(1.0, -0.5), (-1.0, 0.5), (1.0, 0.5)].map(|(sign, at)| {
+            let spot = out * (sign * (half_thin + CREW_GAP)) + along * (at * half_long);
+            (centre + spot, -out * sign)
+        });
+    }
     [
         (centre + Vec2::new(-hw * 0.3, hd), Vec2::NEG_Y),
         (centre + Vec2::new(hw, hd * 0.2), Vec2::NEG_X),
@@ -842,6 +894,12 @@ pub struct GateParts {
     pub leaves: [Slab; 2],
 }
 
+/// The way a `width` by `depth` footprint runs: along y if it is at least
+/// as deep as wide, else along x.
+pub fn long_axis(width: u8, depth: u8) -> Vec2 {
+    if depth >= width { Vec2::Y } else { Vec2::X }
+}
+
 /// Lay out a gate whose turned footprint is `width` by `depth` tiles and
 /// centred on `centre`. Its wall line runs along the longer side and troops
 /// pass across the shorter. Shut, the leaves meet in the middle across the
@@ -886,10 +944,12 @@ pub fn gate_parts(centre: Vec2, width: u8, depth: u8, open: bool) -> GateParts {
 }
 
 /// A gate as boxes: jamb posts in its owner's colour (unless a model
-/// stands for them) and door leaves, open or shut as it is.
+/// stands for them) and door leaves, open or shut as it is. A gatehouse
+/// (`deck`) has its posts up to the deck and a slab across them.
 fn push_gate(
     s: &StructureView,
     posts: Option<[u8; 3]>,
+    deck: bool,
     ground: &impl Fn(f32, f32) -> f32,
     out: &mut Vec<BoxInstance>,
 ) {
@@ -898,8 +958,21 @@ fn push_gate(
     let parts = gate_parts(centre, s.width, s.depth, s.open);
     let slab = |slab: Slab, height: f32, color: [u8; 4]| draped(slab, height, color, range);
     if let Some([r, g, b]) = posts {
+        let top = if deck {
+            GATEHOUSE_DECK
+        } else {
+            WALL_HEIGHT + POST_RISE
+        };
         for post in parts.posts {
-            out.push(slab(post, WALL_HEIGHT + POST_RISE, [r, g, b, 0]));
+            out.push(slab(post, top, [r, g, b, 0]));
+        }
+        if deck {
+            let roof = block(s, GATEHOUSE_DECK, [r, g, b, 0], ground);
+            out.push(BoxInstance {
+                lift: roof.lift + roof.size[1] - DECK_THICK,
+                size: [roof.size[0], DECK_THICK, roof.size[2]],
+                ..roof
+            });
         }
     }
     for leaf in parts.leaves {
@@ -957,7 +1030,13 @@ pub fn push(
         };
         let [r, g, b] = shade(wall_colour(&look, team(s.owner)), s.hp, s.max_hp);
         match (s.gate.is_some() && s.finished(), model) {
-            (true, _) => push_gate(&s, model.is_none().then_some([r, g, b]), &ground, out),
+            (true, _) => push_gate(
+                &s,
+                model.is_none().then_some([r, g, b]),
+                table.is_gatehouse(s.building),
+                &ground,
+                out,
+            ),
             (false, None) => {
                 let body = wall_block(&s, height, look.thick, [r, g, b, look.glow], &ground);
                 out.push(body);
@@ -1794,8 +1873,24 @@ pub fn wall_stand_height(look: WallLook) -> f32 {
     look.height + look.cap.map_or(0.0, |_| COPING_HEIGHT)
 }
 
+/// Where men stand on the wall piece `s`: the middle of its footprint, how
+/// high its top is, and for a piece longer than a tile (a gatehouse) the
+/// half of its length along it.
+pub fn wall_slot(table: &Table, s: &StructureView) -> crate::puppets::WallSlot {
+    let long = f32::from(s.width.max(s.depth));
+    crate::puppets::WallSlot {
+        centre: centre_of(s.tile, s.width, s.depth),
+        lift: table.stand_height(s.building, s.open),
+        half: if long > 1.0 {
+            long_axis(s.width, s.depth) * (long / 2.0)
+        } else {
+            Vec2::ZERO
+        },
+    }
+}
+
 /// The places regiment `h`'s soldiers stand on the wall it is manning
-/// (see [`World::wall_tiles`]): tile centres, with how high each top is.
+/// (see [`World::wall_tiles`]): piece centres, with how high each top is.
 /// Empty unless it is on a wall.
 pub fn wall_slots<'a>(
     world: &'a World,
@@ -1807,13 +1902,10 @@ pub fn wall_slots<'a>(
         .wall_tiles(h)
         .iter()
         .filter_map(move |&t| structures?.get(t))
-        .map(move |s| crate::puppets::WallSlot {
-            centre: centre_of(s.tile, s.width, s.depth),
-            lift: wall_stand_height(table.wall_look(s.building, s.open)),
-        })
+        .map(move |s| wall_slot(table, &s))
 }
 
-/// Where the three ladders against the wall tile regiment `h` climbs go:
+/// Where the three ladders against the wall piece regiment `h` climbs go:
 /// centre, facing (into the wall) and across unit vector, with the height
 /// of the wall there. `from` is where the regiment stands.
 pub fn ladder_props(
@@ -1823,12 +1915,32 @@ pub fn ladder_props(
     from: Vec2,
 ) -> Option<([Vec2; 3], Vec2, f32)> {
     let slot = wall_slots(world, table, h).next()?;
-    let out = (from - slot.centre).try_normalize()?;
+    ladders_against(&slot, from)
+}
+
+/// The ladders for `slot` as `ladder_props` gives them. Against a gatehouse
+/// they lean on its long side nearer `from`, spread along its length.
+fn ladders_against(slot: &crate::puppets::WallSlot, from: Vec2) -> Option<([Vec2; 3], Vec2, f32)> {
+    let to_from = from - slot.centre;
+    let len = slot.half.length();
+    let (out, apart) = if len > 0.0 {
+        let side = Vec2::new(-slot.half.y, slot.half.x) / len;
+        (
+            if side.dot(to_from) >= 0.0 {
+                side
+            } else {
+                -side
+            },
+            len * 2.0 / 3.0,
+        )
+    } else {
+        (to_from.try_normalize()?, LADDER_APART)
+    };
     let facing = -out;
     let across = Vec2::new(-facing.y, facing.x);
-    let at = slot.centre + out * 0.52;
+    let at = slot.centre + out * LADDER_STANDOFF;
     Some((
-        [at - across * 0.9, at, at + across * 0.9],
+        [at - across * apart, at, at + across * apart],
         facing,
         slot.lift,
     ))
@@ -1854,13 +1966,22 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::Overgrown => "Clear the ground there first.",
         Refusal::NoRoom => "There's no room on the map for more buildings.",
         Refusal::NoVeins => "It grows only where your root-veins reach.",
-        Refusal::NoWalkway => "Raise the wall a level first: only a walkway can be manned.",
+        Refusal::NoWalkway => {
+            "Raise the wall a level (or a gate to a gatehouse) first: only a walkway can be manned."
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The building type called `name`.
+    fn id(table: &Table, name: &str) -> BuildingId {
+        (0..table.len() as BuildingId)
+            .find(|&b| table.name(b) == name)
+            .unwrap_or_else(|| panic!("no {name}"))
+    }
 
     #[test]
     fn the_baked_twist_numbers_are_the_sims() {
@@ -1909,12 +2030,6 @@ mod tests {
     fn wall_levels_follow_the_upgrade_chain() {
         let data = crate::data::load();
         let table = Table::new(&data);
-        let id = |name: &str| {
-            data.buildings
-                .iter()
-                .position(|b| b.name() == name)
-                .unwrap_or_else(|| panic!("no {name}")) as BuildingId
-        };
         let chains = [
             ["Palisade", "Stone Wall", "Castle Wall"],
             ["Bone Fence", "Ossuary Wall", "Mausoleum Wall"],
@@ -1923,7 +2038,7 @@ mod tests {
         ];
         for chain in chains {
             let looks = chain.map(|n| {
-                let b = id(n);
+                let b = id(&table, n);
                 let level = table.level(b);
                 (level, table.wall_look(b, false))
             });
@@ -1939,7 +2054,7 @@ mod tests {
             assert_ne!(a.colour, b.colour);
             assert_ne!(b.colour, c.colour);
         }
-        assert_eq!(table.level(id("Clan Hall")), 1);
+        assert_eq!(table.level(id(&table, "Clan Hall")), 1);
     }
 
     #[test]
@@ -2141,12 +2256,7 @@ mod tests {
         let table = Table::new(&data);
         let models = crate::models::load().unwrap();
         let looks = Looks::new(&table, &models);
-        let id = |name: &str| {
-            (0..table.len() as BuildingId)
-                .find(|&b| table.name(b) == name)
-                .unwrap()
-        };
-        let (hall, keep) = (id("Clan Hall"), id("Castle Keep"));
+        let (hall, keep) = (id(&table, "Clan Hall"), id(&table, "Castle Keep"));
         let mut s = StructureView {
             handle: StructureHandle {
                 index: 0,
@@ -2184,6 +2294,184 @@ mod tests {
         s.upgrading = Some((keep, 70));
         let later = model(&s).unwrap();
         assert!(later == "Castle Keep #3" || later == "Clan Hall", "{later}");
+    }
+
+    /// A gate-sized piece at `tile`, as drawn (1 wide, 3 deep) or turned.
+    fn piece(building: BuildingId, tile: (i32, i32), turned: bool) -> StructureView {
+        let (width, depth) = if turned { (3, 1) } else { (1, 3) };
+        StructureView {
+            handle: StructureHandle {
+                index: 0,
+                generation: 0,
+            },
+            owner: 0,
+            building,
+            tile,
+            width,
+            depth,
+            turn: u8::from(turned),
+            hp: 10,
+            max_hp: 10,
+            built_percent: 100,
+            upgrading: None,
+            growing: false,
+            seen: 1,
+            gate: Some(gc_sim::gates::GateMode::Auto),
+            open: false,
+            line: None,
+        }
+    }
+
+    #[test]
+    fn each_gate_has_its_gatehouse_and_only_those_are_gatehouses() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let mut found = Vec::new();
+        for (gate, house) in [
+            ("Gate", "Yagura Gatehouse"),
+            ("Iron Gate", "Gate of Debts"),
+            ("Maw Gate", "Chitin Maw"),
+        ] {
+            let (g, h) = (id(&table, gate), id(&table, house));
+            assert!(table.is_gate(g) && !table.is_gatehouse(g));
+            assert!(table.is_gatehouse(h));
+            assert_eq!(table.stats[usize::from(h)].upgrades_from, Some(g));
+            assert_eq!(table.level(h), 2);
+            // The ring tool still suggests the plain gate.
+            assert_eq!(table.gate_for(g), Some(g));
+            assert_eq!(table.gate_for(h), Some(g));
+            found.push(h);
+        }
+        let all: Vec<BuildingId> = (0..table.len() as BuildingId)
+            .filter(|&b| table.is_gatehouse(b))
+            .collect();
+        found.sort_unstable();
+        assert_eq!(all, found);
+    }
+
+    #[test]
+    fn a_gatehouse_slot_has_the_deck_lift_and_its_length() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let house = id(&table, "Gate of Debts");
+        let stats = table.stats[usize::from(house)];
+        assert_eq!((stats.width, stats.depth), (1, 3));
+        let slot = wall_slot(&table, &piece(house, (10, 20), false));
+        assert_eq!(slot.lift, GATEHOUSE_DECK);
+        assert_eq!(slot.half, Vec2::new(0.0, 1.5));
+        assert_eq!(slot.centre, Vec2::new(10.5, 21.5));
+        // Turned, it runs along x.
+        let turned = wall_slot(&table, &piece(house, (10, 20), true));
+        assert_eq!(turned.half, Vec2::new(1.5, 0.0));
+        assert_eq!(turned.centre, Vec2::new(11.5, 20.5));
+        // The deck is above a plain wall's top.
+        assert!(GATEHOUSE_DECK > wall_stand_height(WallLook::PLAIN));
+    }
+
+    #[test]
+    fn ladders_lean_on_the_long_side_of_a_gatehouse_at_the_deck() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let house = id(&table, "Yagura Gatehouse");
+        let slot = wall_slot(&table, &piece(house, (10, 20), false));
+        for (from, side) in [(Vec2::new(4.0, 23.0), -1.0), (Vec2::new(17.0, 19.0), 1.0)] {
+            let (at, facing, top) = ladders_against(&slot, from).unwrap();
+            assert_eq!(top, GATEHOUSE_DECK);
+            // Square on to the long side, whichever way the man stands.
+            assert_eq!(facing, Vec2::new(-side, 0.0));
+            for a in at {
+                assert!((a.x - (10.5 + side * LADDER_STANDOFF)).abs() < 1e-5, "{a}");
+            }
+            // Along its length: one at each end and one in the middle.
+            let ys = at.map(|a| a.y);
+            assert!(ys.iter().all(|y| (20.0..=23.0).contains(y)), "{ys:?}");
+            assert!((ys[1] - 21.5).abs() < 1e-5 && (ys[2] - ys[0]).abs() > 1.5);
+        }
+        // A tile of wall is as before: ladders a tile apart, square-ish.
+        let tile = crate::puppets::WallSlot {
+            centre: Vec2::new(5.5, 5.5),
+            lift: 2.0,
+            half: Vec2::ZERO,
+        };
+        let (at, facing, _) = ladders_against(&tile, Vec2::new(5.5, 9.5)).unwrap();
+        assert_eq!(facing, Vec2::NEG_Y);
+        assert!((at[1] - Vec2::new(5.5, 5.5 + LADDER_STANDOFF)).length() < 1e-5);
+        assert!((at[2].x - at[0].x - 2.0 * LADDER_APART).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_gate_upgrading_shows_its_crew_and_its_third_look() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let models = crate::models::load().unwrap();
+        let looks = Looks::new(&table, &models);
+        let (gate, house) = (id(&table, "Gate"), id(&table, "Yagura Gatehouse"));
+        let mut s = piece(gate, (10, 20), false);
+        let name = |s: &StructureView| looks.model_of(s).map(|m| models.models[m].name());
+        assert_eq!(name(&s), Some("Gate"));
+        assert_eq!(looks.crew_of(&s), None);
+        s.upgrading = Some((house, 20));
+        assert_eq!(name(&s), Some("Gate"));
+        let crew = looks.crew_of(&s).map(|m| models.models[m].name());
+        assert_eq!(crew, Some("Hands"));
+        // The upgrade's third look, or the gate while it has none.
+        s.upgrading = Some((house, 70));
+        let later = name(&s).unwrap();
+        assert!(later == "Yagura Gatehouse #3" || later == "Gate", "{later}");
+        // A worker never lays a gatehouse: no foundation or frame.
+        assert!(looks.stage(house, 0).is_none() && looks.stage(house, 1).is_none());
+        // Its door is drawn as the gate's is: the same leaves, open or shut.
+        s.upgrading = None;
+        s.building = house;
+        let ground = |_: f32, _: f32| 0.0;
+        let (mut shut, mut open) = (Vec::new(), Vec::new());
+        push_gate(&s, None, true, &ground, &mut shut);
+        s.open = true;
+        push_gate(&s, None, true, &ground, &mut open);
+        assert_eq!((shut.len(), open.len()), (2, 2));
+        assert_ne!(shut[0].size, open[0].size);
+    }
+
+    #[test]
+    fn a_gatehouse_without_a_model_is_roofed_at_the_deck() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let house = (0..table.len() as BuildingId)
+            .find(|&b| table.is_gatehouse(b))
+            .unwrap();
+        let s = piece(house, (10, 20), false);
+        let ground = |_: f32, _: f32| 0.0;
+        let mut boxes = Vec::new();
+        push_gate(&s, Some([1, 2, 3]), true, &ground, &mut boxes);
+        // Two posts, the deck slab and two leaves; the deck tops at the deck.
+        assert_eq!(boxes.len(), 5);
+        let top = |b: &BoxInstance| b.lift + b.size[1];
+        assert!(
+            boxes[..3]
+                .iter()
+                .all(|b| (top(b) - GATEHOUSE_DECK).abs() < 1e-5)
+        );
+        assert_eq!(boxes[2].size[0], 1.0);
+        assert_eq!(boxes[2].size[2], 3.0);
+    }
+
+    #[test]
+    fn the_crew_of_a_gate_stands_on_its_long_sides() {
+        for (w, d) in [(1, 3), (3, 1)] {
+            let centre = Vec2::new(20.0, 30.0);
+            let (hw, hd) = (f32::from(w) / 2.0, f32::from(d) / 2.0);
+            for (at, facing) in crew_spots(centre, w, d) {
+                let off = at - centre;
+                // Beside a long side, not beyond the ends, turned to it.
+                let ((thin, long), (across, along)) = if w < d {
+                    ((hw, hd), (off.x, off.y))
+                } else {
+                    ((hd, hw), (off.y, off.x))
+                };
+                assert!(across.abs() > thin && along.abs() <= long, "{off}");
+                assert!(facing.dot(-off) > 0.0, "{off} {facing}");
+            }
+        }
     }
 
     #[test]
@@ -2400,11 +2688,6 @@ mod tests {
     fn every_build_menu_and_training_card_fits_the_grid() {
         let data = crate::data::load();
         let table = Table::new(&data);
-        let id = |name: &str| {
-            (0..table.len() as BuildingId)
-                .find(|&b| table.name(b) == name)
-                .unwrap()
-        };
         for f in Faction::ALL {
             let menu: Vec<BuildingId> = table.buildable(f).collect();
             assert!(
@@ -2421,7 +2704,7 @@ mod tests {
         assert!(
             table
                 .buildable(Faction::EmberClans)
-                .any(|b| b == id("Farmstead"))
+                .any(|b| b == id(&table, "Farmstead"))
         );
         // A building trains what its whole upgrade chain does.
         for b in 0..table.len() as BuildingId {

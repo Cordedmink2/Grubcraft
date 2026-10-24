@@ -105,37 +105,35 @@ impl Structures {
         self.flags_of(i) & LINE != 0
     }
 
-    /// The tiles of wall joined to wall slot `i` into `out`, `i` first: those
-    /// `keep` takes that touch `i` edge or corner, and those touching them,
-    /// at most `max`, nearest first by the order they join. Each tile is
-    /// looked at once, as it leaves `others` (scratch: the candidates).
+    /// The pieces of wall joined to wall slot `i` into `out`, `i` first:
+    /// those `keep` takes (drawn tiles, or a gatehouse among them) that
+    /// touch `i` edge or corner, and those touching them, at most `max`,
+    /// nearest first by the order they join. Each piece is looked at once,
+    /// as it leaves `others` (scratch: the candidates).
     pub(crate) fn stretch(
         &self,
         i: usize,
         keep: impl Fn(usize) -> bool,
         max: usize,
         out: &mut Vec<usize>,
-        others: &mut Vec<(i32, i32, usize)>,
+        others: &mut Vec<([i32; 4], usize)>,
     ) {
         out.clear();
         out.push(i);
         others.clear();
         others.extend(
             (self.standing())
-                .filter(|&j| j != i && self.is_line(j) && keep(j))
-                .map(|j| {
-                    let [x, y, _, _] = self.footprint(j);
-                    (x, y, j)
-                }),
+                .filter(|&j| j != i && keep(j))
+                .map(|j| (self.footprint(j), j)),
         );
         let mut k = 0;
         while k < out.len() && out.len() < max {
-            let [x, y, _, _] = self.footprint(out[k]);
+            let foot = self.footprint(out[k]);
             k += 1;
             let mut o = 0;
             while o < others.len() && out.len() < max {
-                let (ox, oy, j) = others[o];
-                if (ox - x).abs() <= 1 && (oy - y).abs() <= 1 {
+                let (other, j) = others[o];
+                if crate::veins::foot_reaches(foot, other, 0) {
                     // Keeps the order of the rest, so the stretch is the
                     // same every run.
                     others.remove(o);

@@ -412,8 +412,9 @@ fn buildings_follow_the_design_rules() {
             assert!(
                 b.upgrades_from.is_none()
                     || b.role == Role::Main
-                    || b.flags.contains(&BuildingFlag::Line),
-                "{at}: only main buildings and drawn walls upgrade"
+                    || b.flags.contains(&BuildingFlag::Line)
+                    || b.flags.contains(&BuildingFlag::Gate),
+                "{at}: only main buildings, drawn walls and gates upgrade"
             );
             // Brood structures are all Living; nobody else's are. Elsewhere
             // halls, towers and walls are Fortified.

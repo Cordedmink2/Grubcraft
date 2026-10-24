@@ -277,33 +277,59 @@ pub struct Block {
     pub fighter: Fighter,
 }
 
-/// A wall tile a manning regiment stands on: its centre, and how high
-/// above the ground there its top is.
+/// A wall piece a manning regiment stands on: its centre, how high above
+/// the ground there its top is, and for a piece longer than a tile (a
+/// gatehouse) the half of its length along it, else zero.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WallSlot {
     pub centre: Vec2,
     pub lift: f32,
+    pub half: Vec2,
 }
 
-/// Across how much of a tile men sharing it spread, in tiles.
+/// Across how much of each tile of a piece men sharing it spread, in tiles.
 const WALL_SPREAD: f32 = 0.8;
 
 /// How fast a soldier climbs to or down from the wall top, in tiles per
 /// second.
 const CLIMB_RATE: f32 = 1.5;
 
-/// Where soldier `k` of `models` stands on `slots` (never empty): on slot
-/// `k % n`, men sharing a slot spread along `across` (a unit vector along
-/// the wall, across the way they face), and the height of the top there.
+/// How many men a wall slot has room for in one rank: one a tile of its
+/// length.
+fn slot_room(slot: &WallSlot) -> usize {
+    ((slot.half.length() * 2.0).round() as usize).max(1)
+}
+
+/// Where soldier `k` of `models` stands on `slots` (never empty): the slots
+/// give one place a tile of their length, in order, and soldier `k` takes
+/// place `k % places`. Men beyond the places make further ranks. On a
+/// single tile they spread along `across` (a unit vector along the wall,
+/// across the way they face); on a long slot, across its depth. Also the
+/// height of the top there.
 fn wall_stand(slots: &[WallSlot], k: usize, models: usize, across: Vec2) -> (Vec2, f32) {
-    let n = slots.len();
-    let (tile, nth) = (k % n, k / n);
-    // How many men share this tile.
-    let sharing = (models.saturating_sub(tile)).div_ceil(n).max(1);
-    let slot = slots[tile];
+    let places: usize = slots.iter().map(slot_room).sum();
+    let (place, nth) = (k % places, k / places);
+    // How many men share this place.
+    let sharing = (models.saturating_sub(place)).div_ceil(places).max(1);
     let step = WALL_SPREAD / sharing as f32;
     let off = (nth as f32 - (sharing - 1) as f32 / 2.0) * step;
-    (slot.centre + across * off, slot.lift)
+    let (mut left, mut slot) = (place, slots[0]);
+    for s in slots {
+        slot = *s;
+        if left < slot_room(s) {
+            break;
+        }
+        left -= slot_room(s);
+    }
+    let len = slot.half.length();
+    if len > 0.0 {
+        let along = slot.half / len;
+        let tile = left as f32 - (slot_room(&slot) - 1) as f32 / 2.0;
+        let side = Vec2::new(-along.y, along.x);
+        (slot.centre + along * tile + side * off, slot.lift)
+    } else {
+        (slot.centre + across * off, slot.lift)
+    }
 }
 
 /// How a regiment's soldiers fight, from its unit's stats and state, which
@@ -2728,6 +2754,7 @@ mod tests {
         WallSlot {
             centre: Vec2::new(x, 5.5),
             lift,
+            half: Vec2::ZERO,
         }
     }
 
@@ -2753,6 +2780,42 @@ mod tests {
         assert!(c.x - a.x < 1.0, "all within the tile");
         assert!((stand(1).x + stand(3).x - 5.0).abs() < 1e-5);
         assert!(stand(1).x < stand(3).x);
+    }
+
+    #[test]
+    fn men_on_a_gatehouse_spread_along_its_length_at_the_deck() {
+        // Three tiles long, running along y.
+        let house = WallSlot {
+            centre: Vec2::new(10.5, 21.5),
+            lift: 2.0,
+            half: Vec2::new(0.0, 1.5),
+        };
+        let stand = |k, models| wall_stand(&[house], k, models, Vec2::X);
+        let three: Vec<_> = (0..3).map(|k| stand(k, 3)).collect();
+        for (at, lift) in &three {
+            assert_eq!((at.x, *lift), (10.5, 2.0));
+        }
+        // One to a tile, the middle man on the centre.
+        let ys: Vec<f32> = three.iter().map(|(at, _)| at.y).collect();
+        assert!(ys[0] < ys[1] && ys[1] < ys[2]);
+        assert!((ys[1] - 21.5).abs() < 1e-5);
+        assert!(ys[2] - ys[0] > 1.5, "{ys:?}");
+        // However many, all stay on the gatehouse in ranks of three, and
+        // no two share a spot.
+        let mut seen: Vec<Vec2> = Vec::new();
+        for k in 0..24 {
+            let (at, _) = stand(k, 24);
+            assert!(
+                (20.0..=23.0).contains(&at.y) && (10.0..=11.0).contains(&at.x),
+                "{at}"
+            );
+            assert!((at.y - 20.5 - (k % 3) as f32).abs() < 1e-5, "{at}");
+            assert!(seen.iter().all(|p| p.distance(at) > 1e-3));
+            seen.push(at);
+        }
+        // A tile of wall beside it still spreads across the way given.
+        let tile = slot(11.5, 2.0);
+        assert!((wall_stand(&[tile], 0, 2, Vec2::X).0.x - 11.5).abs() > 0.1);
     }
 
     #[test]

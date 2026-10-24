@@ -105,6 +105,8 @@ impl Structures {
                     let owner = self.owner_of(i);
                     let called = (0..regs.alive.len()).any(|r| {
                         regs.alive[r]
+                            // Not those up on its walkway or the wall.
+                            && !regs.on_wall[r]
                             && !stances.hostile(owner, regs.owner[r])
                             && (within(foot, regs.position[r], GATEWAY)
                                 || regs.target[r].is_some()

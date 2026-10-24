@@ -790,6 +790,11 @@ impl Conquest {
             return Err(Refusal::Busy);
         }
         let b = self.structures.buildings()[usize::from(to)];
+        // A Main building's upgrade is the next tier; anything else's (a
+        // gatehouse) needs the tier it is of.
+        if b.role != Role::Main && self.structures.tier_of(player) < b.tier.max(1) {
+            return Err(Refusal::Tier);
+        }
         if !self
             .economy
             .can_afford(player, u32::from(b.cost_grub), u32::from(b.cost_marrow))

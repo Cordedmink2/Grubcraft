@@ -1,7 +1,9 @@
 //! Manning the walls (docs/26-fortifications.md, "Manning the walls"): a
-//! regiment sent onto its side's wall of level 2 or 3 walks to the nearest
-//! stair (a tower or gate joined to the wall, or an end of it), climbs,
-//! and spreads along the walkway in one rank, facing out.
+//! regiment sent onto its side's wall of level 2 or 3, or its gatehouse,
+//! walks to the nearest stair (a tower or gate joined to the wall, or an
+//! end of it), climbs, and spreads along the walkway in one rank, facing
+//! out. A gatehouse is part of the walkway of the raised wall it touches,
+//! with room for three soldiers.
 //!
 //! Up there it is off the walking grid ([`crate::regiments`] `on_wall`):
 //! the wall holds it where it stands, melee from the ground can't reach
@@ -84,11 +86,11 @@ struct Hold {
     /// down.
     formation: Formation,
     frontage: u16,
-    /// The tiles it holds, the first `held` of them, and where each
-    /// stands (to come down where one fell).
+    /// The pieces it holds, the first `held` of them, and the footprint
+    /// of each (to come down where one fell).
     held: u8,
     tiles: [StructureHandle; MAX_HELD],
-    at: [(i16, i16); MAX_HELD],
+    at: [[i16; 4]; MAX_HELD],
 }
 
 /// The regiments on the walls (see the module docs).
@@ -98,7 +100,7 @@ pub(crate) struct Manning {
     /// Scratch for [`Conquest::walkway_stretch`], kept so a tick never
     /// allocates.
     stretch: Vec<usize>,
-    others: Vec<(i32, i32, usize)>,
+    others: Vec<([i32; 4], usize)>,
 }
 
 impl Manning {
@@ -184,9 +186,10 @@ impl Manning {
                 h.u32(t.index);
                 h.u16(t.generation);
             }
-            for &(x, y) in &o.at[..usize::from(o.held)] {
-                h.u16(x as u16);
-                h.u16(y as u16);
+            for foot in &o.at[..usize::from(o.held)] {
+                for &v in foot {
+                    h.u16(v as u16);
+                }
             }
         }
     }
@@ -213,7 +216,7 @@ impl Conquest {
     /// a regiment that mans walls, steady and not fighting. `i` if so.
     fn walkway_check(&self, i: usize, r: usize, regs: &Regiments) -> Result<usize, Refusal> {
         let s = &self.structures;
-        if !s.is_line(i) || !self.unit(regs.unit[r]).mans_walls {
+        if !(s.is_line(i) || s.is_gate(i)) || !self.unit(regs.unit[r]).mans_walls {
             return Err(Refusal::Unknown);
         }
         if !s.walkway(i) {
@@ -287,7 +290,7 @@ impl Conquest {
             frontage: regs.frontage[r],
             held: 0,
             tiles: [h; MAX_HELD],
-            at: [(0, 0); MAX_HELD],
+            at: [[0; 4]; MAX_HELD],
         });
     }
 
@@ -487,11 +490,13 @@ impl Conquest {
                     // Its own side's Castle Wall under every soldier gives its
                     // shooters loopholes (see [`crate::twists`]); a wall
                     // raised under it does too.
+                    // (A gatehouse joined to it doesn't take them away.)
+                    let ours = |t: &StructureHandle| s.owner_of(t.index as usize) == regs.owner[r];
+                    let loophole = |t: &StructureHandle| s.loopholes(t.index as usize);
+                    let gate = |t: &StructureHandle| s.is_gate(t.index as usize);
                     regs.loophole[r] = !regs.climber[r]
-                        && held.iter().all(|&t| {
-                            let t = t.index as usize;
-                            s.loopholes(t) && s.owner_of(t) == regs.owner[r]
-                        });
+                        && held.iter().all(|t| ours(t) && (loophole(t) || gate(t)))
+                        && held.iter().any(loophole);
                     if regs.climber[r]
                         && regs.engaged[r].is_none()
                         && (self.manning.defender(o.tile, k, regs, stances)).is_none()
@@ -527,12 +532,12 @@ impl Conquest {
         };
         let centre = s.centre(i);
         let out = Angle::of_vec(foot - centre);
-        let [x, y, _, _] = s.footprint(i);
+        let foot_print = s.footprint(i).map(|v| v as i16);
         let hold = &mut self.manning.holds[k];
         hold.phase = Phase::Holding;
         hold.held = 1;
         hold.tiles[0] = tile;
-        hold.at[0] = (x as i16, y as i16);
+        hold.at[0] = foot_print;
         regs.formation[r] = Formation::Line;
         regs.braced[r] = false;
         regs.leave_fight(r);
@@ -604,8 +609,8 @@ impl Conquest {
     }
 
     /// Hold `k`'s regiment, slot `r`, done climbing, takes up to one tile a
-    /// soldier of the walkway it was sent to, out from that tile along the
-    /// wall, and stands on them in one rank facing out. False if every
+    /// soldier of the walkway it was sent to (a gatehouse three), out from
+    /// that tile along the wall, and stands on them in one rank facing out. False if every
     /// tile near there is held already, or the wall is gone.
     fn mount(&mut self, k: usize, r: usize, regs: &mut Regiments) -> bool {
         let (tile, from) = (self.manning.holds[k].tile, self.manning.holds[k].from);
@@ -617,15 +622,18 @@ impl Conquest {
         let s = &self.structures;
         let want = usize::from(regs.models[r]).clamp(1, MAX_HELD);
         let mut tiles = [tile; MAX_HELD];
-        let mut at = [(0, 0); MAX_HELD];
-        let mut held = 0;
+        let mut at = [[0; 4]; MAX_HELD];
+        // Pieces held, and soldiers they have room for in one rank.
+        let (mut held, mut room) = (0, 0);
         for &j in &stretch {
             let t = s.handle(j);
-            if held < want && !self.manning.taken(t) {
-                let [x, y, _, _] = s.footprint(j);
+            if room < want && !self.manning.taken(t) {
+                // One soldier a tile along it (three on a gatehouse).
+                let foot = s.footprint(j);
                 tiles[held] = t;
-                at[held] = (x as i16, y as i16);
+                at[held] = foot.map(|v| v as i16);
                 held += 1;
+                room += piece_room(foot);
             }
         }
         self.give_back(stretch);
@@ -633,22 +641,29 @@ impl Conquest {
             return false;
         }
         let s = &self.structures;
-        // Stand at the middle of the tiles, facing away from where it was
-        // sent from (the foot is often on the wall's own line), square to
-        // the wall as drawn.
+        // Stand at the middle of the tiles (each piece weighed by its room,
+        // summed from the first so it can't overflow), facing away from
+        // where it was sent from (the foot is often on the wall's own
+        // line), square to the wall as drawn.
+        let first = s.centre(tiles[0].index as usize);
         let mut sum = FxVec2::ZERO;
-        for &t in &tiles[..held] {
-            sum += s.centre(t.index as usize);
+        for (t, foot) in tiles[..held].iter().zip(&at) {
+            let weight = Fx::from_int(piece_room(foot.map(i32::from)) as i32);
+            sum += (s.centre(t.index as usize) - first) * weight;
         }
-        let n = Fx::from_int(held as i32);
-        let middle = FxVec2::new(sum.x / n, sum.y / n);
+        let n = Fx::from_int(room as i32);
+        let middle = first + FxVec2::new(sum.x / n, sum.y / n);
         // Along the wall: from the first tile held to the last (the
-        // furthest out along it), or as the wall was drawn.
-        let ((ax, ay), (bx, by)) = (at[0], at[held - 1]);
+        // furthest out along it), or as the wall was drawn, or along a
+        // gatehouse held alone.
+        let ([ax, ay, _, _], [bx, by, _, _]) = (at[0], at[held - 1]);
         let [x0, y0, x1, y1] = s.line[i];
-        let (dx, dy) = match (bx - ax, by - ay) {
-            (0, 0) => (x1 - x0, y1 - y0),
-            d => d,
+        let [_, _, w, d] = s.footprint(i);
+        let (dx, dy) = match ((bx - ax, by - ay), (x1 - x0, y1 - y0)) {
+            ((0, 0), (0, 0)) if w > d => (1, 0),
+            ((0, 0), (0, 0)) => (0, 1),
+            ((0, 0), line) => line,
+            (d, _) => d,
         };
         let mut out = FxVec2::from_ints(-i32::from(dy), i32::from(dx));
         if out == FxVec2::ZERO {
@@ -665,7 +680,7 @@ impl Conquest {
         regs.formation[r] = Formation::Line;
         regs.braced[r] = false;
         regs.leave_fight(r);
-        regs.place(regs.handle(r), middle, Angle::of_vec(out), held as u16);
+        regs.place(regs.handle(r), middle, Angle::of_vec(out), room as u16);
         regs.on_wall[r] = true;
         true
     }
@@ -712,15 +727,15 @@ impl Conquest {
     ) {
         let o = self.manning.holds[k];
         let held = usize::from(o.held);
-        // Soldier `m` stands on tile `m % held`.
+        // The soldiers stand spread over the pieces by their room.
+        let room = |n: usize| piece_room(o.at[n].map(i32::from));
+        let before: usize = (0..f).map(room).sum();
+        let total: usize = (0..held).map(room).sum();
         let models = usize::from(regs.models[r]);
-        let on_it = models / held + usize::from(f < models % held);
+        let on_it = models * (before + room(f)) / total - models * before / total;
         let breach = match self.structures.resolve(o.tiles[f]) {
             // Fallen: its ground is free now.
-            None => {
-                let (x, y) = o.at[f];
-                footprint_centre([i32::from(x), i32::from(y), 1, 1])
-            }
+            None => footprint_centre(o.at[f].map(i32::from)),
             // Without power the wall stands open: down at the foot.
             Some(_) => o.foot,
         };
@@ -733,10 +748,17 @@ impl Conquest {
     }
 }
 
+/// How many soldiers stand on a piece of walkway with footprint `foot` in
+/// one rank: one a tile along it (three on a gatehouse).
+fn piece_room(foot: [i32; 4]) -> usize {
+    foot[2].max(foot[3]).max(1) as usize
+}
+
 impl crate::structures::Structures {
-    /// Whether building slot `i` is a drawn wall with a walkway to stand
-    /// on: a level above the first (one that upgrades from another).
+    /// Whether building slot `i` is a drawn wall or a gate with a walkway
+    /// to stand on: a level above the first (one that upgrades from
+    /// another), a gatehouse for a gate.
     pub(crate) fn walkway(&self, i: usize) -> bool {
-        self.is_line(i) && self.stats_of(i).upgrades_from.is_some()
+        (self.is_line(i) || self.is_gate(i)) && self.stats_of(i).upgrades_from.is_some()
     }
 }

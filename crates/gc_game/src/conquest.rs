@@ -604,6 +604,91 @@ mod tests {
         }
     }
 
+    /// The client's idea of a gatehouse is the simulation's: a regiment
+    /// sent to one stands on a piece the client lifts to its deck and
+    /// spreads along its length, with room for as many men as the sim holds.
+    #[test]
+    fn a_regiment_manning_a_gatehouse_stands_at_the_deck_along_its_length() {
+        use crate::buildings::{GATEHOUSE_DECK, wall_slots};
+        let data = data();
+        let map = make_map(0, 0);
+        let factions = [Faction::EmberClans, Faction::EmberClans];
+        let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
+        let house = (0..table.len() as u16)
+            .find(|&b| table.name(b) == "Yagura Gatehouse")
+            .unwrap();
+        let foot = data
+            .conquest_units
+            .iter()
+            .position(|u| {
+                u.faction() == Faction::EmberClans
+                    && !u.worker()
+                    && matches!(u.class(), Class::Light | Class::Spear | Class::Heavy)
+            })
+            .expect("a foot regiment") as u16;
+        let (sx, sy) = map.starts()[0];
+        let tile = (-14..14)
+            .flat_map(|dy| (-14..14).map(move |dx| (sx + dx, sy + dy)))
+            .find(|&t| world.can_build(house, t, 0).is_ok())
+            .expect("room for a gatehouse");
+        let apply = |world: &mut World, command| {
+            world
+                .tick(&[PlayerCommand { player: 0, command }])
+                .commands_applied
+                == 1
+        };
+        assert!(apply(
+            &mut world,
+            Command::SpawnStructure {
+                building: house,
+                tile: (tile.0 as i16, tile.1 as i16),
+                turn: 0,
+            }
+        ));
+        let structure = world
+            .structures()
+            .unwrap()
+            .iter()
+            .find(|s| s.building == house)
+            .unwrap()
+            .handle;
+        assert!(apply(
+            &mut world,
+            Command::SpawnRegiment {
+                unit: foot,
+                position: gc_fixed::FxVec2::from_ints(tile.0 - 4, tile.1 + 1),
+                facing: gc_sim::scenario::NORTH,
+            }
+        ));
+        let regiment = world.regiments.iter().last().unwrap().handle;
+        assert!(apply(
+            &mut world,
+            Command::ManWall {
+                regiment,
+                structure
+            }
+        ));
+        let up = |world: &World| world.regiments.iter().any(|r| r.on_wall);
+        for _ in 0..120 * TICKS_PER_SECOND {
+            if up(&world) {
+                break;
+            }
+            world.tick(&[]);
+        }
+        assert!(up(&world), "it never got onto the gatehouse");
+        let slots: Vec<_> = wall_slots(&world, &table, regiment).collect();
+        assert_eq!(slots.len(), 1);
+        let slot = slots[0];
+        assert_eq!(slot.lift, GATEHOUSE_DECK);
+        let held = world
+            .regiments
+            .iter()
+            .find(|r| r.handle == regiment)
+            .unwrap();
+        // Room along the piece for the men the sim holds in a rank.
+        assert_eq!(slot.half.length() * 2.0, f32::from(held.frontage));
+    }
+
     /// A fresh Conquest world on `map` for `factions`, and its plan.
     fn world_on(map: &Map, factions: &[Faction], tempo: Tempo) -> (World, ConquestRecord, Table) {
         world_for(map, factions, tempo, Victories::default())

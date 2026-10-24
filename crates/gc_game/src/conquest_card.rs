@@ -78,31 +78,14 @@ impl Running {
         let mut slots = [None; GRID_SLOTS];
         let structures = self.world.structures()?;
         if let Some(s) = self.picked_structure().and_then(|h| structures.get(h)) {
-            // Your gates take their mode in the first slots (Q, W, E), going
-            // up or standing; they train nothing.
-            if s.gate.is_some() && s.owner == self.sandbox.side {
-                for (slot, mode) in slots.iter_mut().zip(GateMode::ALL) {
-                    *slot = Some(Action::SetGate(mode));
-                }
-            }
-            // Your own drawn wall's tiles are raised a stretch at a time, not
-            // upgraded one by one; a top-level wall has nothing to offer.
-            let own_wall =
-                s.owner == self.sandbox.side && s.gate.is_none() && self.is_wall(s.building);
-            if own_wall && s.finished() && s.upgrading.is_none() {
-                slots[SLOT_LAST] = structures.upgrade_of(s.building).map(Action::RaiseWall);
-            } else if !s.finished() || (own_wall && s.upgrading.is_some()) {
-                slots[SLOT_LAST] = Some(Action::CallOff);
-            } else {
-                // It still trains while it upgrades.
-                for (slot, u) in slots[..SLOT_LAST].iter_mut().zip(self.trains(s.building)) {
-                    *slot = Some(Action::Train(u));
-                }
-                slots[SLOT_LAST] = match s.upgrading {
-                    Some(_) => Some(Action::CallOff),
-                    None => structures.upgrade_of(s.building).map(Action::Upgrade),
-                };
-            }
+            let own = s.owner == self.sandbox.side;
+            let slots = building_slots(
+                s.gate.is_some() && own,
+                own && s.gate.is_none() && self.is_wall(s.building),
+                (s.finished(), s.upgrading.is_some()),
+                structures.upgrade_of(s.building),
+                self.trains(s.building),
+            );
             return Some(Card { slots, whole: true });
         }
         let worker = self.selected_workers().next()?;
@@ -296,7 +279,11 @@ impl Running {
                 Action::Upgrade(b) => {
                     if let Some(s) = self.buildings.stats.get(usize::from(b)) {
                         price(detail, s.cost_grub, s.cost_marrow);
-                        let _ = write!(label, "Tier {}", s.tier);
+                        if self.buildings.is_gate(b) {
+                            label.push_str("Gatehouse");
+                        } else {
+                            let _ = write!(label, "Tier {}", s.tier);
+                        }
                     }
                 }
                 Action::RaiseWall(_) => {
@@ -576,6 +563,10 @@ impl Running {
         let Some(wall) = self.building_under_cursor(|o| o == side) else {
             return false;
         };
+        // A plain right-click on a gate marches through it; Alt mans it.
+        if self.is_gate_piece(wall) && !self.input.alt {
+            return false;
+        }
         let (up, rest): (Vec<_>, Vec<_>) =
             (self.selected.iter()).partition(|&&h| self.world.man_check(h, wall).is_ok());
         if up.is_empty() {
@@ -601,12 +592,31 @@ impl Running {
     /// The line under the cursor over a wall of yours with regiments
     /// selected: that they can man it, or why they can't.
     pub fn man_hint(&self) -> Option<String> {
-        let (_, crew, why) = self.manning_under_cursor()?;
+        let (wall, crew, why) = self.manning_under_cursor()?;
+        let gate = self.is_gate_piece(wall);
+        if gate && !self.input.alt {
+            // A click marches through; say how to man it only if they could.
+            return (crew > 0).then(|| "Alt+right-click to man the gatehouse".into());
+        }
         if crew > 0 {
-            Some("Right-click to man the wall".into())
+            Some(
+                if gate {
+                    "Right-click to man the gatehouse"
+                } else {
+                    "Right-click to man the wall"
+                }
+                .into(),
+            )
         } else {
             why.map(|r| buildings::why(r).into())
         }
+    }
+
+    /// Whether `h` is a gate or gatehouse.
+    fn is_gate_piece(&self, h: StructureHandle) -> bool {
+        (self.world.structures())
+            .and_then(|all| all.get(h))
+            .is_some_and(|s| self.buildings.is_gate(s.building))
     }
 
     /// The raised wall of an enemy under the mouse that some of the
@@ -670,7 +680,9 @@ impl Running {
         }
         Some(
             match why? {
-                Refusal::NoWalkway => "Only a raised wall (level 2 or 3) can be climbed.",
+                Refusal::NoWalkway => {
+                    "Only a raised wall (level 2 or 3) or a gatehouse can be climbed."
+                }
                 Refusal::Busy => "They can't climb now: it isn't finished, or they are fighting.",
                 Refusal::Unpowered => "That wall stands open without its power.",
                 Refusal::Unknown => "Only foot and archers can climb walls.",
@@ -916,6 +928,43 @@ fn needs_hands(s: StructureView) -> bool {
     !s.finished() || s.hp < s.max_hp
 }
 
+/// The card of a selected building. `gate`: it is a gate of yours, which
+/// takes its mode in the first slots (Q, W, E), going up or standing, and
+/// keeps its upgrade (to a gatehouse) in the last. `own_wall`: a drawn wall
+/// of yours, whose tiles are raised a stretch at a time, not upgraded one by
+/// one (a top-level wall has nothing to offer). `state`: whether it is
+/// finished and whether its upgrade is going up. `next`: what it upgrades to.
+fn building_slots(
+    gate: bool,
+    own_wall: bool,
+    (finished, upgrading): (bool, bool),
+    next: Option<BuildingId>,
+    trains: impl Iterator<Item = UnitId>,
+) -> [Option<Action>; GRID_SLOTS] {
+    let mut slots = [None; GRID_SLOTS];
+    if gate {
+        for (slot, mode) in slots.iter_mut().zip(GateMode::ALL) {
+            *slot = Some(Action::SetGate(mode));
+        }
+    }
+    if own_wall && finished && !upgrading {
+        slots[SLOT_LAST] = next.map(Action::RaiseWall);
+    } else if !finished || (own_wall && upgrading) {
+        slots[SLOT_LAST] = Some(Action::CallOff);
+    } else {
+        // It still trains while it upgrades.
+        for (slot, u) in slots[..SLOT_LAST].iter_mut().zip(trains) {
+            *slot = Some(Action::Train(u));
+        }
+        slots[SLOT_LAST] = if upgrading {
+            Some(Action::CallOff)
+        } else {
+            next.map(Action::Upgrade)
+        };
+    }
+    slots
+}
+
 /// A name short enough for a grid slot: its first word.
 fn short(name: &str) -> &str {
     name.split(' ').next().unwrap_or(name)
@@ -980,19 +1029,77 @@ mod tests {
                 .position(|b| b.name() == name)
                 .unwrap_or_else(|| panic!("no {name}")) as BuildingId
         };
-        let next = |b: BuildingId| {
-            (0..table.len() as BuildingId)
-                .find(|&n| table.stats[usize::from(n)].upgrades_from == Some(b))
-        };
         // The card offers Raise on a wall that has a next level; the top
         // level and a plain building have none.
         let has_next_level = |name: &str| {
             let b = id(name);
-            table.is_wall(b) && next(b).is_some()
+            table.is_wall(b) && upgrade_of(&table, b).is_some()
         };
         assert!(has_next_level("Palisade") && has_next_level("Stone Wall"));
         assert!(!has_next_level("Castle Wall") && !has_next_level("Clan Hall"));
-        assert_eq!(next(id("Palisade")), Some(id("Stone Wall")));
+        assert_eq!(upgrade_of(&table, id("Palisade")), Some(id("Stone Wall")));
         assert!(!table.is_wall(id("Clan Hall")));
+    }
+
+    /// The building type that upgrades `b`.
+    fn upgrade_of(table: &crate::buildings::Table, b: BuildingId) -> Option<BuildingId> {
+        (0..table.len() as BuildingId)
+            .find(|&n| table.stats[usize::from(n)].upgrades_from == Some(b))
+    }
+
+    #[test]
+    fn a_finished_gate_offers_its_gatehouse_after_its_modes() {
+        let data = crate::data::load();
+        let table = crate::buildings::Table::new(&data);
+        let mut seen = 0;
+        for b in 0..table.len() as BuildingId {
+            if !table.is_gate(b) || table.is_gatehouse(b) {
+                continue;
+            }
+            seen += 1;
+            let up = upgrade_of(&table, b).expect("a gate has a gatehouse");
+            assert!(table.is_gatehouse(up), "{}", table.name(up));
+            let card = |state, next| building_slots(true, false, state, next, std::iter::empty());
+            let slots = card((true, false), Some(up));
+            for (slot, mode) in slots.iter().zip(GateMode::ALL) {
+                assert_eq!(*slot, Some(Action::SetGate(mode)));
+            }
+            assert_eq!(slots[SLOT_LAST], Some(Action::Upgrade(up)));
+            // It goes up on its own: calling it off, the modes kept.
+            let going = card((true, true), Some(up));
+            assert_eq!(going[SLOT_LAST], Some(Action::CallOff));
+            assert_eq!(going[0], Some(Action::SetGate(GateMode::ALL[0])));
+            // The gatehouse itself has nothing more to offer.
+            assert_eq!(card((true, false), upgrade_of(&table, up))[SLOT_LAST], None);
+        }
+        assert_eq!(
+            seen, 3,
+            "a gate each for the Clans, the Concord and the Brood"
+        );
+        assert!(GateMode::ALL.len() < SLOT_LAST);
+    }
+
+    #[test]
+    fn the_build_menu_lists_no_gatehouse_but_every_gate() {
+        let data = crate::data::load();
+        let table = crate::buildings::Table::new(&data);
+        for f in gc_data::Faction::ALL {
+            let menu: Vec<BuildingId> = table.buildable(f).collect();
+            assert!(menu.iter().all(|&b| !table.is_gatehouse(b)));
+            let gates = menu.iter().filter(|&&b| table.is_gate(b)).count();
+            assert_eq!(gates, usize::from(f != gc_data::Faction::Choir), "{f:?}");
+        }
+    }
+
+    #[test]
+    fn a_wall_with_a_next_level_is_raised_not_upgraded() {
+        let slots = building_slots(false, true, (true, false), Some(3), std::iter::empty());
+        assert_eq!(slots[SLOT_LAST], Some(Action::RaiseWall(3)));
+        let slots = building_slots(false, false, (true, false), Some(3), [4].into_iter());
+        assert_eq!(slots[0], Some(Action::Train(4)));
+        assert_eq!(slots[SLOT_LAST], Some(Action::Upgrade(3)));
+        let unfinished = building_slots(false, false, (false, false), Some(3), [4].into_iter());
+        assert_eq!(unfinished[SLOT_LAST], Some(Action::CallOff));
+        assert_eq!(unfinished[0], None);
     }
 }

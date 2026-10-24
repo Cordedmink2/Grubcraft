@@ -152,12 +152,24 @@
         ),
         (
             name: "Iron Gate",
-            summary: "A gate in your Bone Fence: your side walks through and enemies don't. Select it to set Auto (opens as your regiments march up, shuts 2 s after), Locked (shut to everyone) or Open (anyone can pass).",
+            summary: "A gate in your Bone Fence: your side walks through and enemies don't. Select it to set Auto (opens as your regiments march up, shuts 2 s after; troops in the gateway hold it open), Locked (shut to everyone) or Open (anyone can pass).",
+            notes: [
+                ("Gate of Debts", "Half as tough again, with a walk on top for archers or foot. It goes up on its own, with no worker, and the bars keep working."),
+            ],
+            tips: [
+                (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it under attack; open it for a sally."),
+                (icon: Hammer, text: "Place it on your own Bone Fence and it replaces that stretch: R turns it to run along the wall."),
+                (icon: Hammer, text: "Press V to raise it to a Gate of Debts: archers or foot can man its top."),
+            ],
+        ),
+        (
+            name: "Gate of Debts",
+            summary: "Level 2 of the Iron Gate: an arch of stacked bone and ledger-stones with a walk on top, half as tough again. Select an Iron Gate and press V: it goes up on its own, with no worker, and the bars keep working. Archers or foot can man the walk, and it joins a raised wall beside it into one walkway.",
             notes: [],
             tips: [
-                (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it against an attack; open it for a sally."),
-                (icon: Hammer, text: "Place it on your own Bone Fence and it replaces that stretch: R turns it to run along the wall."),
-                (icon: Alarm, text: "Open lets enemies in too, and on Auto troops in the gateway hold it open: lock it under attack."),
+                (icon: Flag, text: "Alt+right-click it with foot or archers to man it: they shoot further, take half from arrows."),
+                (icon: Alarm, text: "Enemies can climb it on ladders; spears stop climbers. Lock the bars under attack."),
+                (icon: Move, text: "A raised wall touching it joins its walk, so one regiment can hold both."),
             ],
         ),
     ],

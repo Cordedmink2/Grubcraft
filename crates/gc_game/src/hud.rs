@@ -895,6 +895,11 @@ impl Running {
                     {
                         tip = wall_tip(self.buildings.stats[usize::from(b)].flags);
                     }
+                    if let Some(Action::Upgrade(b)) = card.slots[i]
+                        && self.buildings.is_gate(b)
+                    {
+                        tip = GATEHOUSE_TIP;
+                    }
                     *slot = GridSlot {
                         label: &card_labels[i],
                         detail: &card_details[i],
@@ -1883,6 +1888,9 @@ fn wall_tip(flags: u16) -> &'static str {
         WALL_TIP
     }
 }
+
+/// The tooltip of a gate's upgrade button.
+const GATEHOUSE_TIP: &str = "Raise the gate to a gatehouse: archers or foot can man its top. It goes up on its own, and the door keeps working.";
 
 /// The picture and tooltip line of a Conquest card slot.
 fn card_look(action: Option<Action>) -> (Icon, &'static str) {

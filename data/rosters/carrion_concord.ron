@@ -278,6 +278,19 @@
             flags: [Gate],
             effect: "Iron bars between bone posts that open for your own and allied regiments. Put it on your Bone Fence and it replaces that stretch.",
         ),
+        (
+            name: "Gate of Debts",
+            role: Wall,
+            tier: 1,
+            upgrades_from: Some("Iron Gate"),
+            cost: (grub: 55, marrow: 0),
+            build_time: 22.0,
+            hp: 1800,
+            armour: Fortified,
+            footprint: (1, 3),
+            flags: [Gate],
+            effect: "Raises an Iron Gate to an arch of stacked bone and ledger-stones with a walk on top: half as tough again, and archers or foot can man it.",
+        ),
     ],
     units: [
         (

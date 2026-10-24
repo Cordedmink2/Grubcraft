@@ -142,12 +142,24 @@
         ),
         (
             name: "Maw Gate",
-            summary: "A gate in your Resin Ridge: your side walks through and enemies don't. A Gnawer is used up growing it, as for any Brood building. Select it to set Auto (opens as your regiments march up, shuts 2 s after), Locked (shut to everyone) or Open (anyone can pass).",
+            summary: "A gate in your Resin Ridge: your side walks through and enemies don't. A Gnawer is used up growing it, as for any Brood building. Select it to set Auto (opens as your regiments march up, shuts 2 s after; troops in the gateway hold it open), Locked (shut to everyone) or Open (anyone can pass).",
+            notes: [
+                ("Chitin Maw", "Half as tough again, with a ridge of chitin on top for archers or foot. It grows on its own, with no Gnawer, and the jaws keep working."),
+            ],
+            tips: [
+                (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it under attack; open it for a sally."),
+                (icon: Hammer, text: "Place it on your own Resin Ridge and it replaces that stretch: R turns it to run along the wall."),
+                (icon: Hammer, text: "Press V to raise it to a Chitin Maw: archers or foot can man the ridge on top."),
+            ],
+        ),
+        (
+            name: "Chitin Maw",
+            summary: "Level 2 of the Maw Gate: a plated arch with a ridge of chitin on top, half as tough again. Select a Maw Gate and press V: it grows on its own, with no Gnawer, and the jaws keep working. Archers or foot can man the ridge, and it joins a raised wall beside it into one walkway.",
             notes: [],
             tips: [
-                (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it against an attack; open it for a sally."),
-                (icon: Hammer, text: "Place it on your own Resin Ridge and it replaces that stretch: R turns it to run along the wall."),
-                (icon: Alarm, text: "Open lets enemies in too, and on Auto troops in the gateway hold it open: lock it under attack."),
+                (icon: Flag, text: "Alt+right-click it with foot or archers to man it: they shoot further, take half from arrows."),
+                (icon: Alarm, text: "Enemies can climb it on ladders; spears stop climbers. Lock the jaws under attack."),
+                (icon: Move, text: "A raised wall touching it joins its ridge, so one regiment can hold both."),
             ],
         ),
     ],

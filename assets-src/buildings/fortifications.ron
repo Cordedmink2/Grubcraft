@@ -1,13 +1,19 @@
-// Fortification gates for the Carrion Concord and the Brood (Iron Gate, Maw Gate), baked into
-// assets/buildings/fortifications.pak by tools/gc_artbake
+// Fortification gates and gatehouses, baked into assets/buildings/fortifications.pak by tools/gc_artbake
 // (`cargo run -p gc_artbake --release -- --config assets-src/buildings/fortifications.ron --out assets/buildings/fortifications.pak`).
-// Each gate has four models: its construction stages `#1` (foundation), `#2` (frame) and `#3`
-// (nearly done), then the finished gate under its own name, exactly as in data/rosters.
-// All four share one texture set (one material) and keep their authored positions in tiles
-// (`keep_origin`), with the origin at the middle of the 1x3 footprint on the ground and the door
-// facing +z. Sizes and look match the Ember Gate. Sources and scripts: the project's design/buildings/
-// folder (docs/21-buildings.md); the Iron Gate is buildings/concord/iron_gate.py and the Maw Gate is
-// buildings/brood/maw_gate.py. More faction fortifications (walls, towers) join this pack later.
+// Gates for the Carrion Concord and the Brood (Iron Gate, Maw Gate): four models each, the construction
+// stages `#1` (foundation), `#2` (frame) and `#3` (nearly done), then the finished gate under its own
+// name, exactly as in data/rosters. Gatehouses (wall level 2: Yagura Gatehouse over the Ember Gate, Gate
+// of Debts over the Iron Gate, Chitin Maw over the Maw Gate) are tier upgrades of a gate and are never
+// laid as foundations, so each has only `#3` (shown in the second half of the upgrade) and the finished
+// model. A gatehouse keeps its gate's 1x3 footprint and base and has a flat walkway deck at exactly 2.0
+// tiles on top (parapets at most 0.35 high on the long sides, both ends open for the walls' walkways).
+// Every gate or gatehouse keeps its authored positions in tiles (`keep_origin`), with the origin at the
+// middle of the 1x3 footprint on the ground and the door facing +z, and shares one texture set (one
+// material) between its looks. Gates and gatehouses look like the Ember Gate in size. Sources and
+// scripts: the project's design/buildings/ folder (docs/21-buildings.md); the Iron Gate is
+// buildings/concord/iron_gate.py, the Maw Gate buildings/brood/maw_gate.py, and the gatehouses are
+// buildings/ember/yagura_gatehouse.py, buildings/concord/gate_of_debts.py and buildings/brood/chitin_maw.py.
+// More faction fortifications (walls, towers) join this pack later.
 (
     models: [
         (
@@ -128,6 +134,96 @@
                 normal: Some("shared:grubcraft/buildings/brood/maw-gate/normal.png"),
                 orm: Some("shared:grubcraft/buildings/brood/maw-gate/orm.png"),
                 emissive: Some("shared:grubcraft/buildings/brood/maw-gate/emissive.png"),
+            )),
+        ),
+        (
+            name: "Yagura Gatehouse #3",
+            source: "shared:grubcraft/buildings/ember/yagura-gatehouse/stage3.glb",
+            height: 3.05,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/ember/yagura-gatehouse/albedo.png",
+                team: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/team.png"),
+                normal: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/normal.png"),
+                orm: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/emissive.png"),
+            )),
+        ),
+        (
+            name: "Yagura Gatehouse",
+            source: "shared:grubcraft/buildings/ember/yagura-gatehouse/final.glb",
+            height: 3.05,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/ember/yagura-gatehouse/albedo.png",
+                team: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/team.png"),
+                normal: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/normal.png"),
+                orm: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/emissive.png"),
+            )),
+        ),
+        (
+            name: "Gate of Debts #3",
+            source: "shared:grubcraft/buildings/concord/gate-of-debts/stage3.glb",
+            height: 2.97,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/gate-of-debts/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/gate-of-debts/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/gate-of-debts/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/gate-of-debts/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/gate-of-debts/emissive.png"),
+            )),
+        ),
+        (
+            name: "Gate of Debts",
+            source: "shared:grubcraft/buildings/concord/gate-of-debts/final.glb",
+            height: 2.97,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/gate-of-debts/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/gate-of-debts/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/gate-of-debts/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/gate-of-debts/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/gate-of-debts/emissive.png"),
+            )),
+        ),
+        (
+            name: "Chitin Maw #3",
+            source: "shared:grubcraft/buildings/brood/chitin-maw/stage3.glb",
+            height: 2.32,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/chitin-maw/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/chitin-maw/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/chitin-maw/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/chitin-maw/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/chitin-maw/emissive.png"),
+            )),
+        ),
+        (
+            name: "Chitin Maw",
+            source: "shared:grubcraft/buildings/brood/chitin-maw/final.glb",
+            height: 2.32,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/chitin-maw/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/chitin-maw/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/chitin-maw/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/chitin-maw/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/chitin-maw/emissive.png"),
             )),
         ),
     ],
