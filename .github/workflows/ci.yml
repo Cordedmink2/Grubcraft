@@ -183,9 +183,11 @@ jobs:
           path: target/Grubcraft-Windows.zip
           retention-days: 14
       # After the upload, so a failing smoke run still leaves the zip to download.
-      # The zip as friends get it, on Windows' software adapter (WARP).
+      # The zip as friends get it, on Windows' software adapter (WARP). WARP
+      # draws a frame of today's battle in about three seconds, so it draws
+      # 120 frames, not 300, to stay inside the 15-minute limit.
       - name: Smoke run of the zip
         shell: pwsh
         run: |
           Expand-Archive target/Grubcraft-Windows.zip -DestinationPath target/smoke
-          python scripts/smoke-run.py target/smoke/Grubcraft/grubcraft.exe
+          python scripts/smoke-run.py target/smoke/Grubcraft/grubcraft.exe 120
