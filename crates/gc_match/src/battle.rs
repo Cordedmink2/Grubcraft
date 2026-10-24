@@ -56,7 +56,15 @@ pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
     let spells = match settings.weather {
         WeatherSetting::Fair if overcast => all_match(WeatherKind::Clear, 0, 220, (4, 2)),
         WeatherSetting::Fair => Vec::new(),
-        WeatherSetting::Changing => changing(seed, Season::Wet, SKY_TICKS),
+        WeatherSetting::Changing => {
+            let mut spells = changing(seed, Season::Wet, SKY_TICKS);
+            if overcast {
+                for s in &mut spells {
+                    s.weather.cloud = s.weather.cloud.max(220);
+                }
+            }
+            spells
+        }
         WeatherSetting::Rain => all_match(WeatherKind::Rain, 200, 230, (10, 4)),
         WeatherSetting::Snow => all_match(WeatherKind::Snow, 180, 220, (6, 2)),
         WeatherSetting::Fog => all_match(WeatherKind::Fog, 220, 160, (2, 0)),

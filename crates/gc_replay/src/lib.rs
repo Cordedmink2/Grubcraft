@@ -503,6 +503,10 @@ impl SkyRecord {
         w.var(u64::from(self.day_ticks));
         w.bool(self.runs);
         w.var(self.spells.len() as u64);
+        debug_assert!(
+            self.spells.is_sorted_by_key(|s| s.at),
+            "a sky's spells are kept in tick order"
+        );
         let mut prev = 0;
         for s in &self.spells {
             // Spells are kept in tick order, so each starts after the last.

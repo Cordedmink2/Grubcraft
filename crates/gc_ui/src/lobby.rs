@@ -201,7 +201,7 @@ impl TimeOfDay {
         match self {
             TimeOfDay::GoldenHour => (17, 0),
             TimeOfDay::Noon | TimeOfDay::Overcast => (12, 0),
-            TimeOfDay::Dusk => (18, 30),
+            TimeOfDay::Dusk => (18, 0),
             TimeOfDay::Night => (23, 0),
         }
     }

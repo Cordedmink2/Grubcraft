@@ -38,11 +38,6 @@ impl WeatherKind {
         WeatherKind::Snow,
         WeatherKind::Fog,
     ];
-
-    /// The kind with this byte; anything unknown is clear.
-    pub fn from_u8(b: u8) -> WeatherKind {
-        Self::ALL.get(b as usize).copied().unwrap_or_default()
-    }
 }
 
 /// The weather at a moment.
@@ -78,8 +73,9 @@ pub struct Spell {
     pub weather: Weather,
 }
 
-/// Ticks in a game day: two hours of play.
-pub const DAY_TICKS: u32 = 2 * 60 * 60 * TICKS_PER_SECOND;
+/// Ticks in a game day: eight hours of play, so an hour of the day is
+/// twenty minutes and a dusk battle has time to turn into a night one.
+pub const DAY_TICKS: u32 = 8 * 60 * 60 * TICKS_PER_SECOND;
 
 /// The tick of a [`DAY_TICKS`] day at `hour`:`minute`.
 pub const fn at_hour(hour: u32, minute: u32) -> u32 {
