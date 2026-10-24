@@ -273,6 +273,47 @@ pub(crate) fn distance(mask: &[bool], n: usize, cap: i32) -> Grid {
     }
 }
 
+/// The four tiles beside tile `i` on an `n`-wide grid, in the order
+/// left, right, up, down (searches rely on the order for their ties).
+pub(crate) fn n4(i: usize, n: usize) -> impl Iterator<Item = usize> {
+    let (x, y) = (i % n, i / n);
+    [
+        (x > 0).then(|| i - 1),
+        (x + 1 < n).then(|| i + 1),
+        (y > 0).then(|| i - n),
+        (y + 1 < n).then(|| i + n),
+    ]
+    .into_iter()
+    .flatten()
+}
+
+/// Every connected patch (four ways) of the mask, each as its tile
+/// indices, in the order their first tiles come.
+pub(crate) fn patches(m: &[bool], n: usize) -> Vec<Vec<usize>> {
+    let mut seen = vec![false; n * n];
+    let mut out = Vec::new();
+    let mut stack = Vec::new();
+    for s in 0..n * n {
+        if !m[s] || seen[s] {
+            continue;
+        }
+        seen[s] = true;
+        stack.push(s);
+        let mut patch = Vec::new();
+        while let Some(i) = stack.pop() {
+            patch.push(i);
+            for k in n4(i, n) {
+                if m[k] && !seen[k] {
+                    seen[k] = true;
+                    stack.push(k);
+                }
+            }
+        }
+        out.push(patch);
+    }
+    out
+}
+
 /// Where the seeds of a map's fields come from: one stream, drawn in a
 /// fixed order.
 pub(crate) struct Seeds(pub(crate) Pcg32);

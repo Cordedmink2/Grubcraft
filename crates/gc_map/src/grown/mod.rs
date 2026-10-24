@@ -33,6 +33,7 @@ mod erode;
 pub(crate) mod field;
 mod shape;
 mod water;
+mod ways;
 
 use std::sync::{Arc, Mutex};
 
@@ -47,7 +48,7 @@ use crate::generate::plateaus;
 use crate::recipe::{BASE, WATER, start_objects};
 use crate::stamp::dist2;
 use crate::wilds::Wildness;
-use field::{Grid, ONE, Seeds, distance, fbm, hypot, mul, smoothstep};
+use field::{Grid, ONE, Seeds, fbm, hypot, mul, smoothstep};
 
 /// The water line, in fixed-point tiles: the Wilds' water line (24
 /// sixteenths of a tile).
@@ -218,12 +219,32 @@ impl Raster {
     pub(crate) fn sample_heights(&self, side: usize) -> Vec<i32> {
         let per = i64::from(crate::SAMPLES_PER_TILE);
         let one = i64::from(ONE);
-        let at = |s: usize| s as i64 * one / per - one / 2;
         let units = i64::from(gc_sim::terrain::HEIGHT_UNITS);
+        let g = &self.height;
+        let last = g.n as i64 - 1;
+        // Bilinear, as `Grid::sample`, with each column's and row's
+        // tiles and weights worked out once.
+        let axis: Vec<(usize, usize, i64)> = (0..side)
+            .map(|s| {
+                let at = s as i64 * one / per - one / 2;
+                let (i, f) = (at.div_euclid(one), at.rem_euclid(one));
+                (
+                    i.clamp(0, last) as usize,
+                    (i + 1).clamp(0, last) as usize,
+                    f,
+                )
+            })
+            .collect();
         let mut out = Vec::with_capacity(side * side);
-        for sy in 0..side {
-            for sx in 0..side {
-                let h = i64::from(self.height.sample(at(sx), at(sy)));
+        for &(y0, y1, fy) in &axis {
+            let (r0, r1) = (
+                &g.v[y0 * g.n..(y0 + 1) * g.n],
+                &g.v[y1 * g.n..(y1 + 1) * g.n],
+            );
+            for &(x0, x1, fx) in &axis {
+                let top = i64::from(r0[x0]) * (one - fx) + i64::from(r0[x1]) * fx;
+                let bottom = i64::from(r1[x0]) * (one - fx) + i64::from(r1[x1]) * fx;
+                let h = (top * (one - fy) + bottom * fy) >> 32;
                 out.push((h * units / one) as i32);
             }
         }
@@ -337,43 +358,15 @@ fn grow_uncached(n: usize, what: Grown) -> Raster {
         land: d.land,
         habitat: d.habitat,
     };
-    break_dead_ground(&mut raster, &mut seeds);
+    ways::open_ways(&mut raster, &mut seeds);
     raster
 }
 
-/// Walkable ground no start can reach (the flat top of a crag ringed by
-/// cliffs, mostly) is made broken rock no one walks on: the land there is
-/// roughened until it is too steep, and left bare. Stage 2's passes will
-/// open some of these up instead.
-fn break_dead_ground(r: &mut Raster, seeds: &mut Seeds) {
-    let n = r.height.n;
-    let rough = fbm(n, seeds.next(), ONE * 5 / 2, 2);
-    for _ in 0..4 {
-        let dead = dead_ground(r);
-        if !dead.iter().any(|&d| d) {
-            return;
-        }
-        let near = distance(&dead, n, 3);
-        let last = n * n - 1;
-        for i in 0..n * n {
-            if near.v[i] > ONE * 3 / 2 {
-                continue;
-            }
-            // The same bump on a tile and its turned copy.
-            let bump = mul(ONE * 18 / 10, rough.v[i.min(last - i)] - ONE / 2);
-            r.height.v[i] = (r.height.v[i] + bump).clamp(0, TOP);
-            r.cover[i] = gc_sim::Cover::Open as u8;
-            r.thicket[i] = false;
-            r.habitat[i] = Habitat::BareRock as u8;
-            r.land[i] = Land::Highland as u8;
-        }
-    }
-}
-
-/// The tiles of each piece of standable ground ([`crate::Map::standable`],
-/// four tiles or more) that no start stands on. (Starts cut off from each
-/// other are left for the map maker to reroll.)
-fn dead_ground(r: &Raster) -> Vec<bool> {
+/// What it costs to step onto each tile ([`crate::Ground::cost`], ten on
+/// open ground) where a regiment's centre can stand
+/// ([`crate::Map::standable`]) on the land as it stands, and 0 where it
+/// can't.
+fn standable(r: &Raster) -> Vec<u8> {
     let n = r.height.n;
     let side = n * crate::SAMPLES_PER_TILE as usize + 1;
     let samples = r
@@ -385,50 +378,12 @@ fn dead_ground(r: &Raster) -> Vec<bool> {
         crate::map::sample_of_sim(i64::from(WATER) * i64::from(gc_sim::terrain::HEIGHT_UNITS) / 16);
     let mut map = crate::Map::from_samples(n as u32, samples, water);
     map.thicket.clone_from(&r.thicket);
-    let standable = map.standable(&map.tile_ground(&map.nav_costs()));
-    let mut seen = vec![false; n * n];
-    let mut dead = vec![false; n * n];
-    let starts = plateaus(n as u32);
-    let flood = |from: usize, seen: &mut Vec<bool>| {
-        let mut piece = vec![from];
-        seen[from] = true;
-        let mut k = 0;
-        while k < piece.len() {
-            let i = piece[k];
-            k += 1;
-            let (x, y) = (i % n, i / n);
-            let next = [
-                (x > 0).then(|| i - 1),
-                (x + 1 < n).then(|| i + 1),
-                (y > 0).then(|| i - n),
-                (y + 1 < n).then(|| i + n),
-            ];
-            for j in next.into_iter().flatten() {
-                if standable[j] && !seen[j] {
-                    seen[j] = true;
-                    piece.push(j);
-                }
-            }
-        }
-        piece
-    };
-    for (x, y) in starts {
-        let at = y as usize * n + x as usize;
-        if standable[at] && !seen[at] {
-            flood(at, &mut seen);
-        }
-    }
-    for i in 0..n * n {
-        if standable[i] && !seen[i] {
-            let piece = flood(i, &mut seen);
-            if piece.len() >= 4 {
-                for j in piece {
-                    dead[j] = true;
-                }
-            }
-        }
-    }
-    dead
+    let ground = map.tile_ground(&map.nav_costs());
+    map.standable(&ground)
+        .iter()
+        .zip(&ground)
+        .map(|(&ok, g)| if ok { g.cost() as u8 } else { 0 })
+        .collect()
 }
 
 /// Heights eased under [`TOP`]: the same below the snow line and ever
@@ -801,8 +756,33 @@ mod tests {
 
 #[cfg(test)]
 mod load_time {
-    /// The doc 27 target: a 768 map is made in under 3 seconds (release,
-    /// one core). `cargo test -p gc_map --release --lib grown_load_time -- --ignored --nocapture`
+    /// The loader's samples are the land's bilinear heights, as
+    /// `Grid::sample` gives them.
+    #[test]
+    fn samples_are_the_grids_heights() {
+        use crate::grown::{Grown, field::ONE, grow};
+        use crate::wilds::Wildness;
+        let r = grow(
+            64,
+            Grown {
+                seed: 2,
+                wildness: Wildness::Wild,
+            },
+        );
+        let side = 64 * crate::SAMPLES_PER_TILE as usize + 1;
+        let samples = r.sample_heights(side);
+        let per = i64::from(crate::SAMPLES_PER_TILE);
+        let one = i64::from(ONE);
+        let at = |s: usize| s as i64 * one / per - one / 2;
+        let units = i64::from(gc_sim::terrain::HEIGHT_UNITS);
+        for sy in 0..side {
+            for sx in 0..side {
+                let h = i64::from(r.height.sample(at(sx), at(sy)));
+                assert_eq!(samples[sy * side + sx], (h * units / one) as i32);
+            }
+        }
+    }
+
     /// A map file may ask for an odd side: the land still fits it.
     #[test]
     fn an_odd_side_grows() {
@@ -812,6 +792,8 @@ mod load_time {
         assert_eq!(map.habitat.len(), 257 * 257);
     }
 
+    /// The doc 27 target: a 768 map is made in under 3 seconds (release,
+    /// one core). `cargo test -p gc_map --release --lib grown_load_time -- --ignored --nocapture`
     #[test]
     #[ignore = "a timing, run by hand in release"]
     fn grown_load_time() {

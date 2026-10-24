@@ -132,7 +132,7 @@ Foot marches about 3 tiles a second. On maps of 512 tiles or more the starts sta
 
 **Making a random map.** A random map's side comes from its size and its player count (above). A recipe writes the north half from the seed, and the loader turns it half a circle for the south (`Rot2`), so both sides get the same ground. Every recipe puts the six starts on the plateaus of the seeded map: the four corners, and the middles of the north and south. If the starts of a random map can't all walk to each other, the next seed is tried, so nobody is shown a broken map.
 
-*Partly built:* [27 · Living Land](27-living-land.md) grows land from noise, strata, erosion and drainage instead of the Wilds' line and disc stamps. Stage 1 is built (2026-10-23): the Land maps above are grown, still mirrored; the Wilds stay as Classic. Measured fairness (a Mirrored option stays) is stage 3.
+*Partly built:* [27 · Living Land](27-living-land.md) grows land from noise, strata, erosion and drainage instead of the Wilds' line and disc stamps. Stage 1 is built (2026-10-23): the Land maps above are grown, still mirrored; the Wilds stay as Classic. Stage 2 (2026-10-24) gives cut-off plateaus a ramp and cuts passes and fords where two starts' way round is over 1.7 times the straight line. Measured fairness (a Mirrored option stays) is stage 3.
 
 **The recipes.** Each one starts from rolling ground and adds its own shape:
 - **Pass:** a cliff wall along the middle, with two to four gaps. One gap is a ford, and a rise behind another gap holds it.

@@ -33,7 +33,9 @@ use std::collections::BinaryHeap;
 
 use gc_fixed::Angle;
 
-use super::field::{Grid, ONE, Seeds, distance, fbm, hypot, lerp, mul, smoothstep, sqrt, warp};
+use super::field::{
+    Grid, ONE, Seeds, distance, fbm, hypot, lerp, mul, patches, smoothstep, sqrt, warp,
+};
 use super::{Dials, WATER_LINE};
 
 /// What the water layer leaves for the biomes.
@@ -67,6 +69,9 @@ const MIN_LAKE: usize = 300;
 const MAX_LAKE_DIV: usize = 120;
 /// About how many tiles of river lie between fords.
 const FORD_SPACING: i32 = 140;
+/// A river at least this wide somewhere (fixed point) has fords a third
+/// closer together.
+const WIDE_RIVER: i32 = 6 * ONE;
 /// The eight neighbours, as the prototype's order (ties go to the first).
 const N8: [(i32, i32); 8] = [
     (-1, -1),
@@ -602,46 +607,6 @@ fn dilate_cross(m: &[bool], n: usize) -> Vec<bool> {
     out
 }
 
-/// Every connected patch (four ways) of the mask, each as its tile
-/// indices, in the order their first tiles come.
-fn patches(m: &[bool], n: usize) -> Vec<Vec<usize>> {
-    let mut seen = vec![false; n * n];
-    let mut out = Vec::new();
-    let mut stack = Vec::new();
-    for s in 0..n * n {
-        if !m[s] || seen[s] {
-            continue;
-        }
-        seen[s] = true;
-        stack.push(s);
-        let mut patch = Vec::new();
-        while let Some(i) = stack.pop() {
-            patch.push(i);
-            let (x, y) = (i % n, i / n);
-            let mut visit = |k: usize| {
-                if m[k] && !seen[k] {
-                    seen[k] = true;
-                    stack.push(k);
-                }
-            };
-            if x > 0 {
-                visit(i - 1);
-            }
-            if x + 1 < n {
-                visit(i + 1);
-            }
-            if y > 0 {
-                visit(i - n);
-            }
-            if y + 1 < n {
-                visit(i + n);
-            }
-        }
-        out.push(patch);
-    }
-    out
-}
-
 /// Clear every connected patch of the mask no bigger than `min` tiles.
 fn keep_big(m: &mut [bool], n: usize, min: usize) {
     for patch in patches(m, n) {
@@ -745,7 +710,14 @@ fn fords(h: &mut Grid, seeds: &mut Seeds, keep: &[bool], lines: &[Line]) -> Vec<
         if tiles < 40 || widest < ONE * 35 / 10 {
             continue;
         }
-        let count = (tiles / FORD_SPACING).max(1);
+        // Wide rivers are crossed more often: they are the ones that cut
+        // the land in two.
+        let spacing = if widest >= WIDE_RIVER {
+            FORD_SPACING * 2 / 3
+        } else {
+            FORD_SPACING
+        };
+        let count = (tiles / spacing).max(1);
         for j in 0..count {
             // The middle of its stretch (a river is narrowest at its
             // source, which is no place for a ford).

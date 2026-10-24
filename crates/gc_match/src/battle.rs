@@ -1239,6 +1239,41 @@ pub(crate) mod tests {
         }
     }
 
+    /// The computer players find their way to each other on grown land
+    /// (Living Land stage 2's route check): at every wildness two of
+    /// them meet within the time a battle takes. `AI_BATTLES` seeds each.
+    #[test]
+    #[ignore = "slow: plays battles on grown maps, run by hand in release"]
+    fn grown_land_battles_meet() {
+        let n: u64 = std::env::var("AI_BATTLES").map_or(2, |v| v.parse().unwrap());
+        for k in 1..=3 {
+            for seed in 1..=n {
+                let map = gc_map::FieldMap {
+                    choice: gc_map::GROWN + k,
+                    tiles: 256,
+                    seed,
+                }
+                .make();
+                let setup = lobby(
+                    &[Some(Difficulty::Veteran), Some(Difficulty::Veteran)],
+                    &[0, 1],
+                );
+                let played = play_on(&setup, seed, 15, map, |_| {});
+                let met = played.first_contact.map(|t| t / gc_sim::TICKS_PER_SECOND);
+                println!(
+                    "{} seed {seed}: met at {met:?} s, {:?} after {} s",
+                    gc_map::FIELD_MAPS[gc_map::GROWN + k],
+                    played.battle.outcome,
+                    played.ticks / gc_sim::TICKS_PER_SECOND
+                );
+                assert!(
+                    met.is_some_and(|s| s < 600),
+                    "{k} seed {seed}: the armies never met"
+                );
+            }
+        }
+    }
+
     #[test]
     #[ignore = "slow: plays battles and prints what the minds cost, run by hand"]
     fn watch() {
