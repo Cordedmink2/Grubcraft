@@ -207,10 +207,11 @@ impl Running {
     /// tile of the line. This also works out the preview for the frame,
     /// which the hint reads too.
     pub fn push_wall_ghost(&mut self) {
-        self.hud.wall_preview = match self.hud.armed {
-            Some(Armed::Wall(id, _)) => self.wall_preview(id),
-            _ => None,
+        let Some(Armed::Wall(id, _)) = self.hud.armed else {
+            self.hud.wall_preview = None;
+            return;
         };
+        self.hud.wall_preview = self.wall_preview(id);
         let Some(Preview { line, plan }) = &self.hud.wall_preview else {
             return;
         };
@@ -229,6 +230,7 @@ impl Running {
         };
         buildings::push_wall_ghost(
             *line,
+            self.buildings.wall_look(id, false),
             tiles.into_iter(),
             colour,
             ground,
@@ -257,8 +259,14 @@ impl Running {
             self.say("Your walls already stand there.".into());
             return;
         }
-        let Some(regiment) = self.nearest_worker(buildings::centre_of(from, 1, 1)) else {
-            return;
+        // A wall grown along veins (the Brood's) takes no worker.
+        let regiment = if self.buildings.is_grown(building) {
+            None
+        } else {
+            let Some(w) = self.nearest_worker(buildings::centre_of(from, 1, 1)) else {
+                return;
+            };
+            Some(w)
         };
         // The tool keeps both ends within the map, so these fit.
         self.orders([Command::BuildWall {
@@ -305,10 +313,25 @@ impl Running {
         } else {
             ""
         };
-        Some(format!(
-            "{n} {tiles}, {price}{clear} - click to build and go on - right-click to finish"
+        Some(hint_line(
+            n,
+            tiles,
+            &price,
+            clear,
+            self.buildings.is_grown(id),
         ))
     }
+}
+
+/// The hint while a wall is drawn: a worker builds most walls, a grown one
+/// grows on its own.
+fn hint_line(n: u32, tiles: &str, price: &str, clear: &str, grown: bool) -> String {
+    let then = if grown {
+        "grows on its own - click to go on"
+    } else {
+        "click to build and go on"
+    };
+    format!("{n} {tiles}, {price}{clear} - {then} - right-click to finish")
 }
 
 #[cfg(test)]
@@ -320,6 +343,15 @@ mod tests {
             rect: [x, y, 1, 1],
             joins: true,
         }
+    }
+
+    #[test]
+    fn a_grown_wall_hint_names_no_worker() {
+        let grown = hint_line(3, "tiles", "30 Grub", "", true);
+        assert!(grown.contains("grows on its own"), "{grown}");
+        assert!(!grown.contains("build"), "{grown}");
+        let built = hint_line(3, "tiles", "30 Grub", "", false);
+        assert!(built.contains("click to build and go on"), "{built}");
     }
 
     #[test]

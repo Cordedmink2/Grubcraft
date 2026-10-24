@@ -122,6 +122,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Gorge | 2 | 180 / 60 | 60 s | 1,300 | Living | 4×4 |  | Lets larvae hatch into Broodmother Bulks and, at tier 3, the Colossus Maw. |
 | Spine Mound | 1 | 100 / 0 | 35 s | 900 | Living | 2×2 |  | Flings spines at ground and air. Range 30, 1 × 10 damage every 2 s. |
 | Queen's Chamber | 1 | 140 / 0 | 45 s | 1,100 | Living | 3×3 |  | Hatches and revives heroes. |
+| Resin Ridge | 1 | 8 / 0 a tile | 5 s a tile | 200 a tile | Living | 1×1, drawn as a line | Line, Grown | Grown by the Hive along its root-veins, every tile at once, with no Gnawer ([26](26-fortifications.md#drawn-walls)). Heals on the veins and withers off them. |
 
 ## Choir
 
@@ -137,6 +138,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Skyglass Loom | 2 | 160 / 50 | 55 s | 1,100 | Structure | 3×3 |  | Builds Skyglass. |
 | Bell Tower | 1 | 150 / 0 | 40 s | 900 | Fortified | 2×2 |  | A beam that hits ground and air. Every 20 s it tolls, silencing enemy abilities within 10 tiles for 5 s. Range 30, 1 × 10 damage every 2 s. |
 | Sanctum of Echoes | 1 | 150 / 0 | 50 s | 1,100 | Structure | 3×3 |  | Builds and restores heroes. |
+| Light Curtain | 1 | 10 / 0 a tile | 3 s a tile | 180 a tile | Fortified | 1×1, drawn as a line | Line, Pass, Needs power | A wall of light drawn inside your power ([26](26-fortifications.md#drawn-walls)). Your own troops walk through it; it drops for everyone without power. |
 
 ## Carrion Concord
 
@@ -153,3 +155,4 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Lantern Spire | 2 | 160 / 50 | 55 s | 1,000 | Structure | 3×3 |  | Trains Lantern Wraiths. |
 | Tollgate | 1 | 140 / 0 | 40 s | 1,000 | Fortified | 2×2 |  | Two crossbows that shoot at ground and air. Every 4 damage it deals earns 1 Grub. Range 30, 2 × 5 damage every 2 s. |
 | Vault of Names | 1 | 150 / 0 | 50 s | 1,200 | Structure | 3×3 |  | Hires and revives heroes. |
+| Bone Fence | 1 | 12 / 0 a tile | 4 s a tile | 300 a tile | Fortified | 1×1, drawn as a line | Line | Bone stakes and chain, drawn at any angle ([26](26-fortifications.md#drawn-walls)). Blocks movement. |

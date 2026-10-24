@@ -14,16 +14,26 @@
 //! lays it builds it tile by tile from the end nearer it, going on each
 //! time to the next unfinished tile of its side's walls beside it (see
 //! [`Structures::next_wall_tile`]).
+//!
+//! A Brood wall ([`GROWN`]) is grown, not built: it takes no worker, goes
+//! only where its owner's root-veins reach, and every tile of it grows at
+//! once on its own. A tile its veins no longer reach withers
+//! ([`WITHER_PER_SECOND`]) until it dies.
 
 use crate::conquest::{Conquest, overgrown, overlaps};
 use crate::nav::Nav;
 use crate::regiments::Regiments;
-use crate::structures::{BuildingId, GATE, LINE, Refusal, StructureHandle, Structures, Work};
+use crate::structures::{
+    BuildingId, GATE, GROWN, LINE, Refusal, StructureHandle, Structures, Work,
+};
 use crate::terrain::Terrain;
 use crate::{PlayerId, Vec};
 
 /// The most tiles a wall drawn in one order covers.
 pub const MAX_WALL_TILES: usize = 32;
+
+/// Hit points a second a Brood wall tile off its owner's veins loses.
+pub const WITHER_PER_SECOND: u32 = 10;
 
 /// How near, in tiles, a worker that finishes a tile of wall looks for the
 /// next to build.
@@ -119,16 +129,38 @@ impl Structures {
             return None;
         }
         let mut ends = None;
+        let grown = self.buildings()[usize::from(building)].flags & GROWN != 0;
         for t in plan {
             let i = self.take_slot(owner, building, t.tile, 0).expect("room");
             self.lay_foundation(i);
             self.line[i] = line;
+            self.growing[i] = grown;
             let h = self.handle(i);
             ends = Some(ends.map_or((h, h), |(first, _)| (first, h)));
         }
         let feet: Vec<[i32; 4]> = plan.iter().map(|t| [t.tile.0, t.tile.1, 1, 1]).collect();
         nav.set_built_all(&feet, true, regs);
         ends
+    }
+
+    /// One tick: each tile of a Brood wall its owner's veins don't reach
+    /// withers, and falls when it has no hit points left. The tiles of a
+    /// cut-off wall fall together, so they come down in one change to the
+    /// walking grid (the list is made only when some fall).
+    pub(crate) fn wither(&mut self, nav: &mut Nav, regs: &Regiments) {
+        let mut falling = Vec::new();
+        for i in 0..self.line.len() {
+            if !self.stands(i) || self.flags_of(i) & GROWN == 0 || self.rooted(i) {
+                continue;
+            }
+            if self.wear(i, WITHER_PER_SECOND) {
+                falling.push(self.handle(i));
+            }
+        }
+        if !falling.is_empty() {
+            self.fallen.extend_from_slice(&falling);
+            self.despawn_all(&falling, nav, regs);
+        }
     }
 }
 
@@ -170,10 +202,12 @@ impl Conquest {
             .into_iter()
             .filter(|&t| !own.iter().any(|&foot| overlaps(foot, [t.0, t.1, 1, 1])))
             .map(|tile| {
+                let foot = [tile.0, tile.1, 1, 1];
                 let fits = (self.check(building, tile, 0, nav, regs, terrain))
                     .and_then(|()| self.powered(player, building, tile, 0))
+                    .and_then(|()| self.rooted(player, building, tile, 0))
                     .and_then(|()| {
-                        if overgrown(terrain, [tile.0, tile.1, 1, 1]) {
+                        if overgrown(terrain, foot) {
                             Err(Refusal::Overgrown)
                         } else {
                             Ok(())
@@ -198,13 +232,14 @@ impl Conquest {
 
     /// Worker slot `r`, `player`'s, lays a wall of type `building` from tile
     /// `from` to tile `to` (see [`Conquest::wall_plan`]), pays for all of
-    /// it and goes to build the tile nearest it. Refused if any tile can't
-    /// go up, or there is nothing new to build.
+    /// it and goes to build the tile nearest it; a wall grown along veins
+    /// takes no worker (`r` is `None`) and grows on its own. Refused if
+    /// any tile can't go up, or there is nothing new to build.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn lay_wall(
         &mut self,
         player: PlayerId,
-        r: usize,
+        r: Option<usize>,
         building: BuildingId,
         from: (i32, i32),
         to: (i32, i32),
@@ -212,12 +247,22 @@ impl Conquest {
         regs: &mut Regiments,
         terrain: &Terrain,
     ) -> bool {
-        // A worker used up on the building it starts would leave the rest
-        // of the wall unbuilt.
-        let kind = self.unit(regs.unit[r]);
-        if !kind.worker || kind.consumed {
+        let Some(&stats) = self.structures.buildings().get(usize::from(building)) else {
             return false;
-        }
+        };
+        // A grown wall takes no worker; any other a worker that isn't used
+        // up on the building it starts, which would leave the rest unbuilt.
+        let worker = match (r, stats.flags & GROWN != 0) {
+            (None, true) => None,
+            (Some(r), false) => {
+                let kind = self.unit(regs.unit[r]);
+                if !kind.worker || kind.consumed {
+                    return false;
+                }
+                Some(r)
+            }
+            _ => return false,
+        };
         let Ok(plan) = self.wall_plan(player, building, from, to, nav, regs, terrain) else {
             return false;
         };
@@ -231,14 +276,17 @@ impl Conquest {
         else {
             return false;
         };
-        let stats = self.structures.buildings()[usize::from(building)];
         let n = plan.len() as u32;
         self.economy.spend(
             player,
             u32::from(stats.cost_grub) * n,
             u32::from(stats.cost_marrow) * n,
         );
-        // It starts at the end nearer it and works along.
+        let Some(r) = worker else {
+            // Grown: every tile grows on its own.
+            return true;
+        };
+        // The worker starts at the end nearer it and works along.
         let here = regs.position[r];
         let gap = |h: &StructureHandle| {
             let c = self.structures.centre(h.index as usize) - here;

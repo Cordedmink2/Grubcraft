@@ -120,6 +120,8 @@ enum BuildingFlag {
     Silences,
     Gate,
     Line,
+    Pass,
+    Grown,
     #[serde(other)]
     Other,
 }
@@ -504,6 +506,12 @@ fn building_flag_text(f: BuildingFlag, b: &RBuilding) -> Option<String> {
         }
         BuildingFlag::Line => {
             "Drawn wall: drag it out at any angle, paid and built a tile at a time".into()
+        }
+        BuildingFlag::Pass => {
+            "Your side walks through it; without power it drops and anyone can".into()
+        }
+        BuildingFlag::Grown => {
+            "Grown along your root-veins, no Gnawer needed; withers off them".into()
         }
         BuildingFlag::Other => return None,
     })

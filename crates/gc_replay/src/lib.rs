@@ -45,6 +45,8 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 32: grown walls (a build-wall command with no worker; 31 is kept for
+///   terrain tactics);
 /// - 30: the Conquest units' clearing styles (read as the standard one);
 /// - 29: drawn walls (the build-wall command);
 /// - 28: gates (the set-gate command);
@@ -85,7 +87,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 30;
+pub const FORMAT: u16 = 32;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.

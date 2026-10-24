@@ -218,6 +218,18 @@
             flags: [NeedsPower],
             effect: "Builds and restores heroes.",
         ),
+        (
+            name: "Light Curtain",
+            role: Wall,
+            tier: 1,
+            cost: (grub: 10, marrow: 0),
+            build_time: 3.0,
+            hp: 180,
+            armour: Fortified,
+            footprint: (1, 1),
+            flags: [Line, Pass, NeedsPower],
+            effect: "A wall of light you draw at any angle inside your power. Your own troops walk straight through it; enemies don't, until its power is cut and it drops.",
+        ),
     ],
     units: [
         (

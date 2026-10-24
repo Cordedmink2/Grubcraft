@@ -33,6 +33,8 @@ const _: () = assert!(
         && record::BUILDING_SILENCES == gc_sim::structures::SILENCES
         && record::BUILDING_GATE == gc_sim::structures::GATE
         && record::BUILDING_LINE == gc_sim::structures::LINE
+        && record::BUILDING_PASS == gc_sim::structures::PASS
+        && record::BUILDING_GROWN == gc_sim::structures::GROWN
         && record::MAX_REACH_TILES == gc_sim::structures::MAX_REACH
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );
@@ -44,6 +46,22 @@ const WALL_HEIGHT: f32 = 1.5;
 /// a step, to the edge of its tile.
 const LINE_THICK: f32 = 0.5;
 const LINE_JOINT: f32 = 0.05;
+/// Bone Fence: pale bone, a little lower than a palisade.
+const BONE_COLOR: [u8; 3] = [214, 206, 180];
+const BONE_HEIGHT: f32 = 1.2;
+/// Light Curtain: thin and tall, glowing pale cyan. Dropped, it is a faint
+/// low line on the ground.
+const CURTAIN_COLOR: [u8; 3] = [150, 220, 255];
+const CURTAIN_THICK: f32 = 0.16;
+const CURTAIN_HEIGHT: f32 = 1.7;
+const CURTAIN_GLOW: u8 = 200;
+const CURTAIN_DROPPED_HEIGHT: f32 = 0.06;
+const CURTAIN_DROPPED_GLOW: u8 = 60;
+/// Resin Ridge: amber resin, lower and wider than a palisade.
+const RESIN_COLOR: [u8; 3] = [196, 126, 40];
+const RESIN_HEIGHT: f32 = 1.0;
+const RESIN_THICK: f32 = 0.8;
+const RESIN_GLOW: u8 = 30;
 /// A building model's walls are what stands in its lowest share.
 const WALL_SHARE: f32 = 0.3;
 /// A gate's jamb posts stand a little over its walls' height.
@@ -213,6 +231,21 @@ impl Table {
     pub fn is_wall(&self, building: BuildingId) -> bool {
         (self.stats.get(usize::from(building)))
             .is_some_and(|s| s.flags & gc_sim::structures::LINE != 0)
+    }
+
+    /// Whether `building` is a wall grown along veins with no worker.
+    pub fn is_grown(&self, building: BuildingId) -> bool {
+        (self.stats.get(usize::from(building)))
+            .is_some_and(|s| s.flags & gc_sim::structures::GROWN != 0)
+    }
+
+    /// How a drawn wall of type `building` looks (`open`: its door is open
+    /// to everyone).
+    pub fn wall_look(&self, building: BuildingId, open: bool) -> WallLook {
+        match self.stats.get(usize::from(building)) {
+            Some(s) => wall_look(self.faction(building), s.flags, open),
+            None => WallLook::PLAIN,
+        }
     }
 
     /// A type's name.
@@ -553,11 +586,71 @@ pub fn wall_piece(line: [i32; 4], tile: (i32, i32)) -> Option<WallPiece> {
     })
 }
 
+/// How a wall tile is drawn: its height and thickness in tiles, a colour of
+/// its own (else its owner's) and how much it glows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WallLook {
+    pub height: f32,
+    pub thick: f32,
+    pub colour: Option<[u8; 3]>,
+    pub glow: u8,
+}
+
+impl WallLook {
+    /// The plain wall: the owner's colour, no glow.
+    pub const PLAIN: WallLook = WallLook {
+        height: WALL_HEIGHT,
+        thick: LINE_THICK,
+        colour: None,
+        glow: 0,
+    };
+}
+
+/// The look of a drawn wall of `faction` with building `flags`; `open` is
+/// true while its door is open to everyone (a dropped Light Curtain).
+pub fn wall_look(faction: Option<Faction>, flags: u16, open: bool) -> WallLook {
+    use gc_sim::structures::{GROWN, PASS};
+    if flags & PASS != 0 {
+        let dropped = open;
+        return WallLook {
+            height: if dropped {
+                CURTAIN_DROPPED_HEIGHT
+            } else {
+                CURTAIN_HEIGHT
+            },
+            thick: CURTAIN_THICK,
+            colour: Some(CURTAIN_COLOR),
+            glow: if dropped {
+                CURTAIN_DROPPED_GLOW
+            } else {
+                CURTAIN_GLOW
+            },
+        };
+    }
+    if flags & GROWN != 0 {
+        return WallLook {
+            height: RESIN_HEIGHT,
+            thick: RESIN_THICK,
+            colour: Some(RESIN_COLOR),
+            glow: RESIN_GLOW,
+        };
+    }
+    if faction == Some(Faction::CarrionConcord) {
+        return WallLook {
+            height: BONE_HEIGHT,
+            colour: Some(BONE_COLOR),
+            ..WallLook::PLAIN
+        };
+    }
+    WallLook::PLAIN
+}
+
 /// One box for the wall tile `s`: a straight slab along the line it was
 /// drawn in, or the usual block if it has no line or the line is one tile.
 fn wall_block(
     s: &StructureView,
     height: f32,
+    thick: f32,
     color: [u8; 4],
     ground: &impl Fn(f32, f32) -> f32,
 ) -> BoxInstance {
@@ -566,7 +659,7 @@ fn wall_block(
     };
     let slab = Slab {
         centre: piece.centre,
-        size: Vec2::new(LINE_THICK, piece.len),
+        size: Vec2::new(thick, piece.len),
     };
     BoxInstance {
         facing: piece.dir.to_array(),
@@ -692,11 +785,26 @@ pub fn push(
         // floats over the model's roof).
         // A gate standing is drawn as posts and door leaves, not a block.
         let model = modelled(&s);
-        let height = model.unwrap_or(height_of(stats.role));
-        let [r, g, b] = shade(team(s.owner), s.hp, s.max_hp);
+        let look = if s.line.is_some() {
+            table.wall_look(s.building, s.open)
+        } else {
+            WallLook::PLAIN
+        };
+        let height = match (model, s.line) {
+            (Some(h), _) => h,
+            (None, Some(_)) => look.height,
+            (None, None) => height_of(stats.role),
+        };
+        let [r, g, b] = shade(look.colour.unwrap_or_else(|| team(s.owner)), s.hp, s.max_hp);
         match (s.gate.is_some() && s.finished(), model) {
             (true, _) => push_gate(&s, model.is_none().then_some([r, g, b]), &ground, out),
-            (false, None) => out.push(wall_block(&s, height, [r, g, b, 0], &ground)),
+            (false, None) => out.push(wall_block(
+                &s,
+                height,
+                look.thick,
+                [r, g, b, look.glow],
+                &ground,
+            )),
             (false, Some(_)) => {}
         }
         if s.hp >= s.max_hp {
@@ -1395,6 +1503,7 @@ pub fn push_ghost(
 /// wall (a line of one tile is a plain block).
 pub fn push_wall_ghost(
     line: [i32; 4],
+    look: WallLook,
     tiles: impl Iterator<Item = ((i32, i32), Fit)>,
     colour: [u8; 3],
     ground: impl Fn(f32, f32) -> f32,
@@ -1407,7 +1516,7 @@ pub fn push_wall_ghost(
         let colour = ghost_colour(fit, colour);
         let mut view = footprint_view(tile, 1, 1, 0);
         view.line = Some(line);
-        out.push(wall_block(&view, WALL_HEIGHT, colour, &ground));
+        out.push(wall_block(&view, look.height, look.thick, colour, &ground));
     }
 }
 
@@ -1525,12 +1634,28 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::NoShrine => "Edicts are cast from a finished Ancestor Shrine.",
         Refusal::Overgrown => "Clear the ground there first.",
         Refusal::NoRoom => "There's no room on the map for more buildings.",
+        Refusal::NoVeins => "It grows only where your root-veins reach.",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_faction_wall_has_its_own_look() {
+        use gc_sim::structures::{GROWN, LINE, PASS};
+        let plain = wall_look(Some(Faction::EmberClans), LINE, false);
+        assert_eq!(plain, WallLook::PLAIN);
+        let bone = wall_look(Some(Faction::CarrionConcord), LINE, false);
+        assert!(bone.colour.is_some() && bone.height < plain.height);
+        let up = wall_look(Some(Faction::Choir), LINE | PASS, false);
+        let down = wall_look(Some(Faction::Choir), LINE | PASS, true);
+        assert!(up.thick < plain.thick && up.height > down.height);
+        assert!(up.glow > down.glow);
+        let resin = wall_look(Some(Faction::Brood), LINE | GROWN, false);
+        assert!(resin.thick > plain.thick && resin.height < plain.height);
+    }
 
     #[test]
     fn every_baked_building_converts_whole() {

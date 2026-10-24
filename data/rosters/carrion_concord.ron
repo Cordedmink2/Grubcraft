@@ -227,6 +227,18 @@
             footprint: (3, 3),
             effect: "Hires and revives heroes.",
         ),
+        (
+            name: "Bone Fence",
+            role: Wall,
+            tier: 1,
+            cost: (grub: 12, marrow: 0),
+            build_time: 4.0,
+            hp: 300,
+            armour: Fortified,
+            footprint: (1, 1),
+            flags: [Line],
+            effect: "A wall of bone stakes and chain you draw at any angle, priced and built a tile at a time. Blocks movement.",
+        ),
     ],
     units: [
         (

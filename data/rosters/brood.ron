@@ -175,6 +175,18 @@
             footprint: (3, 3),
             effect: "Hatches and revives heroes.",
         ),
+        (
+            name: "Resin Ridge",
+            role: Wall,
+            tier: 1,
+            cost: (grub: 8, marrow: 0),
+            build_time: 5.0,
+            hp: 200,
+            armour: Living,
+            footprint: (1, 1),
+            flags: [Line, Grown],
+            effect: "A ridge of resin the Hive grows along its root-veins, every tile at once, with no Gnawer. Heals on the veins and withers off them.",
+        ),
     ],
     units: [
         (

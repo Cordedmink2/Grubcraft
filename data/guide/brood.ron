@@ -106,6 +106,15 @@
                 (icon: Heart, text: "Hire the Queen-in-Waiting for healing and haste, since she supports the whole army."),
             ],
         ),
+        (
+            name: "Resin Ridge",
+            summary: "A wall the Hive grows: click the start, move, click the end; click again to bend it, right-click to finish. It goes only where your root-veins reach, takes no Gnawer and grows every tile at once. It heals on the veins and withers off them.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Spread veins first: a ridge grows only where your root-veins reach."),
+                (icon: Alarm, text: "Cut the veins under an enemy ridge and it withers away on its own."),
+            ],
+        ),
     ],
     units: [
         (

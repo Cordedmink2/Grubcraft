@@ -128,6 +128,11 @@ pub enum BuildingFlag {
     /// A wall drawn as a line, its stats for one tile (docs/26, "Drawn
     /// walls").
     Line,
+    /// Choir: a drawn wall its owner's side walks through; it drops
+    /// without power.
+    Pass,
+    /// Brood: a drawn wall grown along root-veins with no worker.
+    Grown,
 }
 
 #[derive(Deserialize)]

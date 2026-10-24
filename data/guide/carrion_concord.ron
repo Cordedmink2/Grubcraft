@@ -116,6 +116,15 @@
                 (icon: Heart, text: "Keep Marrow in reserve for a replacement hero, since heroes cost Marrow here."),
             ],
         ),
+        (
+            name: "Bone Fence",
+            summary: "A wall you draw: click the start, move, click the end; click again to bend it, right-click to finish. Shift locks 15-degree steps. Priced and built a tile at a time, and a worker walks along it building.",
+            notes: [],
+            tips: [
+                (icon: Alarm, text: "Close a choke point end to end, since regiments file through a gap just one tile wide."),
+                (icon: Hammer, text: "Start or end near a wall end or tower and the line snaps to it, so walls join cleanly."),
+            ],
+        ),
     ],
     units: [
         (

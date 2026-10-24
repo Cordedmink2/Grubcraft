@@ -20,8 +20,8 @@ use crate::production::Production;
 use crate::regiments::Regiments;
 use crate::stances::Stances;
 use crate::structures::{
-    Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, LINE, NEEDS_POWER, Refusal, Role,
-    StructureHandle, Structures, Work,
+    Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, GROWN, LINE, NEEDS_POWER, Refusal,
+    Role, StructureHandle, Structures, Work,
 };
 use crate::terrain::{Growth, Terrain};
 use crate::verdict::Victories;
@@ -245,10 +245,12 @@ impl Conquest {
         out: u8,
     ) {
         self.structures.update(regs, stats, &self.units, nav);
-        self.structures.work_gates(regs, nav, stances);
         self.structures.link_veins();
         self.structures.regrow();
+        self.structures.wither(nav, regs);
         self.structures.link_power();
+        // After the power, which the Choir's walls read.
+        self.structures.work_gates(regs, nav, stances);
         self.structures.charge_resonance();
         self.structures.grow_larvae();
         self.economy
@@ -402,6 +404,23 @@ impl Conquest {
             return Err(Refusal::Unknown);
         }
         self.powered(player, building, tile, turn)
+    }
+
+    /// Whether a building of type `building` `player` lays at `tile` has
+    /// the root-veins it needs under it, if it needs them (a grown wall).
+    pub(crate) fn rooted(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        tile: (i32, i32),
+        turn: u8,
+    ) -> Result<(), Refusal> {
+        let b = self.structures.buildings()[usize::from(building)];
+        let foot = b.footprint(tile, turn);
+        if b.flags & GROWN != 0 && !self.structures.veins_reach(player, foot) {
+            return Err(Refusal::NoVeins);
+        }
+        Ok(())
     }
 
     /// Whether a building of type `building` `player` lays at `tile`,

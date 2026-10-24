@@ -180,6 +180,8 @@ pub enum Refusal {
     Overgrown,
     /// The match has no room for that many more buildings.
     NoRoom,
+    /// It grows only on its owner's root-veins, and they don't reach there.
+    NoVeins,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -210,6 +212,12 @@ pub const SILENCES: u16 = 1024;
 pub const GATE: u16 = 2048;
 /// A wall drawn as a line, a building a tile (see [`crate::walls`]).
 pub const LINE: u16 = 4096;
+/// Choir: a wall its owner's side walks straight through, and everyone
+/// does once it has no power (see [`crate::gates`]).
+pub const PASS: u16 = 8192;
+/// Brood: a drawn wall grown along its owner's root-veins with no worker,
+/// that withers off them (see [`crate::walls`]).
+pub const GROWN: u16 = 16384;
 /// The furthest a field or tuning reaches, in tiles.
 pub const MAX_REACH: u8 = 30;
 
@@ -296,10 +304,15 @@ impl BuildingStats {
 
     /// The same stats forced into the ranges the simulation relies on.
     pub fn sanitized(self) -> BuildingStats {
-        // A wall drawn as a line is a tile a building.
+        // A wall drawn as a line is a tile a building; what only such a
+        // wall can be goes with it.
         let line = self.width == 1 && self.depth == 1;
         BuildingStats {
-            flags: if line { self.flags } else { self.flags & !LINE },
+            flags: if line {
+                self.flags
+            } else {
+                self.flags & !(LINE | PASS | GROWN)
+            },
             hp: self.hp.max(1),
             width: self.width.clamp(1, MAX_FOOTPRINT),
             depth: self.depth.clamp(1, MAX_FOOTPRINT),
@@ -546,7 +559,7 @@ pub struct Structures {
     crew: Vec<u8>,
     /// A building going up on its own, having used up the worker that
     /// started it (the Brood's, see [`ConquestUnit::consumed`]).
-    growing: Vec<bool>,
+    pub(crate) growing: Vec<bool>,
     /// Brood: larvae each building holds, and ticks until its next one
     /// (0 while full); see [`crate::larvae`].
     pub(crate) larvae: Vec<u8>,
@@ -1045,6 +1058,16 @@ impl Structures {
         self.hp[i] = (self.hp[i] + per_second * HP_SCALE / TICKS_PER_SECOND).min(max);
     }
 
+    /// Building slot `i` loses `per_second` hit points a second; whether
+    /// that wears it out. A worn-out building is left at its last hit point
+    /// for the caller to take down.
+    pub(crate) fn wear(&mut self, i: usize, per_second: u32) -> bool {
+        let loss = per_second * HP_SCALE / TICKS_PER_SECOND;
+        let out = self.hp[i] <= loss;
+        self.hp[i] = if out { 1 } else { self.hp[i] - loss };
+        out
+    }
+
     /// Whether building slot `i` has a tier upgrade going on.
     pub(crate) fn upgrading(&self, i: usize) -> bool {
         self.upgrade_to[i].is_some()
@@ -1244,7 +1267,7 @@ impl Structures {
     }
 
     /// Free building slot `i` (standing, or just brought to nothing).
-    fn remove(&mut self, i: usize, nav: &mut Nav, regs: &Regiments) {
+    pub(crate) fn remove(&mut self, i: usize, nav: &mut Nav, regs: &Regiments) {
         self.hand_on_wall(i, regs);
         self.shut_door(i, nav, regs);
         nav.set_built(self.footprint(i), false, regs);
@@ -1345,9 +1368,10 @@ impl Structures {
         self.upgrades();
         self.crew.fill(0);
         // A building that used up its worker grows as one builder would
-        // build it.
+        // build it; a grown wall only while its veins reach it.
         for s in 0..self.hp.len() {
-            if self.hp[s] > 0 && self.growing(s) {
+            let cut_off = || self.flags_of(s) & GROWN != 0 && !self.rooted(s);
+            if self.hp[s] > 0 && self.growing(s) && !cut_off() {
                 self.build(s, 1);
             }
         }
@@ -1577,7 +1601,7 @@ impl Structures {
             if self.stats_of(i).attack.is_some() {
                 self.hash_tower(i, h);
             }
-            if self.is_gate(i) {
+            if self.is_door(i) {
                 self.hash_gate(i, h);
             }
         }

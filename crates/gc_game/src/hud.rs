@@ -861,7 +861,7 @@ impl Running {
                     if let Some(Action::Lay(b)) = card.slots[i]
                         && self.buildings.is_wall(b)
                     {
-                        tip = WALL_TIP;
+                        tip = wall_tip(self.buildings.stats[usize::from(b)].flags);
                     }
                     *slot = GridSlot {
                         label: &card_labels[i],
@@ -1749,7 +1749,22 @@ fn gate_now(open: bool) -> &'static str {
 }
 
 /// The tooltip of a wall on the build menu (it replaces a building's).
-const WALL_TIP: &str = "A worker draws this wall. Click its start, then click each end or bend, a tile at a time. Right-click ends it; Shift locks 15-degree steps.";
+const WALL_TIP: &str = "Draw this wall: click its start, then click each end or bend, a tile at a time. Right-click ends it; Shift locks 15-degree steps.";
+/// The Light Curtain's and the Resin Ridge's tips say what is different.
+const WALL_TIP_PASS: &str = "Draw this wall: click its start, then each end or bend. Your own troops walk through it; it drops when power fails. Right-click ends it; Shift locks 15-degree steps.";
+const WALL_TIP_GROWN: &str = "Draw this wall: click its start, then each end or bend. It grows on its own along your root-veins, with no Gnawer. Right-click ends it; Shift locks 15-degree steps.";
+
+/// The build-menu tooltip for the wall `flags` describe.
+fn wall_tip(flags: u16) -> &'static str {
+    use gc_sim::structures::{GROWN, PASS};
+    if flags & PASS != 0 {
+        WALL_TIP_PASS
+    } else if flags & GROWN != 0 {
+        WALL_TIP_GROWN
+    } else {
+        WALL_TIP
+    }
+}
 
 /// The picture and tooltip line of a Conquest card slot.
 fn card_look(action: Option<Action>) -> (Icon, &'static str) {

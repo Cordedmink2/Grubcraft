@@ -107,6 +107,15 @@
                 (icon: Sword, text: "Pair the Refractor with Prism Lancers for damage, and the Hollow Bell for stuns and morale."),
             ],
         ),
+        (
+            name: "Light Curtain",
+            summary: "A wall of light you draw inside your power: click the start, move, click the end; click again to bend it, right-click to finish. Your own troops walk straight through it, so the Choir needs no gates. Enemies can't, until its power is cut and it drops.",
+            notes: [],
+            tips: [
+                (icon: Move, text: "Your army marches through your own curtains, so wall every way in and keep moving freely."),
+                (icon: Alarm, text: "Guard the Resonators that power it: lose them and the curtain drops for everyone."),
+            ],
+        ),
     ],
     units: [
         (

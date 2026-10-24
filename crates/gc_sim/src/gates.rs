@@ -14,11 +14,15 @@
 //! - **Open**: held open to everyone, for a sally.
 //!
 //! A gate going up is a wall to everyone until it is finished.
+//!
+//! A Choir wall ([`PASS`]) is a door too, always open to its own side and
+//! shut to the rest while it has power; without power it drops, open to
+//! everyone, so cutting the power opens the base. It has no setting.
 
 use crate::nav::{Door, Nav};
 use crate::regiments::Regiments;
 use crate::stances::Stances;
-use crate::structures::{GATE, Structures};
+use crate::structures::{GATE, PASS, Structures};
 use crate::veins::within;
 use crate::{StateHasher, TICKS_PER_SECOND};
 
@@ -59,11 +63,22 @@ const OPEN: Door = Door {
     own: true,
     others: true,
 };
+/// A door open to its own side only: a powered wall it walks through.
+const OWN_ONLY: Door = Door {
+    own: true,
+    others: false,
+};
 
 impl Structures {
     /// Whether building slot `i` is a gate.
     pub(crate) fn is_gate(&self, i: usize) -> bool {
         self.flags_of(i) & GATE != 0
+    }
+
+    /// Whether building slot `i` is a door in the walking grid: a gate, or
+    /// a wall its side walks through.
+    pub(crate) fn is_door(&self, i: usize) -> bool {
+        self.flags_of(i) & (GATE | PASS) != 0
     }
 
     /// Set building slot `i`'s gate (the caller has checked it is one).
@@ -76,10 +91,13 @@ impl Structures {
     /// changed.
     pub(crate) fn work_gates(&mut self, regs: &Regiments, nav: &mut Nav, stances: &Stances) {
         for i in 0..self.gate_door.len() {
-            if !self.stands(i) || !self.is_gate(i) || !self.finished(i) {
+            if !self.stands(i) || !self.is_door(i) || !self.finished(i) {
                 continue;
             }
             let now = match self.gate[i] {
+                // A wall its side walks through, while it has power.
+                _ if !self.is_gate(i) && self.powered(i) => OWN_ONLY,
+                _ if !self.is_gate(i) => OPEN,
                 GateMode::Locked => SHUT,
                 GateMode::Open => OPEN,
                 GateMode::Auto => {

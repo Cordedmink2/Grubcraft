@@ -159,6 +159,7 @@ Chitin Guard ─┬─▶ Mantid Reapers (anti-cavalry, high damage)
 | Gorge | Monsters and siege |
 | Spine Mound | Defensive tower |
 | Queen's Chamber | Heroes |
+| Resin Ridge | Defence: a wall grown along root-veins with no Gnawer |
 
 Cost, hit points, build time and size for each: [21 · Buildings](21-buildings.md#brood).
 
@@ -225,6 +226,7 @@ Choir beam weapons pass *through* allied crystal units and split. A Prism Lancer
 | Skyglass Loom | Air |
 | Bell Tower | Defence, pulse that silences abilities |
 | Sanctum of Echoes | Heroes |
+| Light Curtain | Defence: a wall your own troops walk through; drops without power |
 
 Cost, hit points, build time and size for each: [21 · Buildings](21-buildings.md#choir).
 
@@ -296,6 +298,7 @@ Concord undead regiments ignore morale entirely. Instead they **crumble**: they 
 | Lantern Spire | Air |
 | Tollgate | Defensive tower; damage it deals earns Grub |
 | Vault of Names | Heroes |
+| Bone Fence | Defence: a drawn wall |
 
 Cost, hit points, build time and size for each: [21 · Buildings](21-buildings.md#carrion-concord).
 

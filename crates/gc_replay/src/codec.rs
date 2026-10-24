@@ -379,8 +379,14 @@ impl Writer {
                 from,
                 to,
             } => {
-                self.u8(29);
-                self.handle(regiment);
+                // A grown wall, with no worker, has a tag of its own.
+                match regiment {
+                    Some(r) => {
+                        self.u8(29);
+                        self.handle(r);
+                    }
+                    None => self.u8(30),
+                }
                 self.var(u64::from(building));
                 for v in [from.0, from.1, to.0, to.1] {
                     self.var(u64::from(v as u16));
@@ -796,8 +802,12 @@ impl<'a> Reader<'a> {
                 on: self.bool()?,
             },
             21 => Command::HandOver { to: self.u8()? },
-            29 => Command::BuildWall {
-                regiment: self.handle()?,
+            tag @ (29 | 30) => Command::BuildWall {
+                regiment: if tag == 29 {
+                    Some(self.handle()?)
+                } else {
+                    None
+                },
                 building: self.var_as()?,
                 from: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
                 to: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
@@ -993,13 +1003,19 @@ mod tests {
                 mode: gc_sim::gates::GateMode::Open,
             },
             Command::BuildWall {
-                regiment: RegimentHandle {
+                regiment: Some(RegimentHandle {
                     index: 8,
                     generation: 1,
-                },
+                }),
                 building: 2,
                 from: (40, -5),
                 to: (12, 3),
+            },
+            Command::BuildWall {
+                regiment: None,
+                building: 5,
+                from: (3, 9),
+                to: (9, 3),
             },
             Command::FocusTower {
                 structure: StructureHandle {

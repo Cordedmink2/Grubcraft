@@ -113,8 +113,14 @@ pub const BUILDING_GATE: u16 = 2048;
 /// A wall drawn as a line: its stats are for one tile, and each tile of
 /// the line is a building of its own (docs/26, "Drawn walls").
 pub const BUILDING_LINE: u16 = 4096;
+/// Choir: a drawn wall its owner's side walks through, and everyone does
+/// once it has no power (docs/26).
+pub const BUILDING_PASS: u16 = 8192;
+/// Brood: a drawn wall grown along its owner's root-veins with no worker
+/// (docs/26).
+pub const BUILDING_GROWN: u16 = 16384;
 /// Every flag there is; a record with any other bit set is refused.
-const BUILDING_FLAGS: u16 = (BUILDING_LINE << 1) - 1;
+const BUILDING_FLAGS: u16 = (BUILDING_GROWN << 1) - 1;
 
 /// [`BuildingRecord::tunes`]: the nodes a building tunes (schema 4).
 pub const TUNES_NOTHING: u8 = 0;
@@ -489,6 +495,14 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     }
     if b.flags & BUILDING_LINE != 0 && (b.width, b.depth) != (1, 1) {
         return Err("a wall drawn as a line has a one-tile footprint");
+    }
+    if b.flags & (BUILDING_PASS | BUILDING_GROWN) != 0 && b.flags & BUILDING_LINE == 0 {
+        return Err("only a wall drawn as a line is walked through or grown");
+    }
+    if b.flags & BUILDING_PASS != 0
+        && (b.flags & BUILDING_NEEDS_POWER == 0 || b.flags & BUILDING_GATE != 0)
+    {
+        return Err("a wall its side walks through needs power and is no gate");
     }
     let fields = b.flags & (BUILDING_POWERS_FIELD | BUILDING_VEINS) != 0;
     if fields != (b.field_tiles > 0) || b.field_tiles > MAX_REACH_TILES {

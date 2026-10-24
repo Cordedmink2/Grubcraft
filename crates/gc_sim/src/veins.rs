@@ -183,9 +183,12 @@ impl Structures {
 
     /// Whether building slot `i` stands on its owner's linked veins.
     pub(crate) fn rooted(&self, i: usize) -> bool {
-        let foot = self.footprint(i);
-        self.veins_of(self.owner_of(i))
-            .any(|v| self.reaches(v, foot))
+        self.veins_reach(self.owner_of(i), self.footprint(i))
+    }
+
+    /// Whether `owner`'s linked veins reach footprint `foot`.
+    pub(crate) fn veins_reach(&self, owner: PlayerId, foot: [i32; 4]) -> bool {
+        self.veins_of(owner).any(|v| self.reaches(v, foot))
     }
 
     /// One tick: hurt living buildings on their owner's veins regrow.

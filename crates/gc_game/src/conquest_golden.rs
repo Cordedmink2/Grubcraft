@@ -806,7 +806,7 @@ impl Match {
         out.push(PlayerCommand {
             player: p,
             command: Command::BuildWall {
-                regiment: w,
+                regiment: Some(w),
                 building: b,
                 from: (from.0 as i16, from.1 as i16),
                 to: (to.0 as i16, to.1 as i16),

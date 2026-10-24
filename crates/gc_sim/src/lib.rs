@@ -106,7 +106,7 @@ pub const SYSTEMS: [&str; 14] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 31;
+pub const SIM_VERSION: u32 = 33;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -693,9 +693,10 @@ pub enum Command {
     },
     /// Conquest: one of the issuer's workers draws a wall of type
     /// `building` from tile `from` to tile `to`, pays for it and builds it
-    /// tile by tile (see [`walls`]).
+    /// tile by tile (see [`walls`]). A wall grown along veins (the
+    /// Brood's) takes no worker: `regiment` is `None` for it.
     BuildWall {
-        regiment: RegimentHandle,
+        regiment: Option<RegimentHandle>,
         building: BuildingId,
         from: (i16, i16),
         to: (i16, i16),
@@ -1695,7 +1696,11 @@ impl World {
                 to,
             } => {
                 let tile = |t: (i16, i16)| (i32::from(t.0), i32::from(t.1));
-                match (self.worker_of(pc.player, regiment), &mut self.conquest) {
+                let worker = match regiment {
+                    Some(h) => self.worker_of(pc.player, h).map(Some),
+                    None => Some(None),
+                };
+                match (worker, &mut self.conquest) {
                     (Some(r), Some(c)) => c.lay_wall(
                         pc.player,
                         r,

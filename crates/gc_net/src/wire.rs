@@ -401,8 +401,14 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             from,
             to,
         } => {
-            w.u8(27);
-            w.handle(regiment);
+            // A grown wall, with no worker, has a tag of its own.
+            match regiment {
+                Some(r) => {
+                    w.u8(27);
+                    w.handle(r);
+                }
+                None => w.u8(28),
+            }
             w.var(u64::from(building));
             for v in [from.0, from.1, to.0, to.1] {
                 w.var(u64::from(v as u16));
@@ -552,8 +558,8 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             on: r.bool()?,
         },
         21 => Command::HandOver { to: r.u8()? },
-        27 => Command::BuildWall {
-            regiment: r.handle()?,
+        tag @ (27 | 28) => Command::BuildWall {
+            regiment: if tag == 27 { Some(r.handle()?) } else { None },
             building: r.var_as()?,
             from: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
             to: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
@@ -804,13 +810,19 @@ mod tests {
                 mode: gc_sim::gates::GateMode::Locked,
             },
             Command::BuildWall {
-                regiment: RegimentHandle {
+                regiment: Some(RegimentHandle {
                     index: 3,
                     generation: 1,
-                },
+                }),
                 building: 1,
                 from: (-2, 7),
                 to: (30, 7),
+            },
+            Command::BuildWall {
+                regiment: None,
+                building: 4,
+                from: (7, 7),
+                to: (7, 1),
             },
             Command::FocusTower {
                 structure: StructureHandle {
