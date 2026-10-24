@@ -71,6 +71,7 @@ fn world_with(style: ClearStyle) -> World {
             footing: &[],
         },
         champions: false,
+        generals: true,
     });
     let house = BuildingStats {
         role: Role::Housing,

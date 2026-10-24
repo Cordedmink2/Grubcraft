@@ -27,6 +27,7 @@ fn battle() -> World {
         teams: &[],
         ground: Ground::FLAT,
         champions: false,
+        generals: true,
     });
     let spawn = |player, unit, x, y, facing| PlayerCommand {
         player,

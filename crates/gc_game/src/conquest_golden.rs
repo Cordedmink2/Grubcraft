@@ -323,6 +323,7 @@ impl Match {
             teams: &[0, 1],
             ground: map.ground(),
             champions: false,
+            generals: true,
         };
         let mut plan = conquest::plan(
             &table,

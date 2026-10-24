@@ -52,6 +52,8 @@ fn world_on(map: u32, seed: u64, units: &[UnitStats], cover: &[u8], teams: &[u8]
             footing: &[],
         },
         champions: false,
+        // This rule on its own: generals have tests of their own.
+        generals: false,
     })
 }
 

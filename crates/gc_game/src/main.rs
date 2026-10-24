@@ -232,6 +232,17 @@ const TEAM_COLORS: [[u8; 3]; 4] = [
 const EDGE_SCROLL_PX: f64 = 6.0;
 /// Height of a placeholder box soldier, for unit types without a model.
 const SOLDIER_HEIGHT: f32 = 0.95;
+/// A side's general (see `gc_sim::generals`) stands this much taller than
+/// his men, in his side's colour lightened by [`GENERAL_LIGHT`].
+const GENERAL_SCALE: f32 = 1.15;
+const GENERAL_LIGHT: f32 = 0.35;
+
+/// The colour a general is drawn in: his side's, lightened, with his own
+/// tone.
+fn general_colour([r, g, b]: [u8; 3], tone: u8) -> [u8; 4] {
+    let light = |c: u8| (f32::from(c) + (255.0 - f32::from(c)) * GENERAL_LIGHT) as u8;
+    [light(r), light(g), light(b), tone]
+}
 /// Soldiers drawn at least this many pixels tall use levels of detail 0, 1
 /// and 2; smaller ones the last.
 const LOD_PIXELS: [f32; LODS - 1] = [100.0, 40.0, 16.0];
@@ -1404,6 +1415,7 @@ impl App {
                 teams: &[],
                 ground: heightmap.ground(),
                 champions: false,
+                generals: true,
             });
             // The sandbox is where buildings can be tried so far.
             if opts.sandbox {
@@ -3056,6 +3068,7 @@ impl Running {
         // The simulation's time, in ticks, interpolated as the regiments are.
         let now = world.tick_count() as f32 - 1.0 + alpha;
         self.puppets.champions(world.challenge(), now);
+        self.puppets.generals(world.generals(), now);
         let marked = self
             .attack_mark
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
@@ -3153,6 +3166,7 @@ impl Running {
                 charge: r.charge,
                 ploughed: (f32::from(r.ploughed) / puppets::DENT_EASE_TICKS).min(1.0),
                 ploughed_by: r.ploughed_by,
+                general: r.general,
                 fighter: fighter_of(stats, &r),
             };
             // How workers clear a tile, and where its trees should fall from
@@ -3432,14 +3446,22 @@ impl Running {
                             }
                             _ => 0,
                         };
+                        let (color, scale) = if s.general {
+                            (
+                                general_colour([wr, wg, wb], tone),
+                                look.scale * GENERAL_SCALE,
+                            )
+                        } else {
+                            ([wr, wg, wb, tone], look.scale)
+                        };
                         buckets[model * LODS + lod].push(SoldierInstance {
                             pos: s.pos.to_array(),
                             facing: facing.to_array(),
                             frames: pose.rows,
                             flags: models::pose_flags(pose, highlight, flat),
-                            color: [wr, wg, wb, tone],
+                            color,
                             lift: 0.0,
-                            scale: look.scale,
+                            scale,
                             feet,
                             ..Default::default()
                         });
@@ -4539,6 +4561,7 @@ impl Running {
             teams: &teams,
             ground: self.heightmap.ground(),
             champions,
+            generals: true,
         };
         // A lobby Conquest match: what every machine makes its world with,
         // from the lobby's settings and the game data.
@@ -5002,14 +5025,20 @@ impl Running {
         line
     }
 
-    /// How the battle ended, once it has, and news of the champions.
+    /// How the battle ended, once it has, and news of the champions and
+    /// the generals.
     fn battle_news(&self) -> Option<String> {
         let battle = self.battle.as_ref()?;
-        let lines: Vec<&str> = [&battle.outcome, &battle.champions, &battle.throne]
-            .into_iter()
-            .flatten()
-            .map(String::as_str)
-            .collect();
+        let lines: Vec<&str> = [
+            &battle.outcome,
+            &battle.champions,
+            &battle.generals,
+            &battle.throne,
+        ]
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
         (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
@@ -5030,6 +5059,12 @@ impl Running {
         }
         if battle.herald(&self.world, &self.parties, &self.units.names) {
             if let Some(news) = &battle.champions {
+                logln!("grubcraft: {news}");
+            }
+            self.sandbox.dirty = true;
+        }
+        if battle.muster(&self.world, &self.parties) {
+            if let Some(news) = &battle.generals {
                 logln!("grubcraft: {news}");
             }
             self.sandbox.dirty = true;

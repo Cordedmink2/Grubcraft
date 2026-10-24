@@ -198,6 +198,9 @@ fn conquest_on(meters: &[Meter], powers: &[PowerStats], nav: &[u8]) -> World {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        // Generals off: their drill units never rout, so any of them could
+        // take a general and change what these rules measure.
+        generals: false,
     });
     let mut start = [(0, 0); MAX_PARTIES];
     start[..2].fill((100, 0));

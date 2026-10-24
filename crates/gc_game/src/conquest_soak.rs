@@ -113,6 +113,7 @@ impl Soak {
             teams: &teams,
             ground: map.ground(),
             champions: false,
+            generals: true,
         };
         // Annihilation only, so the fog is on but nobody wins by holding
         // the Heart and the hour plays out.

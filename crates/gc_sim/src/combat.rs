@@ -1604,6 +1604,11 @@ impl Combat {
             if vision.off_guard(i) {
                 landed = landed * OFF_GUARD_DAMAGE_PERCENT / 100;
             }
+            // Undead driven on by their general (see `generals`; `led` is
+            // from the tick before, as generals update after combat).
+            if regs.led[i] && attacker.morale == 0 {
+                landed = landed * crate::generals::DRIVEN_PERCENT / 100;
+            }
             landed = landed * BATTLE_PACE_PERCENT / 100;
             // Even a blow that can't wound shoves, by the weight of all the
             // blows the regiment strikes.

@@ -40,6 +40,7 @@ Read in order the first time; afterwards each document stands alone.
 | 34 | [Ambient life and busy bases](34-ambient-life.md) | The living world as a picture, never a match rule: clearing land on screen (workers cutting, trees tipping over, built), then living touches, busy bases, wildlife and villagers (ideas 3, 10, 22) |
 | 35 | [Ground marks](35-ground-marks.md) | Ground that remembers: turned earth where trees were felled and bare tracks where regiments march and fight, healing over minutes (idea 2 render side, idea 22 ground) |
 | 36 | [Habitat ground](36-habitat-ground.md) | Each habitat's own ground: bog pools, mud, flower drifts, heather, gravel, crust, bone ripples, leaf litter and moss, drawn by the terrain shader from a per-tile look (Living Land stage 4, ground half) |
+| 37 | [The commander on the field](37-commander.md) | Idea 12, built: each player's general rides with their best regiment, steadies the men near him, speaks before the lines meet, and when he falls his side panics |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |

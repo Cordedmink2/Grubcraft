@@ -68,6 +68,7 @@ fn world() -> World {
             footing: &[],
         },
         champions: false,
+        generals: true,
     });
     let palisade = BuildingStats {
         role: Role::Wall,

@@ -109,6 +109,8 @@ fn world(behind: Behind) -> World {
             footing: &[],
         },
         champions: false,
+        // This rule on its own: generals have tests of their own.
+        generals: false,
     })
 }
 

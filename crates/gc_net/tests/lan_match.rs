@@ -104,6 +104,7 @@ const SETUP: MatchSetup = MatchSetup {
     teams: &[],
     ground: gc_sim::Ground::FLAT,
     champions: false,
+    generals: true,
 };
 
 /// `n` machines' worlds, each recorded the way the game records a match.

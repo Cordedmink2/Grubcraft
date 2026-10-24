@@ -134,6 +134,7 @@ fn conquest_on(
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        generals: true,
     });
     let mut start = [(0, 0); gc_sim::MAX_PARTIES];
     start[0] = (500, 100);
@@ -433,6 +434,7 @@ fn gathering_is_refused_outside_conquest() {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        generals: true,
     });
     let worker = spawn(&mut w, 0, WORKER, 10, 10);
     assert!(!gather(&mut w, 0, worker, 0));

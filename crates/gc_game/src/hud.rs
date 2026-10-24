@@ -515,6 +515,12 @@ impl Running {
         let (mut unit, mut same, mut icon, mut same_icon) = (None, true, Icon::Sword, true);
         let mut color = crate::color_of(&self.parties, side);
         let mut ground = "";
+        let mut general = false;
+        let led = self
+            .world
+            .generals()
+            .find(|g| g.party == side && g.fell.is_none())
+            .map(|g| g.regiment);
         for &h in &self.selected {
             let Some(r) = self.world.regiments.get(h).filter(|r| r.owner == side) else {
                 continue;
@@ -534,6 +540,7 @@ impl Running {
                 same_icon &= icon == this;
             }
             n += 1;
+            general |= led == Some(h);
             models += u32::from(r.models);
             max_models += u32::from(stats.models);
             morale += u32::from(r.morale_points);
@@ -566,6 +573,7 @@ impl Running {
                 _ => "",
             },
             ground,
+            general,
             shapes: &[],
         };
         Some((name, selection))

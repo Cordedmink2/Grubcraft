@@ -95,6 +95,7 @@ impl World {
             // A rehearsal is all battle.
             deploy: crate::deploy::Deployment::default(),
             champions: None,
+            generals: None,
             judge: crate::verdict::Judge::default(),
             // A rehearsal tells no one what happens in it.
             events: crate::events::Events::none(),
@@ -197,6 +198,10 @@ impl World {
         }
         w.nav
             .copy_queue(&self.nav, |i| copied.get(i).copied().unwrap_or(false));
+        w.generals = self
+            .generals
+            .as_ref()
+            .map(|g| g.fork(|h| copied.get(h.index as usize).copied().unwrap_or(false)));
         w
     }
 }
@@ -240,6 +245,7 @@ mod tests {
             teams: &[],
             ground: Ground::FLAT,
             champions: false,
+            generals: true,
         });
         let mut drill = Drill::new(7);
         drill.regiments_per_player = 20;

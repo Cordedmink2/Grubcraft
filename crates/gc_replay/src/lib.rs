@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 34: the generals flag (read as generals on);
 /// - 33: the footing layer (read as firm ground everywhere);
 /// - 32: grown walls (a build-wall command with no worker);
 /// - 31: not used;
@@ -88,7 +89,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 33;
+pub const FORMAT: u16 = 34;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -371,6 +372,8 @@ pub struct Replay {
     pub footing: Vec<u8>,
     /// Whether champions may duel before battle, as [`MatchSetup::champions`].
     pub champions: bool,
+    /// Whether each side has a general, as [`MatchSetup::generals`].
+    pub generals: bool,
     /// What made it a Conquest match; `None` for a Field Battle.
     pub conquest: Option<ConquestRecord>,
     /// Ticks recorded.
@@ -474,6 +477,7 @@ impl Replay {
                 footing: &self.footing,
             },
             champions: self.champions,
+            generals: self.generals,
         }
     }
 
@@ -654,6 +658,12 @@ impl Replay {
         w.bytes(&self.footing);
     }
 
+    /// The generals flag, just after the growth and footing layers (format
+    /// 34 on).
+    fn write_generals(&self, w: &mut Writer) {
+        w.bool(self.generals);
+    }
+
     /// The Conquest record, if any; the info block says whether there is
     /// one.
     fn write_conquest(&self, w: &mut Writer) {
@@ -716,6 +726,7 @@ impl Replay {
         self.write_units(&mut w);
         self.write_map(&mut w);
         self.write_layers(&mut w);
+        self.write_generals(&mut w);
         self.write_conquest(&mut w);
         self.write_tail(&mut w);
         let packed = lz4_flex::compress_prepend_size(&w.buf);
@@ -895,6 +906,7 @@ impl Replay {
         let champions = format >= 4 && r.bool()?;
         let growth = layer(r, 27)?;
         let footing = layer(r, 33)?;
+        let generals = format < 34 || r.bool()?;
         let conquest = if format >= 12 && info.conquest {
             Some(ConquestRecord::read(r, format)?)
         } else {
@@ -960,6 +972,7 @@ impl Replay {
             growth,
             footing,
             champions,
+            generals,
             conquest,
             ticks: info.ticks,
             turns,
@@ -1120,6 +1133,7 @@ impl Recorder {
                 // is none, as in the sim.
                 footing: gc_sim::Footing::layer(setup.ground.footing, setup.map_tiles).to_vec(),
                 champions: setup.champions,
+                generals: setup.generals,
                 conquest: None,
                 ticks: 0,
                 turns: Vec::new(),
@@ -1246,6 +1260,7 @@ mod tests {
                 footing: &[],
             },
             champions: false,
+            generals: true,
         };
         let mut world = World::new(&setup);
         let mut rec = Recorder::new(&setup, &world, "test drill");
@@ -1376,6 +1391,7 @@ mod tests {
             teams: &[],
             ground: Ground::FLAT,
             champions: false,
+            generals: true,
         };
         let hall = BuildingStats {
             role: Role::Main,
@@ -1698,6 +1714,7 @@ mod tests {
         replay.write_units(&mut w);
         replay.write_map(&mut w);
         replay.write_layers(&mut w);
+        replay.write_generals(&mut w);
         // Every byte of the Conquest record.
         let mut c = Writer::default();
         replay.write_conquest(&mut c);
@@ -1718,6 +1735,15 @@ mod tests {
         replay.write_tail(&mut body);
         lying.extend_from_slice(&lz4_flex::compress_prepend_size(&body.buf));
         assert!(Replay::decode(&lying).is_err());
+    }
+
+    #[test]
+    fn a_match_without_generals_plays_back_without_them() {
+        let mut replay = record();
+        assert!(replay.generals);
+        replay.generals = false;
+        let back = Replay::decode(&replay.encode()).unwrap();
+        assert!(!back.generals && !back.setup().generals);
     }
 
     #[test]
@@ -1903,14 +1929,16 @@ mod tests {
         old.extend_from_slice(&14u16.to_le_bytes());
         old.extend_from_slice(&(info.len() as u32).to_le_bytes());
         old.extend_from_slice(&info);
-        // The body as it was then: no growth or footing layer after the map.
+        // The body as it was then: no growth or footing layer or generals
+        // flag after the map.
         let body = lz4_flex::decompress_size_prepended(&new[10 + len..]).unwrap();
         let mut map = Writer::default();
         replay.write_units(&mut map);
         replay.write_map(&mut map);
         let mut old_body = body[..map.buf.len()].to_vec();
         assert_eq!(body[map.buf.len()..map.buf.len() + 2], [0, 0], "no layers");
-        old_body.extend_from_slice(&body[map.buf.len() + 2..]);
+        assert_eq!(body[map.buf.len() + 2], 1, "generals on");
+        old_body.extend_from_slice(&body[map.buf.len() + 3..]);
         old.extend_from_slice(&lz4_flex::compress_prepend_size(&old_body));
         assert_eq!(Replay::decode(&old).unwrap(), replay);
         let path = temp("header-14", &old);
@@ -2002,6 +2030,7 @@ mod tests {
             teams: &[],
             ground: Ground::FLAT,
             champions: false,
+            generals: true,
         };
         let mut world = World::new(&setup);
         let mut rec = Recorder::new(&setup, &world, "trail")

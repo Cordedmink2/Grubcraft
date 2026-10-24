@@ -229,6 +229,9 @@ fn run_seeded(
             footing: &[],
         },
         champions: false,
+        // A drill sets each regiment's heart exactly (a shaken one,
+        // wavering from the start), and a general's speech would lift it.
+        generals: false,
     });
     let mut out: Vec<PlayerCommand> = Vec::new();
     spawn_commands(AI, &drill.ai, &mut out);

@@ -29,7 +29,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::combat::{BATTLE_PACE_PERCENT, Combat, Whose, placement};
 use crate::regiments::Regiments;
 use crate::vision::Vision;
-use crate::{Formation, Stances, TICKS_PER_SECOND, UnitStats};
+use crate::{Formation, Stances, TICKS_PER_SECOND, UnitStats, generals};
 
 /// Morale is kept in tenths of a point.
 pub const SCALE: i16 = 10;
@@ -176,12 +176,21 @@ fn check(
     } else if regs.bled[i] == 0 {
         tenths += i32::from(RECOVERY * SCALE);
     }
+    // Its side's general near it steadies it (see [`crate::generals`]).
+    if regs.led[i] {
+        drain -= i32::from(generals::LEAD * SCALE);
+    }
     tenths -= drain * BATTLE_PACE_PERCENT as i32 / 100;
     // A battered regiment never gets all its nerve back: the cap falls from
     // the unit's stat at full strength to half of it with nobody left. A
     // champion's win or loss raises or lowers it for the rest of the battle.
     let cap = i32::from(fresh(stats)) * (full + i32::from(regs.models[i])) / (2 * full)
-        + i32::from(regs.party_morale[regs.owner[i] as usize]);
+        + i32::from(regs.party_morale[regs.owner[i] as usize])
+        + if tick < regs.heartened_until[i] {
+            i32::from(generals::SPEECH * SCALE)
+        } else {
+            0
+        };
     let morale = (i32::from(regs.morale[i]) + tenths).clamp(0, cap.max(1)) as i16;
     // Steadfast, or summoned (see [`crate::powers`]), it holds at the edge
     // of breaking.

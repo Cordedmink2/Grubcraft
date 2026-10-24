@@ -67,6 +67,7 @@ impl Field {
             teams: &[],
             ground: self.map.ground(),
             champions: false,
+            generals: true,
         })
     }
 

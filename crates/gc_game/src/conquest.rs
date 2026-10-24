@@ -625,6 +625,7 @@ mod tests {
             teams: &[],
             ground: map.ground(),
             champions: false,
+            generals: true,
         });
         let plan = plan(&table, &data, map, factions, tempo, victories);
         assert!(world.conquest(&plan.setup()));

@@ -117,6 +117,7 @@ fn world(cover: &[u8]) -> World {
             footing: &[],
         },
         champions: false,
+        generals: true,
     })
 }
 

@@ -2047,6 +2047,7 @@ mod tests {
             teams: &[],
             ground: gc_sim::Ground::FLAT,
             champions: false,
+            generals: true,
         });
         table.conquer(&mut world);
         let farm = table

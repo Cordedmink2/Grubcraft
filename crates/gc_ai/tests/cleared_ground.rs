@@ -67,6 +67,7 @@ fn the_minds_see_cleared_ground() {
             footing: &[],
         },
         champions: false,
+        generals: true,
     });
     let hall = BuildingStats {
         role: Role::Main,

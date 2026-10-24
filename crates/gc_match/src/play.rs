@@ -87,6 +87,7 @@ impl Match {
             teams: &teams,
             ground: map.ground(),
             champions: champions_allowed(setup),
+            generals: true,
         };
         let world = World::new(&match_setup);
         let recorder = record.map(|note| Recorder::new(&match_setup, &world, note));

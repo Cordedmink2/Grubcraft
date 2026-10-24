@@ -505,6 +505,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         teams: &teams,
         ground: heightmap.ground(),
         champions: golden.champions,
+        generals: true,
     };
     let world = World::new(&setup);
     let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&heightmap, &nav));

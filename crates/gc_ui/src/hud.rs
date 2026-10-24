@@ -219,6 +219,8 @@ pub struct Selection<'a> {
     /// What the ground does to them ("In mud: slow, no charges"); empty on
     /// plain ground.
     pub ground: &'a str,
+    /// The side's general rides with one of them (docs/37-commander.md).
+    pub general: bool,
     /// The army shapes to choose from, as a row of chips along the tray's top
     /// edge. Empty for none, and the row only shows for two or more
     /// regiments.
@@ -1405,6 +1407,16 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
             1,
             muted_ink(),
             &fit(&format!("Formation: {}", s.formation), chars),
+        );
+        y += 16;
+    }
+    if s.general {
+        draw.text_bold(
+            x,
+            y,
+            1,
+            theme::MADDER,
+            &fit("Your general rides here: guard him", chars),
         );
         y += 16;
     }
@@ -2697,6 +2709,7 @@ mod tests {
             state: CardState::Steady,
             formation: "Line",
             ground: "In mud: slow, no charges",
+            general: false,
             shapes: &[],
         }
     }

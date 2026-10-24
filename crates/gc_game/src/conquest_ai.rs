@@ -313,6 +313,7 @@ mod tests {
             teams: &teams,
             ground: map.ground(),
             champions: false,
+            generals: true,
         };
         let defaults = gc_ui::lobby::LobbySettings::default();
         let plan = conquest::plan(

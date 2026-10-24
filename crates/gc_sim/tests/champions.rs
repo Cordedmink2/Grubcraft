@@ -36,6 +36,8 @@ fn world_in(seed: u64, champions: bool, cover: &[u8]) -> World {
             footing: &[],
         },
         champions,
+        // This rule on its own: generals have tests of their own.
+        generals: false,
     })
 }
 

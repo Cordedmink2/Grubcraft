@@ -22,6 +22,7 @@ fn one_regiment() -> (World, RegimentHandle) {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        generals: true,
     });
     w.tick(&[PlayerCommand {
         player: 0,

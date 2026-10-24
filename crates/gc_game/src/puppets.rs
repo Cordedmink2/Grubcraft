@@ -20,7 +20,7 @@
 
 use gc_sim::combat::{Blow, CHARGE_TICKS, Outcome, hit_percent};
 use gc_sim::formation::MAX_MODELS;
-use gc_sim::{Challenge, Mass, RegimentHandle, TICKS_PER_SECOND};
+use gc_sim::{Challenge, General, Mass, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
 const SLOTS: usize = MAX_MODELS as usize;
@@ -140,6 +140,48 @@ const STALE: f32 = 0.5;
 const TOLD_KEEP: f32 = 1.5;
 /// No partner.
 const NONE: u32 = u32::MAX;
+
+/// A general's speech (see [`Puppets::generals`]): he holds his weapon up
+/// this long, and his men cheer in turn, each for [`CHEER_TURN`] seconds,
+/// starting up to [`CHEER_SPREAD`] seconds after he begins.
+const SPEECH_SHOW: f32 = 4.0;
+const CHEER_TURN: f32 = 1.6;
+const CHEER_SPREAD: f32 = 2.4;
+/// The share of men near him who cheer.
+const CHEERING: f32 = 0.7;
+/// When a general falls, the men of his side near him flinch as one, a
+/// moment after.
+const FLINCH_AFTER: f32 = 0.3;
+
+/// What the generals mean to one block this frame (see
+/// [`Puppets::heeding`]).
+#[derive(Clone, Copy, Debug, Default)]
+struct Heed {
+    /// How far through the flinch at their general's fall, if they are in
+    /// one.
+    flinch: Option<f32>,
+    /// Seconds since their general's speech, if they heard it.
+    speech: Option<f32>,
+}
+
+impl Heed {
+    /// What soldier `k` of block `h` does for it, when nothing else has
+    /// him busy: the general raises his weapon through his speech, most of
+    /// his men cheer in turn, and all flinch as one when he falls.
+    fn of(self, h: RegimentHandle, k: usize, general: bool) -> Option<Move> {
+        if let Some(f) = self.flinch {
+            return Some(Move::Stagger(f));
+        }
+        let since = self.speech?;
+        let cheers = if general {
+            (0.0..SPEECH_SHOW).contains(&since)
+        } else {
+            unit_hash(h, k, 21) < CHEERING
+                && (0.0..CHEER_TURN).contains(&(since - unit_hash(h, k, 22) * CHEER_SPREAD))
+        };
+        cheers.then_some(Move::Cheer)
+    }
+}
 /// A routing regiment's soldiers spread this much further apart (as a
 /// fraction of their spacing) and this much further off their slots, in tiles.
 const ROUT_SPREAD: f32 = 0.8;
@@ -201,6 +243,8 @@ pub struct Block {
     /// which regiment charged: the line dents where that charge went in.
     pub ploughed: f32,
     pub ploughed_by: Option<RegimentHandle>,
+    /// The slot its side's general stands in, if he rides with it.
+    pub general: Option<u8>,
     pub fighter: Fighter,
 }
 
@@ -307,6 +351,8 @@ pub struct Soldier {
     /// A stable value per soldier for his look (`models::look`), which he
     /// keeps when he falls.
     pub look: u8,
+    /// His side's general (see [`gc_sim::generals`]), drawn to stand out.
+    pub general: bool,
 }
 
 /// A dueling soldier's move, with how far through it he is (0 to 1).
@@ -586,6 +632,10 @@ pub struct Puppets {
     duel: Option<Duel>,
     /// The tick the duel the puppets are done with was called.
     duel_over: Option<u32>,
+    /// Each side's general, as the simulation last told it, and its time
+    /// then, in ticks (interpolated).
+    generals: Vec<General>,
+    general_now: f32,
 }
 
 impl Puppets {
@@ -631,7 +681,44 @@ impl Puppets {
             dt: 0.0,
             duel: None,
             duel_over: None,
+            generals: Vec::with_capacity(gc_sim::MAX_PARTIES),
+            general_now: 0.0,
         }
+    }
+
+    /// Follow the generals (see [`gc_sim::generals`]) at the simulation's
+    /// time `now`, in ticks (interpolated).
+    pub fn generals<'a>(&mut self, generals: impl Iterator<Item = &'a General>, now: f32) {
+        self.generals.clear();
+        self.generals.extend(generals.copied());
+        self.general_now = now;
+    }
+
+    /// Seconds since tick `t`, by the generals' clock.
+    fn since(&self, t: u32) -> f32 {
+        (self.general_now - t as f32) / TICKS_PER_SECOND as f32
+    }
+
+    /// What the generals of `owner`'s side mean to a block of theirs
+    /// standing at `centre`: the moment of a flinch at his fall, or seconds
+    /// since his speech, if they are near enough to be part of it.
+    fn heeding(&self, owner: u8, centre: Vec2) -> Heed {
+        let mut heed = Heed::default();
+        for g in self.generals.iter().filter(|g| g.party == owner) {
+            let d = crate::from_fx_vec(g.at).distance_squared(centre);
+            let within = |tiles: i32| d <= (tiles * tiles) as f32;
+            match (g.fell, g.spoke) {
+                (Some(t), _) if within(gc_sim::generals::PANIC_TILES) => {
+                    let f = (self.since(t) - FLINCH_AFTER) / STAGGER_SECONDS;
+                    heed.flinch = heed.flinch.or((0.0..1.0).contains(&f).then_some(f));
+                }
+                (None, Some(t)) if within(gc_sim::generals::LEAD_TILES) => {
+                    heed.speech = heed.speech.or(Some(self.since(t)));
+                }
+                _ => {}
+            }
+        }
+        heed
     }
 
     /// Game seconds since the puppets started (stops while paused).
@@ -1270,6 +1357,12 @@ impl Puppets {
             )
         };
         let champion_here = self.champion_of(r);
+        let general = block.general.map(usize::from);
+        let heed = if block.engaged || block.routing {
+            Heed::default()
+        } else {
+            self.heeding(owner, block.centre)
+        };
         let band = self.band(r);
         let pressing = block.engaged && !block.routing;
         let dent = self.dent(r, block, right);
@@ -1417,6 +1510,8 @@ impl Puppets {
                 (Some((Act::Block, f)), _) => Some(Move::Block(f)),
                 (Some((Act::Parry, f)), _) => Some(Move::Parry(f)),
                 _ if on_guard => Some(Move::Guard),
+                // Not fighting: a speech to cheer, or their general's fall.
+                _ if champion.is_none() => heed.of(block.handle, k, general == Some(k)),
                 _ => None,
             };
             let reeling = acting.is_some_and(|(act, _)| act.reels());
@@ -1450,6 +1545,7 @@ impl Puppets {
                 fight,
                 phase,
                 look: self.looks[i],
+                general: general == Some(k),
             });
         }
     }
@@ -1747,6 +1843,7 @@ mod tests {
             charge: 0,
             ploughed: 0.0,
             ploughed_by: None,
+            general: None,
             fighter: Fighter::default(),
         };
         let mut first = Vec::new();
@@ -1826,6 +1923,7 @@ mod tests {
             charge: 0,
             ploughed: 0.0,
             ploughed_by: None,
+            general: None,
             fighter: Fighter::default(),
         }
     }
@@ -1930,6 +2028,7 @@ mod tests {
             charge: 0,
             ploughed: 0.0,
             ploughed_by: None,
+            general: None,
             fighter: Fighter::default(),
         };
         let mut soldiers = Vec::new();
@@ -1994,6 +2093,7 @@ mod tests {
             charge: 0,
             ploughed: 0.0,
             ploughed_by: None,
+            general: None,
             fighter: Fighter::default(),
         };
         p.update(&block, 2, 0.016, |_| {});
@@ -2029,6 +2129,7 @@ mod tests {
             charge: 0,
             ploughed: 0.0,
             ploughed_by: None,
+            general: None,
             fighter: Fighter::default(),
         };
         p.update(&block, 1, 0.016, |_| {});
@@ -2561,6 +2662,60 @@ mod tests {
             abandoned: None,
         };
         (a, b, c)
+    }
+
+    #[test]
+    fn a_general_stands_out_his_men_cheer_his_speech_and_flinch_when_he_falls() {
+        let mut p = Puppets::new(2, 4);
+        let mut a = block(0, Vec2::ZERO, Vec2::NEG_Y, false);
+        a.general = Some(5);
+        let b = block(1, Vec2::new(10.0, 0.0), Vec2::NEG_Y, false);
+        let mut g = General {
+            party: 0,
+            regiment: a.handle,
+            at: gc_fixed::FxVec2::ZERO,
+            picked: 0,
+            spoke: None,
+            fell: None,
+        };
+        let tick = TICKS_PER_SECOND as f32 * FRAME;
+        let frame = |p: &mut Puppets, a: &Block, g: &General, now: f32| {
+            p.advance(FRAME);
+            p.generals(core::iter::once(g), now);
+            let mut out = Vec::new();
+            p.update(a, 0, FRAME, |s| out.push(s));
+            p.update(&b, 0, FRAME, |s| out.push(s));
+            out
+        };
+        let out = frame(&mut p, &a, &g, 0.0);
+        let generals: Vec<usize> = (0..out.len()).filter(|&k| out[k].general).collect();
+        assert_eq!(generals, [5], "only he is drawn as the general");
+        assert!(out.iter().all(|s| s.fight.is_none()));
+        // He speaks: he raises his weapon at once, and most of the men of
+        // both his regiments (they are near him) cheer within a few seconds.
+        g.spoke = Some(20);
+        let mut now = 20.0;
+        let mut cheered = [false; 16];
+        while now < 20.0 + 5.0 * TICKS_PER_SECOND as f32 {
+            let out = frame(&mut p, &a, &g, now);
+            if now < 20.0 + tick {
+                assert_eq!(out[5].fight, Some(Move::Cheer));
+            }
+            for (k, s) in out.iter().enumerate() {
+                cheered[k] |= s.fight == Some(Move::Cheer);
+            }
+            now += tick;
+        }
+        let count = cheered.iter().filter(|&&c| c).count();
+        assert!((8..16).contains(&count), "{count} cheered");
+        // He falls: a moment later every man near him flinches.
+        g.fell = Some(400);
+        a.general = None;
+        let out = frame(&mut p, &a, &g, 400.0 + 0.5 * TICKS_PER_SECOND as f32);
+        assert!(
+            out.iter()
+                .all(|s| matches!(s.fight, Some(Move::Stagger(_))) && !s.general)
+        );
     }
 
     #[test]

@@ -13,27 +13,27 @@ const TICKS: u32 = 2_400; // two minutes of game time
 
 /// Expected state hash every 600 ticks (30 s of game time).
 const GOLDEN: [(u32, u64); 4] = [
-    (600, 0x02f2_bdf1_e932_2f3b),
-    (1200, 0xe5e9_d303_8df6_c67e),
-    (1800, 0x17f3_9ffc_4948_10be),
-    (2400, 0x95dc_6e9a_250c_989c),
+    (600, 0x939b_43f8_6ea1_79c5),
+    (1200, 0x18b0_4098_0f18_dde2),
+    (1800, 0x66ae_919e_870c_cf7e),
+    (2400, 0x8170_90b7_95ea_bd8f),
 ];
 
 /// The same drill on the ridged test map, where most orders need routes.
 const GOLDEN_RIBS: [(u32, u64); 4] = [
-    (600, 0xda29_0d49_5948_a270),
-    (1200, 0x9238_7377_ae00_cd95),
-    (1800, 0xc619_6f73_da99_1ea2),
-    (2400, 0x1334_d139_b2b5_9780),
+    (600, 0xdbd5_5c75_ed13_375f),
+    (1200, 0xb23c_a23c_ab1e_95b9),
+    (1800, 0x7b19_fcad_1801_a1f8),
+    (2400, 0x3412_9f95_97f2_4fa8),
 ];
 
 /// The same drill on terraced, river-cut ground, where high ground and
 /// fords change the fighting.
 const GOLDEN_GROUND: [(u32, u64); 4] = [
-    (600, 0x7b78_2f4e_bd1c_1c20),
-    (1200, 0xc4bf_1de3_2e2c_ea63),
-    (1800, 0x5637_d3d2_fe03_7e68),
-    (2400, 0xcf67_dfb8_a732_5e09),
+    (600, 0xcaec_2033_d29f_b7fe),
+    (1200, 0x6642_6404_b08c_a17c),
+    (1800, 0x22a4_06ad_9f02_3ab3),
+    (2400, 0xab16_88a8_91e5_968f),
 ];
 
 /// Terraces a little under a tile high, every 16 tiles, crossed by shallow
@@ -65,6 +65,7 @@ fn run_on(nav: &[u8], ground: Ground) -> Vec<(u32, u64)> {
         teams: &[],
         ground,
         champions: false,
+        generals: true,
     });
     let mut drill = Drill::new(SEED);
     let mut commands = Vec::with_capacity(512);
@@ -143,6 +144,7 @@ fn different_seed_different_hash() {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        generals: true,
     });
     let b = World::new(&MatchSetup {
         seed: 2,
@@ -153,6 +155,7 @@ fn different_seed_different_hash() {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        generals: true,
     });
     assert_ne!(a.state_hash(), b.state_hash());
     a.tick(&[]);

@@ -48,6 +48,9 @@ fn seeded_world(nav: &[u8], seed: u64) -> World {
         teams: &[],
         ground: Ground::FLAT,
         champions: false,
+        // Generals off: these rules count wounds, and a general's extra hit
+        // points would muddle the count (docs/37-commander.md).
+        generals: false,
     })
 }
 

@@ -81,6 +81,9 @@ fn world_full(
             footing,
         },
         champions: false,
+        // Generals off: these rules count wounds, and a general's extra hit
+        // points would muddle the count (docs/37-commander.md).
+        generals: false,
     })
 }
 

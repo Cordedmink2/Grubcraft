@@ -288,6 +288,15 @@ regiment_fields! {
     /// Ticks left of a summoned regiment's life (see [`crate::powers`]);
     /// 0 for one that isn't summoned. It never routs while it lasts.
     summoned_left: u16 = 0,
+    /// The slot its side's general stands in, if he leads it (see
+    /// [`crate::generals`]). `None` once he has fallen.
+    general: Option<u8> = None,
+    /// The tick a general's speech stops lifting its morale ceiling (see
+    /// [`crate::generals`]); 0 for none.
+    heartened_until: u32 = 0,
+    /// Led this tick by its side's general, near him (see
+    /// [`crate::generals`]).
+    led: bool = false,
 }
 
 impl Regiments {
@@ -865,12 +874,26 @@ impl Regiments {
                 amount -= u32::from(hp[k]);
                 bled = bled.saturating_add(hp[k]);
                 hp[k] = 0;
+                if self.general[i] == Some(k as u8) {
+                    self.general[i] = None;
+                }
                 self.models[i] -= 1;
             }
         }
         let lost = before - self.models[i];
         self.bleed(i, bled, lost);
         (lost, asked - amount)
+    }
+
+    /// Soldier `k` of regiment `i`'s hit points.
+    pub(crate) fn hp_mut(&mut self, i: usize, k: u8) -> &mut u16 {
+        &mut self.hp[i * MAX_MODELS as usize + usize::from(k)]
+    }
+
+    /// Soldiers `a` and `b` of regiment `i` change places.
+    pub(crate) fn swap_men(&mut self, i: usize, a: u8, b: u8) {
+        let base = i * MAX_MODELS as usize;
+        self.hp.swap(base + usize::from(a), base + usize::from(b));
     }
 
     /// Take `damage` hit points off soldier `k` of regiment `i`. Each time
@@ -891,6 +914,13 @@ impl Regiments {
             damage -= hp[k];
             bled += hp[k];
             let last = self.models[i] as usize - 1;
+            // A general who falls is gone; one in the last slot steps up
+            // into the gap with everyone else's.
+            if self.general[i] == Some(k as u8) {
+                self.general[i] = None;
+            } else if self.general[i] == Some(last as u8) {
+                self.general[i] = Some(k as u8);
+            }
             hp[k] = hp[last];
             hp[last] = 0;
             self.models[i] -= 1;
@@ -935,6 +965,7 @@ impl Regiments {
                 0
             },
             ploughed_by: self.plougher(i).map(|k| self.handle(k)),
+            general: self.general[i],
             braced: self.braced[i],
             falling_back: self.falling_back[i] > 0,
         }
@@ -1183,6 +1214,9 @@ pub struct RegimentView {
     pub ploughed: u8,
     /// The charger that ploughed in, while it does.
     pub ploughed_by: Option<RegimentHandle>,
+    /// The slot its side's general stands in, if he rides with it and
+    /// stands (see [`crate::generals`]).
+    pub general: Option<u8>,
 }
 
 impl RegimentView {
@@ -1211,6 +1245,7 @@ mod tests {
             teams: &[],
             ground: Ground::FLAT,
             champions: false,
+            generals: true,
         });
         let mut drill = Drill::new(7);
         drill.regiments_per_player = 20;
@@ -1311,6 +1346,7 @@ mod tests {
             teams: &[],
             ground: Ground::FLAT,
             champions: false,
+            generals: true,
         });
         other.regiments = copy(&world.regiments);
         let mut again = Vec::new();
