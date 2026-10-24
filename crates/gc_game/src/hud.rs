@@ -514,6 +514,7 @@ impl Running {
         let mut state = CardState::Steady;
         let (mut unit, mut same, mut icon, mut same_icon) = (None, true, Icon::Sword, true);
         let mut color = crate::color_of(&self.parties, side);
+        let mut ground = "";
         for &h in &self.selected {
             let Some(r) = self.world.regiments.get(h).filter(|r| r.owner == side) else {
                 continue;
@@ -523,7 +524,12 @@ impl Running {
             if n == 0 {
                 (unit, icon) = (Some(r.unit), this);
                 color = crate::color_of(&self.parties, r.owner);
+                ground = ground_word(self.world.terrain(), r.position);
             } else {
+                // Shown only when every selected regiment shares it.
+                if ground_word(self.world.terrain(), r.position) != ground {
+                    ground = "";
+                }
                 same &= unit == Some(r.unit);
                 same_icon &= icon == this;
             }
@@ -559,6 +565,7 @@ impl Running {
                 Some(Some(f)) => f.name(),
                 _ => "",
             },
+            ground,
             shapes: &[],
         };
         Some((name, selection))
@@ -1736,6 +1743,22 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
         Icon::Spear
     } else {
         Icon::Sword
+    }
+}
+
+/// What the ground at `p` does to a regiment, in a few words for the selection panel (capitalised, as it stands on its own line): the readable side
+/// of docs/32-changing-land.md, "Reading the ground". Empty on plain ground.
+fn ground_word(terrain: &gc_sim::Terrain, p: gc_fixed::FxVec2) -> &'static str {
+    if terrain.wet(p) {
+        "In a ford: slow, no charges"
+    } else if terrain.soft(p) {
+        "In mud: slow, no charges"
+    } else if terrain.cover(p) == gc_sim::Cover::Wood {
+        "In woods: slower"
+    } else if terrain.on_slope(p) {
+        "On a slope: slower uphill"
+    } else {
+        ""
     }
 }
 

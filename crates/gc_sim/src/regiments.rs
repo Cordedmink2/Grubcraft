@@ -1017,16 +1017,17 @@ impl Regiments {
                     }
                     pace
                 };
-                let step = terrain.going(step, self.position[i], units[self.unit[i] as usize].mass);
-                let step = crate::combat::pushing(step, self.crowd[i]);
-                debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
-                let here = self.position[i];
-                let arriving = dist <= step;
                 let dir = if dist.raw() > 0 {
                     FxVec2::new(delta.x / dist, delta.y / dist)
                 } else {
                     FxVec2::ZERO
                 };
+                let mass = units[self.unit[i] as usize].mass;
+                let step = terrain.going(step, self.position[i], dir, mass);
+                let step = crate::combat::pushing(step, self.crowd[i]);
+                debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
+                let here = self.position[i];
+                let arriving = dist <= step;
                 let next = if arriving { point } else { here + dir * step };
                 // A friendly block holding its ground in the way, where the
                 // ground leaves no room beside it (a ford, a pass): wait
@@ -1091,7 +1092,11 @@ impl Regiments {
                     nav.lost(i);
                     continue;
                 }
-                if self.falling_back[i] == 0 {
+                // A run-up is made on ground that bears a charge: wading or
+                // slogging through mud starts it again.
+                if !terrain.bears_charge(self.position[i]) {
+                    self.run_up[i] = 0;
+                } else if self.falling_back[i] == 0 {
                     self.run_up[i] = (self.run_up[i] + 1).min(crate::combat::RUN_UP_TICKS);
                 }
             } else if let Some(want) = self.target_facing[i] {

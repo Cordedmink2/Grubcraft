@@ -106,6 +106,7 @@ fn world(behind: Behind) -> World {
             water_level: HEIGHT_UNITS as u16,
             cover: &[],
             growth: &[],
+            footing: &[],
         },
         champions: false,
     })

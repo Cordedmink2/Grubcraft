@@ -276,8 +276,8 @@ mod tests {
         assert_eq!(at_320(4), 0x4810_c8ad_25ff_bc7c);
         // Grown land: erosion and the river lines are the parts most
         // likely to drift, and each of the dials.
-        assert_eq!(hash(GROWN + 1), 0x4e0d_d838_2c3c_18e2);
-        assert_eq!(hash(GROWN + 2), 0x018d_aecb_df40_2342);
-        assert_eq!(hash(GROWN + 3), 0xfebc_be13_4da1_db26);
+        assert_eq!(hash(GROWN + 1), 0x0354_4072_643d_ed6c);
+        assert_eq!(hash(GROWN + 2), 0xe996_ed2f_78a8_fc0e);
+        assert_eq!(hash(GROWN + 3), 0xe3de_77b9_2aa8_6372);
     }
 }

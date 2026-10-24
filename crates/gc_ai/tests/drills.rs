@@ -226,6 +226,7 @@ fn run_seeded(
             water_level: (WATER_LEVEL * per_tile) as u16,
             cover: &[],
             growth: &[],
+            footing: &[],
         },
         champions: false,
     });

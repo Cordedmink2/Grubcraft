@@ -295,7 +295,7 @@
                 melee_defence: 40,
                 melee_damage: 4,
                 charge_bonus: 30,
-                morale: 55,
+                morale: 54,
                 swing_room: true,
             ),
         ),

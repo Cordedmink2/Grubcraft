@@ -1142,13 +1142,14 @@ impl Combat {
             if let Some(j) = best {
                 if !was_engaged {
                     // Hitting home at speed after a run-up is a charge, but
-                    // nobody charges out of a river, from behind a shield
-                    // wall, or while pushing through friends. A fight ends
-                    // any march.
+                    // nobody charges out of a river or mud, or into either,
+                    // from behind a shield wall, or while pushing through
+                    // friends. A fight ends any march.
                     let charging = regs.target[i].is_some()
                         && regs.run_up[i] >= RUN_UP_TICKS
                         && regs.pace[i].raw() * 4 >= regs.speed[i].raw() * 3
-                        && !terrain.wet(regs.position[i])
+                        && terrain.bears_charge(regs.position[i])
+                        && terrain.bears_charge(regs.position[j])
                         && regs.formation[i].can_charge()
                         && regs.crowd[i] <= CROWDING;
                     let front = || self.blocks[j].side_facing(me.centre) == Side::Front;
@@ -1160,7 +1161,11 @@ impl Combat {
                         // strike at once, as long weapons do when a foe
                         // comes at their points.)
                         let (mine, theirs) = (
-                            units[regs.unit[i] as usize].charge_bonus,
+                            terrain.charge_bonus(
+                                units[regs.unit[i] as usize].charge_bonus,
+                                regs.position[i],
+                                regs.position[j],
+                            ),
                             units[regs.unit[j] as usize].charge_bonus,
                         );
                         regs.charge[j] = CHARGE_TICKS;
@@ -1169,12 +1174,19 @@ impl Combat {
                         regs.strike[i] = Strike::Rest;
                     } else if charging {
                         regs.charge[i] = CHARGE_TICKS;
-                        regs.charge_bonus[i] = units[regs.unit[i] as usize].charge_bonus;
+                        regs.charge_bonus[i] = terrain.charge_bonus(
+                            units[regs.unit[i] as usize].charge_bonus,
+                            regs.position[i],
+                            regs.position[j],
+                        );
                         // Heavy enough, it ploughs into the ranks: they are
                         // driven back from it, and the charger strikes the
                         // men it knocks aside at once. (Routers are only
                         // run down.)
-                        let ploughed = if regs.morale_state[j].broken() {
+                        // Up onto high ground, it hits home too slowly to
+                        // plough in.
+                        let uphill = terrain.downhill(regs.position[j], regs.position[i]);
+                        let ploughed = if regs.morale_state[j].broken() || uphill {
                             0
                         } else {
                             ploughs(regs, units, i, j, front())
@@ -1329,7 +1341,7 @@ impl Combat {
             };
             let pace = Fx::from_raw((GIVE_GROUND.raw() * i32::from(giving) / 100).max(1));
             let mass = units[regs.unit[i] as usize].mass;
-            let give = away * terrain.going(pace, me.centre, mass);
+            let give = away * terrain.going(pace, me.centre, away, mass);
             if nav.blocks(regs.owner[j], foe, foe + give) {
                 // Its foe can't follow, so nobody is pushing.
                 continue;
@@ -1449,8 +1461,8 @@ impl Combat {
             return None;
         }
         let mass = units[regs.unit[i] as usize].mass;
-        let step =
-            (them.centre - me.centre).normalized() * terrain.going(CLOSE_UP, me.centre, mass);
+        let toward = (them.centre - me.centre).normalized();
+        let step = toward * terrain.going(CLOSE_UP, me.centre, toward, mass);
         let next = me.centre + step;
         (!nav.blocks(regs.owner[i], me.centre, next) && !self.backs_into(regs, stances, i, next))
             .then_some(step)

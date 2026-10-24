@@ -96,6 +96,10 @@ pub struct Map {
     /// row by row, worked out from the cover, thicket and habitat by
     /// [`Map::settle_growth`] (empty with no cover).
     pub growth: Vec<u8>,
+    /// How each tile holds a soldier's feet, one `gc_sim::Footing` byte per
+    /// tile, row by row, worked out from the habitat (or the land on a map
+    /// that wasn't grown) by [`Map::settle_growth`] (empty: firm everywhere).
+    pub footing: Vec<u8>,
     /// Starts, seeps, veins, hamlets and the rest. A generated map has its
     /// four starts and nothing else.
     pub objects: Vec<Placed>,
@@ -146,6 +150,7 @@ impl Map {
             land: Vec::new(),
             habitat: Vec::new(),
             growth: Vec::new(),
+            footing: Vec::new(),
             objects: Vec::new(),
             set_pieces: Vec::new(),
         }
@@ -156,8 +161,8 @@ impl Map {
         self.tiles * SAMPLES_PER_TILE + 1
     }
 
-    /// Work out [`Map::growth`] again from the cover, thicket and habitat:
-    /// call it whenever they change. Thicket is thicket; scrub habitats
+    /// Work out [`Map::growth`] and [`Map::footing`] again from the cover,
+    /// thicket, habitat and land: call it whenever they change. Thicket is thicket; scrub habitats
     /// are scrub whatever their cover; other woods are woods; the rest
     /// (tall grass in a meadow too) is open.
     pub fn settle_growth(&mut self) {
@@ -176,6 +181,31 @@ impl Map {
                 growth as u8
             })
             .collect();
+        self.settle_footing();
+    }
+
+    /// Soft ground (`gc_sim::Footing::Soft`) is peat bog and alder carr (wet
+    /// woodland) on a grown map, about a tenth of it, and fen on one that
+    /// wasn't. Sedge and wet meadow bear a charge. Firm everywhere is kept as
+    /// no layer at all.
+    fn settle_footing(&mut self) {
+        use crate::grown::Habitat;
+        let wet = [Habitat::AlderCarr as u8, Habitat::PeatBog as u8];
+        let n = (self.tiles * self.tiles) as usize;
+        let soft: Vec<bool> = if self.habitat.len() == n {
+            self.habitat.iter().map(|h| wet.contains(h)).collect()
+        } else if self.land.len() == n {
+            (self.land.iter())
+                .map(|&l| l == crate::def::Land::Fen as u8)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let footing = soft
+            .iter()
+            .map(|&s| u8::from(s) * gc_sim::Footing::Soft as u8)
+            .collect::<Vec<_>>();
+        self.footing = gc_sim::Footing::layer(&footing, self.tiles).to_vec();
     }
 
     /// The ground the simulation plays on: tile heights, the water line,
@@ -193,6 +223,7 @@ impl Map {
             water_level: self.water,
             cover: &self.cover,
             growth: &self.growth,
+            footing: &self.footing,
         }
     }
 
@@ -408,7 +439,8 @@ pub fn map_hash(nav: &[u8], ground: &gc_sim::Ground) -> u64 {
     let bytes = (nav.iter().copied())
         .chain(heights.flat_map(|v| v.to_le_bytes()))
         .chain(ground.cover.iter().copied())
-        .chain(ground.growth.iter().copied());
+        .chain(ground.growth.iter().copied())
+        .chain(ground.footing.iter().copied());
     fnv1a(bytes) ^ nav.len() as u64
 }
 

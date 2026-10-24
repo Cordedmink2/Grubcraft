@@ -1,6 +1,6 @@
 # 32 · Changing land
 
-*Design note, 2026-10-24, restart plan thread T9 ([29](29-restart-plan.md)). Covers idea 22 (clearing land to expand bases) first, and the one way the simulation changes the ground mid-match, which burning woods (idea 2), floods (idea 6) and rubble reuse later. Weather, night, terrain tactics and seasons (ideas 1, 9, 13, 7) get their own sections here as they are built.*
+*Design note, 2026-10-24, restart plan thread T9 ([29](29-restart-plan.md)). Covers idea 22 (clearing land to expand bases) first, and the one way the simulation changes the ground mid-match, which burning woods (idea 2), floods (idea 6) and rubble reuse later. Terrain tactics (idea 13) is built below; weather, night and seasons (ideas 1, 9, 7) get their own sections here as they are built.*
 
 ## Clearing land (idea 22)
 
@@ -46,6 +46,22 @@ Burning is a look only, reported on the event so the ground is drawn scorched ([
 ### Computer players
 
 A computer player prefers open spots for a new building; when only overgrown ground fits, it lays there anyway and its worker clears first. Its picture of the ground (`gc_ai::Terrain`) follows the simulation's: whenever the ground changes, cleared thicket stops being a wall to its armies and cleared woods stop being cover for its ambushes (`Terrain::follow`, checked every tick against `gc_sim::Terrain::changes`, and re-measuring only round the tiles cleared). Preferring open spots costs nothing worth noting: a search for a building spot, measured on a test base, takes about 4 µs on open ground and about 50 µs where nothing fits at all, the most any search can take.
+
+## Reading the ground (idea 13)
+
+**Built (2026-10-24), stage 1.** The ground now matters in more ways, and each one can be seen.
+
+- **Climbing.** A regiment marching uphill loses half its pace for each tile of height it climbs per tile of ground (`CLIMB_SLOW_PERCENT` 50), at most 40% (`CLIMB_SLOW_MAX`). It looks one tile ahead along its march's main axis (`Terrain::climb_percent`, so diagonal climbs count as straight ones do), so a column slows as it starts up a slope. Going down is no faster, which keeps the crowd check's longest step true.
+- **Charges and slopes.** A charge that hits home from high ground (half a tile or more above its target, as for fighting downhill) lands with half its charge bonus again (`CHARGE_DOWNHILL_PERCENT` 150). One that hits home up onto high ground keeps half (`CHARGE_UPHILL_PERCENT` 50) and never ploughs into the ranks. The same scaling applies to the weight braced spears turn back on a charger. Holding a hill against cavalry now pays.
+- **Mud.** Each tile is firm or soft (`gc_sim::Footing`, the new `Ground::footing` layer). Soft ground is peat bog and alder carr (wet woodland) on a grown map, about a tenth of it, and fen on a painted one (`Map::settle_footing`). Troops in it march at 75% pace (heavy troops 60%), on top of any woods. Nobody starts a charge in mud or water, and nobody charges a regiment standing in either (`Terrain::bears_charge`): horses bog down. A run-up is only built on ground that bears a charge, so cavalry leaving a bog needs a fresh run-up. Charging into a ford was allowed before; it no longer is.
+- **Seeing it.** The selection panel says what the ground under the regiment does: "In a ford: slow, no charges", "In mud: slow, no charges", "In woods: slower" or "On a slope: slower uphill" (shown for a group only when every regiment in it shares it). On the ground, bog and carr are fen (reeds and pools); sedge is fen too but firm, so the ground thread (T8) is asked to draw soft tiles visibly muddier than the rest of the fen. The Quick Start's Command step and the Cavalry class say to charge downhill and keep out of mud.
+
+The footing layer is stored in replays from `FORMAT` 33 (older files read firm ground) and is part of the online map check. `SIM_VERSION` 34.
+
+**Later:**
+- Rain makes ground soft (idea 1). The footing layer is where it will write.
+- Computer players don't yet weigh mud or slopes. Their routes and charges ignore both, so they will sometimes charge into a bog.
+- Roads (+15%) and loose scree come with more footing kinds.
 
 ## The one ground change
 

@@ -62,6 +62,7 @@ fn world() -> World {
             water_level: 0,
             cover: &cover,
             growth: &growth,
+            footing: &[],
         },
         champions: false,
     });

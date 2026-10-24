@@ -33,6 +33,7 @@ fn world_in(seed: u64, champions: bool, cover: &[u8]) -> World {
             water_level: 0,
             cover,
             growth: &[],
+            footing: &[],
         },
         champions,
     })

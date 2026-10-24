@@ -3,7 +3,7 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
-use gc_sim::terrain::HEIGHT_UNITS;
+use gc_sim::terrain::{Footing, HEIGHT_UNITS};
 use gc_sim::{
     Capacities, Command, Cover, Ground, Mass, MatchSetup, PlayerCommand, RegimentHandle, UnitStats,
     World,
@@ -56,6 +56,16 @@ fn world_on(seed: u64, units: &[UnitStats], heights: &[u16]) -> World {
 }
 
 fn world_with(seed: u64, units: &[UnitStats], heights: &[u16], cover: &[u8]) -> World {
+    world_full(seed, units, heights, cover, &[])
+}
+
+fn world_full(
+    seed: u64,
+    units: &[UnitStats],
+    heights: &[u16],
+    cover: &[u8],
+    footing: &[u8],
+) -> World {
     World::new(&MatchSetup {
         seed,
         capacities: Capacities::default(),
@@ -68,9 +78,22 @@ fn world_with(seed: u64, units: &[UnitStats], heights: &[u16], cover: &[u8]) -> 
             water_level: WATER_LEVEL,
             cover,
             growth: &[],
+            footing,
         },
         champions: false,
     })
+}
+
+/// Firm ground with soft ground (mud) over rows `y0..y1`.
+fn mud(y0: u32, y1: u32) -> Vec<u8> {
+    (0..MAP * MAP)
+        .map(|i| u8::from((y0..y1).contains(&(i / MAP))) * Footing::Soft as u8)
+        .collect()
+}
+
+/// Ground that climbs `per_tile` each tile northwards (towards y = 0).
+fn ramp(per_tile: u16) -> Vec<u16> {
+    heights(|_, y| LAND + (MAP - 1 - y) as u16 * per_tile)
 }
 
 fn spawn(w: &mut World, player: u8, unit: u16, x: Fx, y: Fx, facing: Angle) -> RegimentHandle {
@@ -345,6 +368,151 @@ fn nobody_charges_out_of_a_river() {
         wet * 10 < plain * 12,
         "wading cavalry still charged: {wet} vs {plain} without a charge"
     );
+}
+
+/// How far a regiment marches in two seconds from `start_y`, north if
+/// `north`, else south.
+fn marched(w: &mut World, unit: u16, start_y: i32, north: bool) -> Fx {
+    let (facing, to) = if north {
+        (NORTH, start_y - 20)
+    } else {
+        (SOUTH, start_y + 20)
+    };
+    let r = spawn(w, 0, unit, tile(32), tile(start_y), facing);
+    move_to(w, 0, r, tile(32), tile(to));
+    run(w, 40);
+    (tile(start_y) - w.regiments.get(r).unwrap().position.y).abs()
+}
+
+#[test]
+fn climbing_is_slow_and_going_down_is_not() {
+    let flat = marched(&mut world_on(1, &fearless(), &ramp(0)), SPEARS, 50, true);
+    // Half a tile of height a tile: a quarter of the pace lost climbing.
+    let half = HEIGHT_UNITS as u16 / 2;
+    let up = marched(&mut world_on(1, &fearless(), &ramp(half)), SPEARS, 50, true);
+    assert!(
+        up * 100 <= flat * 79 && up * 100 >= flat * 71,
+        "up {up:?} vs flat {flat:?}"
+    );
+    // A cliff-steep climb loses at most 40%.
+    let steep = marched(
+        &mut world_on(1, &fearless(), &ramp(4 * half)),
+        SPEARS,
+        50,
+        true,
+    );
+    assert!(
+        steep * 100 >= flat * 57 && steep * 100 <= flat * 64,
+        "steep {steep:?} vs flat {flat:?}"
+    );
+    let down = marched(
+        &mut world_on(1, &fearless(), &ramp(half)),
+        SPEARS,
+        20,
+        false,
+    );
+    assert!(down * 100 >= flat * 98, "down {down:?} vs flat {flat:?}");
+}
+
+#[test]
+fn mud_is_slow_and_heavy_troops_slowest() {
+    let units = fearless();
+    let on = |units: &[UnitStats], unit, footing: &[u8]| {
+        marched(&mut world_full(1, units, &[], &[], footing), unit, 38, true)
+    };
+    let (firm, soft) = (on(&units, SPEARS, &[]), on(&units, SPEARS, &mud(10, 40)));
+    assert!(
+        soft * 100 <= firm * 78 && soft * 100 >= firm * 72,
+        "on foot: mud {soft:?} vs firm {firm:?}"
+    );
+    let heavy = units.map(|u| UnitStats {
+        mass: Mass::Heavy,
+        ..u
+    });
+    let (firm, soft) = (on(&heavy, CAVALRY, &[]), on(&heavy, CAVALRY, &mud(10, 40)));
+    assert!(
+        soft * 100 <= firm * 63 && soft * 100 >= firm * 57,
+        "heavy: mud {soft:?} vs firm {firm:?}"
+    );
+}
+
+/// Hit points spearmen at row 28 lose in the first three seconds after
+/// cavalry starting at `cavalry_y` hits home, over six seeds.
+fn charged(units: &[UnitStats], heights: &[u16], footing: &[u8], cavalry_y: i32) -> u32 {
+    (1..=6)
+        .map(|seed| {
+            let mut w = world_full(seed, units, heights, &[], footing);
+            let d = spawn(&mut w, 1, SPEARS, tile(32), tile(28), SOUTH);
+            let a = spawn(&mut w, 0, CAVALRY, tile(32), tile(cavalry_y), NORTH);
+            w.tick(&[PlayerCommand {
+                player: 0,
+                command: Command::Attack {
+                    regiment: a,
+                    target: d,
+                },
+            }]);
+            let before = hp(&w, d);
+            let mut ticks = 0;
+            while !w.regiments.get(a).unwrap().engaged {
+                w.tick(&[]);
+                ticks += 1;
+                assert!(ticks < 20 * 20, "never reached them");
+            }
+            run(&mut w, 60);
+            before - hp(&w, d)
+        })
+        .sum()
+}
+
+/// The drill units, fearless, with cavalry charging for `bonus`.
+fn chargers(bonus: u8) -> [UnitStats; 4] {
+    let mut units = fearless();
+    units[CAVALRY as usize].charge_bonus = bonus;
+    units
+}
+
+#[test]
+fn nobody_charges_through_mud() {
+    let land = heights(|_, _| LAND);
+    let plain = charged(&chargers(0), &land, &[], 40);
+    let firm = charged(&chargers(250), &land, &[], 40);
+    assert!(firm * 10 > plain * 13, "the charge: {firm} vs {plain}");
+    // The spearmen stand in mud: the charge bogs down.
+    let into = charged(&chargers(250), &land, &mud(25, 31), 40);
+    assert!(
+        into * 10 < plain * 12,
+        "charged into mud: {into} vs {plain}"
+    );
+    // The cavalry starts in mud and is still in it when it hits home.
+    let out = charged(&chargers(250), &land, &mud(29, 45), 40);
+    assert!(
+        out * 10 < plain * 12,
+        "charged out of mud: {out} vs {plain}"
+    );
+}
+
+#[test]
+fn charges_from_high_ground_hit_harder_and_up_onto_it_softer() {
+    // Cavalry charges north from row 40 at spearmen on row 28; rows north of
+    // 31 stand a tile higher (uphill for the cavalry) or lower (downhill).
+    let up = hill(31, HEIGHT_UNITS as u16);
+    let down = heights(|_, y| {
+        if y < 31 {
+            LAND
+        } else {
+            LAND + HEIGHT_UNITS as u16
+        }
+    });
+    let land = heights(|_, _| LAND);
+    let bonus = |heights: &[u16]| {
+        charged(&chargers(100), heights, &[], 40) - charged(&chargers(0), heights, &[], 40)
+    };
+    let (flat, downhill, uphill) = (bonus(&land), bonus(&down), bonus(&up));
+    assert!(
+        downhill * 10 > flat * 12,
+        "downhill {downhill} vs flat {flat}"
+    );
+    assert!(uphill * 10 < flat * 8, "uphill {uphill} vs flat {flat}");
 }
 
 #[test]

@@ -64,6 +64,7 @@ fn the_minds_see_cleared_ground() {
             water_level: 0,
             cover: &cover,
             growth: &growth,
+            footing: &[],
         },
         champions: false,
     });

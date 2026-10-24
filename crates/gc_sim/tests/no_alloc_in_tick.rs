@@ -64,6 +64,7 @@ fn ticking_never_allocates() {
             water_level: 0,
             cover: &cover,
             growth: &[],
+            footing: &[],
         },
         champions: true,
     });

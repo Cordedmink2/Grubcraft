@@ -216,6 +216,9 @@ pub struct Selection<'a> {
     pub state: CardState,
     /// The formation they stand in; empty when it varies or is not known.
     pub formation: &'a str,
+    /// What the ground does to them ("In mud: slow, no charges"); empty on
+    /// plain ground.
+    pub ground: &'a str,
     /// The army shapes to choose from, as a row of chips along the tray's top
     /// edge. Empty for none, and the row only shows for two or more
     /// regiments.
@@ -1402,6 +1405,11 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
             muted_ink(),
             &fit(&format!("Formation: {}", s.formation), chars),
         );
+        y += 16;
+    }
+    // What the ground does to them, under it, where the tray has room.
+    if !s.ground.is_empty() && y + 14 <= r.bottom() {
+        draw.text(x, y, 1, muted_ink(), &fit(s.ground, chars));
     }
 }
 
@@ -2687,6 +2695,7 @@ mod tests {
             morale: 80,
             state: CardState::Steady,
             formation: "Line",
+            ground: "In mud: slow, no charges",
             shapes: &[],
         }
     }
@@ -2759,6 +2768,8 @@ mod tests {
         assert!(has(&one, "Yari") && has(&one, "Ashigaru"));
         assert!(has(&one, "40of60soldiers"));
         assert!(has(&one, "Health") && has(&one, "Morale") && has(&one, "Formation:Line"));
+        // What the ground does to them, when it does something.
+        assert!(has(&one, "Inmud:slow,nocharges"));
         assert!(has(&none, "Clickaregimenttocommandit"));
         assert!(!has(&one, "Clickaregimenttocommandit"));
         // A mixed selection counts regiments and soldiers.

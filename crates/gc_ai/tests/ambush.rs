@@ -114,6 +114,7 @@ fn world(cover: &[u8]) -> World {
             water_level: 0,
             cover,
             growth: &[],
+            footing: &[],
         },
         champions: false,
     })

@@ -66,7 +66,7 @@ use structures::Work;
 pub use structures::{
     BuildingId, BuildingStats, Refusal, StructureHandle, StructureView, Structures,
 };
-pub use terrain::{Cover, Ground, Growth, Terrain};
+pub use terrain::{Cover, Footing, Ground, Growth, Terrain};
 pub use verdict::{
     EXILE_TICKS, HEART_HOLD_TICKS, HEART_REACH, HEART_UNLOCK_TICKS, HOLD_TICKS, HeartView, Verdict,
     Victories, Win,
@@ -106,7 +106,7 @@ pub const SYSTEMS: [&str; 14] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 33;
+pub const SIM_VERSION: u32 = 34;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
