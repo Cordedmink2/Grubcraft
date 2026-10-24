@@ -334,12 +334,14 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
     }
     albedo *= 1.0 - OCCLUDED_DARK * in.occ;
     albedo *= 1.0 - WET_DARK * drench(n);
+    let unsnowed = albedo;
+    albedo = mix(albedo, SNOW_ALBEDO, dusting(n) * SNOW_ON_SCENERY);
     var c = shade(albedo, n, in.world);
     // Leaves and blades pass light on: with the sun behind them they glow,
     // yellower than they are lit from the front.
     let behind = max(dot(-n, g.sun_dir.xyz), 0.0);
     if in.leafy > 0.5 && behind > 0.0 {
-        let glow = albedo * vec3<f32>(1.2, 1.1, 0.7) * g.sun_color.rgb * behind * sunlight_soft(in.world, -n);
+        let glow = unsnowed * vec3<f32>(1.2, 1.1, 0.7) * g.sun_color.rgb * behind * sunlight_soft(in.world, -n);
         c += glow * g.sun_color.a * (1.0 - air_amount(in.world, distance(in.world, g.camera_pos.xyz)));
     }
     return vec4<f32>(veil(c, in.world.xz), 1.0);

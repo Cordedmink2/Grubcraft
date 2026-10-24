@@ -3707,6 +3707,7 @@ impl Running {
         // The unit viewer shows a model as made, not as the last rain left it.
         if self.viewer.is_some() {
             look.wet = 0.0;
+            look.snow = 0.0;
         }
         self.renderer.set_look(look);
         // A battle that has just begun draws the bars; blows shook the screen

@@ -317,7 +317,8 @@ struct Globals {
     air: [f32; 4],
     sky_top: [f32; 4],
     sky_horizon: [f32; 4],
-    /// x: how many point lights there are (see [`lights`]).
+    /// x: how many point lights there are (see [`lights`]), y: how much snow
+    /// lies ([`Look::snow`]).
     light_meta: [f32; 4],
     /// Each light's position and radius, then its colour and seed.
     lights: [[f32; 4]; 2 * MAX_LIGHTS],
@@ -1752,7 +1753,12 @@ impl Renderer {
             ],
             sky_top: rgba(look.hdr(look.sky_top), 0.0),
             sky_horizon: rgba(look.hdr(look.sky_horizon), 0.0),
-            light_meta: [self.lights.len().min(MAX_LIGHTS) as f32, 0.0, 0.0, 0.0],
+            light_meta: [
+                self.lights.len().min(MAX_LIGHTS) as f32,
+                look.snow.clamp(0.0, 1.0),
+                0.0,
+                0.0,
+            ],
             lights: lights::pack(&self.lights),
         };
         self.post

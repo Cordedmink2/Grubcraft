@@ -246,6 +246,7 @@ const GOLDEN_HOUR: Look = Look {
     cloud_shadows: 0.4,
     ground_occlusion: 1.0,
     wet: 0.0,
+    snow: 0.0,
     exposure: 0.9,
     contrast: 1.1,
     saturation: 1.15,
@@ -289,6 +290,11 @@ pub struct Look {
     /// with puddles in the hollows. The game sets it from the rain that has
     /// fallen, so it outlasts the rain and dries slowly.
     pub wet: f32,
+    /// How much snow lies on the ground, 0 bare to 1 a blanket: patches that
+    /// grow into a cover on flat ground, a dusting on the tops of trees,
+    /// rocks, buildings and soldiers. The game sets it from the snow that has
+    /// fallen, so it outlasts the fall and melts slowly (rain melts it).
+    pub snow: f32,
     /// The film curve's input scale.
     pub exposure: f32,
     /// Contrast round mid grey, 1 neutral.
@@ -424,6 +430,7 @@ impl Look {
             cloud_shadows: n(self.cloud_shadows, other.cloud_shadows),
             ground_occlusion: n(self.ground_occlusion, other.ground_occlusion),
             wet: n(self.wet, other.wet),
+            snow: n(self.snow, other.snow),
             exposure: n(self.exposure, other.exposure),
             contrast: n(self.contrast, other.contrast),
             saturation: n(self.saturation, other.saturation),
@@ -1222,6 +1229,10 @@ mod tests {
 
     #[test]
     fn every_look_starts_dry() {
-        assert!(LookPreset::ALL.iter().all(|p| p.look().wet == 0.0));
+        assert!(
+            LookPreset::ALL
+                .iter()
+                .all(|p| p.look().wet == 0.0 && p.look().snow == 0.0)
+        );
     }
 }

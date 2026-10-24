@@ -123,6 +123,13 @@ const SOAK_SETTLE: f32 = 12.0;
 const DRY_SETTLE: f32 = 90.0;
 /// How little wet is dry.
 const DRY_BELOW: f32 = 0.002;
+/// Seconds snow takes to settle as a time constant, to melt on its own, and
+/// to melt under rain.
+const SNOW_SETTLE: f32 = 50.0;
+/// Under this much snow the ground is bare to the eye, so it is none.
+const SNOW_BARE: f32 = 0.06;
+const SNOW_MELT: f32 = 240.0;
+const RAIN_MELT: f32 = 25.0;
 /// How much of the full rain it takes to storm, and the seconds between
 /// flashes (shortest, longest).
 const STORM_AT: f32 = 0.75;
@@ -197,6 +204,8 @@ pub struct Atmosphere {
     leaving: (Weather, f32),
     /// How wet the ground is (0 to 1), which outlasts the rain.
     soaked: f32,
+    /// How much snow lies on the ground (0 to 1), which outlasts the fall.
+    settled: f32,
     storm: Storm,
     /// The sky the match has now, which the weather and the light follow
     /// until F12 (weather) or F9 (look) takes them over, or `--weather` or
@@ -307,6 +316,7 @@ impl Atmosphere {
             fade: 0.0,
             leaving: (Weather::Clear, 0.0),
             soaked: 0.0,
+            settled: 0.0,
             storm: Storm::new(),
             sky: None,
             weather_preview: false,
@@ -437,6 +447,7 @@ impl Atmosphere {
         self.start_weather();
         self.leaving = (Weather::Clear, 0.0);
         self.soaked = 0.0;
+        self.settled = 0.0;
         self.storm = Storm::new();
     }
 
@@ -498,6 +509,26 @@ impl Atmosphere {
         if rain == 0.0 && self.soaked < DRY_BELOW {
             self.soaked = 0.0;
         }
+        // Snow settles while it falls and stays while it eases, melts slowly
+        // once it has stopped and quickly under rain.
+        let snowfall = [self.leaving, (self.weather, self.fade)]
+            .into_iter()
+            .filter(|&(weather, _)| weather == Weather::Snow)
+            .map(|(_, amount)| amount)
+            .fold(0.0, f32::max);
+        let (target, settle) = if rain > 0.0 {
+            (0.0, RAIN_MELT)
+        } else if snowfall > self.settled {
+            (snowfall, SNOW_SETTLE)
+        } else if snowfall > 0.0 {
+            (self.settled, SNOW_SETTLE)
+        } else {
+            (0.0, SNOW_MELT)
+        };
+        self.settled += (target - self.settled) * (1.0 - (-dt.max(0.0) / settle).exp());
+        if snowfall == 0.0 && self.settled < SNOW_BARE {
+            self.settled = 0.0;
+        }
         let stormy = self.weather == Weather::Rain && self.fade >= STORM_AT;
         let flash = self.storm.step(dt.max(0.0), stormy);
         // Under Clarity the weather dims the light and thickens the air
@@ -525,6 +556,7 @@ impl Atmosphere {
             .in_weather(self.leaving.0, self.leaving.1 * share)
             .in_weather(self.weather, self.fade * share);
         look.wet = self.soaked * share;
+        look.snow = self.settled * share;
         if clarity {
             look = look.clear();
         }
@@ -803,9 +835,13 @@ mod tests {
 
     /// One frame of `atmosphere` over the 64-tile test map.
     fn frame(atmosphere: &mut Atmosphere, dt: f32) -> Look {
+        frame_with(atmosphere, dt, false)
+    }
+
+    fn frame_with(atmosphere: &mut Atmosphere, dt: f32, clarity: bool) -> Look {
         static MAP: std::sync::OnceLock<Map> = std::sync::OnceLock::new();
         let map = MAP.get_or_init(|| Map::generate(1, 64));
-        atmosphere.look(dt, map, Vec2::new(32.0, 32.0), 40.0, false)
+        atmosphere.look(dt, map, Vec2::new(32.0, 32.0), 40.0, clarity)
     }
 
     #[test]
@@ -1071,6 +1107,49 @@ mod tests {
             run(&mut atmosphere, 900.0).wet,
             0.0,
             "dry in the end, not a trace"
+        );
+    }
+
+    #[test]
+    fn snow_settles_while_it_falls_stays_and_melts_slowly_or_fast_under_rain() {
+        use gc_sim::WeatherKind;
+        let run = |atmosphere: &mut Atmosphere, secs: f32| {
+            let mut look = frame(atmosphere, 0.016);
+            for _ in 0..(secs * 10.0) as u32 {
+                look = frame(atmosphere, 0.1);
+            }
+            look
+        };
+        let mut atmosphere = Atmosphere::new(None, None);
+        atmosphere.follow(sim_sky(WeatherKind::Snow, 255, 0, 12));
+        assert!(run(&mut atmosphere, 0.1).snow < 0.05, "bare at first");
+        let early = run(&mut atmosphere, 20.0).snow;
+        let late = run(&mut atmosphere, 200.0).snow;
+        assert!(early > 0.1 && early < 0.7 && late > 0.95, "{early} {late}");
+        // The fall stops: it stays, melting over minutes.
+        atmosphere.follow(sim_sky(WeatherKind::Clear, 0, 0, 12));
+        let after = run(&mut atmosphere, 60.0).snow;
+        assert!(after > 0.7 && after < late, "{after}");
+        assert!(
+            run(&mut atmosphere, 1500.0).snow == 0.0,
+            "melted in the end"
+        );
+        // Rain melts what is left quickly, and snow does not wet the ground.
+        atmosphere.follow(sim_sky(WeatherKind::Snow, 255, 0, 12));
+        let covered = run(&mut atmosphere, 200.0);
+        assert!(covered.snow > 0.95 && covered.wet == 0.0);
+        atmosphere.follow(sim_sky(WeatherKind::Rain, 255, 0, 12));
+        assert!(run(&mut atmosphere, 100.0).snow < 0.05);
+        // A new match starts bare, and Clarity keeps a share.
+        atmosphere.start(LookPreset::Noon);
+        assert_eq!(atmosphere.settled, 0.0);
+        let mut plain = Atmosphere::new(None, None);
+        plain.follow(sim_sky(WeatherKind::Snow, 255, 0, 12));
+        let full = run(&mut plain, 300.0).snow;
+        let clear = frame_with(&mut plain, 0.1, true).snow;
+        assert!(
+            (clear - full * CLARITY_WEATHER).abs() < 0.02,
+            "{clear} {full}"
         );
     }
 
