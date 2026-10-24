@@ -3,7 +3,8 @@
 //! SEED OUT.ron` writes the map a recipe makes from a seed, so a good one
 //! can become a hand-tuned map: a Field Battle recipe (Pass, Ford, Hill or
 //! Open, the Wilds as Plains, Mixed or Wild, or grown land as Land-Plains,
-//! Land-Mixed or Land-Wild) takes a size in tiles, as
+//! Land-Mixed or Land-Wild, or with measured fairness as Measured-Plains
+//! and so on) takes a size in tiles, as
 //! do the big Conquest Wilds (Conquest-Plains, Conquest-Mixed or
 //! Conquest-Wild, 512 tiles and up); a Conquest recipe (Teeth, Bowl or
 //! Fen) takes Duel, Skirmish or Warfield and rerolls the seed until the
@@ -11,6 +12,7 @@
 //! writes a campaign battle map (FORT is `fort` or `open`).
 
 use gc_map::conquest::{CONQUEST_SIZES, ConquestRecipe};
+use gc_map::grown::Fairness;
 use gc_map::wilds::Wildness;
 use gc_mapcheck::{Map, MapDef, check, generate, preview};
 use std::path::{Path, PathBuf};
@@ -43,9 +45,16 @@ fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String
             ));
         }
         gc_map::wilds::describe(tiles, seed, wild)
-    } else if let Some(wild) = Wildness::ALL
+    } else if let Some((wild, (_, fairness))) = Wildness::ALL
         .into_iter()
-        .find(|w| is(&format!("Land-{}", w.name())))
+        .flat_map(|w| {
+            [
+                ("Land", Fairness::Mirrored),
+                ("Measured", Fairness::Measured),
+            ]
+            .map(|f| (w, f))
+        })
+        .find(|(w, (kind, _))| is(&format!("{kind}-{}", w.name())))
     {
         let tiles = tiles()?;
         if tiles < gc_map::grown::MIN_TILES {
@@ -54,7 +63,7 @@ fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String
                 gc_map::grown::MIN_TILES
             ));
         }
-        gc_map::grown::describe(tiles, seed, wild)
+        gc_map::grown::describe(tiles, seed, wild, fairness)
     } else if let Some(wild) = Wildness::ALL
         .into_iter()
         .find(|w| is(&format!("Conquest-{}", w.name())))

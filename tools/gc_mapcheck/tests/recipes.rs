@@ -10,6 +10,7 @@ use gc_map::Kind;
 use gc_map::SizeClass;
 use gc_map::battle::{DEFENDER, FORT_RADIUS, Region, battle_map};
 use gc_map::conquest::{self, CONQUEST_SIZES, ConquestRecipe};
+use gc_map::grown::Fairness;
 use gc_map::recipe::{Recipe, describe};
 use gc_map::wilds::{self, Wildness};
 use gc_mapcheck::Map;
@@ -71,18 +72,19 @@ fn every_wilds_map_passes_the_checker() {
 /// to large, passes the checker and has room for all its sites.
 #[test]
 fn every_grown_map_passes_the_checker() {
-    let jobs: Vec<(Wildness, i32, u64)> = Wildness::ALL
+    let jobs: Vec<(Wildness, i32, u64, Fairness)> = Wildness::ALL
         .into_iter()
         .flat_map(|w| [256, 512, 768].map(|t| (w, t)))
         .flat_map(|(w, t)| (1..=4).map(move |seed| (w, t, seed)))
+        .flat_map(|(w, t, seed)| Fairness::ALL.map(|f| (w, t, seed, f)))
         .collect();
     // The game makes a map whose starts are cut off from each other again
     // from the next seed (`gc_map::FieldMap::make`); stage 2's passes and
     // fords will make that rarer still.
     let rerolls = AtomicUsize::new(0);
-    let failed = failures(&jobs, |&(wild, tiles, seed)| {
+    let failed = failures(&jobs, |&(wild, tiles, seed, fairness)| {
         let Some(def) = (0..8)
-            .map(|k| gc_map::grown::describe(tiles, seed + k, wild))
+            .map(|k| gc_map::grown::describe(tiles, seed + k, wild, fairness))
             .find(|d| {
                 let joined = gc_map::Map::from_def(d).starts_joined();
                 if !joined {
@@ -92,7 +94,7 @@ fn every_grown_map_passes_the_checker() {
             })
         else {
             return Some(format!(
-                "{wild:?} {tiles} seed {seed}: no seed of 8 joins the starts"
+                "{wild:?} {fairness:?} {tiles} seed {seed}: no seed of 8 joins the starts"
             ));
         };
         let report = check(&def);
@@ -101,7 +103,7 @@ fn every_grown_map_passes_the_checker() {
             .first()
             .cloned()
             .or_else(|| short_of_sites(&def))?;
-        Some(format!("{wild:?} {tiles} seed {seed}: {e}"))
+        Some(format!("{wild:?} {fairness:?} {tiles} seed {seed}: {e}"))
     });
     assert!(
         failed.is_empty(),

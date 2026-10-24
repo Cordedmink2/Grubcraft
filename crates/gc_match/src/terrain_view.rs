@@ -15,6 +15,14 @@ pub fn plateau_positions(tiles: u32) -> [Vec2; START_PLATEAUS] {
     gc_map::plateaus(tiles).map(|(x, y)| Vec2::new(x as f32, y as f32))
 }
 
+/// Where a Field Battle map's six starts stand, in lobby order: the map's
+/// own starts (grown land with measured fairness moves them off the
+/// plateaus), or the plateaus for a map without six.
+pub fn field_starts(map: &Map) -> [Vec2; START_PLATEAUS] {
+    <[Vec2; START_PLATEAUS]>::try_from(map.start_positions())
+        .unwrap_or_else(|_| plateau_positions(map.tiles))
+}
+
 /// The ground as the computer players read it: the walkable-ground grid
 /// (the match's, `Map::sim_nav_costs`), what grows on it (thicket blocked
 /// until it is cleared, which the minds follow as the match goes), plus

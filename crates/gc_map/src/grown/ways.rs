@@ -18,7 +18,6 @@ use super::field::{
 };
 use super::{Habitat, Raster, TOP, WATER_LINE};
 use crate::def::Land;
-use crate::generate::plateaus;
 
 /// A pocket smaller than this (in tiles) is broken into rock instead of
 /// getting a ramp.
@@ -36,9 +35,13 @@ const FORD: i32 = ONE / 5;
 const DEEP: i32 = WATER_LINE - ONE * 35 / 100;
 /// Rounds of ramps and passes before what is still cut off is broken.
 const ROUNDS: usize = 4;
+/// Under measured fairness the walks are what keeps the starts equal, so
+/// passes are cut sooner and for longer.
+const MEASURED_ROUNDS: usize = 8;
 /// The longest the walk between two starts may be, in tenths of the
 /// straight line between them, before a pass is cut.
 const MAX_STRETCH: i64 = 17;
+const MEASURED_STRETCH: i64 = 13;
 
 /// Give every cut-off piece of standable ground a way in (or break it),
 /// and cut a pass wherever two starts' way round is much longer than the
@@ -47,7 +50,8 @@ pub(super) fn open_ways(r: &mut Raster, seeds: &mut Seeds) {
     let n = r.height.n;
     let rough = fbm(n, seeds.next(), ONE * 5 / 2, 2);
     let mut standable = super::standable(r);
-    for _ in 0..ROUNDS {
+    let rounds = if r.mirrored { ROUNDS } else { MEASURED_ROUNDS };
+    for _ in 0..rounds {
         let opened = open_pockets(r, &standable, &rough, false);
         if opened {
             standable = super::standable(r);
@@ -70,7 +74,7 @@ pub(super) fn open_ways(r: &mut Raster, seeds: &mut Seeds) {
 fn open_pockets(r: &mut Raster, standable: &[u8], rough: &Grid, only_break: bool) -> bool {
     let n = r.height.n;
     let last = n * n - 1;
-    let starts = start_tiles(n);
+    let starts = start_tiles(r);
     let (live, pockets) = pieces(standable, n, starts[0]);
     // With no ground under the first start there is nothing to measure
     // reachable from; leave the land be rather than break all of it.
@@ -85,7 +89,7 @@ fn open_pockets(r: &mut Raster, standable: &[u8], rough: &Grid, only_break: bool
             // A start's own ground is never broken: better cut off than
             // gone.
             if !holds_start {
-                mark(&mut broken, p, &live);
+                mark(&mut broken, p, &live, r.mirrored);
             }
             continue;
         }
@@ -94,11 +98,11 @@ fn open_pockets(r: &mut Raster, standable: &[u8], rough: &Grid, only_break: bool
         // reachable land itself).
         let lo = *p.iter().min().expect("a pocket has tiles");
         let hi = *p.iter().max().expect("a pocket has tiles");
-        if last - hi < lo && !live[last - hi] {
+        if r.mirrored && last - hi < lo && !live[last - hi] {
             continue;
         }
         if p.len() < POCKET && !holds_start {
-            mark(&mut broken, p, &live);
+            mark(&mut broken, p, &live, r.mirrored);
             continue;
         }
         let (dist, parent) = cross.get_or_insert_with(|| crossings(r, &live));
@@ -108,7 +112,7 @@ fn open_pockets(r: &mut Raster, standable: &[u8], rough: &Grid, only_break: bool
             .expect("a pocket has tiles");
         if dist[a] == u32::MAX {
             if !holds_start {
-                mark(&mut broken, p, &live);
+                mark(&mut broken, p, &live, r.mirrored);
             }
             continue;
         }
@@ -126,8 +130,9 @@ fn open_pockets(r: &mut Raster, standable: &[u8], rough: &Grid, only_break: bool
 }
 
 /// The start tiles as indices, in player order (as `plateaus` gives them).
-fn start_tiles(n: usize) -> Vec<usize> {
-    plateaus(n as u32)
+fn start_tiles(r: &Raster) -> Vec<usize> {
+    let n = r.height.n;
+    r.starts
         .iter()
         .map(|&(x, y)| y as usize * n + x as usize)
         .collect()
@@ -140,23 +145,33 @@ fn start_tiles(n: usize) -> Vec<usize> {
 fn passes(r: &mut Raster, standable: &[u8]) -> bool {
     let n = r.height.n;
     let last = n * n - 1;
-    let starts = start_tiles(n);
+    let starts = start_tiles(r);
     // Each start's turned copy: the start nearest where it turns to (the
     // starts sit on whole tiles, so they can be a tile out). Every pair of
     // starts, or its turned copy, has one of 0, 1 and 4 in it, so walks
     // from those three are enough.
-    let twin: Vec<usize> = starts
-        .iter()
-        .map(|&s| {
-            let (x, y) = ((last - s) % n, (last - s) / n);
-            (0..starts.len())
-                .min_by_key(|&k| (starts[k] % n).abs_diff(x) + (starts[k] / n).abs_diff(y))
-                .expect("there are starts")
-        })
-        .collect();
-    debug_assert_eq!(twin, [3, 2, 1, 0, 5, 4]);
-    const FROM: [usize; 3] = [0, 1, 4];
-    let walks: Vec<Vec<u32>> = FROM
+    let twin: Vec<usize> = if !r.mirrored {
+        (0..starts.len()).collect()
+    } else {
+        starts
+            .iter()
+            .map(|&s| {
+                let (x, y) = ((last - s) % n, (last - s) / n);
+                (0..starts.len())
+                    .min_by_key(|&k| (starts[k] % n).abs_diff(x) + (starts[k] / n).abs_diff(y))
+                    .expect("there are starts")
+            })
+            .collect()
+    };
+    // (On land that isn't its own turned copy, walks from all six.)
+    let from: &[usize] = if r.mirrored {
+        debug_assert_eq!(twin, [3, 2, 1, 0, 5, 4]);
+        &[0, 1, 4]
+    } else {
+        // (Pairs are walked from their lower start, so never from 5.)
+        &[0, 1, 2, 3, 4]
+    };
+    let walks: Vec<Vec<u32>> = from
         .iter()
         .map(|&k| walk(standable, n, starts[k], &starts))
         .collect();
@@ -169,11 +184,11 @@ fn passes(r: &mut Raster, standable: &[u8]) -> bool {
             if (ti, tj) < (i, j) {
                 continue;
             }
-            // The pair as a walk from one of `FROM`, turned if need be.
+            // The pair as a walk from one of `from`, turned if need be.
             let (w, to) = [(i, j), (j, i), (twin[i], twin[j]), (twin[j], twin[i])]
                 .into_iter()
-                .find_map(|(k, to)| Some((FROM.iter().position(|&f| f == k)?, to)))
-                .expect("every pair of starts, or its turned copy, has one in FROM");
+                .find_map(|(k, to)| Some((from.iter().position(|&f| f == k)?, to)))
+                .expect("every pair of starts, or its turned copy, has one in `from`");
             let walked = walks[w][starts[to]];
             let (si, sj) = (starts[i], starts[j]);
             let (dx, dy) = (
@@ -182,7 +197,12 @@ fn passes(r: &mut Raster, standable: &[u8]) -> bool {
             );
             let straight = u64::from((hypot(dx * ONE, dy * ONE) >> 16).max(1) as u32);
             // A start with no ground under it can't anchor a pass.
-            if u64::from(walked) <= straight * MAX_STRETCH as u64
+            let limit = if r.mirrored {
+                MAX_STRETCH
+            } else {
+                MEASURED_STRETCH
+            };
+            if u64::from(walked) <= straight * limit as u64
                 || standable[si] == 0
                 || standable[sj] == 0
             {
@@ -366,10 +386,12 @@ fn crossings(r: &Raster, live: &[bool]) -> (Vec<u32>, Vec<u32>) {
 
 /// Mark a pocket and its turned copy to be broken (never the reachable
 /// land, when the turned copy is part of it).
-fn mark(broken: &mut [bool], pocket: &[usize], live: &[bool]) {
+fn mark(broken: &mut [bool], pocket: &[usize], live: &[bool], mirrored: bool) {
     let last = broken.len() - 1;
     for &t in pocket {
-        if !live[last - t] {
+        if !mirrored {
+            broken[t] = true;
+        } else if !live[last - t] {
             broken[t] = true;
             broken[last - t] = true;
         }
@@ -433,7 +455,8 @@ fn ramp(r: &mut Raster, a: usize, b: usize) {
     }
     cut.sort_by_key(|&(w, ..)| w);
     for (w, i, h) in cut {
-        for k in [i, last - i] {
+        let twin = r.mirrored.then_some(last - i);
+        for k in std::iter::once(i).chain(twin) {
             r.height.v[k] = h;
             if w > ONE / 2 {
                 r.thicket[k] = false;
@@ -458,7 +481,10 @@ fn break_ground(r: &mut Raster, broken: &[bool], rough: &Grid) {
         // Rough bumps, and on the ground itself every other tile up or
         // down too, so steep that no one stands there (a tile and its
         // turned copy are alike: x + y keeps its evenness).
-        let mut bump = mul(ONE * 18 / 10, rough.v[i.min(last - i)] - ONE / 2);
+        let mut bump = mul(
+            ONE * 18 / 10,
+            rough.v[if r.mirrored { i.min(last - i) } else { i }] - ONE / 2,
+        );
         if is_broken {
             bump += if (i % n + i / n).is_multiple_of(2) {
                 ONE * 7 / 10
@@ -476,7 +502,7 @@ fn break_ground(r: &mut Raster, broken: &[bool], rough: &Grid) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Grown, grow};
+    use super::super::{Fairness, Grown, grow};
     use super::*;
     use crate::wilds::Wildness;
 
@@ -485,19 +511,32 @@ mod tests {
     /// walk is far longer than the straight line between them.
     #[test]
     fn every_start_and_plateau_has_a_way_in() {
-        for wildness in Wildness::ALL {
+        for (wildness, fairness) in Wildness::ALL
+            .into_iter()
+            .flat_map(|w| Fairness::ALL.map(|f| (w, f)))
+        {
             for seed in 1..=2 {
                 let n = 256;
-                let r = grow(n as u32, Grown { seed, wildness });
+                let r = grow(
+                    n as u32,
+                    Grown {
+                        seed,
+                        wildness,
+                        fairness,
+                    },
+                );
                 let standable = super::super::standable(&r);
-                let starts = start_tiles(n);
+                let starts = start_tiles(&r);
                 let (live, pockets) = pieces(&standable, n, starts[0]);
                 assert!(
                     pockets.is_empty(),
-                    "{wildness:?} seed {seed}: cut off {:?}",
+                    "{wildness:?} {fairness:?} seed {seed}: cut off {:?}",
                     pockets.iter().map(Vec::len).collect::<Vec<_>>()
                 );
-                assert!(starts.iter().all(|&s| live[s]), "{wildness:?} seed {seed}");
+                assert!(
+                    starts.iter().all(|&s| live[s]),
+                    "{wildness:?} {fairness:?} seed {seed}"
+                );
                 let from = walk(&standable, n, starts[0], &starts);
                 for &s in &starts[1..] {
                     let (dx, dy) = (
@@ -508,7 +547,7 @@ mod tests {
                     let stretch = f64::from(from[s]) / 10.0 / straight;
                     assert!(
                         stretch < 1.8,
-                        "{wildness:?} seed {seed}: stretch {stretch:.2}"
+                        "{wildness:?} {fairness:?} seed {seed}: stretch {stretch:.2}"
                     );
                 }
             }
@@ -534,6 +573,8 @@ mod tests {
             thicket: vec![false; n * n],
             land: vec![0; n * n],
             habitat: vec![0; n * n],
+            starts: crate::generate::plateaus(n as u32),
+            mirrored: true,
         };
         let mid = 24 * n;
         ramp(&mut r, mid + n / 4 + 2, mid + n / 4 - 3);

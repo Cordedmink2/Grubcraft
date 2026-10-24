@@ -154,6 +154,34 @@ Each stage is playable on its own.
 - `ways::tests` check that no start or plateau is left cut off and no start pair winds past 1.8 at 256.
 - **The computer players' routes.** `gc_match`'s `grown_land_battles_meet` (run by hand) plays two Veteran computer players on a 256 map of each wildness, two seeds each. In all six their armies met within 23 to 77 seconds, and the battle was decided in under four and a half minutes. The minds read the grown land's chokes and ways without changes.
 
+## Stage 3 as built
+
+*Built 2026-10-24, in part.* Measured fairness is in the lobby as four new choices, **Measured: Random, Plains, Mixed and Wild** (`gc_map::MEASURED`). The mirrored grown land stays **Land: ...** and is still the default, because Measured is not yet as even as the doc's limits for four to six players (below). The code is `grown/starts.rs` and the `Fairness` switch on `Grown`.
+
+- **Unique land.** No seam: the land, water and woods grow once over the whole map.
+- **Starts by search.** Each start keeps to a window round its plateau, so north, south, corners and middles mean what they always did for handing out starts (`gc_match::battle_starts`). A coarse-grid search moves the starts one at a time to make the walk to the nearest enemy as equal as it can. It scores every way the lobby hands starts out: corners and all six, north against south, everyone for themselves, and column against column. It runs twice. The first pass runs on the land's shape before the water, so the rivers, woods and open ground grow round the chosen starts. The second runs on the finished land as the nav rules see it, a dozen tiles at most, onto dry, standable ground.
+- **Equal clearings.** Every start gets the same clearing shape, so its building room is equal by construction.
+- **Passes cut sooner.** Stage 2's passes fire at 1.3 times the straight line instead of 1.7, for up to eight rounds, because under Measured the walks are what keeps the starts equal.
+- **Paired sites.** Each site in the north (village, camp, fort, lair, stones, knolls, heights, ford) gets a partner of its own in the south, as near the turned spot as the land has room. Nothing is mirrored.
+- **Deployment and the lobby preview** read the map's own starts (`gc_match::terrain_view::field_starts`), not the plateaus. PROTOCOL 35.
+
+**Measured (2026-10-24, 12 maps at 512, true walks via `gc_mapcheck`'s search, spread = (most - least) / mean of each start's walk to its nearest enemy).**
+
+- **Two players** are equal by construction: one pair, one walk.
+- **Four players (2v2, free-for-all):** 0 to 5% on most seeds, but 10 to 20% on some Mixed and Wild seeds.
+- **Six players:** 3v3 2 to 26%. Free-for-all and two-against-two-against-two 3 to 39%. The mirrored land is 1 to 30% on the same measures, since twins are equal but corners and middles are not.
+- **The checker:** all 72 maps (36 mirrored, 36 measured) of `every_grown_map_passes_the_checker` pass with no reroll.
+- **Build time:** a 768 Measured map builds in about 4.5 seconds (mirrored 2.2), over the 3-second target. The second search and the extra pass rounds are the cost.
+
+**Still to do for stage 3:**
+
+- A finer search, or seeds rerolled against fairness limits in `gc_mapcheck`, to bring four to six players under about 5%.
+- Then make Measured the default.
+- Count cuttable woods near starts (idea 22).
+- Team-aware limits.
+- Store the generator version with the map choice in replays.
+- Move Conquest big maps onto grown land.
+
 ## Costs and risks
 
 - **Load time.** The Python prototype takes 20 to 40 seconds a map. The game runs erosion, drainage and the start search on coarse grids. Estimated 1 to 3 seconds for a 768 map; measured in stage 1 at about 2 seconds.

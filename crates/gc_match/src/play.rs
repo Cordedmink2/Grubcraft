@@ -14,7 +14,7 @@ use gc_ui::lobby::MatchStart;
 
 use crate::Tables;
 use crate::battle::{Battle, SetOut, champions_allowed, set_out};
-use crate::terrain_view::{ai_terrain, plateau_positions};
+use crate::terrain_view::{ai_terrain, field_starts};
 
 /// A battle under way.
 pub struct Match {
@@ -103,7 +103,7 @@ impl Match {
             &tables.units,
             &tables.factions,
             &tables.points,
-            plateau_positions(map.tiles),
+            field_starts(map),
             seed,
             deploy,
             &mut minds,

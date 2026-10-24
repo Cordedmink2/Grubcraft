@@ -51,9 +51,10 @@ pub use map::{
 /// The maps a Field Battle can be played on, in the lobby's order: the
 /// seeded map, a random map from each recipe, a random recipe, the Classic
 /// Wilds as wild as the seed picks and at each [`wilds::Wildness`], then
-/// grown land (Living Land, [`grown`]) the same way. Each group was added
-/// after the last, so older replays keep their choices.
-pub const FIELD_MAPS: [&str; 14] = [
+/// grown land (Living Land, [`grown`]) the same way, mirrored, then the
+/// same with measured fairness. Each group was added after the last, so
+/// older replays keep their choices.
+pub const FIELD_MAPS: [&str; 18] = [
     "Proving Ground",
     "Random: Pass",
     "Random: Ford",
@@ -68,16 +69,24 @@ pub const FIELD_MAPS: [&str; 14] = [
     "Land: Plains",
     "Land: Mixed",
     "Land: Wild",
+    "Measured: Random",
+    "Measured: Plains",
+    "Measured: Mixed",
+    "Measured: Wild",
 ];
 
 /// The first Classic Wilds choice in [`FIELD_MAPS`], as wild as the seed
 /// picks. Each [`wilds::Wildness`] follows it.
 pub const WILDS: usize = 6;
 
-/// The first grown land choice in [`FIELD_MAPS`], as wild as the seed
-/// picks: the one a new lobby starts on. Each [`wilds::Wildness`] follows
-/// it.
+/// The first grown land choice in [`FIELD_MAPS`] (mirrored), as wild as
+/// the seed picks: the one a new lobby starts on. Each
+/// [`wilds::Wildness`] follows it.
 pub const GROWN: usize = WILDS + 1 + wilds::Wildness::ALL.len();
+
+/// The first grown land choice with measured fairness, as wild as the seed
+/// picks. Each [`wilds::Wildness`] follows it.
+pub const MEASURED: usize = GROWN + 1 + wilds::Wildness::ALL.len();
 
 /// A Field Battle map: the lobby's choice (an index into [`FIELD_MAPS`]),
 /// its size and its seed. The same three make the same map on every
@@ -102,7 +111,7 @@ impl FieldMap {
         enum Maker {
             Recipe(recipe::Recipe),
             Wilds(wilds::Wildness),
-            Grown(wilds::Wildness),
+            Grown(wilds::Wildness, grown::Fairness),
         }
         let (recipes, lands) = (recipe::Recipe::ALL, wilds::Wildness::ALL);
         let pick = |count: usize| (seed % count as u64) as usize;
@@ -112,8 +121,14 @@ impl FieldMap {
             c if c == recipes.len() + 1 => Maker::Recipe(recipes[pick(recipes.len())]),
             WILDS => Maker::Wilds(lands[pick(lands.len())]),
             c if c <= WILDS + lands.len() => Maker::Wilds(lands[c - WILDS - 1]),
-            GROWN => Maker::Grown(lands[pick(lands.len())]),
-            c if c <= GROWN + lands.len() => Maker::Grown(lands[c - GROWN - 1]),
+            GROWN => Maker::Grown(lands[pick(lands.len())], grown::Fairness::Mirrored),
+            c if c <= GROWN + lands.len() => {
+                Maker::Grown(lands[c - GROWN - 1], grown::Fairness::Mirrored)
+            }
+            MEASURED => Maker::Grown(lands[pick(lands.len())], grown::Fairness::Measured),
+            c if c <= MEASURED + lands.len() => {
+                Maker::Grown(lands[c - MEASURED - 1], grown::Fairness::Measured)
+            }
             _ => return Map::generate(seed, tiles),
         };
         let make = |k| {
@@ -121,7 +136,7 @@ impl FieldMap {
             Map::from_def(&match maker {
                 Maker::Recipe(recipe) => recipe::describe(recipe, tiles as i32, seed),
                 Maker::Wilds(wild) => wilds::describe(tiles as i32, seed, wild),
-                Maker::Grown(wild) => grown::describe(tiles as i32, seed, wild),
+                Maker::Grown(wild, fair) => grown::describe(tiles as i32, seed, wild, fair),
             })
         };
         let first = make(0);
@@ -211,14 +226,14 @@ mod tests {
     /// lobby names the Classic Wilds and grown land by how wild.
     #[test]
     fn the_wilds_choices_are_named_for_how_wild() {
-        for (first, kind) in [(WILDS, "Classic"), (GROWN, "Land")] {
+        for (first, kind) in [(WILDS, "Classic"), (GROWN, "Land"), (MEASURED, "Measured")] {
             assert_eq!(FIELD_MAPS[first], format!("{kind}: Random"));
             for (k, wild) in wilds::Wildness::ALL.iter().enumerate() {
                 let name = format!("{kind}: {}", wild.name());
                 assert_eq!(FIELD_MAPS[first + 1 + k], name);
             }
         }
-        assert_eq!(FIELD_MAPS.len(), GROWN + 1 + wilds::Wildness::ALL.len());
+        assert_eq!(FIELD_MAPS.len(), MEASURED + 1 + wilds::Wildness::ALL.len());
     }
 
     /// Every lobby choice, at both Small sizes, makes a map whose starts
@@ -279,5 +294,7 @@ mod tests {
         assert_eq!(hash(GROWN + 1), 0xdf84_c076_b039_24e6);
         assert_eq!(hash(GROWN + 2), 0xccc6_9cef_3753_ebc2);
         assert_eq!(hash(GROWN + 3), 0x5b6f_0756_43bc_688a);
+        // Measured fairness: the start search and the paired sites.
+        assert_eq!(hash(MEASURED + 2), 0xc4a7_b7c2_c82c_4cc3);
     }
 }

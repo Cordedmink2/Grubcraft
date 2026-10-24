@@ -590,7 +590,16 @@ mod tests {
     /// Land from the real pipeline, with a made-up drainage: low ground
     /// gathers water, and a thin band just over the water line is river.
     fn setup(n: usize, seed: u64, w: Wildness) -> (Grid, Water, Vec<bool>, Dials) {
-        let h = grow(n as u32, Grown { seed, wildness: w }).height.clone();
+        let h = grow(
+            n as u32,
+            Grown {
+                seed,
+                wildness: w,
+                fairness: super::super::Fairness::Mirrored,
+            },
+        )
+        .height
+        .clone();
         let acc =
             h.v.iter()
                 .map(|&v| {

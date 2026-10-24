@@ -269,10 +269,11 @@ pub fn field_map_tiles(size: MapSize, players: usize) -> u32 {
 }
 
 /// Maps the lobby offers: the seeded map, a random map from each recipe,
-/// a random recipe, the Classic Wilds maps and grown land (Living Land),
-/// each as wild as the seed picks or as plains, mixed or wild land. The
+/// a random recipe, the Classic Wilds maps and grown land (Living Land,
+/// mirrored, then with measured fairness), each as wild as the seed picks
+/// or as plains, mixed or wild land. The
 /// same names in the same order as `gc_map::FIELD_MAPS` (the game checks).
-pub const MAPS: [&str; 14] = [
+pub const MAPS: [&str; 18] = [
     "Proving Ground",
     "Random: Pass",
     "Random: Ford",
@@ -287,6 +288,10 @@ pub const MAPS: [&str; 14] = [
     "Land: Plains",
     "Land: Mixed",
     "Land: Wild",
+    "Measured: Random",
+    "Measured: Plains",
+    "Measured: Mixed",
+    "Measured: Wild",
 ];
 
 /// The map a new lobby starts on: grown land, as wild as the seed picks

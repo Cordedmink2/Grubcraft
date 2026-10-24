@@ -798,7 +798,8 @@ mod tests {
         erode::erode(&mut h, seeds.next(), 70_000 * n * n / (512 * 512));
         erode::thermal(&mut h, ONE * 18 / 10, 4);
         for &st in &starts {
-            super::super::flatten_clearing(&mut h, st, &mut seeds);
+            let shape = super::super::clearing_shape(&mut seeds);
+            super::super::flatten_clearing(&mut h, st, shape);
         }
         let open = s(40);
         let keep = near.v.iter().map(|&d| d <= open * ONE).collect();

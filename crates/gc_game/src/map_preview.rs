@@ -43,6 +43,14 @@ fn work(jobs: mpsc::Receiver<MapPreviewKey>, made: mpsc::Sender<Made>) {
         // only a copy.
         let map = make_map(MapKey::from(key));
         let starts = match key {
+            // (Measured land moves the starts off the plateaus.)
+            MapPreviewKey::Field { tiles, .. } if map.starts().len() == gc_map::START_PLATEAUS => {
+                let side = tiles as f32;
+                map.starts()
+                    .iter()
+                    .map(|&(x, z)| [x as f32 / side, z as f32 / side])
+                    .collect()
+            }
             MapPreviewKey::Field { tiles, .. } => starts_of(tiles),
             MapPreviewKey::Conquest { .. } => {
                 let side = map.tiles as f32;

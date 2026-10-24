@@ -5395,7 +5395,7 @@ impl Running {
                 &self.units.stats,
                 &self.units.factions,
                 &self.units.points,
-                terrain_view::plateau_positions(self.heightmap.tiles),
+                terrain_view::field_starts(&self.heightmap),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,
