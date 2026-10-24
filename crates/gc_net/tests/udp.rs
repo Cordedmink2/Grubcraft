@@ -83,6 +83,7 @@ fn two_machines_find_each_other_and_play_in_lockstep() {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
         generals: true,
     };
     let mut lans = [host, alex];

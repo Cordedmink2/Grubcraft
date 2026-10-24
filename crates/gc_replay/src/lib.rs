@@ -36,8 +36,8 @@ use gc_fixed::FxVec2;
 use gc_sim::powers::MAX_POWERS;
 use gc_sim::{
     BuildingStats, Capacities, ConquestSetup, ConquestUnit, Ground, MAX_PARTIES, MatchSetup, Meter,
-    NodeSetup, PlayerCommand, PowerStats, TICKS_PER_SECOND, TickStats, UnitStats, Verdict,
-    Victories, Win, World,
+    NodeSetup, PlayerCommand, PowerStats, Sky, Spell, TICKS_PER_SECOND, TickStats, UnitStats,
+    Verdict, Victories, Weather, WeatherKind, Win, World,
 };
 
 use codec::{Reader, Writer};
@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 35: the sky (read as a fair afternoon whose clock stands still);
 /// - 34: the generals flag (read as generals on);
 /// - 33: the footing layer (read as firm ground everywhere);
 /// - 32: grown walls (a build-wall command with no worker);
@@ -89,7 +90,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 34;
+pub const FORMAT: u16 = 35;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -370,6 +371,8 @@ pub struct Replay {
     /// How each tile holds a soldier's feet, as [`Ground::footing`] (empty:
     /// firm everywhere).
     pub footing: Vec<u8>,
+    /// The weather and the time of day, as [`MatchSetup::sky`].
+    pub sky: SkyRecord,
     /// Whether champions may duel before battle, as [`MatchSetup::champions`].
     pub champions: bool,
     /// Whether each side has a general, as [`MatchSetup::generals`].
@@ -457,6 +460,105 @@ impl From<std::io::Error> for Error {
     }
 }
 
+/// A match's sky, as [`MatchSetup::sky`] (see [`gc_sim::sky`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkyRecord {
+    pub start: u32,
+    pub day_ticks: u32,
+    pub runs: bool,
+    pub spells: Vec<Spell>,
+}
+
+impl Default for SkyRecord {
+    fn default() -> Self {
+        SkyRecord::of(&Sky::STILL)
+    }
+}
+
+/// Most spells a replay may hold: a day of three-minute spells and more.
+const MAX_SPELLS: usize = 4096;
+
+impl SkyRecord {
+    pub fn of(sky: &Sky) -> SkyRecord {
+        SkyRecord {
+            start: sky.start,
+            day_ticks: sky.day_ticks,
+            runs: sky.runs,
+            spells: {
+                let mut spells = sky.spells.to_vec();
+                spells.sort_by_key(|s| s.at);
+                spells
+            },
+        }
+    }
+
+    pub fn sky(&self) -> Sky<'_> {
+        Sky {
+            start: self.start,
+            day_ticks: self.day_ticks,
+            runs: self.runs,
+            spells: &self.spells,
+        }
+    }
+
+    fn write(&self, w: &mut Writer) {
+        w.var(u64::from(self.start));
+        w.var(u64::from(self.day_ticks));
+        w.bool(self.runs);
+        w.var(self.spells.len() as u64);
+        debug_assert!(
+            self.spells.is_sorted_by_key(|s| s.at),
+            "a sky's spells are kept in tick order"
+        );
+        let mut prev = 0;
+        for s in &self.spells {
+            // Spells are kept in tick order, so each starts after the last.
+            w.var(u64::from(s.at.saturating_sub(prev)));
+            prev = s.at;
+            let wx = s.weather;
+            w.u8(wx.kind as u8);
+            w.u8(wx.strength);
+            w.u8(wx.cloud);
+            w.u8(wx.wind.0 as u8);
+            w.u8(wx.wind.1 as u8);
+        }
+    }
+
+    fn read(r: &mut Reader) -> Option<SkyRecord> {
+        let start = r.var_as()?;
+        let day_ticks: u32 = r.var_as()?;
+        if day_ticks == 0 {
+            return None;
+        }
+        let runs = r.bool()?;
+        let n: usize = r.var_as()?;
+        if n > MAX_SPELLS || n > r.remaining() {
+            return None;
+        }
+        let mut spells = Vec::with_capacity(n);
+        let mut at = 0u32;
+        for _ in 0..n {
+            at = at.checked_add(r.var_as()?)?;
+            let kind = WeatherKind::ALL.get(r.u8()? as usize).copied()?;
+            spells.push(Spell {
+                at,
+                weather: Weather {
+                    kind,
+                    strength: r.u8()?,
+                    cloud: r.u8()?,
+                    wind: (r.u8()? as i8, r.u8()? as i8),
+                },
+            });
+        }
+        Some(SkyRecord {
+            start,
+            day_ticks,
+            runs,
+            spells,
+        })
+    }
+}
+
 impl Replay {
     /// The setup to create the recorded match's world from.
     pub fn setup(&self) -> MatchSetup<'_> {
@@ -477,6 +579,7 @@ impl Replay {
                 footing: &self.footing,
             },
             champions: self.champions,
+            sky: self.sky.sky(),
             generals: self.generals,
         }
     }
@@ -664,6 +767,11 @@ impl Replay {
         w.bool(self.generals);
     }
 
+    /// The sky, just after the generals flag (format 35 on).
+    fn write_sky(&self, w: &mut Writer) {
+        self.sky.write(w);
+    }
+
     /// The Conquest record, if any; the info block says whether there is
     /// one.
     fn write_conquest(&self, w: &mut Writer) {
@@ -727,6 +835,7 @@ impl Replay {
         self.write_map(&mut w);
         self.write_layers(&mut w);
         self.write_generals(&mut w);
+        self.write_sky(&mut w);
         self.write_conquest(&mut w);
         self.write_tail(&mut w);
         let packed = lz4_flex::compress_prepend_size(&w.buf);
@@ -907,6 +1016,11 @@ impl Replay {
         let growth = layer(r, 27)?;
         let footing = layer(r, 33)?;
         let generals = format < 34 || r.bool()?;
+        let sky = if format >= 35 {
+            SkyRecord::read(r)?
+        } else {
+            SkyRecord::default()
+        };
         let conquest = if format >= 12 && info.conquest {
             Some(ConquestRecord::read(r, format)?)
         } else {
@@ -971,6 +1085,7 @@ impl Replay {
             cover,
             growth,
             footing,
+            sky,
             champions,
             generals,
             conquest,
@@ -1132,6 +1247,7 @@ impl Recorder {
                 // Footing that doesn't fit the map, or is firm everywhere,
                 // is none, as in the sim.
                 footing: gc_sim::Footing::layer(setup.ground.footing, setup.map_tiles).to_vec(),
+                sky: SkyRecord::of(&setup.sky),
                 champions: setup.champions,
                 generals: setup.generals,
                 conquest: None,
@@ -1260,6 +1376,7 @@ mod tests {
                 footing: &[],
             },
             champions: false,
+            sky: gc_sim::Sky::STILL,
             generals: true,
         };
         let mut world = World::new(&setup);
@@ -1391,6 +1508,7 @@ mod tests {
             teams: &[],
             ground: Ground::FLAT,
             champions: false,
+            sky: gc_sim::Sky::STILL,
             generals: true,
         };
         let hall = BuildingStats {
@@ -1715,6 +1833,7 @@ mod tests {
         replay.write_map(&mut w);
         replay.write_layers(&mut w);
         replay.write_generals(&mut w);
+        replay.write_sky(&mut w);
         // Every byte of the Conquest record.
         let mut c = Writer::default();
         replay.write_conquest(&mut c);
@@ -1919,6 +2038,20 @@ mod tests {
     }
 
     #[test]
+    fn the_sky_round_trips() {
+        let mut replay = record();
+        replay.sky = SkyRecord {
+            start: gc_sim::sky::at_hour(22, 30),
+            day_ticks: gc_sim::sky::DAY_TICKS,
+            runs: true,
+            spells: gc_sim::sky::changing(9, gc_sim::sky::Season::Cold, 20_000),
+        };
+        assert!(replay.sky.spells.len() > 1);
+        assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
+        assert_eq!(replay.setup().sky, replay.sky.sky());
+    }
+
+    #[test]
     fn a_format_14_replay_has_no_unit_names() {
         let mut replay = record();
         replay.header.unit_names.clear();
@@ -1929,16 +2062,21 @@ mod tests {
         old.extend_from_slice(&14u16.to_le_bytes());
         old.extend_from_slice(&(info.len() as u32).to_le_bytes());
         old.extend_from_slice(&info);
-        // The body as it was then: no growth or footing layer or generals
-        // flag after the map.
+        // The body as it was then: no growth or footing layer, generals
+        // flag or sky after the map.
         let body = lz4_flex::decompress_size_prepended(&new[10 + len..]).unwrap();
         let mut map = Writer::default();
         replay.write_units(&mut map);
         replay.write_map(&mut map);
-        let mut old_body = body[..map.buf.len()].to_vec();
-        assert_eq!(body[map.buf.len()..map.buf.len() + 2], [0, 0], "no layers");
-        assert_eq!(body[map.buf.len() + 2], 1, "generals on");
-        old_body.extend_from_slice(&body[map.buf.len() + 3..]);
+        let mut layers = Writer::default();
+        replay.write_layers(&mut layers);
+        replay.write_generals(&mut layers);
+        replay.write_sky(&mut layers);
+        let (at, layers) = (map.buf.len(), layers.buf.len());
+        let mut old_body = body[..at].to_vec();
+        assert_eq!(body[at..at + 2], [0, 0], "no growth or footing");
+        assert_eq!(body[at + 2], 1, "generals on");
+        old_body.extend_from_slice(&body[at + layers..]);
         old.extend_from_slice(&lz4_flex::compress_prepend_size(&old_body));
         assert_eq!(Replay::decode(&old).unwrap(), replay);
         let path = temp("header-14", &old);
@@ -2030,6 +2168,7 @@ mod tests {
             teams: &[],
             ground: Ground::FLAT,
             champions: false,
+            sky: gc_sim::Sky::STILL,
             generals: true,
         };
         let mut world = World::new(&setup);

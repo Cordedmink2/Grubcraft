@@ -625,6 +625,7 @@ mod tests {
             teams: &[],
             ground: map.ground(),
             champions: false,
+            sky: gc_sim::Sky::STILL,
             generals: true,
         });
         let plan = plan(&table, &data, map, factions, tempo, victories);

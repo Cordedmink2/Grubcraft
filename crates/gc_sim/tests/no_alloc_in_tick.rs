@@ -67,6 +67,7 @@ fn ticking_never_allocates() {
             footing: &[],
         },
         champions: true,
+        sky: gc_sim::Sky::STILL,
         generals: true,
     });
     assert!(world.terrain().has_cover());

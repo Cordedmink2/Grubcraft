@@ -31,6 +31,7 @@ fn world_with(units: &[gc_sim::UnitStats]) -> World {
         ground: gc_sim::Ground::FLAT,
         champions: false,
         generals: true,
+        sky: gc_sim::Sky::STILL,
     })
 }
 

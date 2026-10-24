@@ -505,6 +505,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         teams: &teams,
         ground: heightmap.ground(),
         champions: golden.champions,
+        sky: gc_sim::Sky::STILL,
         generals: true,
     };
     let world = World::new(&setup);

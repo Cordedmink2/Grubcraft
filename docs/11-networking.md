@@ -79,7 +79,7 @@ Tests (`crates/gc_net/tests/lan_match.rs`) run every machine in one process on a
 
 **Built in step 6a (2026-10-15):** replays in the game (see [Save, load and replays](#save-load-and-replays)), and desync reports are replay files. No protocol change.
 
-**Since 2026-10-24:** the lobby settings carry the host's **Time of day** (one byte after the map size), protocol 26. It changes only how the match looks ([30](30-cinematic-lighting.md#built-a-look-per-land)), so it is not in the simulation's setup and replays do not store it.
+**Since 2026-10-24:** the lobby settings carry the host's **Time of day** (one byte after the map size), protocol 26, and the **Weather** (one byte after that), protocol 28. Since the weather (2026-10-24) both set the simulation's sky ([32](32-changing-land.md#weather-and-the-time-of-day-ideas-1-and-9)): every machine builds the same `MatchSetup::sky` from them and the match seed, and replays store it (format 35).
 
 **Built in step 7 (2026-10-15):** packaging, with no protocol change. One zip per platform, each with a read-me that explains the firewall (Windows) and local network (Mac) prompts LAN play depends on. See [release checklist](release-checklist.md).
 

@@ -189,6 +189,7 @@ fn conquest(nodes: &[NodeSetup]) -> World {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
         generals: true,
     });
     let mut start = [(0, 0); MAX_PARTIES];

@@ -421,6 +421,7 @@ mod tests {
             teams: &[],
             ground: gc_sim::Ground::FLAT,
             champions: false,
+            sky: gc_sim::Sky::STILL,
             generals: true,
         });
         let t = Terrain::new(&nav, 256);

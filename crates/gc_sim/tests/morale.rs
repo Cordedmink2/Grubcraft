@@ -22,6 +22,7 @@ fn world_with(units: &[UnitStats]) -> World {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
         // This rule on its own: generals have tests of their own.
         generals: false,
     })

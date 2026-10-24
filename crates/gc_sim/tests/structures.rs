@@ -72,6 +72,7 @@ fn conquest(tiles: u32, breakers: &[Breaker]) -> World {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
         generals: true,
     });
     let units: Vec<ConquestUnit> = breakers
@@ -473,6 +474,7 @@ fn only_conquest_has_buildings() {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
         generals: true,
     });
     assert!(!order(

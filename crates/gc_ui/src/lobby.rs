@@ -157,10 +157,11 @@ impl MapSize {
     }
 }
 
-/// The light a match is played in, chosen by the host. Only how the match
-/// looks: the simulation never reads it, and the same on every screen. Each
-/// land then tints it (the Waste's amber haze, the Fen's green mist, the
-/// Highland's cold clear air).
+/// The light a match starts in, chosen by the host, the same on every
+/// screen. Each land then tints it (the Waste's amber haze, the Fen's green
+/// mist, the Highland's cold clear air). The simulation's clock starts at
+/// its hour (see [`TimeOfDay::hour`]) and the day then passes slowly, so
+/// night falls on a long dusk battle and fighting in the dark is harder.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TimeOfDay {
     /// A low warm sun, blue shade, long shadows: the game's look.
@@ -172,14 +173,17 @@ pub enum TimeOfDay {
     Dusk,
     /// Soft grey light and heavy air; few shadows.
     Overcast,
+    /// Moonlight: troops see and shoot less far.
+    Night,
 }
 
 impl TimeOfDay {
-    pub const ALL: [TimeOfDay; 4] = [
+    pub const ALL: [TimeOfDay; 5] = [
         TimeOfDay::GoldenHour,
         TimeOfDay::Noon,
         TimeOfDay::Dusk,
         TimeOfDay::Overcast,
+        TimeOfDay::Night,
     ];
 
     pub fn name(self) -> &'static str {
@@ -188,6 +192,53 @@ impl TimeOfDay {
             TimeOfDay::Noon => "Noon",
             TimeOfDay::Dusk => "Dusk",
             TimeOfDay::Overcast => "Overcast",
+            TimeOfDay::Night => "Night",
+        }
+    }
+
+    /// The hour and minute the match's clock starts at.
+    pub fn hour(self) -> (u32, u32) {
+        match self {
+            TimeOfDay::GoldenHour => (17, 0),
+            TimeOfDay::Noon | TimeOfDay::Overcast => (12, 0),
+            TimeOfDay::Dusk => (18, 0),
+            TimeOfDay::Night => (23, 0),
+        }
+    }
+}
+
+/// What the weather does in a match, chosen by the host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WeatherSetting {
+    /// Dry and clear all match.
+    #[default]
+    Fair,
+    /// Spells of rain, fog and clear sky come and go every few minutes.
+    Changing,
+    /// Rain all match: archers reach a little less far.
+    Rain,
+    /// Snow all match: everyone marches slower and sees less far.
+    Snow,
+    /// Fog all match: archers and sight reach less than half as far.
+    Fog,
+}
+
+impl WeatherSetting {
+    pub const ALL: [WeatherSetting; 5] = [
+        WeatherSetting::Fair,
+        WeatherSetting::Changing,
+        WeatherSetting::Rain,
+        WeatherSetting::Snow,
+        WeatherSetting::Fog,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            WeatherSetting::Fair => "Fair",
+            WeatherSetting::Changing => "Changing",
+            WeatherSetting::Rain => "Rain",
+            WeatherSetting::Snow => "Snow",
+            WeatherSetting::Fog => "Fog",
         }
     }
 }
@@ -407,8 +458,10 @@ pub struct LobbySettings {
     /// Whether champions may duel between the lines before a battle with a
     /// computer player (a chance, not every time).
     pub champions: bool,
-    /// The light the match is played in (looks only).
+    /// The light the match starts in.
     pub time_of_day: TimeOfDay,
+    /// What the weather does.
+    pub weather: WeatherSetting,
 }
 
 impl Default for LobbySettings {
@@ -424,6 +477,7 @@ impl Default for LobbySettings {
             map_size: MapSize::Standard,
             champions: true,
             time_of_day: TimeOfDay::GoldenHour,
+            weather: WeatherSetting::Fair,
         }
     }
 }

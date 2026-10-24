@@ -8,8 +8,8 @@ use crate::hud::{MinimapTerrain, draw_terrain};
 use crate::lobby::{
     AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAX_ARMY,
     MAX_PLAYERS, MapSize, MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile,
-    RosterUnit, SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, army_points, field_map_tiles,
-    fresh_map_seed, map_code, maps_for, parse_map_code, thousands,
+    RosterUnit, SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, WeatherSetting, army_points,
+    field_map_tiles, fresh_map_seed, map_code, maps_for, parse_map_code, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -922,7 +922,12 @@ impl<N: Network> Menu<N> {
             (x, w) = (strip.x + preview_side + 16, strip.w - preview_side - 16);
             let name = settings.map_name();
             // The time of day has the name row's right end.
-            let name_room = (w - TIME_OF_DAY_W - 16).max(0) / 16;
+            let sky = if strip_h >= 2 * sp(36) + sp(4) {
+                TIME_OF_DAY_W
+            } else {
+                2 * SKY_NARROW_W + 8
+            };
+            let name_room = (w - sky - 16).max(0) / 16;
             ui.label(x, strip.y, 2, theme::INK, &fit(name, name_room as usize));
             // The orange dots on the picture, said once, if there is room.
             if preview_side >= sp(88) {
@@ -931,25 +936,59 @@ impl<N: Network> Menu<N> {
             }
         }
         // The light the match is played in: the host picks, everyone sees.
-        let time_r = Rect::new(
-            strip.right() - TIME_OF_DAY_W,
-            strip.y,
-            TIME_OF_DAY_W,
-            sp(36),
-        );
-        if lobby.is_host {
+        // Two rows: the time of day over the weather at the strip's right
+        // end, the weather on the map code's row. One row (a short screen,
+        // no picture): both narrower, side by side at the code row's end.
+        let two_rows = strip_h >= 2 * sp(36) + sp(4);
+        let sky_w = if two_rows {
+            TIME_OF_DAY_W
+        } else {
+            SKY_NARROW_W
+        };
+        let time_r = Rect::new(strip.right() - sky_w, strip.y, sky_w, sp(36));
+        let weather_r = if two_rows {
+            Rect::new(time_r.x, strip.bottom() - sp(36), sky_w, sp(36))
+        } else {
+            Rect::new(time_r.x - sky_w - 8, strip.y, sky_w, sp(36))
+        };
+        // Short labels when narrow: the values say what they are.
+        let (time_label, weather_label) = if two_rows {
+            ("Time of day", "Weather")
+        } else {
+            ("", "Sky")
+        };
+        // A map code note takes the code row's right end while it shows,
+        // over the steppers that share that row.
+        let noting = lobby.is_host && self.code_note.is_some();
+        if noting && !two_rows {
+        } else if lobby.is_host {
             let names = TimeOfDay::ALL.map(TimeOfDay::name);
             let mut at = TimeOfDay::ALL
                 .iter()
                 .position(|&t| t == settings.time_of_day)
                 .unwrap_or(0);
-            if ui.stepper(time_r, "Time of day", &mut at, &names) {
+            if ui.stepper(time_r, time_label, &mut at, &names) {
                 settings.time_of_day = TimeOfDay::ALL[at];
                 changed = true;
             }
         } else {
             let text = format!("Time of day: {}", settings.time_of_day.name());
             ui.label_centered(time_r, 1, theme::INK, &text);
+        }
+        if noting {
+        } else if lobby.is_host {
+            let names = WeatherSetting::ALL.map(WeatherSetting::name);
+            let mut at = WeatherSetting::ALL
+                .iter()
+                .position(|&t| t == settings.weather)
+                .unwrap_or(0);
+            if ui.stepper(weather_r, weather_label, &mut at, &names) {
+                settings.weather = WeatherSetting::ALL[at];
+                changed = true;
+            }
+        } else {
+            let text = format!("Weather: {}", settings.weather.name());
+            ui.label_centered(weather_r, 1, theme::INK, &text);
         }
         let code_r = Rect::new(x, strip.bottom() - sp(36), w, sp(36));
         let text_y = code_r.y + (code_r.h - 16) / 2;
@@ -969,12 +1008,8 @@ impl<N: Network> Menu<N> {
             }
             if let Some(note) = self.code_note {
                 let note_x = new_r.right() + 12;
-                // On a short screen the code row is the stepper's row too.
-                let end = if time_r.bottom() > code_r.y {
-                    time_r.x - 12
-                } else {
-                    code_r.right()
-                };
+                // The row's right end is the note's while it shows.
+                let end = code_r.right();
                 let room = ((end - note_x) / 8).max(0) as usize;
                 ui.label(note_x, text_y, 1, theme::BAD_INK, &fit(note, room));
             }
@@ -1601,6 +1636,10 @@ impl<N: Network> Menu<N> {
 
 /// Width of the lobby's "Time of day" stepper.
 const TIME_OF_DAY_W: i32 = 264;
+
+/// How wide the time of day and the weather are when the lobby's map strip
+/// is a single row and they share it with the map code.
+const SKY_NARROW_W: i32 = 200;
 
 /// How tall the lobby's player rows are and how big the map picture is
 /// (its side in pixels, 0 for none), on a screen `screen_h` tall at scale

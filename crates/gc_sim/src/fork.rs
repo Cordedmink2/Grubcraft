@@ -103,8 +103,11 @@ impl World {
             // Rehearsals are of battles: buildings still block the shared
             // ground, but can't be attacked or put up here.
             conquest: None,
+            // Under the same sky, so it sees and shoots as far.
+            sky: self.sky.clone(),
             regiments: Regiments::with_capacity(n),
         }
+        .with_air()
     }
 
     /// Put a regiment on the field as `s` describes it, mid-battle (engine
@@ -245,6 +248,7 @@ mod tests {
             teams: &[],
             ground: Ground::FLAT,
             champions: false,
+            sky: crate::Sky::STILL,
             generals: true,
         });
         let mut drill = Drill::new(7);

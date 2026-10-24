@@ -80,6 +80,7 @@ fn field(seed: u64) -> (World, Terrain, PlayerId) {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
         generals: true,
     });
     let terrain = Terrain::open(MAP);

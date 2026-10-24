@@ -313,6 +313,7 @@ mod tests {
             teams: &teams,
             ground: map.ground(),
             champions: false,
+            sky: gc_sim::Sky::STILL,
             generals: true,
         };
         let defaults = gc_ui::lobby::LobbySettings::default();

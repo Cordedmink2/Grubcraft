@@ -51,6 +51,7 @@ use gc_fixed::{Fx, FxVec2};
 use crate::combat::{Block, Combat, Whose, placement};
 use crate::morale;
 use crate::regiments::{RegimentHandle, Regiments};
+use crate::sky::Air;
 use crate::structures::Structures;
 use crate::terrain::{Cover, Terrain};
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats};
@@ -115,6 +116,7 @@ struct Post {
     slot: usize,
     owner: PlayerId,
     block: Block,
+    /// How far it sees, as the sky lets it.
     sight: Fx,
 }
 
@@ -166,6 +168,8 @@ pub(crate) struct Vision {
     /// The furthest any post sees, and the largest post's radius.
     post_sight: Fx,
     post_radius: Fx,
+    /// How far the sky lets anyone see in fog of war (see [`crate::sky`]).
+    air: Air,
 }
 
 /// The side of a cell posts are sorted into, in tiles.
@@ -179,6 +183,15 @@ fn post_cell(cells: usize, p: FxVec2) -> (usize, usize) {
 }
 
 impl Vision {
+    pub(crate) fn set_air(&mut self, air: Air) {
+        self.air = air;
+    }
+
+    /// How far a regiment sees in fog of war in this air.
+    pub(crate) fn sight(&self) -> Fx {
+        self.air.sight(SIGHT)
+    }
+
     pub(crate) fn new(capacity: usize, terrain: &Terrain, stances: &Stances) -> Vision {
         let active = terrain.has_cover();
         let n = if active { capacity } else { 0 };
@@ -191,6 +204,7 @@ impl Vision {
             }
         }
         let mut v = Vision {
+            air: Air::CLEAR,
             active,
             allies,
             tracked: Vec::new(),
@@ -329,7 +343,8 @@ impl Vision {
                 slot,
                 owner: s.owner_of(slot),
                 block: s.block(slot),
-                sight: s.sight(slot),
+                // As far as the sky lets it see.
+                sight: self.air.sight(s.sight(slot)),
             }));
             self.sort_posts();
         }
@@ -388,7 +403,7 @@ impl Vision {
             let fog_now = self.fog && (looks_now(i as u32, tick) || self.unlooked[i]);
             let (near, far) = match owner as usize {
                 o if o < PARTIES => {
-                    let far = fog_now.then_some(SIGHT);
+                    let far = fog_now.then_some(self.sight());
                     self.spotters(regs, combat, units, stances, i, cover, far)
                 }
                 _ => (u8::MAX, u8::MAX),
@@ -750,17 +765,18 @@ impl Vision {
                 continue;
             }
             let block = post.block;
+            let sight = self.sight();
             let mut seen = self.allies[o] | structures.seen(post.slot);
             combat.each_near(
                 &at,
                 block.centre,
-                SIGHT + block.radius() + combat.max_radius(),
+                sight + block.radius() + combat.max_radius(),
                 Whose::Enemies(post.owner),
                 |j| {
                     let party = regs.owner[j] as usize;
                     if party < PARTIES
                         && seen & (1 << party) == 0
-                        && block.touches(&Block::of(regs, units, j), SIGHT)
+                        && block.touches(&Block::of(regs, units, j), sight)
                     {
                         seen |= self.allies[party];
                     }

@@ -27,6 +27,7 @@ fn battle() -> World {
         teams: &[],
         ground: Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
         generals: true,
     });
     let spawn = |player, unit, x, y, facing| PlayerCommand {

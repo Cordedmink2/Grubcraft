@@ -109,6 +109,7 @@ fn world(behind: Behind) -> World {
             footing: &[],
         },
         champions: false,
+        sky: gc_sim::Sky::STILL,
         // This rule on its own: generals have tests of their own.
         generals: false,
     })

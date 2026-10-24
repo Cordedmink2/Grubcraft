@@ -63,6 +63,42 @@ The footing layer is stored in replays from `FORMAT` 33 (older files read firm g
 - Computer players don't yet weigh mud or slopes. Their routes and charges ignore both, so they will sometimes charge into a bog.
 - Roads (+15%) and loose scree come with more footing kinds.
 
+## Weather and the time of day (ideas 1 and 9)
+
+*The simulation owns the sky's state and what it does in play; the cinematic lighting thread (T3, [30](30-cinematic-lighting.md)) owns every picture of it, the sun's direction included.*
+
+**Built (2026-10-24), stage 1:** the sky's state, where it comes from, and its effect on sight, range and the march. `SIM_VERSION` 37, replay `FORMAT` 35 (stores the sky; older files read a fair afternoon whose clock stands still), net `PROTOCOL` 28 (the lobby's weather).
+
+### The shared state
+
+The sim keeps one small state (`gc_sim::sky`), deterministic and part of the state hash (under "clock"), and the game reads it each frame:
+
+- `world.weather()` returns `Weather { kind, strength, cloud, wind }`. `kind` is `WeatherKind::{Clear, Rain, Snow, Fog}`, in the same order as `gc_render::Weather`. `strength` (0 to 255) is how hard it rains, snows or how thick the fog is; the renderer's amount is `strength / 255`. `cloud` (0 to 255) is cloud cover, so an overcast day is clear weather with heavy cloud. `wind` (two `i8`s, sixteenths of a tile a second) is for particles, smoke and banners.
+- `world.daylight()` returns `Daylight { tick_of_day, day_ticks }`. `light()` (0 to 1000, smooth from tick to tick) is 0 through the night, rises through dawn (about 4:50 to 7:10), is 1000 through the day and falls through dusk (about 16:50 to 19:10). `rising()` says which half of the day it is (dawn or dusk), so the look can blend Night, Dusk, Golden hour and Noon.
+- `world.air()` returns the `Air`: what the sky does in play now (below).
+
+Both change smoothly: a new spell of weather first fades the old one's strength to nothing, then grows its own, one step every two ticks (`EASE_EVERY`, about 25 seconds end to end); cloud and wind ease the same way. The spell in force at tick 0 is there from the start.
+
+### Where the sky comes from
+
+`MatchSetup::sky` is a `Sky { start, day_ticks, runs, spells }`: the tick of the day at the first tick, the day's length (`DAY_TICKS`, eight hours of play, so an hour of the day takes twenty minutes), whether the clock moves, and a list of spells (`Spell { at, weather }`, each starting at a tick). `Sky::STILL` (a fair 17:00 whose clock stands still) is what tests, the sandbox and old replays have, and it hashes as nothing, so they play as before.
+
+A lobby match builds its sky from the lobby (`gc_match::battle::sky_of`): the **Time of day** sets where the clock starts (Golden hour 17:00, Noon and Overcast 12:00, Dusk 18:00, and the new **Night** 23:00) and the day then passes, so a long dusk battle ends in the dark. The new **Weather** stepper, beside the time of day (on the map-code row, or beside it on a short window) (Fair, Changing, Rain, Snow, Fog), sets the spells: one for the whole match, or for Changing a new spell every three to six minutes drawn from the match seed (`sky::changing`; rain, fog or clear sky, a little over a third clear). Overcast is fair weather under heavy cloud, and keeps the cloud heavy under any weather. Every peer builds the same sky from the lobby settings, and replays store it.
+
+### What it does in play (stage 1)
+
+- **How far troops see and shoot.** The `Air`'s sight percent is the light's share times the weather's. Full light lasts until the light falls under half (so golden hour sees as far as noon), then sight falls to 45% in the dark of night (`NIGHT_SIGHT_PERCENT`). Fog takes up to 60% (`FOG_SIGHT_LOSS`), snow 30%, rain 20%, each scaled by strength. It moves in steps of 5%. Archers' and towers' range is cut by it everywhere: archers reaching 25 tiles reach about 21 in the lobby's rain, 11 in its fog and 11 at night, so a line can close in under fewer volleys. In fog of war, regiments' and buildings' sight is cut too.
+- **Snow** slows marching by up to 15% (`SNOW_MARCH_LOSS`), on top of the ground.
+- **Seeing it.** The top bar shows a chip whenever the sky cuts anything, e.g. "Fog: sight 40%", "Night: sight 45%" or "Snow: sight 70%, march 85%". The Ranged class in the Guide says fog, rain and night cut their reach.
+
+Computer players don't yet plan for the shorter range (they still think archers reach as far as by day); that comes with stage 3.
+
+### Later stages
+
+- **Rain soaks the ground (stage 2).** Long, heavy rain turns low, flat, open tiles beside water soft (it writes the footing layer through `World::change_ground`), and a dry spell firms them up again, so a bog spreads in a wet battle. The ground thread draws them muddy.
+- **Night battles, sight tied to light (stage 3, idea 9).** Regiments can carry torches: they see further at night, and are seen from much further. Burning buildings and fires light the ground around them. Ambushes are easier in the dark. The lighting thread draws torches and firelight from the same state. Snow on the Highland's changing weather comes with the lands' own skies.
+- **Lightning (later).** `Event::Lightning { at, tick }` for a flash and thunder; a strike may set woods alight once woods burn (idea 2).
+
 ## The one ground change
 
 All runtime changes to the ground go through one place in the simulation, `World::change_ground` (crate-private), given tiles and the growth they become. It:

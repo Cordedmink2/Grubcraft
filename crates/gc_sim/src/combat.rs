@@ -31,6 +31,7 @@ use crate::events::{Event, Shooter, VolleyId};
 use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_PINNED, SHOCK_REAR, WAVERING_DAMAGE_PERCENT};
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments, Strike, hash_handle};
+use crate::sky::Air;
 use crate::structures::StructureHandle;
 use crate::terrain::Terrain;
 use crate::vision::{OFF_GUARD_DAMAGE_PERCENT, Vision};
@@ -408,6 +409,9 @@ pub struct Combat {
     /// `tell`, and only as many as there is room for).
     blows: Vec<Blow>,
     tell: bool,
+    /// How far the sky lets archers shoot, and how fast troops march (see
+    /// [`crate::sky`]).
+    air: Air,
 }
 
 /// One soldier's melee blow on another (docs/28-soldier-combat.md).
@@ -511,12 +515,22 @@ pub struct VolleyView {
 }
 
 impl Combat {
+    pub(crate) fn set_air(&mut self, air: Air) {
+        self.air = air;
+    }
+
+    /// What the sky lets troops do now (see [`crate::sky`]).
+    pub(crate) fn air(&self) -> Air {
+        self.air
+    }
+
     pub fn new(regiment_capacity: usize) -> Combat {
         let none = RegimentHandle {
             index: 0,
             generation: 0,
         };
         Combat {
+            air: Air::CLEAR,
             head: vec![EMPTY; BUCKETS * OWNER_SLOTS],
             entry_next: vec![EMPTY; regiment_capacity * MAX_CELLS_PER_REGIMENT],
             entry_regiment: vec![0; regiment_capacity * MAX_CELLS_PER_REGIMENT],
@@ -1233,7 +1247,7 @@ impl Combat {
                 continue;
             };
             let range = terrain.range(
-                units[regs.unit[i] as usize].range,
+                self.air.sight(units[regs.unit[i] as usize].range),
                 regs.position[i],
                 regs.position[j],
             );
@@ -1341,7 +1355,7 @@ impl Combat {
             };
             let pace = Fx::from_raw((GIVE_GROUND.raw() * i32::from(giving) / 100).max(1));
             let mass = units[regs.unit[i] as usize].mass;
-            let give = away * terrain.going(pace, me.centre, away, mass);
+            let give = away * self.air.march(terrain.going(pace, me.centre, away, mass));
             if nav.blocks(regs.owner[j], foe, foe + give) {
                 // Its foe can't follow, so nobody is pushing.
                 continue;
@@ -1462,7 +1476,10 @@ impl Combat {
         }
         let mass = units[regs.unit[i] as usize].mass;
         let toward = (them.centre - me.centre).normalized();
-        let step = toward * terrain.going(CLOSE_UP, me.centre, toward, mass);
+        let step = toward
+            * self
+                .air
+                .march(terrain.going(CLOSE_UP, me.centre, toward, mass));
         let next = me.centre + step;
         (!nav.blocks(regs.owner[i], me.centre, next) && !self.backs_into(regs, stances, i, next))
             .then_some(step)
@@ -1665,7 +1682,14 @@ impl Combat {
             {
                 continue;
             }
-            let Some(j) = self.pick_target(regs, stances, terrain, vision, i, stats.range) else {
+            let Some(j) = self.pick_target(
+                regs,
+                stances,
+                terrain,
+                vision,
+                i,
+                self.air.sight(stats.range),
+            ) else {
                 continue;
             };
             let to = regs.position[j] - regs.position[i];

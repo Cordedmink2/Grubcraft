@@ -163,7 +163,7 @@ impl Structures {
         i: usize,
     ) -> Option<usize> {
         let owner = self.owner_of(i);
-        let range = self.stats_of(i).attack?.range;
+        let range = combat.air().sight(self.stats_of(i).attack?.range);
         let at = self.centre(i);
         let shootable = |j: usize| {
             foe_in_sight(owner, regs, stances, vision, j)

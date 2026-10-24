@@ -1415,6 +1415,7 @@ impl App {
                 teams: &[],
                 ground: heightmap.ground(),
                 champions: false,
+                sky: gc_sim::Sky::STILL,
                 generals: true,
             });
             // The sandbox is where buildings can be tried so far.
@@ -4552,6 +4553,13 @@ impl Running {
             ),
             MatchKind::Sandbox { .. } | MatchKind::Replay(_) => (Vec::new(), false),
         };
+        // The sky: the lobby's, or the replay's own; the sandbox's stands
+        // still.
+        let sky = match &kind {
+            MatchKind::Battle(start) => battle::sky_of(&start.settings, self.seed),
+            MatchKind::Replay(r) => r.sky.clone(),
+            MatchKind::Sandbox { .. } => gc_replay::SkyRecord::default(),
+        };
         let setup = MatchSetup {
             seed: self.seed,
             capacities: self.capacities,
@@ -4561,6 +4569,7 @@ impl Running {
             teams: &teams,
             ground: self.heightmap.ground(),
             champions,
+            sky: sky.sky(),
             generals: true,
         };
         // A lobby Conquest match: what every machine makes its world with,
@@ -6988,6 +6997,7 @@ fn preset_of(time_of_day: gc_ui::lobby::TimeOfDay) -> gc_render::LookPreset {
         TimeOfDay::Noon => gc_render::LookPreset::Noon,
         TimeOfDay::Dusk => gc_render::LookPreset::Dusk,
         TimeOfDay::Overcast => gc_render::LookPreset::Overcast,
+        TimeOfDay::Night => gc_render::LookPreset::Night,
     }
 }
 

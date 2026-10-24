@@ -113,6 +113,7 @@ impl Soak {
             teams: &teams,
             ground: map.ground(),
             champions: false,
+            sky: gc_sim::Sky::STILL,
             generals: true,
         };
         // Annihilation only, so the fog is on but nobody wins by holding

@@ -1054,7 +1054,9 @@ impl Regiments {
                     FxVec2::ZERO
                 };
                 let mass = units[self.unit[i] as usize].mass;
-                let step = terrain.going(step, self.position[i], dir, mass);
+                let step = combat
+                    .air()
+                    .march(terrain.going(step, self.position[i], dir, mass));
                 let step = crate::combat::pushing(step, self.crowd[i]);
                 debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
                 let here = self.position[i];
@@ -1245,6 +1247,7 @@ mod tests {
             teams: &[],
             ground: Ground::FLAT,
             champions: false,
+            sky: crate::Sky::STILL,
             generals: true,
         });
         let mut drill = Drill::new(7);
@@ -1346,6 +1349,7 @@ mod tests {
             teams: &[],
             ground: Ground::FLAT,
             champions: false,
+            sky: crate::Sky::STILL,
             generals: true,
         });
         other.regiments = copy(&world.regiments);
