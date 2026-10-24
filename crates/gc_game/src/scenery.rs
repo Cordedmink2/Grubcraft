@@ -453,7 +453,7 @@ struct Chunk {
 type Rect = (i32, i32, u8, u8);
 
 /// A model the game places this frame on top of the map's own scenery: a
-/// Conquest gathering spot or a morale banner, at `at` (x, ground height,
+/// Conquest gathering spot, a morale banner or a fallen standard, at `at` (x, ground height,
 /// y), turned by `turn` (256ths of a circle), at `scale` and tinted by
 /// `tint` (128 as baked, so 255 doubles and a team colour halved shows as
 /// itself on white). `lean` tips it over about its base, 0 (upright) to 255

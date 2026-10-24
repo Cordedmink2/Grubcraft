@@ -753,11 +753,11 @@ impl Puppets {
     /// update never saw fall, as the regiment is gone from the simulation
     /// before the next one) drop where they stood. A regiment that is gone
     /// for any other reason, taken off the field by the player, leaves
-    /// nobody.
-    pub fn wiped(&mut self, h: RegimentHandle) {
+    /// nobody. Tells whose it was, if it had been on the field.
+    pub fn wiped(&mut self, h: RegimentHandle) -> Option<u8> {
         let r = h.index as usize;
         if self.owner[r] != Some(h) {
-            return;
+            return None;
         }
         let base = r * SLOTS;
         for k in 0..(self.models[r] as usize).min(SLOTS) {
@@ -776,6 +776,7 @@ impl Puppets {
         self.models[r] = 0;
         self.shot[r] = 0;
         self.slain.retain(|&(s, ..)| s != h);
+        Some(self.player[r])
     }
 
     /// If an arrow of regiment `h`'s last volley is still to find a man,
