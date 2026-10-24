@@ -71,10 +71,6 @@ pub struct UnitInfo {
 }
 
 impl UnitInfo {
-    pub fn of(stats: &UnitStats) -> UnitInfo {
-        UnitInfo::in_air(stats, Air::CLEAR)
-    }
-
     /// As the type fights under the sky's `air`: fog, rain and night
     /// shorten its range, snow slows its march.
     pub fn in_air(stats: &UnitStats, air: Air) -> UnitInfo {
@@ -217,12 +213,9 @@ pub struct Perception {
     memory: Vec<(Seen, u32)>,
     /// What the sky does to the fight now: `units` are read under it.
     pub air: Air,
-    /// Soft ground (bog, and mud the rain has soaked) per tile, `soft_side`
-    /// a side, row by row; empty when there is none.
-    soft: Vec<bool>,
-    soft_side: i32,
-    /// The tiles rain had soaked when `soft` was read (`None`: not yet).
-    soaked: Option<u32>,
+    /// The ground as the simulation has it now, for what is soft underfoot
+    /// (a clone shares its layers, so it costs a few counts).
+    ground: Option<gc_sim::Terrain>,
 }
 
 /// How long a mind counts an enemy it has lost sight of, in ticks
@@ -251,25 +244,21 @@ impl Perception {
 
     fn capture_seen_by(&mut self, world: &World, party: Option<PlayerId>) {
         self.tick = world.tick_count();
+        let air = world.air();
         if self.units.len() != world.units().len()
-            || self.air != world.air()
+            || self.air != air
             || self
                 .units
                 .iter()
                 .zip(world.units())
                 .any(|(a, b)| a.stats != *b)
         {
-            self.air = world.air();
+            self.air = air;
             self.units.clear();
-            let air = self.air;
             self.units
                 .extend(world.units().iter().map(|u| UnitInfo::in_air(u, air)));
         }
-        let ground = world.terrain();
-        if self.soaked != Some(ground.soaked()) {
-            self.soaked = Some(ground.soaked());
-            self.read_soft(ground);
-        }
+        self.ground = Some(world.terrain().clone());
         if self.stances != *world.stances() {
             self.stances = world.stances().clone();
         }
@@ -406,27 +395,10 @@ impl Perception {
         &self.units[r.unit as usize]
     }
 
-    /// Read which tiles are soft underfoot now. Reuses the buffer.
-    fn read_soft(&mut self, ground: &gc_sim::Terrain) {
-        let n = ground.footing_side() as i32;
-        let at = |v: i32| Fx::from_int(v) + Fx::HALF;
-        self.soft.clear();
-        self.soft
-            .extend((0..n * n).map(|t| ground.soft(FxVec2::new(at(t % n), at(t / n)))));
-        if !self.soft.contains(&true) {
-            self.soft.clear();
-        }
-        self.soft_side = n;
-    }
-
     /// Whether `p` is soft underfoot: bog, or mud the rain has soaked
     /// (slow going, and no charges out of it or into it).
     pub fn soft(&self, p: Vec2) -> bool {
-        let (x, y, n) = (p.x.floor() as i32, p.y.floor() as i32, self.soft_side);
-        !self.soft.is_empty()
-            && (0..n).contains(&x)
-            && (0..n).contains(&y)
-            && self.soft[(y * n + x) as usize]
+        self.ground.as_ref().is_some_and(|g| g.soft(to_fx_vec(p)))
     }
 
     /// How fast `r` marches in its formation, tiles per second.

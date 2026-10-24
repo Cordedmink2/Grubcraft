@@ -9,6 +9,8 @@ use gc_sim::{Capacities, Ground, MatchSetup, Sky, Spell, Weather, WeatherKind, W
 use glam::Vec2;
 
 const ARCHERS: usize = 2;
+/// Six minutes of heavy rain: long enough to soak the banks through.
+const RAIN_TICKS: u32 = 20 * 60 * 6;
 
 fn spell(kind: WeatherKind) -> [Spell; 1] {
     [Spell {
@@ -72,20 +74,24 @@ fn the_minds_see_the_mud_the_rain_has_soaked() {
     let nav = map.sim_nav_costs();
     let spells = spell(WeatherKind::Rain);
     let mut w = world(map.ground(), &nav, map.tiles, &spells);
+    let n = map.tiles;
+    let soft_tiles = |view: &Perception| {
+        (0..n * n)
+            .filter(|t| view.soft(Vec2::new((t % n) as f32 + 0.5, (t / n) as f32 + 0.5)))
+            .count()
+    };
     let mut view = Perception::new();
     view.capture(&w);
-    let soft_before = (0..192 * 192)
-        .filter(|t| view.soft(Vec2::new((t % 192) as f32 + 0.5, (t / 192) as f32 + 0.5)))
-        .count();
-    for _ in 0..20 * 60 * 6 {
+    let soft_before = soft_tiles(&view);
+    for _ in 0..RAIN_TICKS {
         w.tick(&[]);
     }
     assert!(w.terrain().soaked() > 0);
     view.capture(&w);
     let (x, y) = w.terrain().soaked_tiles().next().unwrap();
     assert!(view.soft(Vec2::new(x as f32 + 0.5, y as f32 + 0.5)));
-    let soft_after = (0..192 * 192)
-        .filter(|t| view.soft(Vec2::new((t % 192) as f32 + 0.5, (t / 192) as f32 + 0.5)))
-        .count();
-    assert_eq!(soft_after, soft_before + w.terrain().soaked() as usize);
+    assert_eq!(
+        soft_tiles(&view),
+        soft_before + w.terrain().soaked() as usize
+    );
 }

@@ -341,12 +341,10 @@ mod tests {
     #[test]
     fn footing_keeps_the_line_out_of_the_water_and_off_the_cliff() {
         let t = ground();
-        assert_eq!(
-            line(Vec2::new(20.0, 32.0)).footing(&t, &Perception::new(), 6.0),
-            1.0
-        );
-        assert!(line(Vec2::new(32.0, 53.0)).footing(&t, &Perception::new(), 6.0) < 0.5);
-        assert!(line(Vec2::new(40.0, 32.0)).footing(&t, &Perception::new(), 6.0) < 0.8);
+        let v = Perception::new();
+        assert_eq!(line(Vec2::new(20.0, 32.0)).footing(&t, &v, 6.0), 1.0);
+        assert!(line(Vec2::new(32.0, 53.0)).footing(&t, &v, 6.0) < 0.5);
+        assert!(line(Vec2::new(40.0, 32.0)).footing(&t, &v, 6.0) < 0.8);
     }
 
     #[test]

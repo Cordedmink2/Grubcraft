@@ -259,6 +259,16 @@ pub struct Terrain {
     changes: u64,
 }
 
+impl core::fmt::Debug for Terrain {
+    /// Just the sizes and the soaked count: the layers are a whole map.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Terrain")
+            .field("tiles", &self.tiles)
+            .field("soaked", &self.soaked)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The index of tile `(x, y)` in a layer `side` tiles a side, row by row;
 /// `None` off it or for an empty layer (`side` 0).
 fn index_in(side: i32, x: i32, y: i32) -> Option<usize> {
@@ -456,16 +466,6 @@ impl Terrain {
     pub fn growth(&self, x: i32, y: i32) -> Growth {
         self.tile_of(x, y)
             .map_or(Growth::Open, |i| Growth::from_u8(self.growth[i]))
-    }
-
-    /// Tiles per side of the ground that has soft footing, whether the map
-    /// made it or rain soaked it (0 if none can be soft).
-    pub fn footing_side(&self) -> u32 {
-        if self.soak.is_empty() {
-            self.footing_tiles as u32
-        } else {
-            self.tiles as u32
-        }
     }
 
     /// Tiles per side of the growth layer (0 with no cover).
