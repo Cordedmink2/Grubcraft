@@ -320,6 +320,30 @@ const BANNER_SIZE: [f32; 3] = [0.12, 0.8, 0.7];
 /// The flag over a regiment of yours that no enemy can see
 /// (docs/20-ambushes.md): moss green, above the treetops.
 const HIDDEN_FLAG: [f32; 3] = [0.9, 0.5, 0.12];
+/// A regiment's burning torches (picture only): one warm light over the
+/// block, `TORCH_LIGHT_HEIGHT` tiles up, reaching `TORCH_LIGHT_RADIUS` (what
+/// the simulation's torchlight reveals is 10 tiles from the block's edge; the
+/// light a little less, since the nearest 24 lights share the frame), one
+/// more for every `TORCH_LIGHT_SPACING` tiles of a wide front (at most
+/// three); and about a quarter of the soldiers hold a flame at
+/// `TORCH_HEIGHT` of their height.
+const TORCH_LIGHT_HEIGHT: f32 = 1.4;
+const TORCH_LIGHT_RADIUS: f32 = 7.0;
+const TORCH_LIGHT_STRENGTH: f32 = 0.8;
+const TORCH_LIGHT_SPACING: f32 = 9.0;
+const TORCH_HEIGHT: f32 = 0.8;
+const TORCH_FIRE: [u8; 3] = [255, 160, 70];
+/// The Brood's glow at night (their Grub lime, `docs/24`): a faint, small
+/// light over each Brood regiment that is not burning torches.
+const GRUB_LIME: [u8; 3] = [150, 235, 70];
+const GRUB_LIGHT_RADIUS: f32 = 4.0;
+const GRUB_LIGHT_STRENGTH: f32 = 0.4;
+
+/// Whether a soldier with this `phase` (a stable number in [0, 1)) carries
+/// a lit torch: a quarter of them.
+fn torch_bearer(phase: f32) -> bool {
+    (phase * 64.0) as u32 & 3 == 0
+}
 const HIDDEN_LIFT: f32 = 3.4;
 const HIDDEN_COLOR: [u8; 4] = [95, 150, 70, 120];
 /// Fallen soldiers kept on the field at once: they lie there for the whole
@@ -3429,7 +3453,46 @@ impl Running {
                 let clips = &art.clips;
                 let time = self.puppets.time();
                 let highlight = if selected { 70 } else { 0 };
+                // Torches burn only in the dark.
+                let dark = self.world.air().dark;
+                let torchlit = r.torches && dark;
+                let brood =
+                    self.units.factions.get(usize::from(r.unit)) == Some(&gc_ai::Faction::Brood);
                 let effects = &mut self.effects;
+                // Torches give one warm light over the block, and more along
+                // a wide front so a long line is lit all along; the Brood's
+                // own glow (in the dark alone, and not over their torches,
+                // the brighter light) is a faint lime one.
+                let light = if torchlit {
+                    let count = ((width / TORCH_LIGHT_SPACING).ceil() as i32).clamp(1, 3);
+                    Some((TORCH_FIRE, TORCH_LIGHT_RADIUS, TORCH_LIGHT_STRENGTH, count))
+                } else if brood && dark {
+                    Some((GRUB_LIME, GRUB_LIGHT_RADIUS, GRUB_LIGHT_STRENGTH, 1))
+                } else {
+                    None
+                };
+                if let Some((colour, radius, strength, count)) = light {
+                    // A flicker of its own for each light that stays with the
+                    // regiment, so a march does not make it strobe.
+                    let seed = (r.handle.index as u8).wrapping_mul(53)
+                        ^ (r.handle.generation as u8).wrapping_mul(7);
+                    let side = Vec2::new(facing.y, -facing.x);
+                    for i in 0..count {
+                        let along = (i as f32 - (count - 1) as f32 / 2.0) * TORCH_LIGHT_SPACING;
+                        let at = pos + side * along;
+                        effects.regiment_light(
+                            glam::Vec3::new(
+                                at.x,
+                                heightmap.height_at(at.x, at.y) + TORCH_LIGHT_HEIGHT,
+                                at.y,
+                            ),
+                            colour,
+                            radius,
+                            strength,
+                            seed.wrapping_add((i as u8).wrapping_mul(29)),
+                        );
+                    }
+                }
                 let dirt = self.aftermath.dirt(r.handle);
                 // Soldiers at a building they attack face it: blades close
                 // up to the wall and swing at it, archers shoot.
@@ -3506,6 +3569,14 @@ impl Running {
                         };
                         let toward = if s.backing { -s.facing } else { s.facing };
                         effects.footstep(fx_dt, at, toward, s.speed);
+                        if torchlit && torch_bearer(s.phase) {
+                            let hand = glam::Vec3::new(
+                                s.pos.x - s.facing.y * 0.12,
+                                ground + height * TORCH_HEIGHT,
+                                s.pos.y + s.facing.x * 0.12,
+                            );
+                            effects.torch(hand, fx_dt);
+                        }
                         let look = models::look(s.look);
                         let ([wr, wg, wb], tone) = aftermath::worn([cr, cg, cb], look.tone, dirt);
                         // The rate keeps loops out of step; blows are timed by
@@ -7814,6 +7885,14 @@ mod tests {
         index: 3,
         generation: 1,
     };
+
+    #[test]
+    fn about_a_quarter_of_the_soldiers_carry_a_torch() {
+        let bearers = (0..1000)
+            .filter(|i| torch_bearer(*i as f32 / 1000.0))
+            .count();
+        assert!((200..=300).contains(&bearers), "{bearers}");
+    }
 
     /// The lobby lists the maps gc_map makes, in its order: a lobby's map
     /// index picks the same map on every machine.

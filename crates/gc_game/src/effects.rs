@@ -272,6 +272,24 @@ impl Field {
         self.fx.smoke(pos, size, 0.05, dt);
     }
 
+    /// A torch held at `pos`, for `dt` seconds.
+    pub fn torch(&mut self, pos: Vec3, dt: f32) {
+        self.fx.torch(pos, dt);
+    }
+
+    /// The light a regiment gives off at night (see
+    /// [`gc_render::Effects::regiment_light`]).
+    pub fn regiment_light(
+        &mut self,
+        pos: Vec3,
+        color: [u8; 3],
+        radius: f32,
+        strength: f32,
+        seed: u8,
+    ) {
+        self.fx.regiment_light(pos, color, radius, strength, seed);
+    }
+
     /// A lit window or lantern at `pos`, at `level` of full brightness, for
     /// `dt` seconds.
     pub fn lamp(&mut self, pos: Vec3, colour: [u8; 3], size: f32, level: f32, dt: f32) {

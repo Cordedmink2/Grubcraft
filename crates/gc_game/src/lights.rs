@@ -117,7 +117,10 @@ impl Lights {
                     pos: i.glow.pos,
                     radius: i.glow.radius,
                     color: [r * k, g * k, b * k],
-                    seed: seed_of(i.glow.pos.x, i.glow.pos.z),
+                    seed: i
+                        .glow
+                        .seed
+                        .unwrap_or_else(|| seed_of(i.glow.pos.x, i.glow.pos.z)),
                 }
             })
             .collect()
@@ -159,9 +162,10 @@ impl Lights {
     }
 }
 
-/// Keep only the glows on tiles `sees` says the viewer sees now.
+/// Keep only the glows on tiles `sees` says the viewer sees now (and those
+/// the caller placed itself, such as a regiment the simulation says is seen).
 pub fn in_sight(glows: &mut Vec<Glow>, sees: impl Fn((i32, i32)) -> bool) {
-    glows.retain(|g| sees((g.pos.x.floor() as i32, g.pos.z.floor() as i32)));
+    glows.retain(|g| g.placed || sees((g.pos.x.floor() as i32, g.pos.z.floor() as i32)));
 }
 
 /// A steady number for a place, so a light flickers in its own way.
@@ -182,6 +186,8 @@ mod tests {
             radius: 3.0,
             strength: 1.0,
             needs_dark: true,
+            seed: None,
+            placed: false,
         }
     }
 
@@ -189,6 +195,22 @@ mod tests {
 
     fn lit(lights: &mut Lights, dt: f32, glows: &[Glow], darkness: f32) -> Vec<PointLight> {
         lights.frame(dt, glows.iter().copied(), HERE, 40.0, darkness)
+    }
+
+    #[test]
+    fn a_regiments_light_skips_the_tile_check_and_keeps_its_own_flicker() {
+        let mut glows = vec![
+            glow(5.0, 5.0),
+            Glow {
+                placed: true,
+                seed: Some(77),
+                ..glow(6.0, 6.0)
+            },
+        ];
+        in_sight(&mut glows, |_| false);
+        assert_eq!(glows.len(), 1);
+        let sent = lit(&mut Lights::default(), 0.0, &glows, 1.0);
+        assert_eq!(sent[0].seed, 77, "not made from the place, which moves");
     }
 
     #[test]

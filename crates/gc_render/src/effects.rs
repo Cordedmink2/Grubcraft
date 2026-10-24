@@ -106,6 +106,14 @@ pub struct Glow {
     /// Whether it should be scaled by how dark it is: a fire is, a lit
     /// window already is (it is only reported at dusk).
     pub needs_dark: bool,
+    /// A steady number to flicker by, for a light that moves (a regiment's:
+    /// the game's default is made from the place, which would change every
+    /// frame of a march); `None` for the place's own.
+    pub seed: Option<u8>,
+    /// The caller has already seen to it that the viewer sees the thing that
+    /// shines (a regiment `World::sees` reports is drawn even where the
+    /// fog's own circles do not reach), so the tile check is skipped.
+    pub placed: bool,
 }
 
 /// The most glows kept between two [`Effects::take_glows`], so a caller that
@@ -330,6 +338,8 @@ impl Effects {
             radius: 2.5 + size * 4.0,
             strength: (size * 2.0).min(1.5),
             needs_dark: true,
+            seed: None,
+            placed: false,
         });
         for _ in 0..self.count(40.0 * size * dt) {
             let at = self.rng.disc() * (size * 0.6);
@@ -355,6 +365,54 @@ impl Effects {
                 ..Particle::default()
             });
         }
+    }
+
+    /// A torch held at `pos` for `dt` seconds: a small licking flame. It has
+    /// no light of its own (a whole regiment's torches are one
+    /// [`Effects::regiment_light`]), so a crowd of torches cannot fill the list.
+    pub fn torch(&mut self, pos: Vec3, dt: f32) {
+        for _ in 0..self.count(7.0 * dt) {
+            let at = self.rng.disc() * 0.015;
+            let (seed, spin) = (self.rng.byte(), self.spin(6));
+            self.out.push(Particle {
+                pos: pos + Vec3::new(at.x, 0.0, at.y),
+                vel: Vec3::new(0.0, self.rng.between(0.15, 0.4), 0.0),
+                life: self.rng.between(0.3, 0.6),
+                size: [self.rng.between(0.08, 0.12), 0.02],
+                color: [255, 176, 62, 210],
+                color_end: [255, 60, 10, 0],
+                drag: 1.0,
+                lift: 0.8,
+                shape: Shape::Glow,
+                flags: flags::ADDITIVE | flags::FLICKER,
+                spin,
+                seed,
+                ..Particle::default()
+            });
+        }
+    }
+
+    /// The light a regiment (one the viewer sees) gives off at night (its
+    /// torches, or the Brood's own glow), shining from `pos`: `color` (sRGB),
+    /// as wide as `radius` tiles, `strength` of a bright fire (0 to about
+    /// 1.5), flickering by `seed`.
+    pub fn regiment_light(
+        &mut self,
+        pos: Vec3,
+        color: [u8; 3],
+        radius: f32,
+        strength: f32,
+        seed: u8,
+    ) {
+        self.glow(Glow {
+            pos,
+            color,
+            radius,
+            strength,
+            needs_dark: true,
+            seed: Some(seed),
+            placed: true,
+        });
     }
 
     /// Sparks of ash and ember that float up and away from a fire at `pos`,
@@ -1208,6 +1266,25 @@ mod tests {
         assert!(glows[1].pos.y > 1.0, "a fire's light is above its base");
         assert!(glows[1].radius > glows[0].radius);
         assert!(fx.take_glows().is_empty());
+    }
+
+    #[test]
+    fn a_torch_is_a_flame_with_no_light_of_its_own_and_a_regiments_light_is_one_glow() {
+        let mut fx = Effects::default();
+        for _ in 0..200 {
+            fx.torch(Vec3::new(3.0, 1.0, 3.0), 0.1);
+        }
+        assert!(fx.take().len() > 100, "a torch burns with flame particles");
+        assert!(
+            fx.take_glows().is_empty(),
+            "a crowd of torches adds no lights"
+        );
+        for _ in 0..30 {
+            fx.regiment_light(Vec3::new(3.0, 1.5, 3.0), [255, 160, 70], 7.0, 0.8, 9);
+        }
+        let glows = fx.take_glows();
+        assert_eq!(glows.len(), 1);
+        assert!(glows[0].needs_dark && glows[0].radius == 7.0);
     }
 
     #[test]
