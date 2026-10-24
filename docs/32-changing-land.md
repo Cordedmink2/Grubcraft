@@ -60,7 +60,7 @@ The footing layer is stored in replays from `FORMAT` 33 (older files read firm g
 
 **Later:**
 - Rain makes ground soft (idea 1). The footing layer is where it will write.
-- Computer players don't yet weigh mud or slopes. Their routes and charges ignore both, so they will sometimes charge into a bog.
+- Computer players keep their battle lines out of mud (since the weather's stage 3a, below) but don't yet weigh slopes, and their routes and charges ignore both, so they will sometimes charge into a bog.
 - Roads (+15%) and loose scree come with more footing kinds.
 
 ## Weather and the time of day (ideas 1 and 9)
@@ -91,7 +91,7 @@ A lobby match builds its sky from the lobby (`gc_match::battle::sky_of`): the **
 - **Snow** slows marching by up to 15% (`SNOW_MARCH_LOSS`), on top of the ground.
 - **Seeing it.** The top bar shows a chip whenever the sky cuts anything, e.g. "Fog: sight 40%", "Night: sight 45%" or "Snow: sight 70%, march 85%". The Ranged class in the Guide says fog, rain and night cut their reach.
 
-Computer players don't yet plan for the shorter range (they still think archers reach as far as by day); that comes with stage 3.
+Computer players plan for the shorter range and slower march (stage 3a, below).
 
 ### Rain soaks the ground (stage 2)
 
@@ -100,7 +100,15 @@ Computer players don't yet plan for the shorter range (they still think archers 
 - **How wet the ground is.** The sky keeps one number, 0 (dry) to `WET_FULL` (1000). Once a second rain adds its strength / 64 (`RAIN_WETS`: about 3 in heavy rain, so some five minutes to soak it through), and anything else, drizzle under 64 included, takes 2 off (`DRIES`). Every match starts dry. It is hashed with the sky.
 - **Which ground soaks.** When the match starts, `Terrain` lists the tiles rain can soak: firm, not wooded, nothing growing but scrub, at most half a tile above the water line (`SOAK_RISE`), no land neighbour more than half a tile higher or lower (`SOAK_SLOPE`), and at most 5 tiles from water (`SOAK_REACH`). Each gets the wetness it needs: 150, plus 150 a tile from the water, plus up to 300 for its height. Banks right by the water go first (about a minute and a half of heavy rain), ground further off later. Grown land (the lobby's default) has a few hundred to a thousand such tiles on a 192-tile map; the steeper Random and Classic maps have a few dozen or none.
 - **Soaking and drying.** Each tick, when the wetness has passed a tile's need, the tile turns soft (`Terrain::soak`, which only moves a count: `Terrain::footing` reads a tile as soaked when it is no later in line than the last one soaked), the soonest first: slow going and no charges, as any soft ground. When the ground dries 100 (`SOAK_DRY_MARGIN`) below a soaked tile's need, it firms up again, the last soaked first, so tiles don't flicker as rain eases. The soaked tiles are a run of that list, so their count (`Terrain::soaked`, hashed under "ground" when above 0) is the whole state.
-- **Seeing it.** The renderer draws soaked tiles with the soft ground's mud (the scar grid's spare byte, [35](35-ground-marks.md)); the top bar says "Mud by the water" (or adds ", mud" to the weather's words) while any is soaked, and the selection panel says "In mud" as on any soft ground. The Cavalry guide blurb mentions it. Computer players don't read mud yet, soaked or made with the map (their own ground copy knows water, woods and slopes); that comes with stage 3, alongside the shorter range.
+- **Seeing it.** The renderer draws soaked tiles with the soft ground's mud (the scar grid's spare byte, [35](35-ground-marks.md)); the top bar says "Mud by the water" (or adds ", mud" to the weather's words) while any is soaked, and the selection panel says "In mud" as on any soft ground. The Cavalry guide blurb mentions it. Computer players see the mud (stage 3a, below).
+
+### Computer players read the sky (stage 3a)
+
+**Built (2026-10-24):** no sim change (the minds sit outside it).
+
+- **Range and march.** `Perception` reads the units under the world's `Air` (`UnitInfo::in_air`): archers' range is what fog, rain and night leave, and the march is what snow leaves. Everything that reads a unit's range (the estimator's who-outshoots-whom, when a line is under fire, how far archers stand off, the bank a line waits behind) now plans with the shorter reach, and closes in under fewer volleys. The table is rebuilt when the air changes (in steps of 5%), and the Conquest battle views the Marshal hands its Captains carry it too.
+- **Mud.** The minds' own ground map (`gc_ai::Terrain`) reads which tiles are soft underfoot (bog, and mud the rain has soaked, `Terrain::soft`) at the first look and again whenever the soaked count changes, and `GroundLine::footing` counts mud as bad footing as it counts water, so the Captain doesn't put a battle line in a bog or on a soaked bank. Routes and charges still ignore it.
+- **Towers.** The Spymaster's sums use Conquest towers' range under the same air, as the sim shoots them.
 
 ### Later stages
 

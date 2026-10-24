@@ -40,6 +40,12 @@ pub struct Terrain {
     /// The simulation's ground digest when the minds last looked
     /// (`gc_sim::Terrain::changes`).
     seen: u64,
+    /// Which tiles are soft underfoot, row by row: bog, and mud the rain
+    /// has soaked. Empty when none is.
+    soft: Vec<bool>,
+    /// The simulation's soaked count when the minds last read the soft
+    /// tiles (`gc_sim::Terrain::soaked`); `None` before the first look.
+    soaked: Option<u32>,
 }
 
 impl Terrain {
@@ -56,6 +62,8 @@ impl Terrain {
             growth: Vec::new(),
             under: Vec::new(),
             seen: 0,
+            soft: Vec::new(),
+            soaked: None,
         }
     }
 
@@ -76,6 +84,8 @@ impl Terrain {
             growth: Vec::new(),
             under: Vec::new(),
             seen: 0,
+            soft: Vec::new(),
+            soaked: None,
         };
         t.measure_clearance();
         t
@@ -140,7 +150,12 @@ impl Terrain {
     /// Catch up with the simulation's ground, if it has changed since the
     /// last look: cleared tiles lose their cover, and cleared thicket can
     /// be walked again.
+    /// The soft tiles are read again when rain soaks or dries any.
     pub fn follow(&mut self, ground: &gc_sim::Terrain) {
+        if self.soaked != Some(ground.soaked()) {
+            self.soaked = Some(ground.soaked());
+            self.read_soft(ground);
+        }
         if self.seen == ground.changes() {
             return;
         }
@@ -167,7 +182,20 @@ impl Terrain {
 
     /// Whether the minds' ground lags the simulation's.
     pub fn stale(&self, ground: &gc_sim::Terrain) -> bool {
-        !self.growth.is_empty() && self.seen != ground.changes()
+        (!self.growth.is_empty() && self.seen != ground.changes())
+            || self.soaked != Some(ground.soaked())
+    }
+
+    /// Read which tiles are soft from the simulation's ground.
+    fn read_soft(&mut self, ground: &gc_sim::Terrain) {
+        let n = self.map_tiles as i32;
+        self.soft.clear();
+        let centre = |t: i32| {
+            crate::perception::to_fx_vec(Vec2::new((t % n) as f32 + 0.5, (t / n) as f32 + 0.5))
+        };
+        if (0..n * n).any(|t| ground.soft(centre(t))) {
+            self.soft.extend((0..n * n).map(|t| ground.soft(centre(t))));
+        }
     }
 
     /// The first cell of tile `t`, as (column, row).
@@ -273,6 +301,17 @@ impl Terrain {
     /// Whether `p` is under water, deep or not.
     pub fn water(&self, p: Vec2) -> bool {
         !self.height.is_empty() && self.height(p) < self.water_level
+    }
+
+    /// Whether `p` is soft underfoot: bog, or mud the rain has soaked (slow
+    /// going, and no charges out of it or into it).
+    pub fn soft(&self, p: Vec2) -> bool {
+        let n = self.map_tiles as i32;
+        let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
+        !self.soft.is_empty()
+            && (0..n).contains(&x)
+            && (0..n).contains(&y)
+            && self.soft[(y * n + x) as usize]
     }
 
     /// Whether `p` is water a regiment can wade: a ford or shallows.

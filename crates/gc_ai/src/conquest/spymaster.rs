@@ -66,7 +66,11 @@ pub fn enemy_buildings(s: &Sense) -> Vec<Sighted> {
                 at: v2(v.centre()),
                 role: b.role,
                 owner: v.owner,
-                attack: b.attack.filter(|_| v.finished()),
+                // Fog shortens a tower's reach as it does a bow's.
+                attack: b.attack.filter(|_| v.finished()).map(|mut a| {
+                    a.range = s.view.air.sight(a.range);
+                    a
+                }),
                 hp: v.hp,
             })
         })

@@ -59,7 +59,8 @@ impl Line {
     }
 
     /// Share of the places under the line, and under a row `behind` tiles
-    /// behind it (the archers), where a regiment can stand out of the water.
+    /// behind it (the archers), where a regiment can stand out of the water
+    /// and the mud.
     pub fn footing(&self, terrain: &Terrain, behind: f32) -> f32 {
         let rows = [
             self.depth * 0.5 - 0.5,
@@ -67,7 +68,9 @@ impl Line {
             -self.depth * 0.5 + 0.5,
             -self.depth * 0.5 - behind,
         ];
-        self.share(&rows, 2.0, |p| terrain.walkable(p) && !terrain.wet(p))
+        self.share(&rows, 2.0, |p| {
+            terrain.walkable(p) && !terrain.wet(p) && !terrain.soft(p)
+        })
     }
 
     /// Share of the places under the line in a wood, where the trees catch
