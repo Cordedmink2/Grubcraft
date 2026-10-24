@@ -615,20 +615,29 @@ impl Effects {
         centre: Vec2,
         radius: f32,
         amount: f32,
+        wind: Vec2,
         ground: impl Fn(Vec2) -> f32,
     ) {
+        // A gale has no more business here than a breeze: a drop's lean stays
+        // within what a replay's wind byte can say sensibly.
+        let wind = wind.clamp_length_max(MAX_WIND);
         for _ in 0..self.count(amount) {
+            // Where the drop lands; it starts upwind so the slant carries it
+            // there and the disc stays evenly covered.
             let at = centre + self.rng.disc() * radius;
             let low = ground(at);
             match weather {
                 Weather::Rain => {
-                    // Slanted a little by the wind, and falling fast.
+                    // Slanted by the wind, and falling fast.
                     let fall = self.rng.between(10.0, 13.0);
                     let top = self.rng.between(0.6, 1.0) * FALL_HEIGHT;
+                    let life = (top - 0.1) / fall;
+                    let drift = wind * RAIN_DRIFT;
+                    let from = at - drift * life;
                     self.out.push(Particle {
-                        pos: Vec3::new(at.x, low + top, at.y),
-                        vel: Vec3::new(1.6, -fall, 0.8),
-                        life: (top - 0.1) / fall,
+                        pos: Vec3::new(from.x, low + top, from.y),
+                        vel: Vec3::new(drift.x, -fall, drift.y),
+                        life,
                         size: [0.03, 0.03],
                         shape: Shape::Streak,
                         flags: flags::STRETCH,
@@ -640,18 +649,17 @@ impl Effects {
                     let fall = self.rng.between(1.1, 1.9);
                     // Gone before the ring's longest life (8 s) cuts it short.
                     let top = (self.rng.between(0.4, 1.0) * FALL_HEIGHT).min(fall * 7.4);
+                    let life = (top - 0.1) / fall;
+                    let drift = wind * SNOW_DRIFT
+                        + Vec2::new(self.rng.between(-0.3, 0.3), self.rng.between(-0.3, 0.3));
+                    let from = at - drift * life;
                     self.out.push(Particle {
-                        pos: Vec3::new(at.x, low + top, at.y),
-                        vel: Vec3::new(
-                            self.rng.between(-0.3, 0.3),
-                            -fall,
-                            self.rng.between(-0.3, 0.3),
-                        ),
-                        life: (top - 0.1) / fall,
+                        pos: Vec3::new(from.x, low + top, from.y),
+                        vel: Vec3::new(drift.x, -fall, drift.y),
+                        life,
                         size: [0.075, 0.06],
                         spin: self.rng.byte() as i8,
                         shape: Shape::Glow,
-                        flags: flags::WIND,
                         seed: self.rng.byte(),
                         ..fading([240, 244, 250], 215)
                     });
@@ -686,6 +694,99 @@ impl Effects {
         }
     }
 
+    /// A bolt of lightning at a random place of the disc of `radius` round
+    /// `centre` that `fits` (somewhere worth striking: on the map, in view),
+    /// `top` tiles tall (see [`Effects::bolt`]). A dozen tries are made;
+    /// the answer is whether one fit and the bolt was drawn.
+    pub fn lightning(
+        &mut self,
+        centre: Vec2,
+        radius: f32,
+        top: f32,
+        width: f32,
+        ground: impl Fn(Vec2) -> f32,
+        fits: impl Fn(Vec2) -> bool,
+    ) -> bool {
+        for _ in 0..12 {
+            let at = centre + self.rng.disc() * radius;
+            if fits(at) {
+                self.bolt(Vec3::new(at.x, ground(at), at.y), top, width);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// A bolt of lightning from the cloud over `ground` (a point on the
+    /// land, `top` tiles above it) down to it: a jagged line of glowing
+    /// points that pulls toward the strike and flares and fades in a
+    /// third of a second, one branch off its middle, and a flash where it
+    /// lands. `width` is the line's radius in tiles (a bolt seen from far
+    /// up has to be wider to be seen).
+    pub fn bolt(&mut self, ground: Vec3, top: f32, width: f32) {
+        // Draws a path and gives back the point halfway along it.
+        let path = |this: &mut Effects, from: Vec3, to: Vec3, steps: u32, wander: f32| -> Vec3 {
+            let mut at = from;
+            let mut halfway = from;
+            for i in 0..steps {
+                if i == steps / 2 {
+                    halfway = at;
+                }
+                let left = (steps - i) as f32;
+                // A step toward the end, and a sideways stumble.
+                let mut next = at + (to - at) / left;
+                if i + 1 < steps {
+                    next.x += this.rng.between(-wander, wander);
+                    next.z += this.rng.between(-wander, wander);
+                }
+                // Points along the step so the line has no gaps.
+                for k in 0..BOLT_POINTS {
+                    let pos = at.lerp(next, k as f32 / BOLT_POINTS as f32);
+                    this.out.push(Particle {
+                        pos,
+                        life: this.rng.between(0.28, 0.4),
+                        size: [width * 1.8, width * 1.2],
+                        color: [214, 226, 255, 255],
+                        color_end: [150, 175, 255, 0],
+                        shape: Shape::Glow,
+                        flags: flags::ADDITIVE,
+                        seed: this.rng.byte(),
+                        ..Particle::default()
+                    });
+                }
+                at = next;
+            }
+            halfway
+        };
+        let high = ground
+            + Vec3::new(
+                self.rng.between(-4.0, 4.0),
+                top,
+                self.rng.between(-4.0, 4.0),
+            );
+        // A branch off the middle, reaching down and out.
+        let fork = path(self, high, ground, 22, top * 0.03);
+        let end = fork
+            + Vec3::new(
+                self.rng.between(-1.0, 1.0) * top * 0.25,
+                -top * 0.3,
+                self.rng.between(-1.0, 1.0) * top * 0.25,
+            );
+        path(self, fork, end, 8, top * 0.03);
+        // The flash where it lands.
+        self.out.push(Particle {
+            pos: ground + Vec3::Y * 0.3,
+            life: 0.45,
+            size: [width * 6.0, width * 14.0],
+            color: [200, 215, 255, 200],
+            color_end: [150, 175, 255, 0],
+            shape: Shape::Glow,
+            flags: flags::ADDITIVE | flags::SOFT,
+            seed: self.rng.byte(),
+            ..Particle::default()
+        });
+    }
+
     /// What a blow throws up at `pos`, flying along `dir`: sparks when it
     /// rang on armour (`armoured`), then the faction's wound. `power` is 1
     /// for an ordinary blow, more for a crushing one.
@@ -718,6 +819,18 @@ fn fading(rgb: [u8; 3], alpha: u8) -> Particle {
         ..Particle::default()
     }
 }
+
+/// Glowing points to a step of a lightning bolt's path.
+const BOLT_POINTS: u32 = 8;
+
+/// How far rain and snow lean with the wind: tiles a second of sideways
+/// travel for each tile a second of wind (a rain drop is fast, so the wind
+/// bends its path more than it moves it).
+const RAIN_DRIFT: f32 = 2.5;
+const SNOW_DRIFT: f32 = 1.5;
+/// The strongest wind (tiles a second) rain and snow lean to; the
+/// simulation's own winds stay inside it.
+const MAX_WIND: f32 = 2.0;
 
 /// How high above the ground rain and snow begin to fall, in tiles.
 pub const FALL_HEIGHT: f32 = 14.0;
@@ -817,7 +930,14 @@ mod tests {
 
     fn fall(weather: Weather, amount: f32) -> Vec<Particle> {
         let mut fx = Effects::default();
-        fx.precipitation(weather, Vec2::new(50.0, 50.0), 10.0, amount, |_| 3.0);
+        fx.precipitation(
+            weather,
+            Vec2::new(50.0, 50.0),
+            10.0,
+            amount,
+            Vec2::ZERO,
+            |_| 3.0,
+        );
         fx.take()
     }
 
@@ -838,8 +958,9 @@ mod tests {
                 assert!(end >= 3.0, "{weather:?}: ends at {end}");
                 assert!(p.pos.y <= 3.0 + FALL_HEIGHT);
                 assert!(p.life > 0.0 && p.life <= 8.0, "{weather:?}: {}", p.life);
-                // Inside the disc it was asked for.
-                assert!(Vec2::new(p.pos.x, p.pos.z).distance(Vec2::new(50.0, 50.0)) <= 10.01);
+                // It lands inside the disc it was asked for.
+                let land = Vec2::new(p.pos.x + p.vel.x * p.life, p.pos.z + p.vel.z * p.life);
+                assert!(land.distance(Vec2::new(50.0, 50.0)) <= 10.01);
             }
         }
     }
@@ -859,10 +980,153 @@ mod tests {
     }
 
     #[test]
+    fn the_wind_leans_rain_and_snow_its_way() {
+        let fall = |weather, wind| {
+            let mut fx = Effects::default();
+            fx.precipitation(weather, Vec2::ZERO, 10.0, 200.0, wind, |_| 0.0);
+            let drops = fx.take();
+            assert!(drops.len() >= 190, "{weather:?}");
+            drops
+        };
+        let lean = |drops: &[Particle], along: fn(&Particle) -> f32| {
+            drops.iter().map(|p| along(p) / -p.vel.y).sum::<f32>() / drops.len() as f32
+        };
+        let x: fn(&Particle) -> f32 = |p| p.vel.x;
+        let z: fn(&Particle) -> f32 = |p| p.vel.z;
+        for weather in [Weather::Rain, Weather::Snow] {
+            let calm = fall(weather, Vec2::ZERO);
+            let east = fall(weather, Vec2::new(1.0, 0.0));
+            let west = fall(weather, Vec2::new(-1.0, 0.0));
+            let south = fall(weather, Vec2::new(0.0, 1.0));
+            assert!(lean(&east, x) > lean(&calm, x) + 0.05, "{weather:?}");
+            assert!(lean(&west, x) < lean(&calm, x) - 0.05, "{weather:?}");
+            assert!(lean(&south, z) > lean(&calm, z) + 0.05, "{weather:?}");
+            assert!(lean(&south, x).abs() < 0.1, "{weather:?}");
+            // Snow is no longer pushed by anything but the simulation's wind.
+            assert!(calm.iter().all(|p| p.flags & flags::WIND == 0));
+        }
+        // A lobby's rain wind (10, 4 sixteenths) is the slant it always had.
+        let mut fx = Effects::default();
+        fx.precipitation(
+            Weather::Rain,
+            Vec2::ZERO,
+            10.0,
+            50.0,
+            Vec2::new(0.625, 0.25),
+            |_| 0.0,
+        );
+        let drops = fx.take();
+        assert!(!drops.is_empty());
+        assert!(drops.iter().all(|p| (p.vel.x - 1.5625).abs() < 1e-3));
+    }
+
+    #[test]
+    fn a_slanted_fall_still_lands_inside_the_disc() {
+        for weather in [Weather::Rain, Weather::Snow] {
+            let mut fx = Effects::default();
+            fx.precipitation(
+                weather,
+                Vec2::new(20.0, 20.0),
+                10.0,
+                300.0,
+                Vec2::new(1.5, -1.0),
+                |_| 0.0,
+            );
+            let drops = fx.take();
+            assert!(drops.len() >= 280);
+            for p in drops {
+                // Where it would land, if it were left to fall.
+                let t = p.pos.y / -p.vel.y;
+                let land = Vec2::new(p.pos.x + p.vel.x * t, p.pos.z + p.vel.z * t);
+                assert!(land.distance(Vec2::new(20.0, 20.0)) <= 10.5, "{weather:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_gale_leans_no_further_than_the_cap() {
+        let mut fx = Effects::default();
+        fx.precipitation(
+            Weather::Rain,
+            Vec2::ZERO,
+            10.0,
+            100.0,
+            Vec2::new(8.0, 0.0),
+            |_| 0.0,
+        );
+        let drops = fx.take();
+        assert!(!drops.is_empty());
+        assert!(
+            drops
+                .iter()
+                .all(|p| p.vel.x <= MAX_WIND * RAIN_DRIFT + 1e-3)
+        );
+    }
+
+    #[test]
+    fn a_bolt_runs_from_the_cloud_to_the_ground_and_flashes_where_it_lands() {
+        let mut fx = Effects::default();
+        fx.bolt(Vec3::new(30.0, 2.0, 40.0), 40.0, 0.2);
+        let parts = fx.take();
+        assert!(parts.len() > 200 && parts.len() < 300, "{}", parts.len());
+        assert!(
+            parts
+                .iter()
+                .all(|p| p.life <= 0.5 && p.flags & flags::ADDITIVE != 0)
+        );
+        let top = parts.iter().map(|p| p.pos.y).fold(0.0, f32::max);
+        assert!(top > 38.0, "{top}");
+        // The line comes down into the strike.
+        assert!(parts.iter().filter(|p| p.pos.y < 3.0).count() >= 2);
+        let flash = parts.last().unwrap();
+        assert!(flash.size[1] > 1.5 && (flash.pos.x - 30.0).abs() < 1e-3);
+        // Nothing underground.
+        assert!(parts.iter().all(|p| p.pos.y > 1.9));
+        // The branch leaves the main line rather than hanging in the air:
+        // every point has another within a step of it.
+        let step = 40.0 / 22.0 * 1.5;
+        for (i, p) in parts[..parts.len() - 1].iter().enumerate() {
+            let near = parts
+                .iter()
+                .enumerate()
+                .any(|(j, q)| i != j && q.pos.distance(p.pos) < step / BOLT_POINTS as f32 * 2.5);
+            assert!(near, "point {i} floats alone");
+        }
+    }
+
+    #[test]
+    fn the_bolt_the_disc_picks_stands_on_the_land_it_strikes() {
+        let mut fx = Effects::default();
+        let slope = |p: Vec2| p.x * 0.5;
+        for _ in 0..20 {
+            assert!(fx.lightning(Vec2::new(40.0, 40.0), 20.0, 30.0, 0.1, slope, |_| true));
+        }
+        let parts = fx.take();
+        // Each flash (the last particle of a bolt) sits on its own ground.
+        for flash in parts.chunks(parts.len() / 20).map(|c| c.last().unwrap()) {
+            assert!((flash.pos.y - 0.3 - slope(Vec2::new(flash.pos.x, flash.pos.z))).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn a_strike_only_lands_where_it_fits_and_is_skipped_when_nowhere_does() {
+        let mut fx = Effects::default();
+        let east = |p: Vec2| p.x > 45.0;
+        for _ in 0..20 {
+            assert!(fx.lightning(Vec2::new(40.0, 40.0), 20.0, 30.0, 0.1, |_| 0.0, east));
+        }
+        for p in fx.take().iter().filter(|p| p.size[1] > 1.0) {
+            assert!(p.pos.x > 45.0, "{}", p.pos.x);
+        }
+        assert!(!fx.lightning(Vec2::new(40.0, 40.0), 20.0, 30.0, 0.1, |_| 0.0, |_| false));
+        assert!(fx.take().is_empty());
+    }
+
+    #[test]
     fn a_thin_graphics_density_thins_the_fall() {
         let mut fx = Effects::default();
         fx.set_density(0.25);
-        fx.precipitation(Weather::Rain, Vec2::ZERO, 10.0, 400.0, |_| 0.0);
+        fx.precipitation(Weather::Rain, Vec2::ZERO, 10.0, 400.0, Vec2::ZERO, |_| 0.0);
         let n = fx.take().len();
         assert!((60..=140).contains(&n), "{n}");
     }

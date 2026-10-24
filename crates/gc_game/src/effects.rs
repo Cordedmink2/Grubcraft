@@ -43,6 +43,9 @@ const SPLASH_MOST: f32 = 300.0;
 const SPLASH_REACH: f32 = 0.4;
 const SPLASH_RADIUS: (f32, f32) = (6.0, 26.0);
 const SPLASH_FADE: (f32, f32) = (35.0, 90.0);
+/// How far from the camera's focus a bolt may strike (nearest and farthest
+/// radius, in tiles).
+const STRIKE_RADIUS: (f32, f32) = (15.0, 70.0);
 /// The colour of clods thrown up from the ground.
 const CLOD: [u8; 3] = [92, 74, 52];
 /// Fresh-cut wood, and leaves and torn scrub.
@@ -296,7 +299,7 @@ impl Field {
         &mut self,
         dt: f32,
         density: f32,
-        (weather, amount): (Weather, f32),
+        (weather, amount, wind): (Weather, f32, Vec2),
         focus: Vec2,
         distance: f32,
         ground: impl Fn(Vec2) -> f32,
@@ -315,7 +318,7 @@ impl Field {
         let rate = (per_tile * std::f32::consts::PI * radius * radius).min(most) * amount * near;
         self.fx.set_density(density);
         self.fx
-            .precipitation(weather, focus, radius, rate * dt.min(0.25), &ground);
+            .precipitation(weather, focus, radius, rate * dt.min(0.25), wind, &ground);
         if weather == Weather::Rain {
             let near = 1.0
                 - ((distance - SPLASH_FADE.0) / (SPLASH_FADE.1 - SPLASH_FADE.0)).clamp(0.0, 1.0);
@@ -326,6 +329,30 @@ impl Field {
             self.fx
                 .splashes(focus, radius, rate * dt.min(0.25), &ground);
         }
+    }
+
+    /// A bolt of lightning somewhere in view of the camera at `focus`,
+    /// `distance` from the ground and looking along `heading` (a unit
+    /// vector over the map): taller and wider the further the camera is,
+    /// so it can be seen from up high. It falls ahead of the camera, never
+    /// at its feet, and only where `fits` (on the map and seen, say).
+    pub fn strike(
+        &mut self,
+        focus: Vec2,
+        distance: f32,
+        heading: Vec2,
+        ground: impl Fn(Vec2) -> f32,
+        fits: impl Fn(Vec2) -> bool,
+    ) {
+        let radius = (distance * 0.6).clamp(STRIKE_RADIUS.0, STRIKE_RADIUS.1);
+        let top = 35.0 + distance * 0.2;
+        let width = 0.05 + distance * 0.0025;
+        // The camera hangs at least a dozen tiles behind its focus (eight
+        // when riding), so a little behind the focus is still well ahead.
+        let ahead = |at: Vec2| (at - focus).dot(heading) > -radius * 0.1;
+        self.fx.lightning(focus, radius, top, width, ground, |at| {
+            ahead(at) && fits(at)
+        });
     }
 
     /// The lamps and fires that shone since this was last called.
@@ -399,7 +426,7 @@ mod tests {
             field.weather(
                 1.0 / 60.0,
                 1.0,
-                (weather, amount),
+                (weather, amount, Vec2::ZERO),
                 Vec2::new(50.0, 50.0),
                 distance,
                 |_| 3.0,
@@ -441,7 +468,7 @@ mod tests {
                 field.weather(
                     1.0 / 60.0,
                     1.0,
-                    (weather, 1.0),
+                    (weather, 1.0, Vec2::ZERO),
                     Vec2::new(50.0, 50.0),
                     distance,
                     |_| 3.0,
@@ -460,9 +487,51 @@ mod tests {
     }
 
     #[test]
+    fn a_strike_lands_near_the_camera_and_is_bigger_from_far_up() {
+        let bolt = |distance| {
+            let mut field = Field::new(None);
+            field.strike(Vec2::new(50.0, 50.0), distance, Vec2::X, |_| 3.0, |_| true);
+            field.frame(0.0, 1.0, Vec2::ZERO, 200.0, |_| 0.0)
+        };
+        let (near, far) = (bolt(30.0), bolt(150.0));
+        assert!(!near.is_empty());
+        let flash = near.last().unwrap();
+        // Within the strike disc (0.6 × the distance, 15 to 70 tiles).
+        assert!(Vec2::new(flash.pos.x, flash.pos.z).distance(Vec2::new(50.0, 50.0)) <= 18.01);
+        assert!(far.last().unwrap().size[1] > flash.size[1] * 2.0);
+        let height =
+            |parts: &[gc_render::Particle]| parts.iter().map(|p| p.pos.y).fold(0.0, f32::max);
+        assert!(height(&far) > height(&near));
+    }
+
+    #[test]
+    fn a_strike_falls_ahead_of_the_camera_and_where_it_fits() {
+        let (focus, heading) = (Vec2::new(50.0, 50.0), Vec2::new(0.0, 1.0));
+        for _ in 0..30 {
+            let mut field = Field::new(None);
+            field.strike(focus, 20.0, heading, |_| 3.0, |at| at.x < 55.0);
+            let parts = field.frame(0.0, 1.0, Vec2::ZERO, 200.0, |_| 0.0);
+            let flash = parts.last().unwrap();
+            assert!(flash.pos.z > 50.0 - 15.0 * 0.1 - 0.01, "{}", flash.pos.z);
+            assert!(flash.pos.x < 55.0);
+        }
+        // Nowhere to strike: no bolt.
+        let mut field = Field::new(None);
+        field.strike(focus, 20.0, heading, |_| 3.0, |_| false);
+        assert!(field.frame(0.0, 1.0, Vec2::ZERO, 200.0, |_| 0.0).is_empty());
+    }
+
+    #[test]
     fn a_slow_frame_makes_no_more_than_a_quarter_second_of_rain() {
         let mut field = Field::new(None);
-        field.weather(10.0, 1.0, (Weather::Rain, 1.0), Vec2::ZERO, 40.0, |_| 0.0);
+        field.weather(
+            10.0,
+            1.0,
+            (Weather::Rain, 1.0, Vec2::ZERO),
+            Vec2::ZERO,
+            40.0,
+            |_| 0.0,
+        );
         let n = field.frame(0.0, 1.0, Vec2::ZERO, 200.0, |_| 0.0).len();
         assert!(n as f32 <= (RAIN_MOST + SPLASH_MOST) * 0.26 + 5.0, "{n}");
     }

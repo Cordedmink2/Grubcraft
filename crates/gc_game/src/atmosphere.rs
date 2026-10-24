@@ -100,6 +100,8 @@ const DRY_BELOW: f32 = 0.002;
 /// flashes (shortest, longest).
 const STORM_AT: f32 = 0.75;
 const STRIKE_GAP: (f32, f32) = (5.0, 16.0);
+/// The wind of a weather chosen by hand (F12, `--weather`), tiles a second.
+const PREVIEW_WIND: Vec2 = Vec2::new(0.64, 0.32);
 
 /// The sky the simulation says there is over the match (docs/32), for the
 /// picture to follow.
@@ -111,6 +113,9 @@ pub struct SkyView {
     pub amount: f32,
     /// Cloud cover, 0 a clear sky to 1 overcast.
     pub cloud: f32,
+    /// Which way and how hard the wind blows, in tiles a second along x and
+    /// z (the simulation's sixteenths).
+    pub wind: Vec2,
     /// The hour of the day, 0 to 24.
     pub hour: f32,
     /// How light the day is, 0 night to 1 day.
@@ -137,6 +142,7 @@ impl SkyView {
             weather: kind,
             amount: f32::from(weather.strength) / 255.0,
             cloud: f32::from(weather.cloud) / 255.0,
+            wind: Vec2::new(f32::from(weather.wind.0), f32::from(weather.wind.1)) / 16.0,
             hour: (daylight.tick_of_day % day) as f32 / day as f32 * 24.0,
             light: f32::from(daylight.light()) / 1000.0,
         }
@@ -180,6 +186,8 @@ pub struct Atmosphere {
 struct Storm {
     next: f32,
     age: Option<f32>,
+    /// A flash began since the picture last asked.
+    struck: bool,
     rng: u32,
 }
 
@@ -188,6 +196,7 @@ impl Storm {
         let mut storm = Storm {
             next: 0.0,
             age: None,
+            struck: false,
             rng: 0x9E37_79B9,
         };
         storm.next = storm.gap();
@@ -211,6 +220,7 @@ impl Storm {
             self.next -= dt;
             if self.next <= 0.0 {
                 self.age = Some(0.0);
+                self.struck = true;
                 self.next = self.gap();
             }
         }
@@ -329,6 +339,21 @@ impl Atmosphere {
     /// The weather and how much of it there is now.
     pub fn weather(&self) -> (Weather, f32) {
         (self.weather, self.fade)
+    }
+
+    /// The wind, in tiles a second along x and z: the simulation's while the
+    /// weather follows it, else the slant rain has always had.
+    pub fn wind(&self) -> Vec2 {
+        match self.sky {
+            Some(sky) if !self.weather_preview => sky.wind,
+            _ => PREVIEW_WIND,
+        }
+    }
+
+    /// Whether lightning began since this was last called, for the bolt to
+    /// be drawn (and thunder, when there is some) with the flash.
+    pub fn take_strike(&mut self) -> bool {
+        std::mem::take(&mut self.storm.struck)
     }
 
     /// The weather that is clearing as the new one comes in, with how much
@@ -713,8 +738,9 @@ mod tests {
 
     /// One frame of `atmosphere` over the 64-tile test map.
     fn frame(atmosphere: &mut Atmosphere, dt: f32) -> Look {
-        let map = Map::generate(1, 64);
-        atmosphere.look(dt, &map, Vec2::new(32.0, 32.0), 40.0, false)
+        static MAP: std::sync::OnceLock<Map> = std::sync::OnceLock::new();
+        let map = MAP.get_or_init(|| Map::generate(1, 64));
+        atmosphere.look(dt, map, Vec2::new(32.0, 32.0), 40.0, false)
     }
 
     #[test]
@@ -858,6 +884,52 @@ mod tests {
         let rain = sun(WeatherKind::Rain, 255, 0);
         assert_eq!(sun(WeatherKind::Rain, 255, 255), rain);
         assert!(rain < overcast);
+    }
+
+    #[test]
+    fn the_wind_is_the_simulations_unless_the_weather_was_chosen_by_hand() {
+        use gc_sim::WeatherKind;
+        let mut atmosphere = Atmosphere::new(None, None);
+        assert_eq!(atmosphere.wind(), PREVIEW_WIND, "no sky yet");
+        let mut sky = sim_sky(WeatherKind::Rain, 200, 0, 12);
+        sky.wind = Vec2::new(-3.0, 1.0);
+        atmosphere.follow(sky);
+        frame(&mut atmosphere, 0.016);
+        assert_eq!(atmosphere.wind(), Vec2::new(-3.0, 1.0));
+        atmosphere.next_weather();
+        assert_eq!(atmosphere.wind(), PREVIEW_WIND);
+        // The simulation's sixteenths of a tile a second.
+        let view = SkyView::at(
+            gc_sim::Weather {
+                kind: WeatherKind::Rain,
+                strength: 1,
+                cloud: 0,
+                wind: (16, -8),
+            },
+            gc_sim::Daylight {
+                tick_of_day: 0,
+                day_ticks: 100,
+            },
+        );
+        assert_eq!(view.wind, Vec2::new(1.0, -0.5));
+    }
+
+    #[test]
+    fn each_flash_asks_for_one_bolt() {
+        let mut atmosphere = Atmosphere::new(None, None).with_weather(Some(Weather::Rain));
+        let mut strikes = 0;
+        for _ in 0..1200 {
+            frame(&mut atmosphere, 0.05);
+            strikes += usize::from(atmosphere.take_strike());
+        }
+        // A minute of storm: one flash every 5 to 16 seconds.
+        assert!((3..=12).contains(&strikes), "{strikes}");
+        assert!(!atmosphere.take_strike(), "asked for once");
+        let mut dry = Atmosphere::new(None, None);
+        for _ in 0..1200 {
+            frame(&mut dry, 0.05);
+            assert!(!dry.take_strike());
+        }
     }
 
     #[test]

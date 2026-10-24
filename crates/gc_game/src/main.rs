@@ -3851,6 +3851,7 @@ impl Running {
         // Rain and snow, the one weather clearing and the one coming in;
         // nobody is looking at the field behind the menu or in the unit
         // viewer.
+        let struck = self.atmosphere.take_strike();
         if self.viewer.is_none() && !(self.menu_open && self.online.is_none()) {
             let thin = if self.menu.settings().clarity {
                 0.4
@@ -3858,11 +3859,29 @@ impl Running {
                 1.0
             };
             let water = heightmap.water_level();
-            for sky in [self.atmosphere.leaving(), self.atmosphere.weather()] {
+            let wind = self.atmosphere.wind();
+            // The flash lights the whole sky, but the bolt itself is left
+            // out under Clarity (a bright line that blinks in an instant).
+            if struck && fx_speed > 0.0 && !self.menu.settings().clarity {
+                let (reveal, fog) = (self.reveal_all, &self.fog);
+                let side = heightmap.tiles as f32;
+                self.effects.strike(
+                    view_focus,
+                    view_distance,
+                    self.view_heading(),
+                    |p| heightmap.height_at(p.x, p.y),
+                    |p| {
+                        p.cmpge(Vec2::ZERO).all()
+                            && p.cmplt(Vec2::splat(side)).all()
+                            && (reveal || fog.sees_tile((p.x.floor() as i32, p.y.floor() as i32)))
+                    },
+                );
+            }
+            for (weather, amount) in [self.atmosphere.leaving(), self.atmosphere.weather()] {
                 self.effects.weather(
                     dt.as_secs_f32() * fx_speed,
                     density * thin,
-                    sky,
+                    (weather, amount, wind),
                     view_focus,
                     view_distance,
                     |p| heightmap.height_at(p.x, p.y).max(water),
@@ -6887,6 +6906,17 @@ impl Running {
                 )
             }
             None => (self.camera.focus, self.camera.distance),
+        }
+    }
+
+    /// The way the camera looks over the map, as a unit vector.
+    fn view_heading(&self) -> Vec2 {
+        match &self.ride {
+            Some(ride) => ride.camera.forward_xz(),
+            None => {
+                let forward = self.camera.forward();
+                Vec2::new(forward.x, forward.z).normalize_or(Vec2::Y)
+            }
         }
     }
 
