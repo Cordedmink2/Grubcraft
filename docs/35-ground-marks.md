@@ -63,6 +63,10 @@ pipeline layout (the ground bindings plus its materials) is now 17 sampled
 textures, past the 16 a baseline GPU allows, so the renderer asks for the
 adapter's own limit (every desktop GPU we target allows 128 or more).
 
+## On the Conquest map
+
+The marks are drawn in every match that ticks a world, Conquest included: nothing in `ScarView` or the shader looks at the mode. On a Conquest map the felled tiles of a clearing worker, the scorch of a Concord burning, the tracks and fights of armies and the stumps all show on open ground, and the soaked ground of rain does too. A faction's own land (tilled Clans fields, Brood flesh and so on, [33](33-faction-lands.md)) is drawn over the marks, so ground a faction has made its own is never shown trodden bare or charred. Checked on `--conquest four_teeth` with forced marks on 2026-10-24.
+
 ## Not yet
 
 - Scorch that outlives a replay seek or a rejoin: like the other marks it is

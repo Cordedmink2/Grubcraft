@@ -32,4 +32,4 @@ Re-baking every building (about 4 minutes for a main building on four cores) is 
 
 ## Built so far
 
-Detail textures, the vertex tags, the shader layering, the renderer upload and the baker are built. The re-bake of the buildings and units, and the detail on scenery (the Living ground thread, using the same `detail.pak` and the same bake method), follow.
+Detail textures, the vertex tags, the shader layering, the renderer upload and the baker are built. The buildings and units are re-baked. The scenery pack is re-baked with the stronger bake's colour variation (by place, not by part: see [25](25-scenery-models.md#pipeline)); scenery keeps its own bark, foliage and Rock035 detail arrays rather than `detail.pak`, because the two sets look alike at scenery's distance and moving would change nothing a player sees.
