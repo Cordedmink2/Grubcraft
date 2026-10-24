@@ -1250,12 +1250,13 @@ impl Nav {
     /// Whether a building could stand on the tiles `x..x + w` × `y..y + d`:
     /// all on the map, on ground a regiment could walk on, with no building
     /// on them (always, with no map). Thicket stands on its tiles too (see
-    /// [`Nav::standing`]), and is cleared before a building goes up, so a
-    /// tile `thicket` says is one counts as free of it.
+    /// [`Nav::standing`]), and is cleared before a building goes up, and a
+    /// gate replaces its owner's wall tiles, so `spare` says how many of the
+    /// things standing on a tile will be gone by then.
     pub(crate) fn footing(
         &self,
         tiles: [i32; 4],
-        thicket: impl Fn(i32, i32) -> bool,
+        spare: impl Fn(i32, i32) -> u8,
     ) -> Result<(), Refusal> {
         // Buildings and thicket stand on every side's grid alike.
         let Some(g) = self.base() else {
@@ -1267,8 +1268,8 @@ impl Nav {
         if cells().any(|c| g.ground[at(c)] == BLOCKED) {
             return Err(Refusal::Rough);
         }
-        let grown = |(cx, cy)| u8::from(thicket(cx / CELLS_PER_TILE, cy / CELLS_PER_TILE));
-        if cells().any(|c| g.built[at(c)] > 0 && g.built[at(c)] > grown(c)) {
+        let gone = |(cx, cy)| spare(cx / CELLS_PER_TILE, cy / CELLS_PER_TILE);
+        if cells().any(|c| g.built[at(c)] > 0 && g.built[at(c)] > gone(c)) {
             return Err(Refusal::Built);
         }
         Ok(())

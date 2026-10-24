@@ -125,6 +125,16 @@
                 (icon: Hammer, text: "Start or end near a wall end or tower and the line snaps to it, so walls join cleanly."),
             ],
         ),
+        (
+            name: "Iron Gate",
+            summary: "A gate in your Bone Fence: your side walks through and enemies don't. Select it to set Auto (opens as your regiments march up, shuts 2 s after), Locked (shut to everyone) or Open (anyone can pass).",
+            notes: [],
+            tips: [
+                (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it against an attack; open it for a sally."),
+                (icon: Hammer, text: "Place it on your own Bone Fence and it replaces that stretch: R turns it to run along the wall."),
+                (icon: Alarm, text: "Open lets enemies in too, and on Auto troops in the gateway hold it open: lock it under attack."),
+            ],
+        ),
     ],
     units: [
         (

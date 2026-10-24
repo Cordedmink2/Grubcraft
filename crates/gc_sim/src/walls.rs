@@ -77,11 +77,24 @@ impl Structures {
     /// The footprints of `owner`'s own walls and gates that touch the box
     /// `area`.
     fn own_walls_in(&self, owner: PlayerId, area: [i32; 4]) -> Vec<[i32; 4]> {
-        self.standing()
-            .filter(|&i| self.owner_of(i) == owner && self.flags_of(i) & (LINE | GATE) != 0)
+        self.own_in(owner, LINE | GATE, area)
             .map(|i| self.footprint(i))
-            .filter(|&foot| overlaps(foot, area))
             .collect()
+    }
+
+    /// The slots of `owner`'s own buildings with any of `flags` that touch
+    /// the box `area`.
+    pub(crate) fn own_in(
+        &self,
+        owner: PlayerId,
+        flags: u16,
+        area: [i32; 4],
+    ) -> impl Iterator<Item = usize> + '_ {
+        self.standing().filter(move |&i| {
+            self.owner_of(i) == owner
+                && self.flags_of(i) & flags != 0
+                && overlaps(self.footprint(i), area)
+        })
     }
 
     /// Building slot `i` is a tile of a drawn wall.
@@ -203,7 +216,7 @@ impl Conquest {
             .filter(|&t| !own.iter().any(|&foot| overlaps(foot, [t.0, t.1, 1, 1])))
             .map(|tile| {
                 let foot = [tile.0, tile.1, 1, 1];
-                let fits = (self.check(building, tile, 0, nav, regs, terrain))
+                let fits = (self.check(&[], building, tile, 0, nav, regs, terrain))
                     .and_then(|()| self.powered(player, building, tile, 0))
                     .and_then(|()| self.rooted(player, building, tile, 0))
                     .and_then(|()| {

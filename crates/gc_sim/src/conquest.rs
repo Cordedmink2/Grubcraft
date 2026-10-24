@@ -20,8 +20,8 @@ use crate::production::Production;
 use crate::regiments::Regiments;
 use crate::stances::Stances;
 use crate::structures::{
-    Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, GROWN, LINE, NEEDS_POWER, Refusal,
-    Role, StructureHandle, Structures, Work,
+    Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, GATE, GROWN, LINE, NEEDS_POWER,
+    Refusal, Role, StructureHandle, Structures, Work,
 };
 use crate::terrain::{Growth, Terrain};
 use crate::verdict::Victories;
@@ -345,9 +345,13 @@ impl Conquest {
     }
 
     /// Whether a building of type `building` may go up with its north-west
-    /// tile at `tile`, turned `turn` quarter turns (see `Structures::check`).
+    /// tile at `tile`, turned `turn` quarter turns (see `Structures::check`),
+    /// once the buildings in slots `replaced` are gone (see
+    /// [`Conquest::replaces`]).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn check(
         &self,
+        replaced: &[usize],
         building: BuildingId,
         tile: (i32, i32),
         turn: u8,
@@ -355,7 +359,14 @@ impl Conquest {
         regs: &Regiments,
         terrain: &Terrain,
     ) -> Result<(), Refusal> {
-        let thicket = |x, y| terrain.growth(x, y) == Growth::Thicket;
+        let gone: Vec<[i32; 4]> = replaced
+            .iter()
+            .map(|&i| self.structures.footprint(i))
+            .collect();
+        let spare = |x, y| {
+            let wall = gone.iter().any(|&f| overlaps(f, [x, y, 1, 1]));
+            u8::from(terrain.growth(x, y) == Growth::Thicket) + u8::from(wall)
+        };
         self.structures.check(
             building,
             tile,
@@ -363,7 +374,7 @@ impl Conquest {
             nav,
             regs,
             self.economy.node_positions(),
-            thicket,
+            spare,
         )?;
         // Ground paid for and still being cleared is spoken for.
         let foot = self.footprint(building, tile, turn);
@@ -397,13 +408,49 @@ impl Conquest {
         regs: &Regiments,
         terrain: &Terrain,
     ) -> Result<(), Refusal> {
-        self.check(building, tile, turn, nav, regs, terrain)?;
+        self.lay_plan(player, building, tile, turn, nav, regs, terrain)
+            .map(drop)
+    }
+
+    /// [`Conquest::can_lay`], with the slots of the buildings laying it
+    /// would replace (see [`Conquest::replaces`]).
+    #[allow(clippy::too_many_arguments)]
+    fn lay_plan(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        tile: (i32, i32),
+        turn: u8,
+        nav: &Nav,
+        regs: &Regiments,
+        terrain: &Terrain,
+    ) -> Result<Vec<usize>, Refusal> {
         self.may_lay(player, building)?;
-        if self.structures.buildings()[usize::from(building)].flags & LINE != 0 {
+        let b = self.structures.buildings()[usize::from(building)];
+        if b.flags & LINE != 0 {
             // Drawn, not laid: see `Conquest::lay_wall`.
             return Err(Refusal::Unknown);
         }
-        self.powered(player, building, tile, turn)
+        let foot = b.footprint(tile, turn);
+        let replaced = self.replaces(player, b, foot);
+        self.check(&replaced, building, tile, turn, nav, regs, terrain)?;
+        if !replaced.is_empty() && overgrown(terrain, foot) {
+            // The wall would stand open while the rest was cleared: clear
+            // it first.
+            return Err(Refusal::Overgrown);
+        }
+        self.powered(player, building, tile, turn)?;
+        Ok(replaced)
+    }
+
+    /// The slots of the buildings a building `b` that `player` lays on
+    /// `foot` replaces: `player`'s drawn wall tiles under
+    /// it, if it is a gate.
+    fn replaces(&self, player: PlayerId, b: BuildingStats, foot: [i32; 4]) -> Vec<usize> {
+        if b.flags & GATE == 0 {
+            return Vec::new();
+        }
+        self.structures.own_in(player, LINE, foot).collect()
     }
 
     /// Whether a building of type `building` `player` lays at `tile` has
@@ -480,13 +527,12 @@ impl Conquest {
         regs: &mut Regiments,
         terrain: &Terrain,
     ) -> bool {
-        if !self.unit(regs.unit[r]).worker
-            || self
-                .can_lay(player, building, tile, turn, nav, regs, terrain)
-                .is_err()
-        {
+        if !self.unit(regs.unit[r]).worker {
             return false;
         }
+        let Ok(replaced) = self.lay_plan(player, building, tile, turn, nav, regs, terrain) else {
+            return false;
+        };
         let b = self.structures.buildings()[usize::from(building)];
         let foot = b.footprint(tile, turn);
         let (grub, marrow) = (u32::from(b.cost_grub), u32::from(b.cost_marrow));
@@ -504,6 +550,8 @@ impl Conquest {
             self.clearing.start(regs, r, foot, Some(pledge));
             return true;
         }
+        // A gate replaces the stretch of its owner's wall it goes on.
+        self.structures.remove_all(&replaced, nav, regs);
         let Some(h) = self
             .structures
             .found(player, building, tile, turn, nav, regs)
@@ -539,7 +587,9 @@ impl Conquest {
         let powered = b.flags & NEEDS_POWER == 0 || self.structures.power_reaches(owner, foot);
         let laid = (powered
             && !overgrown(terrain, foot)
-            && self.check(building, tile, turn, nav, regs, terrain).is_ok())
+            && self
+                .check(&[], building, tile, turn, nav, regs, terrain)
+                .is_ok())
         .then(|| {
             self.structures
                 .found(owner, building, tile, turn, nav, regs)

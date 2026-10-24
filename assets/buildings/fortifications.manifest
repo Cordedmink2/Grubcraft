@@ -1,0 +1,28 @@
+# Written by `cargo run -p gc_artbake --release` beside models.pak and checked by
+# `cargo run -p gc_artbake -- --check` in CI. Do not edit by hand.
+# Hashes are XXH3-128. Sources marked "not in the repo" live in the project's
+# shared folder; CI cannot check them, so a change to one shows only in a re-bake.
+manifest = 1
+baker = gc_artbake 2
+schema = 4
+config = 30d1e08a9c14205c9b5d63a1b59ab9a4
+pack = 67b8596eceb12669313ec67031ef6028
+pack_bytes = 2981328
+source shared:grubcraft/buildings/concord/iron-gate/stage1.glb = 32a5c95ac7d925d5d0e6ee16695c7207 not in the repo
+source shared:grubcraft/buildings/concord/iron-gate/albedo.png = 73e2844d3b42b21cfa822d5f79445288 not in the repo
+source shared:grubcraft/buildings/concord/iron-gate/team.png = 3e3bf8a897075a4bdd9d8b2bf8a0bcf2 not in the repo
+source shared:grubcraft/buildings/concord/iron-gate/normal.png = 31cf2eba95bcf05bb6207fe603291fa8 not in the repo
+source shared:grubcraft/buildings/concord/iron-gate/orm.png = 0369aa5269b1c434a6ef215d8d97a19e not in the repo
+source shared:grubcraft/buildings/concord/iron-gate/emissive.png = 624748ee7e5719e7374a1dd99c05606c not in the repo
+source shared:grubcraft/buildings/concord/iron-gate/stage2.glb = db82685442f3266fa660892e434e317f not in the repo
+source shared:grubcraft/buildings/concord/iron-gate/stage3.glb = a22a4f85e0d0cdf58c1c6525559f1341 not in the repo
+source shared:grubcraft/buildings/concord/iron-gate/final.glb = fd7ecd9ec80a4a3068cae7c6b235b451 not in the repo
+source shared:grubcraft/buildings/brood/maw-gate/stage1.glb = 7e8f34d3d1d84dd4a4f050e1e66322ac not in the repo
+source shared:grubcraft/buildings/brood/maw-gate/albedo.png = f6db18e6d4362b270d4cf7f87cfa03b4 not in the repo
+source shared:grubcraft/buildings/brood/maw-gate/team.png = e8c28ee3838a0f5b205547277473ded1 not in the repo
+source shared:grubcraft/buildings/brood/maw-gate/normal.png = c0f13756f882d1ccb261c8757dadc5c5 not in the repo
+source shared:grubcraft/buildings/brood/maw-gate/orm.png = fe0fedfc97550ebea6dcf4664c65c5f2 not in the repo
+source shared:grubcraft/buildings/brood/maw-gate/emissive.png = 28954ee3284cac94538b60428ae1897f not in the repo
+source shared:grubcraft/buildings/brood/maw-gate/stage2.glb = b268155957dd5248b77de926a031df92 not in the repo
+source shared:grubcraft/buildings/brood/maw-gate/stage3.glb = 2ae18c750031dc193e50817aee56bf7c not in the repo
+source shared:grubcraft/buildings/brood/maw-gate/final.glb = 40a4fc1e720559ace4e05b2d3c5a84cc not in the repo

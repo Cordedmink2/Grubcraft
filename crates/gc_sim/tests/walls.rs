@@ -6,7 +6,7 @@ use gc_fixed::{Fx, FxVec2};
 use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::structures::{
-    Armour, GROWN, LINE, NEEDS_POWER, PASS, POWERS_FIELD, Refusal, Role, VEINS,
+    Armour, GATE, GROWN, LINE, NEEDS_POWER, PASS, POWERS_FIELD, Refusal, Role, VEINS,
 };
 use gc_sim::walls::{MAX_WALL_TILES, WITHER_PER_SECOND, wall_tiles};
 use gc_sim::{
@@ -24,6 +24,9 @@ const CURTAIN: u16 = 2;
 const RIDGE: u16 = 3;
 /// Powers a field [`PYLON_FIELD`] tiles round it.
 const PYLON: u16 = 4;
+/// A gate one tile wide and three deep.
+const GATE_3: u16 = 5;
+const GATE_COST: u32 = 60;
 const HALL_VEINS: u8 = 12;
 const PYLON_FIELD: u8 = 20;
 const RIDGE_HP: u16 = 200;
@@ -114,6 +117,13 @@ fn world() -> World {
                 depth: 2,
                 flags: POWERS_FIELD,
                 field: PYLON_FIELD,
+                ..palisade
+            },
+            BuildingStats {
+                cost_grub: GATE_COST as u16,
+                hp: 1000,
+                depth: 3,
+                flags: GATE,
                 ..palisade
             },
         ],
@@ -573,4 +583,114 @@ fn the_brood_grows_its_ridge_along_its_veins_with_no_worker() {
         w.tick(&[]);
     }
     assert!(walls(&w, 0).0.is_empty(), "the ridge withered");
+}
+
+#[test]
+fn a_gate_on_its_owners_wall_replaces_that_stretch() {
+    let mut w = world();
+    let builder = spawn(&mut w, 0, 20, 20);
+    // A wall down the map from top to bottom, in two lines.
+    assert!(draw(&mut w, 0, builder, (24, 0), (24, 23)));
+    assert!(draw(&mut w, 0, builder, (24, 24), (24, 47)));
+    build_all(&mut w, 0, 900);
+    let gate = |w: &mut World, player: u8, r: RegimentHandle, tile: (i16, i16)| {
+        order(
+            w,
+            player,
+            Command::Build {
+                regiment: r,
+                building: GATE_3,
+                tile,
+                turn: 0,
+            },
+        )
+    };
+    // Not on someone else's wall, and a building put up finished doesn't
+    // replace any.
+    let enemy = spawn(&mut w, 1, 30, 30);
+    assert!(!gate(&mut w, 1, enemy, (24, 30)));
+    assert!(!order(
+        &mut w,
+        0,
+        Command::SpawnStructure {
+            building: GATE_3,
+            tile: (24, 30),
+            turn: 0,
+        }
+    ));
+    // Across the join of the two lines: the three tiles under it go.
+    let before = grub(&w, 0);
+    assert!(gate(&mut w, 0, builder, (24, 22)));
+    assert_eq!(grub(&w, 0), before - GATE_COST);
+    let (tiles, _) = walls(&w, 0);
+    assert_eq!(tiles.len(), 45);
+    assert!(!tiles.iter().any(|&(x, y)| x == 24 && (22..25).contains(&y)));
+    // Once it is up, the owner's side walks through it.
+    let mut t = 0;
+    while !w
+        .structures()
+        .unwrap()
+        .iter()
+        .any(|v| v.gate.is_some() && v.finished())
+    {
+        w.tick(&[]);
+        t += 1;
+        assert!(t < 120 * TICKS_PER_SECOND, "the gate never went up");
+    }
+    let walker = spawn(&mut w, 0, 16, 23);
+    assert!(order(
+        &mut w,
+        0,
+        Command::MoveTo {
+            regiment: walker,
+            target: FxVec2::from_ints(34, 23),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        }
+    ));
+    let mut through = false;
+    for _ in 0..60 * TICKS_PER_SECOND {
+        w.tick(&[]);
+        if w.regiments.position(walker).unwrap().x > Fx::from_int(26) {
+            through = true;
+            break;
+        }
+    }
+    assert!(through, "it never got through its gate");
+}
+
+#[test]
+fn a_gate_on_a_wall_still_going_up_leaves_its_builder_on_the_rest() {
+    let mut w = world();
+    let builder = spawn(&mut w, 0, 20, 8);
+    assert!(draw(&mut w, 0, builder, (24, 10), (24, 20)));
+    // A second worker lays a gate across the middle before any is up.
+    let mason = spawn(&mut w, 0, 20, 16);
+    assert!(order(
+        &mut w,
+        0,
+        Command::Build {
+            regiment: mason,
+            building: GATE_3,
+            tile: (24, 14),
+            turn: 0,
+        }
+    ));
+    assert_eq!(walls(&w, 0).0.len(), 8);
+    // The first builder goes on along the wall on both sides of the gate.
+    build_all(&mut w, 0, 300);
+}
+
+#[test]
+fn a_gate_on_a_wall_must_wait_for_the_rest_of_its_ground_to_be_cleared() {
+    let mut w = world();
+    let builder = spawn(&mut w, 0, 36, 26);
+    // Down to the edge of the woods at 40..44 × 30..34.
+    assert!(draw(&mut w, 0, builder, (40, 25), (40, 29)));
+    build_all(&mut w, 0, 300);
+    // A gate over the last two tiles would reach into the woods.
+    assert_eq!(w.can_lay(0, GATE_3, (40, 28), 0), Err(Refusal::Overgrown));
+    // Wholly on the wall, it goes.
+    assert_eq!(w.can_lay(0, GATE_3, (40, 26), 0), Ok(()));
 }
