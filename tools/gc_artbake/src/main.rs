@@ -144,8 +144,9 @@ struct ModelConfig {
     /// Joints the model's own clips keep in its hands though they hang
     /// from elsewhere (a Concord pike or shield hangs from the chest, and
     /// the arms reach for it), each to the hand joint that holds it. In
-    /// moves from a library, which lacks them, the hand then carries the
-    /// joint as the model's Idle holds it, rather than leaving it at rest.
+    /// moves from a library that does not key them, the hand then carries the
+    /// joint as the model's Idle holds it, rather than leaving it at rest;
+    /// a library move that keys the joint itself moves it as keyed.
     #[serde(default)]
     held_by: BTreeMap<String, String>,
     /// What the model holds, named as in `gc_assets::anim::Weapon`
@@ -177,8 +178,8 @@ struct MoveConfig {
     /// once and hold. Written `loops: Some(true)`.
     #[serde(default)]
     loops: Option<bool>,
-    /// For an attack, the seconds into the animation where its blow lands:
-    /// the move is then retimed so its blow lands at
+    /// For an attack or a finisher (`Finish`), the seconds into the
+    /// animation where its blow lands: the move is then retimed so its blow lands at
     /// `gc_assets::anim::BLOW_AT` of it, where the game's swing lands one.
     /// Both halves of a matched kill (`Kill`, `Killed`) must have one, so
     /// the two meet when played together over the same time.
@@ -216,19 +217,25 @@ impl MoveConfig {
         use gc_assets::anim::{ADDITIVE, Act, LOOPS, Mask, Side, Weapon};
         let act = named(&Act::ALL, &self.act, "act")?;
         let kill = matches!(act, Act::Kill | Act::Killed);
-        if self.contact.is_some() && !(kill || act == Act::Attack) {
+        if self.contact.is_some() && !(kill || matches!(act, Act::Attack | Act::Finish)) {
             return Err(format!(
-                "move {:?}: contact is only for attacks and kills",
+                "move {:?}: contact is only for attacks, finishers and kills",
                 self.anim
             ));
         }
-        if kill && self.contact.is_none() {
+        // A finisher, like a kill, is one blow of the whole body that lands
+        // where its contact says.
+        let blow = kill || act == Act::Finish;
+        if blow && self.contact.is_none() {
             // Without one the two halves of a kill would not meet.
-            return Err(format!("move {:?}: a kill needs its contact", self.anim));
-        }
-        if kill && (self.loops == Some(true) || self.additive || self.mask != all_joints()) {
             return Err(format!(
-                "move {:?}: a kill plays once, on the whole body",
+                "move {:?}: a kill or finisher needs its contact",
+                self.anim
+            ));
+        }
+        if blow && (self.loops == Some(true) || self.additive || self.mask != all_joints()) {
+            return Err(format!(
+                "move {:?}: a kill or finisher plays once, on the whole body",
                 self.anim
             ));
         }
@@ -1134,15 +1141,6 @@ fn bake_model(
                         let lib = load(p).map_err(at)?;
                         let lib_skel = Skeleton::new(&lib.doc);
                         let to_model = library_rig(&rig, &joints, &skel, &lib_skel).map_err(at)?;
-                        if let Some(&(j, _, _)) = held
-                            .iter()
-                            .find(|(j, _, _)| to_model.values().any(|&n| n == joints[*j]))
-                        {
-                            return Err(at(format!(
-                                "it moves {:?} itself, which the model's hand holds",
-                                rig.names[j]
-                            )));
-                        }
                         Ok((lib, to_model))
                     })
                     .transpose()?;
@@ -1153,10 +1151,23 @@ fn bake_model(
                 for m in moves {
                     let tags = m.tags()?;
                     let mut globals = sampled_move(m, tags, moves_src, to_model, &skel, &joints)?;
-                    if to_model.is_some() {
-                        for frame in &mut globals {
-                            carry(frame, &held, &rig.parent);
+                    // A hand carries a held joint in a library's move that
+                    // does not key it; one that does moves it as keyed.
+                    let carried: Vec<_> = match to_model {
+                        Some(to_model) => {
+                            let keyed = anim_named(&moves_src.doc, &m.anim)?
+                                .channels()
+                                .filter_map(|c| to_model.get(&c.target().node().index()).copied())
+                                .collect::<std::collections::HashSet<usize>>();
+                            held.iter()
+                                .filter(|(j, _, _)| !keyed.contains(&joints[*j]))
+                                .copied()
+                                .collect()
                         }
+                        None => Vec::new(),
+                    };
+                    for frame in &mut globals {
+                        carry(frame, &carried, &rig.parent);
                     }
                     posed.push(posed_move(m, tags, globals, pose_frames)?);
                 }
@@ -2083,6 +2094,10 @@ mod tests {
             Ok(Act::Attack)
         );
         assert_eq!(tags(r#"(anim: "A", act: "Attack")"#), Ok(Act::Attack));
+        assert_eq!(
+            tags(r#"(anim: "F", act: "Finish", contact: Some(0.5))"#),
+            Ok(Act::Finish)
+        );
         assert_eq!(
             tags(
                 r#"(anim: "K", act: "Kill", contact: Some(0.5), pair: Some("P"), reach: Some(1.0))"#

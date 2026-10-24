@@ -41,8 +41,9 @@ const _: () = assert!(NEAREST < MIN_DISTANCE);
 /// (walking legs under an attacking upper body, to show the pose pass's
 /// masked layers; a model still on bone rows only walks) or a look (idle,
 /// looking round and up and down; a model on bone rows only idles) or a
-/// half of a matched kill (a killer's, else a victim's; a model with none
-/// idles). See docs/33.
+/// half of a matched kill (a killer's, else a victim's) or a finisher (a
+/// blow down at a man on the ground); a model with neither idles. See
+/// docs/33.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Clip {
     Play(Action),
@@ -50,6 +51,7 @@ pub enum Clip {
     March,
     Look,
     Kill,
+    Finish,
 }
 
 impl Clip {
@@ -72,13 +74,14 @@ impl Clip {
             "march" => Clip::March,
             "look" => Clip::Look,
             "kill" => Clip::Kill,
+            "finish" => Clip::Finish,
             _ => return None,
         })
     }
 }
 
-/// How long a kill's last frame holds before it plays again.
-const KILL_HOLD_FRAMES: u32 = 18;
+/// How long a kill's or finisher's last frame holds before it plays again.
+const HOLD_FRAMES: u32 = 18;
 
 /// The clip playing `time` seconds in, and how many seconds into it: the
 /// `hold` clip looping (a fall plays once and holds), or with none held,
@@ -135,18 +138,18 @@ pub(crate) fn pose(clips: &Clips, model: usize, hold: Option<Clip>, time: f32) -
             Some(s)
         }
         // Played through, held a moment, and again.
-        (Clip::Kill, t) => match clips.kill_half(model) {
-            Some(half) => {
-                let frames = (half.frames + KILL_HOLD_FRAMES) as f32;
-                Some(shown((
-                    half.at_frame((t * half.fps).rem_euclid(frames)),
-                    false,
-                )))
-            }
-            None => clips
-                .pose(model, Action::Idle, t)
-                .map(|p| shown((p, false))),
-        },
+        (clip @ (Clip::Kill | Clip::Finish), t) => {
+            let once = if clip == Clip::Kill {
+                clips.kill_half(model)
+            } else {
+                clips.finisher(model, 0).map(|f| f.strike)
+            };
+            let pose = match once {
+                Some(m) => m.at_frame((t * m.fps).rem_euclid((m.frames + HOLD_FRAMES) as f32)),
+                None => clips.pose(model, Action::Idle, t)?,
+            };
+            Some(shown((pose, false)))
+        }
         (Clip::Look, t) => {
             let mut s = shown((clips.pose(model, Action::Idle, t)?, false));
             // Round to either side and back, nodding more quickly.
@@ -534,6 +537,7 @@ mod tests {
         for m in 0..models.models.len() {
             for clip in [
                 "idle", "walk", "attack", "shoot", "cheer", "die", "march", "look", "kill",
+                "finish",
             ] {
                 assert!(pose(&clips, m, Clip::parse(clip), 1.3).is_some());
             }

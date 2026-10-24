@@ -3,7 +3,7 @@
 //! the build script and embedded in the executable, and the choice of
 //! which animation frame each soldier shows.
 
-use gc_assets::anim::{Act, Weapon};
+use gc_assets::anim::{Act, Mask, Side, Weapon};
 use gc_assets::detail::Detail;
 use gc_assets::model::Models;
 use gc_assets::{Aligned, Pack};
@@ -116,6 +116,8 @@ struct ModelClips {
     /// raised partway, a hit).
     parry: Option<MoveClip>,
     stagger: Option<MoveClip>,
+    /// Its finishers made for its weapon, else those made for any.
+    finishes: Vec<MoveClip>,
 }
 
 /// A matched kill: the killer's and the victim's halves of one move, made
@@ -162,6 +164,35 @@ struct KillFor {
 /// men of one size to still meet.
 const KILL_SIZES: core::ops::RangeInclusive<f32> = 0.9..=1.1;
 
+/// How far in front of the killer's origin the finishers made for `weapon`
+/// strike the chest of a man lying on his back, in the skeleton's space (the
+/// Ember men's metres): a yari's tip is 3.3 m from the hands that hold it, so
+/// it stabs from much further out than a katana. These are where the
+/// finishers in `ember-men-finishers-1.glb` were made to strike
+/// (`design/faction-looks/fight-library/finishers/FINISHERS.md`); a finisher
+/// made at another reach needs its own entry here.
+fn finish_reach(weapon: Weapon) -> f32 {
+    match weapon {
+        Weapon::Spear => 3.38,
+        _ => 0.91,
+    }
+}
+
+/// A finisher: a blow struck down at a man already lying on his back.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Finisher {
+    /// Played once over its own length, as an attack: its blow lands at
+    /// `BLOW_AT` of the way through.
+    pub strike: MoveClip,
+    /// How far in front of the killer's origin the lying man's chest should
+    /// be, in tiles at the killer's size.
+    #[allow(
+        dead_code,
+        reason = "puppets.rs will place its finishers by it (docs/28, stage 5)"
+    )]
+    pub reach: f32,
+}
+
 /// Per model, the move for each action, picked once by the move picker
 /// (`moves.rs`).
 pub struct Clips {
@@ -174,6 +205,26 @@ pub struct Clips {
     /// Every model's kills, by [`KillFor::id`]: the index the puppets name
     /// one by ([`Move::Kill`], [`crate::puppets::Corpse::kill`]).
     pairs: Vec<KillPair>,
+}
+
+/// Of `moves`, those of `act` that fit `weapon` best (made for it before
+/// made for any), unlayered and made for no side, as the move picker scores
+/// them.
+fn best_fits(moves: &[MoveClip], act: Act, weapon: Weapon) -> Vec<MoveClip> {
+    let score = |m: &MoveClip| {
+        let whole = !m.additive && m.mask == Mask::All;
+        (m.act == act && whole && m.side == Side::Any)
+            .then(|| crate::moves::fits(m.weapon, weapon, Weapon::Any))
+            .flatten()
+    };
+    let Some(best) = moves.iter().filter_map(score).max() else {
+        return Vec::new();
+    };
+    moves
+        .iter()
+        .filter(|m| score(m) == Some(best))
+        .copied()
+        .collect()
 }
 
 impl Clips {
@@ -189,6 +240,7 @@ impl Clips {
                     die: pick(Want::new(Act::Death)),
                     parry: pick(Want::new(Act::Parry)),
                     stagger: pick(Want::new(Act::Stagger)),
+                    finishes: best_fits(moves.of(m), Act::Finish, weapon),
                 }
             })
             .collect();
@@ -322,6 +374,18 @@ impl Clips {
         let mut all = self.kills.iter().flatten();
         let k = all.find(|k| k.victim == victim)?;
         Some(self.pairs[k.id as usize].killed)
+    }
+
+    /// A finisher for `model`, made for its weapon (else for any), `seed`
+    /// picking among them; `None` for a model with none.
+    pub fn finisher(&self, model: usize, seed: u32) -> Option<Finisher> {
+        let all = &self.by_model.get(model)?.finishes;
+        let strike = *all.get(seed as usize % all.len().max(1))?;
+        let (_, size) = (*self.body.get(model)?)?;
+        Some(Finisher {
+            strike,
+            reach: finish_reach(strike.weapon) * size,
+        })
     }
 
     /// The move `model` plays for `action`.
@@ -610,6 +674,71 @@ mod tests {
         assert_eq!(row(3, 0), None);
         assert_eq!(clips.kill_pair(1, 0, 0), None);
         assert_eq!(clips.kill_pair(99, 0, 0), None);
+    }
+
+    #[test]
+    fn ember_men_strike_down_at_the_fallen_with_their_own_weapon() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        let fin = |name, seed| clips.finisher(by(name), seed);
+        // Two katana finishers, a stab and a chop, picked by the seed.
+        let rows: std::collections::BTreeSet<u32> = (0..6)
+            .map(|seed| fin("Katana Samurai", seed).unwrap().strike.first_row)
+            .collect();
+        assert_eq!(rows.len(), 2);
+        let katana = fin("The Ronin", 0).unwrap();
+        assert_eq!(
+            (katana.strike.act, katana.strike.weapon),
+            (Act::Finish, Weapon::TwoHanded)
+        );
+        let spear = fin("Yari Ashigaru", 0).unwrap();
+        assert_eq!(spear.strike.weapon, Weapon::Spear);
+        // A man's length or so away for a katana, much further for a yari,
+        // in tiles.
+        assert!((0.4..0.7).contains(&katana.reach), "{}", katana.reach);
+        assert!(spear.reach > 3.0 * katana.reach, "{}", spear.reach);
+        // None made for a kanabo, nor for the other factions yet.
+        assert_eq!(fin("Oni-Bound", 0), None);
+        assert_eq!(fin("Bone Pikes", 0), None);
+    }
+
+    #[test]
+    fn choir_and_concord_men_kill_with_their_own_weapons() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        // Each foe's kill, made on its own rig, meets an Ember man and any
+        // other man on foot, and a pike reaches further than a mace.
+        let mut reach = Vec::new();
+        for killer in [
+            "Bone Pikes",
+            "Grubfolk Militia",
+            "Gravewardens",
+            "Shardlings",
+        ] {
+            for victim in ["Yari Ashigaru", "Katana Samurai", "Tuner", "Bone Pikes"] {
+                let p = clips
+                    .kill_pair(by(killer), by(victim), 0)
+                    .unwrap_or_else(|| panic!("{killer} on {victim}"));
+                assert_eq!(p.kill.frames, p.killed.frames);
+                assert!(
+                    p.contact > 0.1 && p.contact < 0.4,
+                    "{killer}: {}",
+                    p.contact
+                );
+            }
+            reach.push(
+                clips
+                    .kill_pair(by(killer), by("Yari Ashigaru"), 0)
+                    .unwrap()
+                    .reach,
+            );
+        }
+        assert!(reach[0] > reach[1] && reach[1] > reach[2], "{reach:?}");
+        // The showroom shows a foe's own kill.
+        let half = clips.kill_half(by("Bone Pikes")).unwrap();
+        assert_eq!(half.act, Act::Kill);
     }
 
     #[test]

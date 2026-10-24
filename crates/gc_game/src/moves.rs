@@ -152,6 +152,8 @@ fn fallbacks(act: Act) -> &'static [Act] {
         // A half of a matched kill means nothing alone: see Clips::kill_pair.
         Kill => &[Kill],
         Killed => &[Killed],
+        // Without one the fight strikes the fallen with a plain swing.
+        Finish => &[Finish],
     }
 }
 
