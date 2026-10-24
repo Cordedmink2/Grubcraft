@@ -62,6 +62,8 @@ pub struct Settings {
     /// The top and bottom of the view softened, so the field looks like a
     /// table of miniatures (off in Clarity).
     pub tilt_shift: bool,
+    /// Wounds drawn heavier and darker (off: the stylised default).
+    pub full_blood: bool,
     pub volume_master: u8,
     pub volume_music: u8,
     pub volume_effects: u8,
@@ -86,6 +88,7 @@ impl Default for Settings {
             frame_cap: 60,
             clarity: false,
             tilt_shift: false,
+            full_blood: false,
             volume_master: 80,
             volume_music: 60,
             volume_effects: 80,

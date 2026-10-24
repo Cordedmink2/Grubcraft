@@ -6037,6 +6037,7 @@ impl Running {
     /// the last frame, those the camera sees (the fog hides the rest, as it
     /// hides all particles), at most [`BLOWS_SHOWN`] a frame.
     fn show_blows(&mut self, cull: &gc_render::Cull) {
+        self.effects.set_full_blood(self.menu.settings().full_blood);
         let hm = &self.heightmap;
         // A rejoining player catching up sees the blows but doesn't hear them.
         let heard = !(self.online.is_some() && self.menu.net().catching_up());

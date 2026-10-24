@@ -1599,18 +1599,23 @@ impl<N: Network> Menu<N> {
         ui.toggle(st.next(row), "Larger text", &mut s.larger_text);
         ui.toggle(st.next(row), "Reduced screen shake", &mut s.reduced_shake);
         ui.toggle(st.next(row), "Contextual hints", &mut s.hints);
+        ui.toggle(
+            st.next(row),
+            "Full blood: heavier wounds",
+            &mut s.full_blood,
+        );
 
-        let note_y = panel.bottom() - 52 - 44;
+        let note_y = panel.bottom() - 52 - 36;
         ui.label(
             panel.x + 24,
             note_y,
             1,
             theme::INK_MUTED,
-            "Working: name, colour, faction, UI scale, Clarity, Tilt-shift, shake, Master, Music.",
+            "Working: name, colour, faction, UI scale, Clarity, Tilt-shift, Full blood, shake, Master, Music.",
         );
         ui.label(
             panel.x + 24,
-            note_y + 18,
+            note_y + 16,
             1,
             theme::INK_MUTED,
             "The other audio, graphics and accessibility choices are saved for later.",
@@ -2294,10 +2299,14 @@ mod tests {
         assert!(!h.menu.settings().tilt_shift);
         h.click("Tilt-shift: soft top and bottom");
         assert!(h.menu.settings().tilt_shift);
+        // Blood is stylised until Full blood is asked for, and is saved.
+        assert!(!h.menu.settings().full_blood);
+        h.click("Full blood: heavier wounds");
+        assert!(h.menu.settings().full_blood);
         h.click("Back");
         assert_eq!(h.menu.screen(), Screen::Main);
         let saved = Settings::load(&path);
-        assert!(saved.larger_text && saved.clarity && saved.tilt_shift);
+        assert!(saved.larger_text && saved.clarity && saved.tilt_shift && saved.full_blood);
         assert_eq!(saved.ui_scale, h.menu.settings().ui_scale);
         let _ = std::fs::remove_dir_all(dir);
     }
