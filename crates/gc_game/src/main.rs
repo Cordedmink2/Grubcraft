@@ -179,8 +179,8 @@ use gc_net::Lan;
 use gc_platform::logln;
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
 use gc_render::{
-    BoxInstance, FrameParams, Renderer, RendererOptions, SoldierBatch, SoldierInstance, Terrain,
-    UiQuad,
+    BoxInstance, FrameParams, HitStyle, Renderer, RendererOptions, SoldierBatch, SoldierInstance,
+    Terrain, UiQuad,
 };
 use gc_sim::arrange::Shape;
 use gc_sim::events::Event;
@@ -330,6 +330,11 @@ type SceneBuilding = (&'static str, Vec2, &'static [(&'static str, f32, f32)]);
 const SIEGE_SCENE_DISTANCE: f32 = 42.0;
 /// How far a ram draws back between its blows, in tiles.
 const RAM_DRAW: f32 = 0.5;
+
+/// Blows shown with sparks or wounds in one frame, at most.
+const BLOWS_SHOWN: usize = 48;
+/// Melee defence from which a soldier's armour rings under a blow.
+const ARMOURED_DEFENCE: u8 = 45;
 
 /// Arrows leave the bow and land at about this height above the ground.
 const ARROW_HEIGHT: f32 = 0.9;
@@ -3417,6 +3422,13 @@ impl Running {
         );
         let fx_speed = pace * self.effects.time_scale();
         self.renderer.set_effects_speed(fx_speed);
+        // Blows behind the menu, in Commander View (where the soldiers are
+        // blocks) and under the unit viewer show nothing, and don't pile up.
+        if viewing || self.commander || !live {
+            drop(self.puppets.drain_impacts());
+        } else {
+            self.show_blows(&cull);
+        }
         let density = self.menu.settings().graphics.effects_density();
         self.ambient.fell_demo(
             dt.as_secs_f32() * fx_speed,
@@ -5004,6 +5016,36 @@ impl Running {
         }
         for b in self.world.blows() {
             self.puppets.struck(b);
+        }
+    }
+
+    /// Sparks and wounds for the blows soldiers landed on each other since
+    /// the last frame, those the camera sees (the fog hides the rest, as it
+    /// hides all particles), at most [`BLOWS_SHOWN`] a frame.
+    fn show_blows(&mut self, cull: &gc_render::Cull) {
+        let hm = &self.heightmap;
+        let on_screen = self.puppets.drain_impacts().filter_map(|i| {
+            let at = glam::Vec3::new(i.pos.x, hm.height_at(i.pos.x, i.pos.y), i.pos.y);
+            cull.on_screen(at, 1.0).then_some((i, at))
+        });
+        for (i, at) in on_screen.take(BLOWS_SHOWN) {
+            let unit = usize::from(i.victim);
+            let (Some(stats), Some(faction)) =
+                (self.units.stats.get(unit), self.units.factions.get(unit))
+            else {
+                continue;
+            };
+            let style = match faction {
+                gc_ai::Faction::EmberClans => HitStyle::Flesh,
+                gc_ai::Faction::Brood => HitStyle::Ichor,
+                gc_ai::Faction::Choir => HitStyle::Crystal,
+                // Only the dead, who never rout, bleed ghost-light.
+                gc_ai::Faction::CarrionConcord if stats.morale == 0 => HitStyle::Ghost,
+                gc_ai::Faction::CarrionConcord => HitStyle::Flesh,
+            };
+            let armoured = stats.shield || stats.melee_defence >= ARMOURED_DEFENCE;
+            let chest = at + glam::Vec3::Y * (SOLDIER_HEIGHT * 0.6);
+            self.effects.blow(chest, i.dir, i.hit, style, armoured);
         }
     }
 

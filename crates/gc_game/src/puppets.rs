@@ -397,6 +397,35 @@ pub struct Lodged {
     pub dir: Vec2,
 }
 
+/// What a soldier's blow did, for the sparks and wounds the game shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hit {
+    /// Turned aside on a weapon.
+    Parried,
+    /// Taken on a shield.
+    Blocked,
+    /// It got through and staggered him.
+    Wounded,
+    /// It crushed through and knocked him down.
+    Crushed,
+    /// It killed him.
+    Killed,
+}
+
+/// A blow landing on a soldier, told once as it lands (`Puppets::drain_impacts`).
+#[derive(Clone, Copy, Debug)]
+pub struct Impact {
+    /// Where it landed on the ground plane, and the way it travelled.
+    pub pos: Vec2,
+    pub dir: Vec2,
+    pub hit: Hit,
+    /// The unit type of the man struck.
+    pub victim: u16,
+}
+
+/// Blows told and not yet collected, at most; later ones are dropped.
+const MAX_IMPACTS: usize = 256;
+
 /// A champion's moves at a moment of his duel: what he is doing outside his
 /// swings, as [`Puppets::acting`] gives it, and his swing (how far through
 /// it, and which of his swings it is).
@@ -536,6 +565,11 @@ pub struct Puppets {
     shot_dir: Vec<Vec2>,
     /// Arrows that stuck in the bodies of soldiers who fell this frame.
     lodged: Vec<Lodged>,
+    /// Blows that have landed, or will when the puppet time reaches the
+    /// first of each pair (a killing blow lands as its victim falls).
+    impacts: Vec<(f32, Impact)>,
+    /// Scratch for [`Puppets::drain_impacts`]: those that are due.
+    ready: Vec<Impact>,
     /// Soldiers the simulation's blows have killed and the puppets have yet
     /// to fell, in the order they fell: the regiment, his slot then, and
     /// the puppet who struck him (or `NONE`).
@@ -588,6 +622,8 @@ impl Puppets {
             shot: vec![0; regiment_capacity],
             shot_dir: vec![Vec2::X; regiment_capacity],
             lodged: Vec::with_capacity(MAX_SINKING),
+            impacts: Vec::with_capacity(MAX_IMPACTS),
+            ready: Vec::with_capacity(MAX_IMPACTS),
             slain: Vec::with_capacity(MAX_SINKING),
             told: vec![None; regiment_capacity * SLOTS],
             filled: vec![f32::NEG_INFINITY; regiment_capacity * SLOTS],
@@ -666,6 +702,45 @@ impl Puppets {
                 *told = Some((target, b.outcome == Outcome::Wounded || bled, self.time));
             }
             _ => {}
+        }
+    }
+
+    /// The blows that landed since the last call, for sparks and wounds.
+    pub fn drain_impacts(&mut self) -> impl Iterator<Item = Impact> + '_ {
+        let now = self.time;
+        let due = self.impacts.extract_if(.., |&mut (when, _)| when <= now);
+        self.ready.extend(due.map(|(_, i)| i));
+        self.ready.drain(..)
+    }
+
+    /// Note that `striker`'s blow lands on `victim` (puppet indices) at
+    /// `when`, doing `hit`.
+    fn impact(&mut self, when: f32, striker: usize, victim: usize, hit: Hit) {
+        // A full queue keeps the kills, the blows most worth showing, by
+        // giving up a lesser blow for one.
+        let room = if self.impacts.len() < MAX_IMPACTS {
+            Some(self.impacts.len())
+        } else if hit == Hit::Killed {
+            self.impacts.iter().position(|(_, i)| i.hit != Hit::Killed)
+        } else {
+            None
+        };
+        let Some(slot) = room else {
+            return;
+        };
+        let dir = (self.pos[victim] - self.pos[striker]).normalize_or(self.facing[striker]);
+        let told = (
+            when,
+            Impact {
+                pos: self.pos[victim] - dir * 0.2,
+                dir,
+                hit,
+                victim: self.unit[victim / SLOTS],
+            },
+        );
+        match self.impacts.get_mut(slot) {
+            Some(old) => *old = told,
+            None => self.impacts.push(told),
         }
     }
 
@@ -1071,6 +1146,16 @@ impl Puppets {
             return;
         }
         self.act[j] = (act, self.time);
+        let hit = match act {
+            Act::Parry => Some(Hit::Parried),
+            Act::Block => Some(Hit::Blocked),
+            Act::Stagger => Some(Hit::Wounded),
+            Act::Down => Some(Hit::Crushed),
+            Act::None | Act::Kill => None,
+        };
+        if let Some(hit) = hit {
+            self.impact(self.time, from, j, hit);
+        }
         if act.reels() {
             self.reeling[j] = self.time + act.seconds();
         }
@@ -1456,6 +1541,9 @@ impl Puppets {
                 look: self.looks[victim],
             };
             self.lay(fallen);
+            if blow_in.is_some() {
+                self.impact(fell, killer, victim, Hit::Killed);
+            }
             if fell <= self.time {
                 self.lodge(block.handle, gone, &fallen);
             }
@@ -2293,6 +2381,57 @@ mod tests {
         p.time = now;
         p.reeling[0] = f32::NEG_INFINITY;
         assert!(p.swing(0, beat).is_some());
+    }
+
+    #[test]
+    fn blows_are_told_as_they_land_and_a_kill_as_its_man_falls() {
+        let mut p = Puppets::new(2, 4);
+        let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
+        let mut hits = Vec::new();
+        for _ in 0..600 {
+            frame(&mut p, &a, &b);
+            hits.extend(p.drain_impacts().map(|i| i.hit));
+        }
+        assert!(hits.contains(&Hit::Parried) || hits.contains(&Hit::Wounded));
+        assert!(!hits.contains(&Hit::Killed));
+        // The man who is killed stands until the blow lands: told then.
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        assert!(p.drain_impacts().all(|i| i.hit != Hit::Killed));
+        p.advance(BLOW_AT * SWING_SECONDS);
+        let told: Vec<Impact> = p.drain_impacts().collect();
+        assert_eq!(told.iter().filter(|i| i.hit == Hit::Killed).count(), 1);
+        // Collected once.
+        assert_eq!(p.drain_impacts().count(), 0);
+        // The blow travels from the killer toward the man struck.
+        let killed = told.iter().find(|i| i.hit == Hit::Killed).unwrap();
+        assert!((killed.dir.length() - 1.0).abs() < 1e-3);
+        // `melee_pair` stands the man struck south of his killer.
+        assert!(killed.dir.y < 0.0, "{:?}", killed.dir);
+    }
+
+    #[test]
+    fn a_full_queue_gives_up_lesser_blows_for_kills() {
+        let mut p = Puppets::new(2, 4);
+        let (a, b) = melee_pair(Fighter::default(), Fighter::default());
+        frame(&mut p, &a, &b);
+        p.impacts.clear();
+        for _ in 0..MAX_IMPACTS + 10 {
+            p.impact(0.0, 0, SLOTS, Hit::Parried);
+        }
+        assert_eq!(p.impacts.len(), MAX_IMPACTS);
+        p.impact(0.0, 0, SLOTS, Hit::Killed);
+        assert_eq!(p.impacts.len(), MAX_IMPACTS);
+        assert_eq!(
+            p.impacts
+                .iter()
+                .filter(|(_, i)| i.hit == Hit::Killed)
+                .count(),
+            1
+        );
+        // Further lesser blows are turned away, and kills keep their place.
+        p.impact(0.0, 0, SLOTS, Hit::Wounded);
+        assert!(p.impacts.iter().all(|(_, i)| i.hit != Hit::Wounded));
     }
 
     #[test]
