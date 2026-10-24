@@ -112,6 +112,8 @@ const PRI_CHARGE: u8 = 170;
 const PRI_CRY: u8 = 200;
 const PRI_MORALE: u8 = 220;
 const PRI_UI: u8 = 255;
+/// How loud the nearest thunder is, of full, with the volume knob at 1.
+const THUNDER_GAIN: f32 = 0.7;
 
 /// How long to wait before the first try to reopen a lost sound output, and
 /// the most between tries. The wait doubles after each failure, because
@@ -990,10 +992,17 @@ impl Sounds {
 
     /// Thunder, heard everywhere: `loud` (0 to 1) is how near the stroke
     /// was; the further ones come duller (the muffling distance gives).
-    pub fn thunder(&self, loud: f32) {
+    /// `volume` is the tuning panel's multiplier: 1 plays the nearest
+    /// stroke at `THUNDER_GAIN` of full, leaving room to turn it up.
+    pub fn thunder(&self, loud: f32, volume: f32) {
         let loud = loud.clamp(0.0, 1.0);
-        self.audio
-            .play_muffled(SoundId::Thunder, loud, 0.0, PRI_CRY, 1.0 - loud);
+        self.audio.play_muffled(
+            SoundId::Thunder,
+            loud * THUNDER_GAIN * volume,
+            0.0,
+            PRI_CRY,
+            1.0 - loud,
+        );
     }
 
     /// An ambush sprung on or by the side you command: a war-drum roll and

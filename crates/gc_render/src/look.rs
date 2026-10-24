@@ -758,8 +758,20 @@ macro_rules! field_knob {
     };
 }
 
+/// A knob that is one share of the look, between 0 and 1.
+macro_rules! share_knob {
+    ($name:literal, $step:literal, $field:ident) => {
+        Knob {
+            name: $name,
+            step: $step,
+            get: |l| l.$field,
+            set: |l, v| l.$field = v.clamp(0.0, 1.0),
+        }
+    };
+}
+
 /// Every knob of the tuning panel, in the order it lists them.
-pub const KNOBS: [Knob; 16] = [
+pub const KNOBS: [Knob; 20] = [
     Knob {
         name: "Sun height (deg)",
         step: 2.0,
@@ -795,6 +807,10 @@ pub const KNOBS: [Knob; 16] = [
     field_knob!("Leaf glow", 0.05, foliage_glow, 0.0),
     field_knob!("Cloud shadows", 0.05, cloud_shadows, 0.0),
     field_knob!("Valley shade", 0.05, ground_occlusion, 0.0),
+    share_knob!("Wet", 0.05, wet),
+    share_knob!("Snow", 0.05, snow),
+    share_knob!("Stars", 0.05, stars),
+    share_knob!("Cloud banks", 0.05, cloud),
     Knob {
         name: "Warmth",
         step: 0.01,
