@@ -988,6 +988,14 @@ impl Sounds {
         self.play_at(sound, noise.at, gain, reach, priority);
     }
 
+    /// Thunder, heard everywhere: `loud` (0 to 1) is how near the stroke
+    /// was; the further ones come duller (the muffling distance gives).
+    pub fn thunder(&self, loud: f32) {
+        let loud = loud.clamp(0.0, 1.0);
+        self.audio
+            .play_muffled(SoundId::Thunder, loud, 0.0, PRI_CRY, 1.0 - loud);
+    }
+
     /// An ambush sprung on or by the side you command: a war-drum roll and
     /// a horn, loud wherever the camera is, panned towards it.
     pub fn ambush(&self, at: Vec2) {

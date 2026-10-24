@@ -1,6 +1,6 @@
 # Audio assets
 
-`sounds.gcsnd` is the game's whole sound bank: 31 sound effects (15 synthesised, 16 battle cries layered from recordings), 4 ambient beds and 2 music loops, compressed as IMA ADPCM (about 945 KB). The game embeds it with `include_bytes!` (`crates/gc_game/src/sounds.rs`).
+`sounds.gcsnd` is the game's whole sound bank: 32 sound effects (16 synthesised, 16 battle cries layered from recordings), 4 ambient beds and 2 music loops, compressed as IMA ADPCM (about 972 KB). The game embeds it with `include_bytes!` (`crates/gc_game/src/sounds.rs`).
 
 ## Where the sounds come from
 
@@ -41,6 +41,7 @@ Commit the rewritten `sounds.gcsnd` and its `sounds.manifest` (baker version, ba
 | `SiegeImpact` | 0.90 s | A siege engine's or artillery shot hits a building (a deep boom, a crunch of timber and stone, rubble trickling down) |
 | `SiegeLaunch` | 0.70 s | A siege engine or artillery piece fires at a building (a wooden creak, the heavy whump of the arm, a rushing whoosh) |
 | `Collapse` | 2.60 s | A building is brought down (a cracking groan, a rumbling roar of masonry and timber with heavy thuds, settling into trickling debris) |
+| `Thunder` | 2.45 s | Lightning in a storm (four sharp cracks and a darkening hiss, a deep thump, then a rolling rumble with a mid-range growl, dying away); played 0.3 to 3 s after the flash, centred, softer and duller the further the stroke |
 | `UiSelect` / `UiMove` / `UiAttack` | 0.1-0.24 s | Selecting a regiment; a move order; an attack order |
 | `MusicCalm` | 19.2 s loop | Shakuhachi-style flute over a drone, sparse taiko, plucked string (D hirajoshi, 100 bpm) |
 | `MusicBattle` | 19.2 s loop | Taiko on every beat with fills, plucked ostinato, brass pad. Same length as the calm loop; the two play in step and crossfade with battle intensity |

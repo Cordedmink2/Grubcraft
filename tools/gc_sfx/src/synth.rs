@@ -64,6 +64,7 @@ pub fn all() -> Vec<Rendered> {
     clips.push(sfx(SoundId::SiegeImpact, 0.9, siege_impact()));
     clips.push(sfx(SoundId::SiegeLaunch, 0.85, siege_launch()));
     clips.push(sfx(SoundId::Collapse, 0.9, collapse()));
+    clips.push(sfx(SoundId::Thunder, 0.9, thunder()));
     clips
 }
 
@@ -829,6 +830,62 @@ fn siege_launch() -> Buf {
         },
         0.43,
         124,
+    );
+    b
+}
+
+/// Thunder: the sky tearing open (a few sharp cracks and a hiss that darkens
+/// as it goes), a deep thump, then a long roll that swells and dies a few
+/// times as it travels, with a mid-range growl in it so small speakers have
+/// something to play.
+fn thunder() -> Buf {
+    let mut b = Buf::new(2.45, SFX_RATE);
+    let rate = b.rate;
+    for (i, (at, amp)) in [(0.0, 1.0), (0.03, 0.8), (0.08, 0.6), (0.15, 0.45)]
+        .into_iter()
+        .enumerate()
+    {
+        crack(&mut b, at, amp, 500 + i as u32);
+    }
+    let mut hp = OnePole::default();
+    let mut tear = Pole2::default();
+    b.at(
+        0.0,
+        |t, rng| {
+            let n = tear.low(
+                hp.high(rng.noise(), 300.0, rate),
+                2600.0 - 1600.0 * t.min(1.0),
+                rate,
+            );
+            n * decay(t, 0.14) * 0.9
+        },
+        0.8,
+        510,
+    );
+    thud(&mut b, 0.03, 0.8, 70.0, 0.22, 530);
+    thud(&mut b, 0.05, 0.5, 110.0, 0.15, 531);
+    let mut rumble = Pole2::default();
+    let mut growl_hi = Pole2::default();
+    let mut growl_lo = Pole2::default();
+    b.at(
+        0.1,
+        |t, rng| {
+            let n = rng.noise();
+            let swell = |at: f32, width: f32, peak: f32| peak * (-((t - at) / width).powi(2)).exp();
+            let env = (swell(0.05, 0.2, 1.0)
+                + swell(0.5, 0.17, 0.75)
+                + swell(0.95, 0.2, 0.6)
+                + swell(1.45, 0.22, 0.45)
+                + 0.12 * decay(t, 1.2))
+                * ((2.3 - t) / 0.6).clamp(0.0, 1.0);
+            // Two slow, unrelated wobbles, so the roll never settles into a beat.
+            let wob = 1.0 + 0.15 * (TAU * 3.1 * t).sin() + 0.12 * (TAU * 4.7 * t + 2.0).sin();
+            let low = rumble.low(n, 90.0 + 60.0 * decay(t, 1.0), rate) * 5.0;
+            let growl = (growl_hi.low(n, 700.0, rate) - growl_lo.low(n, 160.0, rate)) * 2.2;
+            (low + growl * decay(t, 0.9)) * env * wob
+        },
+        2.3,
+        520,
     );
     b
 }

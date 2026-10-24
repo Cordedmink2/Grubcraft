@@ -90,6 +90,8 @@ pub enum SoundId {
     /// A building coming down: a cracking groan, a rumbling roar of masonry
     /// and timber with heavy thuds, settling into trickling debris.
     Collapse = 36,
+    /// Thunder: a tearing crack and a long roll, a moment after lightning.
+    Thunder = 37,
 }
 
 impl SoundId {
@@ -122,7 +124,7 @@ impl SoundId {
         ],
     ];
 
-    pub const COUNT: usize = 37;
+    pub const COUNT: usize = 38;
 
     pub const ALL: [SoundId; SoundId::COUNT] = [
         SoundId::ArrowRelease,
@@ -162,6 +164,7 @@ impl SoundId {
         SoundId::SiegeImpact,
         SoundId::SiegeLaunch,
         SoundId::Collapse,
+        SoundId::Thunder,
     ];
 
     /// The ambient beds, in the order [`Bed`](crate::queue::Command::Bed) numbers them.

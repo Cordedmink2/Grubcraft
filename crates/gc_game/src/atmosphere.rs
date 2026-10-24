@@ -224,6 +224,9 @@ struct Storm {
     age: Option<f32>,
     /// A flash began since the picture last asked.
     struck: bool,
+    /// Thunder on its way (seconds left, how loud), and what has arrived.
+    rolling: Vec<(f32, f32)>,
+    heard: Vec<f32>,
     rng: u32,
 }
 
@@ -233,18 +236,24 @@ impl Storm {
             next: 0.0,
             age: None,
             struck: false,
+            rolling: Vec::new(),
+            heard: Vec::new(),
             rng: 0x9E37_79B9,
         };
         storm.next = storm.gap();
         storm
     }
 
-    /// Seconds to the next flash.
-    fn gap(&mut self) -> f32 {
+    fn unit(&mut self) -> f32 {
         self.rng ^= self.rng << 13;
         self.rng ^= self.rng >> 17;
         self.rng ^= self.rng << 5;
-        let unit = (self.rng >> 8) as f32 / (1u32 << 24) as f32;
+        (self.rng >> 8) as f32 / (1u32 << 24) as f32
+    }
+
+    /// Seconds to the next flash.
+    fn gap(&mut self) -> f32 {
+        let unit = self.unit();
         STRIKE_GAP.0 + (STRIKE_GAP.1 - STRIKE_GAP.0) * unit
     }
 
@@ -258,8 +267,23 @@ impl Storm {
                 self.age = Some(0.0);
                 self.struck = true;
                 self.next = self.gap();
+                // The further the stroke, the later and the softer its thunder.
+                let far = self.unit();
+                self.rolling.push((
+                    THUNDER_LAG.0 + (THUNDER_LAG.1 - THUNDER_LAG.0) * far,
+                    1.0 - 0.55 * far,
+                ));
             }
         }
+        for (left, _) in &mut self.rolling {
+            *left -= dt;
+        }
+        self.rolling.retain(|&(left, loud)| {
+            if left <= 0.0 {
+                self.heard.push(loud);
+            }
+            left > 0.0
+        });
         let Some(age) = self.age.as_mut() else {
             return 0.0;
         };
@@ -271,6 +295,9 @@ impl Storm {
         level
     }
 }
+
+/// Seconds from a flash to its thunder, nearest and furthest stroke.
+const THUNDER_LAG: (f32, f32) = (0.3, 3.0);
 
 /// Seconds a flash lasts, a sharp stroke and a dimmer one after it.
 const BOLT_LENGTH: f32 = 1.0;
@@ -429,6 +456,13 @@ impl Atmosphere {
     /// be drawn (and thunder, when there is some) with the flash.
     pub fn take_strike(&mut self) -> bool {
         std::mem::take(&mut self.storm.struck)
+    }
+
+    /// The next thunder that has reached the viewer since this was last
+    /// called, how loud (0 to 1): it follows each flash by a moment, the
+    /// later and softer the further the stroke.
+    pub fn take_thunder(&mut self) -> Option<f32> {
+        self.storm.heard.pop()
     }
 
     /// The weather that is clearing as the new one comes in, with how much
@@ -1119,6 +1153,37 @@ mod tests {
         for _ in 0..1200 {
             frame(&mut dry, 0.05);
             assert!(!dry.take_strike());
+        }
+    }
+
+    #[test]
+    fn thunder_follows_each_flash_later_and_softer_the_further_it_is() {
+        let mut atmosphere = Atmosphere::new(None, None).with_weather(Some(Weather::Rain));
+        let (mut strikes, mut claps) = (0, 0);
+        let mut loudest = 0.0f32;
+        let mut softest = 1.0f32;
+        for _ in 0..2400 {
+            frame(&mut atmosphere, 0.05);
+            strikes += usize::from(atmosphere.take_strike());
+            while let Some(loud) = atmosphere.take_thunder() {
+                assert!((0.44..=1.0).contains(&loud), "{loud}");
+                (loudest, softest) = (loudest.max(loud), softest.min(loud));
+                claps += 1;
+            }
+        }
+        // Near strokes and far ones both happen over two minutes.
+        assert!(loudest - softest > 0.15, "{loudest} {softest}");
+        // Two minutes of storm: every flash but the last few seconds' has
+        // been answered, and nothing is answered twice.
+        assert!(
+            claps <= strikes && claps + 1 >= strikes,
+            "{strikes} {claps}"
+        );
+        assert!(atmosphere.take_thunder().is_none());
+        let mut dry = Atmosphere::new(None, None);
+        for _ in 0..1200 {
+            frame(&mut dry, 0.05);
+            assert!(dry.take_thunder().is_none());
         }
     }
 

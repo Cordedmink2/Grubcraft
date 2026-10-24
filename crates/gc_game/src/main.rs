@@ -3943,10 +3943,22 @@ impl Running {
                 self.ambient.villagers.hush();
             }
         }
+        let struck = self.atmosphere.take_strike();
+        // The thunder that arrives is heard even with the flash out of
+        // sight, but not while paused, behind the offline menu or in the
+        // unit viewer.
+        while let Some(loud) = self.atmosphere.take_thunder() {
+            if let Some(sounds) = &self.sounds
+                && self.viewer.is_none()
+                && !self.paused
+                && !(self.menu_open && self.online.is_none())
+            {
+                sounds.thunder(loud);
+            }
+        }
         // Rain and snow, the one weather clearing and the one coming in;
         // nobody is looking at the field behind the menu or in the unit
         // viewer.
-        let struck = self.atmosphere.take_strike();
         if self.viewer.is_none() && !(self.menu_open && self.online.is_none()) {
             let thin = if self.menu.settings().clarity {
                 0.4
