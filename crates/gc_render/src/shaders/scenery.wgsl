@@ -333,6 +333,7 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
         n = normalize(vec3<f32>(xz.x, detailed.y, xz.y));
     }
     albedo *= 1.0 - OCCLUDED_DARK * in.occ;
+    albedo *= 1.0 - WET_DARK * drench(n);
     var c = shade(albedo, n, in.world);
     // Leaves and blades pass light on: with the sun behind them they glow,
     // yellower than they are lit from the front.

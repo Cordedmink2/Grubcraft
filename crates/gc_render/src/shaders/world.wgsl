@@ -316,6 +316,17 @@ fn local_lights(world: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     return sum;
 }
 
+// How soaked a surface facing `n` is: the sky's wetness (`misc.w`, from rain
+// that has been falling or fell lately), most on what faces up (rain lands
+// there and pools), a little less on walls and least on undersides. The ground has
+// its own, finer wet (the `soaked` block of `fs_terrain`).
+fn drench(n: vec3<f32>) -> f32 {
+    return g.misc.w * (0.6 + 0.4 * clamp(n.y, -0.75, 1.0));
+}
+
+// How much darker wet cloth, wood, leaves and stone are than dry, at most.
+const WET_DARK: f32 = 0.24;
+
 fn shade(albedo: vec3<f32>, n: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
     let ndl = sun_ndl(n, world);
     return finish(albedo * (g.sun_color.rgb * ndl + ambient_light(n) + local_lights(world, n)), world);
@@ -2117,11 +2128,13 @@ fn vs_soldier_depth(
 
 @fragment
 fn fs_soldier(in: SoldierOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let albedo = srgb_to_linear(in.color);
     // Thin double-sided parts (cloaks, blades) light from whichever side shows.
     let n = select(-in.normal, in.normal, front);
+    let dry = srgb_to_linear(in.color);
+    let albedo = dry * (1.0 - WET_DARK * drench(n));
     let c = shade(albedo, n, in.world) + albedo * rim(n, in.world);
-    return vec4<f32>(c + albedo * in.highlight * HIGHLIGHT, 1.0);
+    // The selection glows as brightly in rain as in the dry.
+    return vec4<f32>(c + dry * in.highlight * HIGHLIGHT, 1.0);
 }
 
 @vertex
@@ -2215,8 +2228,18 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     let bt = cross(n0, t) * select(-1.0, 1.0, in.tangent.w >= 0.0);
     let nt = vec3<f32>(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
     let n = normalize(t * nt.x + bt * nt.y + n0 * nt.z);
+    // Rain darkens what it soaks and leaves it glossy (cloth, leather and
+    // wood most; metal already shines).
+    // Metal is left alone (a rough metal given a tight highlight would glint
+    // past the bloom threshold when the sun comes back), and a team colour
+    // darkens by half as much so sides stay apart.
+    let dry = albedo;
+    let soaked = drench(n) * (1.0 - e.a);
+    albedo = albedo * (1.0 - WET_DARK * soaked * (1.0 - 0.5 * a.a));
+    rough = mix(rough, min(rough, 0.3), soaked * 0.7);
     let c = shade_material(albedo, n, in.world, rough, e.a, ao, e.rgb) + albedo * rim(n, in.world);
-    return vec4<f32>(c + albedo * in.highlight * HIGHLIGHT, 1.0);
+    // The selection glows as brightly in rain as in the dry.
+    return vec4<f32>(c + dry * in.highlight * HIGHLIGHT, 1.0);
 }
 
 // ---------------------------------------------------------------- contact shadows

@@ -3686,13 +3686,17 @@ impl Running {
         );
         let (view_focus, view_distance) = self.view_focus();
         self.atmosphere.follow(atmosphere::SkyView::of(&self.world));
-        let look = self.atmosphere.look(
+        let mut look = self.atmosphere.look(
             dt.as_secs_f32(),
             heightmap,
             view_focus,
             view_distance,
             self.menu.settings().clarity,
         );
+        // The unit viewer shows a model as made, not as the last rain left it.
+        if self.viewer.is_some() {
+            look.wet = 0.0;
+        }
         self.renderer.set_look(look);
         // A battle that has just begun draws the bars; blows shook the screen
         // as they came in. Still while paused or behind the menu.
