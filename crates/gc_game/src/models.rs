@@ -378,6 +378,9 @@ impl Clips {
             Move::Kill { pair, at } => {
                 standing(Some(self.pairs.get(usize::from(pair))?.kill.at(at)))
             }
+            Move::Killed { pair, at } => {
+                standing(Some(self.pairs.get(usize::from(pair))?.killed.at(at)))
+            }
             Move::Swing { at, alt } => {
                 let attack = if alt { Action::Attack2 } else { Action::Attack };
                 standing(self.at(model, attack, at))
