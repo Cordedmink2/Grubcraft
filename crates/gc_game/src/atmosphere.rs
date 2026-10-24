@@ -557,6 +557,11 @@ impl Atmosphere {
             .in_weather(self.weather, self.fade * share);
         look.wet = self.soaked * share;
         look.snow = self.settled * share;
+        // The sky shows the simulation's whole cover as well as the cloud a
+        // fall brings (the larger, so rain coming in never thins the banks), and
+        // stars show only through what is left clear.
+        look.cloud = look.cloud.max(cloud * share);
+        look.stars *= 1.0 - look.cloud;
         if clarity {
             look = look.clear();
         }
@@ -985,6 +990,32 @@ mod tests {
         let rain = sun(WeatherKind::Rain, 255, 0);
         assert_eq!(sun(WeatherKind::Rain, 255, 255), rain);
         assert!(rain < overcast);
+    }
+
+    #[test]
+    fn the_sky_shows_the_simulations_cloud_and_a_clear_night_its_stars() {
+        use gc_sim::WeatherKind;
+        let look = |kind, strength, cloud, hour| {
+            let mut atmosphere = Atmosphere::new(None, None);
+            atmosphere.follow(sim_sky(kind, strength, cloud, hour));
+            for _ in 0..300 {
+                frame(&mut atmosphere, 0.1);
+            }
+            frame(&mut atmosphere, 0.1)
+        };
+        let clear_night = look(WeatherKind::Clear, 0, 0, 23);
+        assert!(clear_night.stars > 0.95 && clear_night.cloud == 0.0);
+        assert_eq!(look(WeatherKind::Clear, 0, 0, 12).stars, 0.0);
+        // Cloud cover shows and puts the stars out; a rainy night has none.
+        let cloudy = look(WeatherKind::Clear, 0, 200, 23);
+        assert!((cloudy.cloud - 200.0 / 255.0).abs() < 1e-3 && cloudy.stars < 0.3);
+        let rain = look(WeatherKind::Rain, 255, 0, 23);
+        assert!(rain.stars < 0.1 && rain.cloud > 0.9);
+        // Light rain under heavy cloud keeps the whole cover: it never thins.
+        let drizzle = look(WeatherKind::Rain, 90, 200, 23);
+        assert!(drizzle.cloud >= 200.0 / 255.0 - 1e-3 && drizzle.stars < 0.1);
+        // The lobby's Overcast is heavy cloud over a noon.
+        assert!(look(WeatherKind::Clear, 0, 230, 12).cloud > 0.85);
     }
 
     #[test]

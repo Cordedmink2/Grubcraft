@@ -117,6 +117,7 @@ impl LookPreset {
                 light_tint: [1.0, 1.0, 1.0],
                 sky_top: [0.46, 0.50, 0.55],
                 sky_horizon: [0.68, 0.70, 0.72],
+                cloud: 0.75,
                 ..GOLDEN_HOUR
             },
             LookPreset::Storm => Look {
@@ -138,6 +139,7 @@ impl LookPreset {
                 light_tint: [1.02, 1.01, 0.99],
                 sky_top: [0.28, 0.31, 0.36],
                 sky_horizon: [0.55, 0.58, 0.61],
+                cloud: 0.95,
                 ..GOLDEN_HOUR
             },
             LookPreset::Dusk => Look {
@@ -184,6 +186,7 @@ impl LookPreset {
                 light_tint: [0.95, 1.0, 1.1],
                 sky_top: [0.015, 0.03, 0.08],
                 sky_horizon: [0.07, 0.11, 0.2],
+                stars: 1.0,
                 ..GOLDEN_HOUR
             },
         }
@@ -247,6 +250,8 @@ const GOLDEN_HOUR: Look = Look {
     ground_occlusion: 1.0,
     wet: 0.0,
     snow: 0.0,
+    stars: 0.0,
+    cloud: 0.0,
     exposure: 0.9,
     contrast: 1.1,
     saturation: 1.15,
@@ -295,6 +300,12 @@ pub struct Look {
     /// rocks, buildings and soldiers. The game sets it from the snow that has
     /// fallen, so it outlasts the fall and melts slowly (rain melts it).
     pub snow: f32,
+    /// How many stars show in the sky, 0 none to 1 a clear night's. Dusk and
+    /// dawn blend it with the looks, cloud and weather hide it.
+    pub stars: f32,
+    /// How much of the sky is cloud, 0 clear to 1 overcast: the cloud banks
+    /// drawn in the sky (the light's own dimming is [`Look::clouded`]).
+    pub cloud: f32,
     /// The film curve's input scale.
     pub exposure: f32,
     /// Contrast round mid grey, 1 neutral.
@@ -377,10 +388,10 @@ impl Look {
         // brightness, the air's thickness and how it hugs the ground, the
         // colour left in the picture, and the grey the air and sky turn to
         // (as a share of the look's own luminance).
-        let (sun, ambient, density, falloff, saturation, grey, shadows) = match weather {
-            Weather::Rain => (0.35, 0.9, 2.2, 1.0, 0.7, 0.55, 2.0),
-            Weather::Snow => (0.45, 1.15, 2.6, 1.0, 0.6, 0.7, 1.6),
-            Weather::Fog => (0.55, 0.95, 6.0, 1.6, 0.8, 0.5, 1.0),
+        let (sun, ambient, density, falloff, saturation, grey, shadows, cloud) = match weather {
+            Weather::Rain => (0.35, 0.9, 2.2, 1.0, 0.7, 0.55, 2.0, 0.95),
+            Weather::Snow => (0.45, 1.15, 2.6, 1.0, 0.6, 0.7, 1.6, 0.9),
+            Weather::Fog => (0.55, 0.95, 6.0, 1.6, 0.8, 0.5, 1.0, 0.5),
             Weather::Clear => unreachable!(),
         };
         let mix = |a: f32, b: f32| a + (b - a) * amount;
@@ -405,6 +416,8 @@ impl Look {
             saturation: mix(self.saturation, self.saturation * saturation),
             sky_top: drain(self.sky_top, lift),
             sky_horizon: drain(self.sky_horizon, lift),
+            cloud: self.cloud.max(amount * cloud),
+            stars: self.stars * (1.0 - amount * 0.95),
             ..*self
         }
     }
@@ -431,6 +444,8 @@ impl Look {
             ground_occlusion: n(self.ground_occlusion, other.ground_occlusion),
             wet: n(self.wet, other.wet),
             snow: n(self.snow, other.snow),
+            stars: n(self.stars, other.stars),
+            cloud: n(self.cloud, other.cloud),
             exposure: n(self.exposure, other.exposure),
             contrast: n(self.contrast, other.contrast),
             saturation: n(self.saturation, other.saturation),
@@ -493,6 +508,8 @@ impl Look {
             saturation: mix(self.saturation, self.saturation * 0.88),
             sky_top: drain(self.sky_top),
             sky_horizon: drain(self.sky_horizon),
+            cloud: self.cloud.max(cloud),
+            stars: self.stars * (1.0 - cloud),
             ..*self
         }
     }
@@ -1206,6 +1223,29 @@ mod tests {
             Look::of_day(8.0).sky_ambient,
             Look::of_day(8.05).sky_ambient
         );
+    }
+
+    #[test]
+    fn stars_belong_to_the_night_and_cloud_and_weather_hide_them() {
+        let night = LookPreset::Night.look();
+        assert_eq!(night.stars, 1.0);
+        for p in LookPreset::ALL.iter().filter(|p| **p != LookPreset::Night) {
+            assert_eq!(p.look().stars, 0.0, "{p:?}");
+        }
+        // Cloud puts the stars out and draws itself; so does a fall.
+        let clouded = night.clouded(0.8, 0.0);
+        assert!((clouded.stars - 0.2).abs() < 1e-5 && (clouded.cloud - 0.8).abs() < 1e-5);
+        let raining = night.in_weather(Weather::Rain, 1.0);
+        assert!(raining.stars < 0.06 && raining.cloud > 0.9);
+        assert_eq!(night.in_weather(Weather::Rain, 0.0).stars, 1.0);
+        // The overcast and the storm come with their cloud; the clear looks have none.
+        assert!(LookPreset::Overcast.look().cloud > 0.6 && LookPreset::Storm.look().cloud > 0.9);
+        assert_eq!(LookPreset::Noon.look().cloud, 0.0);
+        // Dusk and dawn fade the stars through the day's keyframes.
+        assert_eq!(Look::of_day(23.0).stars, 1.0);
+        assert_eq!(Look::of_day(12.0).stars, 0.0);
+        let dawn = Look::of_day(5.5).stars;
+        assert!(dawn > 0.0 && dawn < 1.0, "{dawn}");
     }
 
     #[test]

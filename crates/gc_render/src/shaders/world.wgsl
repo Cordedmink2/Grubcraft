@@ -45,7 +45,8 @@ struct Globals {
     sky_top: vec4<f32>,
     sky_horizon: vec4<f32>,
     // x: how many point lights (lights.rs), y: how much snow lies on the
-    // ground (`Look::snow`)
+    // ground (`Look::snow`), z: how many stars show, w: how much of the sky
+    // is cloud (`Look::stars`, `Look::cloud`)
     light_meta: vec4<f32>,
     // For each light: xyz position and w radius, then rgb colour (HDR) and
     // w its flicker seed. `2 * MAX_LIGHTS` vectors.
@@ -1251,7 +1252,14 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let lit = water * (g.sun_color.rgb * max(dot(wn, g.sun_dir.xyz), 0.0) * sun + ambient_light(wn));
         let r = reflect(-v, wn);
         let mirror = 0.1 + 0.9 * pow(1.0 - max(dot(v, wn), 0.0), 4.0);
-        let sky = sky_color(vec3<f32>(r.x, abs(r.y), r.z), false);
+        let up = vec3<f32>(r.x, abs(r.y), r.z);
+        var sky = sky_color(up, false);
+        if g.light_meta.w > 0.02 {
+            // The cloud banks mirrored: the only place the sky above the
+            // horizon shows from the usual camera.
+            let cl = sky_clouds(up, pow(max(dot(up, g.sun_dir.xyz), 0.0), 3.0));
+            sky = mix(sky, cl.rgb, cl.a);
+        }
         let glint = g.sun_color.rgb * pow(max(dot(r, g.sun_dir.xyz), 0.0), 500.0) * 10.0 * sun;
         let wc = finish(mix(lit, sky * 0.8, mirror) + glint, wp);
         c = mix(c, wc, clamp(0.5 + depth * 1.5, 0.0, 0.92));
@@ -2363,9 +2371,65 @@ fn sky_color(d: vec3<f32>, disc: bool) -> vec3<f32> {
     return c;
 }
 
+// Stars: a sparse grid of points on the sky's sphere, each in its own cell
+// at a random place with its own brightness, and a slow twinkle. `d` is a unit
+// direction; the cells are about two thirds of a degree wide.
+const STAR_SHARE = 0.03;
+
+fn stars(d: vec3<f32>) -> f32 {
+    let p = d * 90.0;
+    let cell = floor(p);
+    let h = hash2(cell.xy + cell.z * vec2<f32>(17.0, 29.0));
+    if h > STAR_SHARE {
+        return 0.0;
+    }
+    let off = vec3<f32>(
+        hash2(cell.yz + 3.0 * cell.x),
+        hash2(cell.zx + 5.0 * cell.y + 11.0),
+        hash2(cell.xy + 7.0 * cell.z + 23.0),
+    ) * 0.6 + 0.2;
+    // The star sits on the sphere, not in its cell's box.
+    let dist = length(p - normalize(cell + off) * 90.0);
+    let twinkle = 0.75 + 0.25 * sin(g.misc.y * (1.5 + h * 30.0) + h * 600.0);
+    return (1.0 - smoothstep(0.04, 0.22, dist)) * (0.35 + 0.65 * h / STAR_SHARE) * twinkle;
+}
+
+// Cloud banks: noise on a plane high over the camera (so the clouds shrink
+// toward the horizon), drifting on a fixed breeze, lit from the sun's side with
+// a darker underside, and thinning into the haze at the horizon.
+// Returns the cloud's colour and its opacity.
+fn sky_clouds(d: vec3<f32>, sun_side: f32) -> vec4<f32> {
+    let cover = g.light_meta.w;
+    let up = max(d.y, 0.02);
+    let uv = d.xz / (up + 0.3) * 1.4 + WIND_DIR * g.misc.y * 0.012;
+    let edge = mix(0.8, 0.22, cover);
+    let thick = fbm(uv);
+    let density = smoothstep(edge, edge + 0.22, thick)
+        * smoothstep(0.02, 0.25, cover)
+        * smoothstep(0.0, 0.06, d.y);
+    // Lit at the edges and on the sun's side, dark where thick.
+    let body = smoothstep(edge + 0.1, edge + 0.4, thick);
+    let lit = 0.35 + 0.65 * sun_side;
+    let colour = g.sky_horizon.rgb * (1.2 - 0.45 * body) + g.sun_color.rgb * 0.22 * lit * (1.0 - 0.5 * body);
+    return vec4<f32>(colour, density * 0.92);
+}
+
 @fragment
 fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
     let far = g.inv_view_proj * vec4<f32>(in.ndc, 1.0, 1.0);
     let d = normalize(far.xyz / far.w - g.camera_pos.xyz);
-    return vec4<f32>(sky_color(d, true), 1.0);
+    var c = sky_color(d, true);
+    let sun_side = pow(max(dot(d, g.sun_dir.xyz), 0.0), 3.0);
+    // Stars: above the horizon haze, not through cloud, and washed out by
+    // the moon's glow round the disc.
+    let night = g.light_meta.z;
+    if night > 0.0 && d.y > 0.0 {
+        let hidden = smoothstep(0.0, 0.06, d.y) * (1.0 - 0.9 * pow(max(dot(d, g.sun_dir.xyz), 0.0), 40.0));
+        c += vec3<f32>(0.85, 0.9, 1.0) * stars(d) * night * hidden * 1.6;
+    }
+    if g.light_meta.w > 0.02 && d.y > 0.0 {
+        let cl = sky_clouds(d, sun_side);
+        c = mix(c, cl.rgb, cl.a);
+    }
+    return vec4<f32>(c, 1.0);
 }
