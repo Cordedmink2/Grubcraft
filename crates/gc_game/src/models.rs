@@ -3,7 +3,7 @@
 //! the build script and embedded in the executable, and the choice of
 //! which animation frame each soldier shows.
 
-use gc_assets::anim::{Act, Weapon};
+use gc_assets::anim::{Act, Anim, ROOT, Role, Weapon};
 use gc_assets::detail::Detail;
 use gc_assets::model::Models;
 use gc_assets::{Aligned, Pack};
@@ -120,6 +120,9 @@ struct ModelClips {
     /// blows vary from one to the next and his regiment does not die as one.
     swings: Vec<MoveClip>,
     dies: Vec<MoveClip>,
+    /// For each of `dies`, where a man lying at its end has his chest (see
+    /// [`Clips::lying_chest`]).
+    lying: Vec<Option<glam::Vec2>>,
     staggers: Vec<MoveClip>,
     finishes: Vec<MoveClip>,
 }
@@ -149,10 +152,21 @@ const DEATH_SALT: u32 = 43;
 pub struct KillPair {
     pub kill: MoveClip,
     pub killed: MoveClip,
-    /// How far apart the two men stand, origin to origin, in tiles (the
+    /// How far apart the two men stand, position to position, in tiles (the
     /// world's units, which models are baked in), the victim facing the
-    /// killer. Warp both towards this before the contact.
+    /// killer. Warp both towards this before the contact. It allows for
+    /// where each model's feet are drawn from its position (see
+    /// [`Body::feet`]), so the two meet as they were made to.
     pub reach: f32,
+    /// How far to the killer's left of his facing the victim stands, in
+    /// tiles: a staff or lance held to one side draws a man aside of his
+    /// position too ([`Body::side`]). Small (up to 0.3 tiles), and not yet
+    /// used by the puppets.
+    #[allow(
+        dead_code,
+        reason = "puppets.rs may place its kills by it (docs/28, stage 5)"
+    )]
+    pub aside: f32,
     /// How far through both halves (0 to 1, as [`MoveClip::at`] counts) the
     /// blow lands.
     pub contact: f32,
@@ -169,15 +183,65 @@ impl KillPair {
     }
 }
 
+/// A model posed from a skeleton.
+#[derive(Clone, Copy, Debug)]
+struct Body {
+    skeleton: u32,
+    /// How much bigger the model is than its skeleton.
+    size: f32,
+    /// How far in front of a soldier's position his model's feet (the
+    /// skeleton's origin, which its moves are made from) are drawn, in
+    /// tiles: the baker centres a model on its rest pose's bounds, so a long
+    /// weapon held forward draws the body behind his position (by 0.66 tiles
+    /// for the Yari Ashigaru).
+    feet: f32,
+    /// How far to a soldier's left of his position his feet are drawn, in
+    /// tiles, the same way (a staff or lance held to one side).
+    side: f32,
+}
+
 /// A kill a model can play.
 #[derive(Clone, Copy, Debug)]
 struct KillFor {
-    /// The skeleton the victim's half is made on.
+    /// The model it is played on.
     victim: u32,
     /// How well it fits the killer's weapon (as the move picker scores it).
     fit: u32,
     /// Its index in [`Clips::pairs`].
     id: u16,
+}
+
+/// Where `model`'s chest joint is in frame `row` of its skeleton's block,
+/// from the soldier's position, in tiles: `x` to his left, `y` ahead along
+/// his facing (model space's x and z). The joint's pose composed up to the
+/// root, then turned, sized and placed into the model by its fit.
+fn chest_at(anim: &Anim<'_>, model: usize, row: u32) -> Option<glam::Vec2> {
+    use gc_assets::model::f16_value;
+    use glam::{Mat4, Quat, Vec3};
+    let fit = anim.fit(model)?;
+    let sk = anim.skeletons.get(fit.skeleton as usize)?;
+    let joints = anim.joints_of(fit.skeleton as usize);
+    let mut j = joints.iter().position(|j| j.role == Role::Chest as u8)?;
+    let base = (sk.first_pose + row * sk.joints) as usize;
+    let (lo, hi) = (
+        |w: u32| f16_value(w as u16),
+        |w: u32| f16_value((w >> 16) as u16),
+    );
+    let mut at = Vec3::ZERO;
+    loop {
+        let p = anim.frames.get(base + j)?;
+        let r = Quat::from_xyzw(lo(p[0]), hi(p[0]), lo(p[1]), hi(p[1]));
+        let t = Vec3::new(lo(p[2]), hi(p[2]), lo(p[3]));
+        at =
+            Mat4::from_scale_rotation_translation(Vec3::splat(hi(p[3])), r, t).transform_point3(at);
+        match joints.get(j)?.parent {
+            ROOT => break,
+            parent => j = usize::from(parent),
+        }
+    }
+    let f = anim.fixes.get(fit.first_fix as usize)?;
+    let row = |r: usize| f[r] * at.x + f[r + 1] * at.y + f[r + 2] * at.z + f[r + 3];
+    Some(glam::Vec2::new(row(0), row(8)))
 }
 
 /// How far a victim's size may be from the killer's for a kill made for two
@@ -204,23 +268,30 @@ pub struct Finisher {
     /// Played once over its own length, as an attack: its blow lands at
     /// `BLOW_AT` of the way through.
     pub strike: MoveClip,
-    /// How far in front of the killer's origin the lying man's chest should
-    /// be, in tiles at the killer's size.
+    /// How far in front of the killer's position the lying man's chest
+    /// ([`Clips::lying_chest`]) should be, in tiles, allowing for where the
+    /// killer's feet are drawn ([`Body::feet`]).
     #[allow(
         dead_code,
         reason = "puppets.rs will place its finishers by it (docs/28, stage 5)"
     )]
     pub reach: f32,
+    /// And how far to the killer's left of his facing ([`Body::side`]).
+    #[allow(
+        dead_code,
+        reason = "puppets.rs will place its finishers by it (docs/28, stage 5)"
+    )]
+    pub aside: f32,
 }
 
 /// Per model, the move for each action, picked once by the move picker
 /// (`moves.rs`).
 pub struct Clips {
     by_model: Vec<ModelClips>,
-    /// Per model posed from a skeleton, the skeleton and how much bigger
-    /// the model is than it.
-    body: Vec<Option<(u32, f32)>>,
-    /// Per model, the kills it can play, their reach in its size.
+    /// Per model posed from a skeleton, its body.
+    body: Vec<Option<Body>>,
+    /// Per model, the kills it can play on each model, their reach in its
+    /// size.
     kills: Vec<Vec<KillFor>>,
     /// Every model's kills, by [`KillFor::id`]: the index the puppets name
     /// one by ([`Move::Kill`], [`crate::puppets::Corpse::kill`]).
@@ -244,54 +315,73 @@ impl Clips {
                         },
                     )
                 };
+                let dies = choices(Act::Death);
                 ModelClips {
+                    lying: dies
+                        .iter()
+                        .map(|d| chest_at(&models.anim, m, d.first_row + d.frames - 1))
+                        .collect(),
                     actions: ACTIONS.map(|a| pick(want(a))),
                     parry: choices(Act::Parry).first().copied(),
                     swings: choices(Act::Attack),
-                    dies: choices(Act::Death),
+                    dies,
                     staggers: choices(Act::Stagger),
                     finishes: choices(Act::Finish),
                 }
             })
             .collect();
         let anim = &models.anim;
-        let body: Vec<Option<(u32, f32)>> = (0..models.models.len())
+        let body: Vec<Option<Body>> = (0..models.models.len())
             .map(|m| {
                 let fit = anim.fit(m)?;
-                // The model's first fix sizes the skeleton's space into it.
+                // The model's first fix sizes and turns the skeleton's space
+                // into it, and places it.
                 let f = anim.fixes.get(fit.first_fix as usize)?;
-                Some((
-                    fit.skeleton,
-                    (f[0] * f[0] + f[4] * f[4] + f[8] * f[8]).sqrt(),
-                ))
+                Some(Body {
+                    skeleton: fit.skeleton,
+                    size: (f[0] * f[0] + f[4] * f[4] + f[8] * f[8]).sqrt(),
+                    feet: f[11],
+                    side: f[3],
+                })
             })
             .collect();
+        // Every kill each model can play on each other one, its reach
+        // allowing for where the two men's feet are drawn.
         let (mut kills, mut pairs) = (Vec::with_capacity(body.len()), Vec::new());
-        for (m, body) in body.iter().enumerate() {
+        for (m, killer) in body.iter().enumerate() {
             let mut own = Vec::new();
-            if let Some((skeleton, scale)) = *body {
+            if let Some(killer) = *killer {
                 let weapon = anim.weapon_of(m);
                 for p in anim.pairs {
                     let (kill, killed) =
                         (&anim.moves[p.kill as usize], &anim.moves[p.killed as usize]);
-                    let fit = crate::moves::fits(kill.weapon(), weapon, Weapon::Any);
-                    let (Some(fit), Ok(id)) = (fit, u16::try_from(pairs.len())) else {
+                    let Some(fit) = crate::moves::fits(kill.weapon(), weapon, Weapon::Any) else {
                         continue;
                     };
-                    if u32::from(kill.skeleton) != skeleton {
+                    if u32::from(kill.skeleton) != killer.skeleton {
                         continue;
                     }
-                    own.push(KillFor {
-                        victim: u32::from(killed.skeleton),
-                        fit,
-                        id,
-                    });
-                    pairs.push(KillPair {
-                        kill: MoveClip::of_move(kill),
-                        killed: MoveClip::of_move(killed),
-                        reach: p.reach * scale,
-                        contact: p.contact,
-                    });
+                    for (v, victim) in body.iter().enumerate() {
+                        let Some(victim) = *victim else { continue };
+                        let fits = victim.skeleton == u32::from(killed.skeleton)
+                            && KILL_SIZES.contains(&(victim.size / killer.size));
+                        let (true, Ok(id)) = (fits, u16::try_from(pairs.len())) else {
+                            continue;
+                        };
+                        own.push(KillFor {
+                            victim: v as u32,
+                            fit,
+                            id,
+                        });
+                        pairs.push(KillPair {
+                            kill: MoveClip::of_move(kill),
+                            killed: MoveClip::of_move(killed),
+                            reach: p.reach * killer.size + killer.feet + victim.feet,
+                            // The victim's left is the killer's right.
+                            aside: killer.side + victim.side,
+                            contact: p.contact,
+                        });
+                    }
                 }
             }
             kills.push(own);
@@ -311,15 +401,8 @@ impl Clips {
         killer_model: usize,
         victim_model: usize,
     ) -> impl Iterator<Item = &KillFor> + '_ {
-        let fits = match (self.body.get(killer_model), self.body.get(victim_model)) {
-            (Some(&Some((_, size))), Some(&Some((victim, theirs))))
-                if KILL_SIZES.contains(&(theirs / size)) =>
-            {
-                self.kills.get(killer_model).map(|k| (k.as_slice(), victim))
-            }
-            _ => None,
-        };
-        let (kills, victim) = fits.unwrap_or((&[], 0));
+        let kills = self.kills.get(killer_model).map_or(&[][..], Vec::as_slice);
+        let victim = victim_model as u32;
         let best = kills
             .iter()
             .filter(|k| k.victim == victim)
@@ -381,9 +464,8 @@ impl Clips {
         if let Some(k) = self.kills.get(model)?.first() {
             return Some(self.pairs[k.id as usize].kill);
         }
-        let (victim, _) = (*self.body.get(model)?)?;
         let mut all = self.kills.iter().flatten();
-        let k = all.find(|k| k.victim == victim)?;
+        let k = all.find(|k| k.victim == model as u32)?;
         Some(self.pairs[k.id as usize].killed)
     }
 
@@ -391,11 +473,29 @@ impl Clips {
     /// picking among them; `None` for a model with none.
     pub fn finisher(&self, model: usize, seed: u32) -> Option<Finisher> {
         let strike = nth(&self.by_model.get(model)?.finishes, seed)?;
-        let (_, size) = (*self.body.get(model)?)?;
+        let body = (*self.body.get(model)?)?;
         Some(Finisher {
             strike,
-            reach: finish_reach(strike.weapon) * size,
+            reach: finish_reach(strike.weapon) * body.size + body.feet,
+            aside: body.side,
         })
+    }
+
+    /// Where the chest of a man of `model` lying dead (or knocked down,
+    /// which ends the same way) is from his position, in tiles at the
+    /// model's size: `y` ahead along the facing he fell with (negative when
+    /// he fell on his back: about 0.7 tiles behind his feet for an Ember man,
+    /// more for a bigger one), `x` to his left. `look` is his, as for
+    /// [`Clips::death`]. A finisher strikes there. `None` for a model with no
+    /// death move or not posed from a skeleton.
+    #[allow(
+        dead_code,
+        reason = "puppets.rs will place its finishers by it (docs/28, stage 5)"
+    )]
+    pub fn lying_chest(&self, model: usize, look: u8) -> Option<glam::Vec2> {
+        let own = self.by_model.get(model)?;
+        let k = by_look(u32::from(look), DEATH_SALT) as usize % own.lying.len().max(1);
+        *own.lying.get(k)?
     }
 
     /// The move `model` plays for `action`.
@@ -673,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn a_kill_is_picked_for_the_victims_skeleton_and_the_killers_weapon() {
+    fn a_kill_is_picked_for_the_victim_and_the_killers_weapon() {
         let models = load().unwrap();
         let mut clips = Clips::new(&models);
         let any = clips.clip(0, Action::Attack).unwrap();
@@ -686,6 +786,7 @@ mod tests {
                 },
                 killed: any,
                 reach: 1.0,
+                aside: 0.0,
                 contact: 0.3,
             })
             .collect();
@@ -694,24 +795,21 @@ mod tests {
             fit,
             id: (row / 10 - 1) as u16,
         };
-        // Model 0 is posed from skeleton 7, model 1 from 8 and model 3 too
-        // but half as big again; model 2 is not posed from one.
-        clips.body = vec![Some((7, 1.0)), Some((8, 1.05)), None, Some((8, 1.5))];
+        // Model 0 has kills on models 1 and 0 (which of them meet, by
+        // skeleton and size, is settled as they are made).
         clips.kills = vec![vec![
-            kill(8, 1, 10),
-            kill(8, 2, 20),
-            kill(8, 2, 30),
-            kill(7, 2, 40),
+            kill(1, 1, 10),
+            kill(1, 2, 20),
+            kill(1, 2, 30),
+            kill(0, 2, 40),
         ]];
         let row = |victim, seed| clips.kill_pair(0, victim, seed).map(|p| p.kill.first_row);
         // The kills made for the weapon beat one made for any; the seed picks.
         assert_eq!(row(1, 0), Some(20));
         assert_eq!(row(1, 1), Some(30));
         assert_eq!(row(0, 5), Some(40));
-        // No kill on a victim posed from no skeleton or of another size, nor
-        // by a model without.
+        // No kill on a victim it has none for, nor by a model without.
         assert_eq!(row(2, 0), None);
-        assert_eq!(row(3, 0), None);
         assert_eq!(clips.kill_pair(1, 0, 0), None);
         assert_eq!(clips.kill_pair(99, 0, 0), None);
     }
@@ -737,7 +835,7 @@ mod tests {
         // A man's length or so away for a katana, much further for a yari,
         // in tiles.
         assert!((0.4..0.7).contains(&katana.reach), "{}", katana.reach);
-        assert!(spear.reach > 3.0 * katana.reach, "{}", spear.reach);
+        assert!(spear.reach > 2.0 * katana.reach, "{}", spear.reach);
         // None made for a kanabo, nor for the other factions yet.
         assert_eq!(fin("Oni-Bound", 0), None);
         assert_eq!(fin("Bone Pikes", 0), None);
@@ -802,8 +900,11 @@ mod tests {
                     "{killer}: {}",
                     p.contact
                 );
-                // A man's length apart for a katana, a spear's for a spear.
-                assert!((0.8..4.5).contains(&p.reach), "{killer}: {}", p.reach);
+                // A man's length apart for a katana, a spear's for a spear,
+                // feet to feet.
+                let feet = |name| clips.body[by(name)].unwrap().feet;
+                let apart = p.reach - feet(killer) - feet(victim);
+                assert!((0.8..2.5).contains(&apart), "{killer}: {apart}");
             }
         }
         // The victims' halves were given to every Choir and Concord man on
@@ -945,6 +1046,63 @@ mod tests {
         for name in ["Lantern Wraiths", "The Hollow Bell"] {
             assert_eq!(clips.by_model[by(name)].staggers.len(), 1, "{name}");
         }
+    }
+
+    #[test]
+    fn kills_and_finishers_allow_for_where_the_feet_are_drawn() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        let feet = |name| clips.body[by(name)].unwrap().feet;
+        // A yari held forward draws the man behind his position.
+        assert!(feet("Yari Ashigaru") < -0.5 && feet("Katana Samurai").abs() < 0.1);
+        let reach = |k, v| clips.kill_pair(by(k), by(v), 0).unwrap().reach;
+        let gap =
+            reach("Yari Ashigaru", "Katana Samurai") - reach("Yari Ashigaru", "Yari Ashigaru");
+        let want = feet("Katana Samurai") - feet("Yari Ashigaru");
+        assert!((gap - want).abs() < 1e-4, "{gap} {want}");
+        // A staff held to one side draws its man aside too; the victim's
+        // left is the killer's right.
+        let side = |name| clips.body[by(name)].unwrap().side;
+        let p = clips
+            .kill_pair(by("Katana Samurai"), by("The Refractor"), 0)
+            .unwrap();
+        assert!(side("The Refractor") > 0.2);
+        assert!((p.aside - side("Katana Samurai") - side("The Refractor")).abs() < 1e-4);
+        // The finisher's reach is from the killer's position, and a lying
+        // man's chest from his, so the blow lands where it was made to.
+        let yari = clips.finisher(by("Yari Ashigaru"), 0).unwrap().reach;
+        let size = clips.body[by("Yari Ashigaru")].unwrap().size;
+        assert!((yari - (3.38 * size + feet("Yari Ashigaru"))).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_lying_mans_chest_is_found_where_he_fell() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        // Men on foot of every faction fall on their backs, the chest about
+        // 0.7 tiles behind where the feet stood.
+        for name in [
+            "Katana Samurai",
+            "Yari Ashigaru",
+            "Bone Pikes",
+            "Grubfolk Militia",
+            "Shardlings",
+            "Tuner",
+        ] {
+            let m = by(name);
+            let (chest, body) = (clips.lying_chest(m, 0).unwrap(), clips.body[m].unwrap());
+            let behind = chest.y - body.feet;
+            assert!((-0.9..-0.5).contains(&behind), "{name}: {behind}");
+            // Lying straight, his chest is in line with his feet.
+            assert!((chest.x - body.side).abs() < 0.05, "{name}: {chest}");
+        }
+        // Standing, the chest is over the feet.
+        let m = by("Yari Ashigaru");
+        let idle = clips.clip(m, Action::Idle).unwrap();
+        let up = chest_at(&models.anim, m, idle.first_row).unwrap().y - clips.body[m].unwrap().feet;
+        assert!(up.abs() < 0.2, "{up}");
     }
 
     #[test]
