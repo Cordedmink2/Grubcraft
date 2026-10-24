@@ -7,7 +7,10 @@
 // is in textures rather than vertex colours. `lod_triangles` budgets the four
 // levels of detail, from full to the one drawn smallest. Clip kinds: Idle,
 // Walk, Run, Attack, Attack2, Hit, Die, Cheer, Shoot, Block (a model without
-// a Block clip guards with its Idle). `weapon` names what a model posed
+// a Block clip guards with its Idle). `contacts` gives the second a model's
+// own Attack or Attack2 clip lands its blow, for the models whose rigs are
+// their own (the Brood, the riders): the clip is retimed so its blow lands
+// on the duel's beat, as a tagged attack's is. `weapon` names what a model posed
 // from a shared skeleton holds, so the move picker prefers the skeleton's
 // tagged `moves` made for it; `moves_from` keeps a model's tagged moves in a
 // separate glTF on its rig (a fight library). An attack's or finisher's
@@ -127,6 +130,7 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Lunge",
                 "Shoot": "Spirit_Bolt", "Hit": "Hit", "Die": "Death", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.4},
             lod_triangles: (12000, 4000, 1400, 450),
             textures: Some((
                 albedo: "shared:grubcraft/ember/fire-spirit/albedo.png",
@@ -289,6 +293,7 @@
                 "Idle": "Ride_Idle", "Walk": "Ride_Walk", "Run": "Ride_Run", "Attack": "Ride_Slash",
                 "Attack2": "Ride_Rear", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Cheer",
             },
+            contacts: {"Attack": 0.43, "Attack2": 0.57},
             lod_triangles: (14000, 5000, 1700, 550),
             textures: Some((
                 albedo: "shared:grubcraft/ember/mounted-samurai/albedo.png",
@@ -309,6 +314,7 @@
                 "Idle": "Ride_Idle", "Walk": "Ride_Walk", "Run": "Ride_Run", "Attack": "Ride_Bash",
                 "Shoot": "Ride_Shoot", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Cheer",
             },
+            contacts: {"Attack": 0.37},
             lod_triangles: (14000, 5000, 1700, 550),
             textures: Some((
                 albedo: "shared:grubcraft/ember/yabusame/albedo.png",
@@ -329,6 +335,7 @@
                 "Idle": "Ride_Idle", "Walk": "Ride_Walk", "Run": "Ride_Run", "Attack": "Ride_Slash",
                 "Attack2": "Ride_Rear", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Rally",
             },
+            contacts: {"Attack": 0.43, "Attack2": 0.57},
             lod_triangles: (14000, 5000, 1700, 550),
             textures: Some((
                 albedo: "shared:grubcraft/ember/daimyo/albedo.png",
@@ -427,6 +434,7 @@
             clips: {
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Kick_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.5},
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/choir/harmonic-walkers/albedo.png",
@@ -444,6 +452,7 @@
             clips: {
                 "Idle": "Ride_Idle", "Walk": "Ride_Walk", "Run": "Ride_Run", "Attack": "Ride_Slash", "Attack2": "Ride_Rear", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Cheer",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.57},
             lod_triangles: (14000, 5000, 1700, 550),
             textures: Some((
                 albedo: "shared:grubcraft/choir/glass-striders/albedo.png",
@@ -496,6 +505,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Slam", "Attack2": "Beam", "Shoot": "Beam", "Hit": "Hit", "Die": "Death", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.77},
             lod_triangles: (20000, 7000, 2400, 800),
             textures: Some((
                 albedo: "shared:grubcraft/choir/monolith/albedo.png",
@@ -665,6 +675,7 @@
             clips: {
                 "Idle": "Cav_Idle", "Walk": "Cav_Walk", "Run": "Cav_Run", "Attack": "Cav_Attack", "Attack2": "Cav_Attack2", "Hit": "Cav_Hit", "Die": "Cav_Die", "Cheer": "Cav_Cheer",
             },
+            contacts: {"Attack": 0.33, "Attack2": 0.53},
             lod_triangles: (14000, 5000, 1700, 550),
             textures: Some((
                 albedo: "shared:grubcraft/concord/debt-collectors/albedo.png",
@@ -828,6 +839,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Block": "Block",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.33},
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/chitinguard/albedo.png",
@@ -844,6 +856,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Shoot": "Shoot",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.33},
             lod_triangles: (20000, 7000, 2400, 800),
             textures: Some((
                 albedo: "shared:grubcraft/brood/bulk/albedo.png",
@@ -860,6 +873,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.5, "Attack2": 0.8},
             lod_triangles: (20000, 7000, 2400, 800),
             textures: Some((
                 albedo: "shared:grubcraft/brood/maw/albedo.png",
@@ -876,6 +890,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.33},
             lod_triangles: (12000, 4000, 1400, 450),
             textures: Some((
                 albedo: "shared:grubcraft/brood/devourer/albedo.png",
@@ -892,6 +907,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.33},
             lod_triangles: (12000, 4000, 1400, 450),
             textures: Some((
                 albedo: "shared:grubcraft/brood/whisperer/albedo.png",
@@ -908,6 +924,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.33},
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/gnawer/albedo.png",
@@ -924,6 +941,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.33},
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/skitterlings/albedo.png",
@@ -940,6 +958,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.33},
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/reclaimer/albedo.png",
@@ -956,6 +975,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Shoot": "Shoot",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.33},
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/spitters/albedo.png",
@@ -972,6 +992,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.33},
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/burrowers/albedo.png",
@@ -988,6 +1009,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.17},
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/mantid/albedo.png",
@@ -1004,6 +1026,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Shoot": "Shoot", "Block": "Block",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.33},
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/shellbacks/albedo.png",
@@ -1020,6 +1043,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Shoot": "Shoot",
             },
+            contacts: {"Attack": 0.5, "Attack2": 0.37},
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/moths/albedo.png",
@@ -1036,6 +1060,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.23},
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/spawnlings/albedo.png",
@@ -1052,6 +1077,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
+            contacts: {"Attack": 0.47, "Attack2": 0.33},
             lod_triangles: (12000, 4000, 1400, 450),
             textures: Some((
                 albedo: "shared:grubcraft/brood/queen/albedo.png",
