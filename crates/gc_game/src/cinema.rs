@@ -6,7 +6,7 @@
 //! reaches the simulation.
 
 use gc_render::Cinema as Frame;
-use glam::Vec2;
+use glam::{Mat4, Vec2, Vec3};
 
 use crate::camera::DEFAULT_DISTANCE;
 use crate::land::smooth;
@@ -31,6 +31,9 @@ const BAR_HEIGHT: f32 = 0.085;
 const BAR_IN: f32 = 0.7;
 const BAR_HOLD: f32 = 2.2;
 const BAR_OUT: f32 = 0.9;
+
+/// How strong the sun's shafts are in the ride camera, at most.
+const SHAFTS: f32 = 0.6;
 
 /// How hard each kind of blow shakes the screen, in full shakes.
 pub const CHARGE_HIT: f32 = 0.35;
@@ -107,13 +110,32 @@ impl Cinema {
             (self.film - slide).max(0.0)
         };
         let bars = height.max(BAR_HEIGHT * smooth(0.0, 1.0, self.film));
-        Frame { shake, bars }
+        Frame {
+            shake,
+            bars,
+            ..Frame::default()
+        }
     }
 
     /// Start a new match with a still screen and no bars.
     pub fn reset(&mut self) {
         *self = Cinema::default();
     }
+}
+
+/// Where the sun is on the screen, as a share of its width and height, and
+/// how strongly its shafts show: full with the sun on screen, fading as it
+/// goes off to the side, none behind the camera. `sun` points toward the sun.
+pub fn sun_shafts(view_proj: Mat4, sun: Vec3) -> Option<([f32; 2], f32)> {
+    let clip = view_proj * sun.extend(0.0);
+    if clip.w <= 1e-4 {
+        return None;
+    }
+    let ndc = Vec2::new(clip.x, clip.y) / clip.w;
+    let uv = Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    let off = (uv - Vec2::splat(0.5)).abs().max_element();
+    let strength = SHAFTS * (1.0 - smooth(0.5, 0.9, off));
+    (strength > 0.0).then_some((uv.to_array(), strength))
 }
 
 /// A smooth wobble between -1 and 1 that never quite repeats.
@@ -212,5 +234,24 @@ mod tests {
         for _ in 0..200 {
             assert_eq!(c.frame(0.016, false, false, true).bars, 0.0);
         }
+    }
+
+    #[test]
+    fn the_sun_shows_shafts_only_in_front_of_the_camera() {
+        let eye = Vec3::new(0.0, 2.0, 0.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::NEG_Z, Vec3::Y);
+        let proj = glam::camera::rh::proj::directx::perspective(1.0, 16.0 / 9.0, 0.1, 500.0) * view;
+        // Straight ahead, a little above the horizon: on screen, strong.
+        let (uv, strength) = sun_shafts(proj, Vec3::new(0.0, 0.3, -1.0).normalize()).unwrap();
+        assert!(uv[0] > 0.4 && uv[0] < 0.6 && uv[1] < 0.5, "{uv:?}");
+        assert!(strength > SHAFTS * 0.95);
+        // Behind the camera: none.
+        assert!(sun_shafts(proj, Vec3::new(0.0, 0.3, 1.0).normalize()).is_none());
+        // Far off to the side but in front: none.
+        let side = sun_shafts(proj, Vec3::new(1.0, 0.1, -0.3).normalize());
+        assert!(side.is_none());
+        // Just off the edge of the screen: fading.
+        let edge = sun_shafts(proj, Vec3::new(1.0, 0.0, -1.0).normalize());
+        assert!(edge.is_some_and(|(_, s)| s > 0.0 && s < SHAFTS), "{edge:?}");
     }
 }

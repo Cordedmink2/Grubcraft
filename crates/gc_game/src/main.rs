@@ -3605,6 +3605,25 @@ impl Running {
             !settings.clarity,
             self.watching.is_some() && self.director.is_on(),
         );
+        // Clarity keeps the picture plain: no softened edges, no shafts. The
+        // shafts are for the ride camera, where the sky is in view.
+        let plain = settings.clarity;
+        let riding = self.ride.is_some();
+        let tilt = if settings.tilt_shift && !plain && !riding && self.viewer.is_none() {
+            1.0
+        } else {
+            0.0
+        };
+        let shafts =
+            (riding && !plain && settings.graphics != gc_ui::settings::GraphicsPreset::Battery)
+                .then(|| cinema::sun_shafts(view_proj, look.sun_dir()))
+                .flatten();
+        let picture = gc_render::Cinema {
+            tilt,
+            shafts: shafts.map_or(0.0, |(_, strength)| strength),
+            sun: shafts.map_or([0.5; 2], |(uv, _)| uv),
+            ..picture
+        };
         self.renderer.set_cinema(picture);
         // Pollen, fireflies, leaves and whirlwinds, where the land has them;
         // not behind the menu or in the unit viewer, where nobody is looking

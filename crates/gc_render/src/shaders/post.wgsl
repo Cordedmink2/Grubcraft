@@ -100,6 +100,9 @@ struct Grade {
     // xy: the shake (an offset of the picture), z: the zoom that hides its
     // edges, w: the height of each letterbox bar, as a share of the screen
     camera: vec4<f32>,
+    // x: tilt-shift strength, y: sun shaft strength, zw: where the sun is on
+    // the screen (a share of its width and height)
+    focus: vec4<f32>,
 };
 @group(0) @binding(3) var<uniform> grade: Grade;
 
@@ -117,13 +120,62 @@ fn hash12(p: vec2<f32>) -> f32 {
     return fract((q.x + q.y) * q.z);
 }
 
+// The tilt-shift look blurs the picture up to this many texels at its top and
+// bottom edges, over a spiral of this many taps.
+const TILT_RADIUS: f32 = 9.0;
+const TILT_TAPS: i32 = 12;
+// The row of the screen that stays sharp: the middle of the field, which is
+// above the middle of the window (the command bar fills the bottom).
+const TILT_CENTRE: f32 = 0.4;
+// Sun shafts: steps of a march from a pixel toward the sun, how much of the
+// way it goes, how much each step counts less, and how bright (in the HDR
+// scale) the sky must be to send light down a shaft.
+const SHAFT_STEPS: i32 = 14;
+const SHAFT_REACH: f32 = 0.85;
+const SHAFT_FADE: f32 = 0.93;
+const SHAFT_LOW: f32 = 1.0;
+const SHAFT_HIGH: f32 = 2.2;
+
 @fragment
 fn fs_composite(in: Fullscreen) -> @location(0) vec4<f32> {
     // The picture, shaken: zoomed in about the middle and moved.
     let uv = (in.uv - 0.5) / grade.camera.z + 0.5 + grade.camera.xy;
-    var c = textureSampleLevel(src, src_sampler, uv, 0.0).rgb;
+    var c: vec3<f32>;
+    // Tilt-shift: out of focus toward the top and bottom edges, so the
+    // battlefield looks like a table of miniatures. The centre stays sharp.
+    let blur = grade.focus.x * smoothstep(0.12, 0.4, abs(in.uv.y - TILT_CENTRE));
+    if blur > 0.03 {
+        let texel = 1.0 / vec2<f32>(textureDimensions(src));
+        var acc = vec3<f32>(0.0);
+        for (var i = 0; i < TILT_TAPS; i++) {
+            let a = f32(i) * 2.3999632;
+            let r = sqrt((f32(i) + 0.5) / f32(TILT_TAPS)) * blur * TILT_RADIUS;
+            acc += textureSampleLevel(src, src_sampler, uv + vec2<f32>(cos(a), sin(a)) * r * texel, 0.0).rgb;
+        }
+        c = acc / f32(TILT_TAPS);
+    } else {
+        c = textureSampleLevel(src, src_sampler, uv, 0.0).rgb;
+    }
     if BLOOM_STRENGTH > 0.0 {
         c += textureSampleLevel(bloom, src_sampler, uv, 0.0).rgb * BLOOM_STRENGTH;
+    }
+    // Sun shafts: march from here toward the sun, gathering the bright sky
+    // seen through gaps (what is in the way is dark and gathers nothing).
+    if grade.focus.y > 0.0 {
+        let step = (grade.focus.zw - uv) * (SHAFT_REACH / f32(SHAFT_STEPS));
+        var p = uv;
+        var w = 1.0;
+        var shaft = vec3<f32>(0.0);
+        for (var i = 0; i < SHAFT_STEPS; i++) {
+            p += step;
+            let s = textureSampleLevel(src, src_sampler, p, 0.0).rgb;
+            // Past the edge of the picture there is nothing to gather (the
+            // edge texel would smear down the screen).
+            let inside = f32(all(p == clamp(p, vec2<f32>(0.0), vec2<f32>(1.0))));
+            shaft += s * smoothstep(SHAFT_LOW, SHAFT_HIGH, dot(s, LUMA)) * w * inside;
+            w *= SHAFT_FADE;
+        }
+        c += shaft / f32(SHAFT_STEPS) * grade.focus.y * grade.light_tint.rgb;
     }
     // Film curve, then split toning: cool shade, warm light.
     var t = film(c * grade.tone.x);

@@ -35,6 +35,13 @@ pub struct Cinema {
     /// The height of each black bar at the top and bottom, as a share of
     /// the screen's height (0 for none).
     pub bars: f32,
+    /// How much the top and bottom of the picture are softened, 0 to 1
+    /// (the tilt-shift look; 0 for none).
+    pub tilt: f32,
+    /// How strong the sun's shafts are, 0 to 1 (0 for none), and where the
+    /// sun is on the screen, as a share of its width and height.
+    pub shafts: f32,
+    pub sun: [f32; 2],
 }
 
 /// The tallest each letterbox bar may be.
@@ -56,6 +63,9 @@ struct Grade {
     /// size), the zoom that hides its edges, the height of each letterbox
     /// bar (a share of the screen's height).
     camera: [f32; 4],
+    /// Tilt-shift strength, sun shaft strength, and the sun's place on the
+    /// screen.
+    focus: [f32; 4],
 }
 
 /// Images sized to the frame, remade when the window resizes.
@@ -225,6 +235,12 @@ impl PostGpu {
                 1.0 + 2.0 * cinema.shake[0].abs().max(cinema.shake[1].abs()),
                 cinema.bars.clamp(0.0, MAX_BARS),
             ],
+            focus: [
+                cinema.tilt.clamp(0.0, 1.0),
+                cinema.shafts.clamp(0.0, 1.0),
+                cinema.sun[0],
+                cinema.sun[1],
+            ],
         };
         queue.write_buffer(&self.grade, 0, bytemuck::bytes_of(&grade));
     }
@@ -363,5 +379,16 @@ impl PostGpu {
             );
         }
         (t.levels.len() * 2 - 1) as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shader's `Grade` is six vec4s; the buffer must match it.
+    #[test]
+    fn the_grade_uniform_matches_the_shaders() {
+        assert_eq!(size_of::<Grade>(), 96);
     }
 }

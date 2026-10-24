@@ -59,6 +59,9 @@ pub struct Settings {
     /// Plain light for competitive play: no vignette, film grain or heavy
     /// colour grading, in any look.
     pub clarity: bool,
+    /// The top and bottom of the view softened, so the field looks like a
+    /// table of miniatures (off in Clarity).
+    pub tilt_shift: bool,
     pub volume_master: u8,
     pub volume_music: u8,
     pub volume_effects: u8,
@@ -82,6 +85,7 @@ impl Default for Settings {
             vsync: true,
             frame_cap: 60,
             clarity: false,
+            tilt_shift: false,
             volume_master: 80,
             volume_music: 60,
             volume_effects: 80,
