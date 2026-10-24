@@ -1,6 +1,28 @@
 # 29 · Restart plan
 
-*Plan, 2026-10-23. Mario asked for an in-depth plan to restart development after the pause, at high quality and token efficient. Wave 1 starts at 01:00 NZDT on Saturday 24 October (2026-10-23 12:00 UTC). Nothing in this plan is built yet.* The illustrated version is the "Grubcraft Restart Plan" artifact (https://claude.ai/artifact/Qw4kBb6YPYZeq6ckdjJytB).
+*Plan, 2026-10-23; progress updated 2026-10-24 21:00 UTC. Mario asked for an in-depth plan to restart development after the pause, at high quality and token efficient. Wave 1 started at 01:00 NZDT on Saturday 24 October (2026-10-23 12:00 UTC). About a hundred pull requests (#184 to #283) have merged since; see [Progress](#progress).* The illustrated version is the "Grubcraft Restart Plan" artifact (https://claude.ai/artifact/Qw4kBb6YPYZeq6ckdjJytB).
+
+## Progress
+
+*As of 2026-10-24 21:00 UTC. The waves below are the original plan; threads ran ahead of them wherever nothing blocked them, so most of waves 1 to 4 is already built.*
+
+| # | Thread | Built (pull requests) | Now | Left |
+|---|---|---|---|---|
+| T1 | Pathfinding overhaul | Overhaul #193; attacks on buildings you can see #200 | Finished | Nothing. Nav doors (#203) and the reopen hook (#199) were built by T6 and T9 |
+| T2 | Living Land maps | Stage 1 grown land #189 (stage 4 habitat ground built by T8, #221) | Restarted 2026-10-24 20:44 UTC on stage 2 (the thread had stopped after stage 1) | Stage 2 passes, fords and walkable mountains; stage 3 measured fairness, the Mirrored lobby option and grown Conquest maps; stage 4 sites by reason and the new scenery models |
+| T3 | Cinematic lighting | Stage 1 #188; particles #201; clean edges and motes #209; looks per land and F10 panel #217; camera craft #222 #228 (director camera, replay films) #233; weather and night look #235 #239 #245 #247 #250 #254 #255 #257 #261 #262 #265; F10 knobs #268 | Parked, waiting on Mario | Tuning on the Mac with F10 |
+| T4 | Every soldier fights | Scrum #187; duels #191 #192 #195; charges that plough (idea 11) #212; commander on the field (idea 12) #226; matched kills #243 #263; tumbling #266; finishers #270; motion warping and champion kills #272; head turns #275; general as hero #277 | Ember finisher moves, #280 in checks | Duel spacing retune with T5; option C later |
+| T5 | Materials, animation engine, fight library | Surface detail #198; engine stages 1 to 4 #213 #224 #229; fight library #238 #241 #260 #267 #274 #279; kills and finishers allow for where models are drawn #282 | Between jobs | Building re-bake (waits on Mario); fixing the bake itself so models are drawn where they stand (needs a duel spacing retune); Brood, Choir and rider rigs' own moves |
+| T6 | Fortifications and bases | Towers #190; turning #196; gates #203; drawn walls #215 #230 #236; ring tool and blueprints #244; wall levels #251; manning #264; ladders #273; faction wall twists #278 | Gatehouses (stage 4c part 2), in review | Stage 5 Bolt and Blast towers; stage 6 field works and bridges (idea 6); stage 8 walled towns and AI walling |
+| T7 | Battle effects and aftermath | Sieges on particles #207; sparks and wounds #211; standards, crows and grime #219 | Finished its planned parts | Trophies (idea 8), a Blood setting, toppling walls, rubble as slow ground, prisoners (a later call) |
+| T8 | Living ground | Ground textures #194; scenery detail #197 #202; Brood veins (19) #205; faction lands (15) #208; ground marks (2) #216; habitat ground #221; stumps #225; scorched ground #232; mud #237 | Finished | Scenery re-bake with the stronger bake; scars on the Conquest map |
+| T9 | Weather and changing land | Clearing land (22) #199 #206 #210; reading the ground (13) #227; weather, mud and night rules #242 #249 #252 #258; woods that burn #271; fords that flood (6) #283 | Seasons in Conquest (idea 7), just started | Seasons |
+| T10 | Battle soundscape | Positional sound and beds #184 (thunder came with T3, #262) | Finished stage 1, no thread running | Hit sounds by weapon and armour, weather and habitat sounds; tuning by ear |
+| T11 | Ambient life and busy bases | Clearing on screen #214 #234; living touches #218; busy bases #220; walkers #231; log piles #240; deer #246; doves #248; houses in Grubfolk villages #253; villagers #256; crow model #259; caravans #269; insects #276; fish rises #281 | Crows on standards, wheel dust, carts on slopes | Polish only |
+
+**Ideas 1 to 22:** built are 1 weather and time of day, 2 a world that remembers (marks, burning woods; Conquest map scars left), 3 wildlife and villagers, 4 sound (later sounds left), 5 director camera and replays, 9 night battles, 10 busy bases, 11 physical formations (charges that plough), 12 commander on the field, 13 terrain tactics, 14 aftermath (prisoners left), 15 faction lands, 16 smarter formations, 17 pathfinding, 18 better guides, 19 Brood veins, 20 option B, 21 less-flat textures (re-bakes left) and 22 clearing land. Partly built: 6 usable rivers (floods built, bridges left) and 8 wear and torn banners (trophies left). Not started: 7 seasons (starting now).
+
+Outside the eleven threads: the Hand over button to give your army to an ally (#186). CI and docs housekeeping: #185 #204 #223.
 
 ## What it covers
 
@@ -94,7 +116,8 @@ Some files every thread touches. Rules for them:
 
 ## Mario's to-dos
 
-- **Before wave 3:** download the Mixamo sword-and-shield and great-sword sets for the fight library (doc 28), unless a bought pack is preferred.
-- **During wave 1:** tune the lighting looks on the Mac build after T3 stage 1.
+- **Now:** say "OK, edit the building configs" when you want T5 to re-bake all 46 buildings with the stronger bake.
+- **When you play next:** tune the lighting on the Mac build with F10 (wet, snow, stars, cloud banks, thunder, torches, Brood glow) and copy the Enter log to the lighting thread. Sound beds and thunder are tuned by ear too.
+- **Done, no longer needed:** the Mixamo download. The fight library uses the free Quaternius Universal Animation Library instead (2026-10-24); the paid versions or Mixamo are an optional top-up.
 - **Open calls with recommendations** (work follows the recommendation unless Mario says otherwise): stylised blood with full as a setting; the three calls in [26](26-fortifications.md#calls-for-mario).
 - **Later calls:** option C, Living Land stage 5, prisoners after battles (idea 14 needs a design), faction depth stages 7 to 9.
