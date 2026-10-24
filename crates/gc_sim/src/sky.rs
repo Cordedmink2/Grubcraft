@@ -300,7 +300,8 @@ pub const WET_FULL: u16 = 1000;
 /// Rain wets the ground by its strength over this much a second (heavy
 /// rain about 3 of [`WET_FULL`]: some five minutes to soak it through).
 pub const RAIN_WETS: u16 = 64;
-/// Anything but rain dries the ground by this much a second.
+/// Anything else (drizzle too light to wet it included) dries the ground
+/// by this much a second.
 pub const DRIES: u16 = 2;
 
 /// The sky as the match plays it.
@@ -383,11 +384,15 @@ impl SkyState {
             self.ease();
         }
         if tick.is_multiple_of(TICKS_PER_SECOND) {
-            self.wet = match self.now.kind {
-                WeatherKind::Rain => {
-                    (self.wet + u16::from(self.now.strength) / RAIN_WETS).min(WET_FULL)
-                }
-                _ => self.wet.saturating_sub(DRIES),
+            // Drizzle too light to wet the ground dries it, as fair weather.
+            let wets = match self.now.kind {
+                WeatherKind::Rain => u16::from(self.now.strength) / RAIN_WETS,
+                _ => 0,
+            };
+            self.wet = if wets > 0 {
+                (self.wet + wets).min(WET_FULL)
+            } else {
+                self.wet.saturating_sub(DRIES)
             };
         }
         let air = Air::of(self.now, self.daylight(tick).light());
@@ -537,6 +542,39 @@ mod tests {
             sky.tick(tick);
             assert!(tick < 2000);
         }
+    }
+
+    #[test]
+    fn rain_wets_the_ground_and_drizzle_lets_it_dry() {
+        let rain = |strength| {
+            [Spell {
+                at: 0,
+                weather: Weather {
+                    kind: WeatherKind::Rain,
+                    strength,
+                    ..Weather::FAIR
+                },
+            }]
+        };
+        let heavy = rain(200);
+        let mut sky = SkyState::new(&Sky {
+            spells: &heavy,
+            ..Sky::STILL
+        });
+        for tick in 1..=TICKS_PER_SECOND * 100 {
+            sky.tick(tick);
+        }
+        assert_eq!(sky.wet(), 300, "3 a second");
+        let drizzle = rain(40);
+        let mut sky = SkyState::new(&Sky {
+            spells: &drizzle,
+            ..Sky::STILL
+        });
+        sky.wet = 300;
+        for tick in 1..=TICKS_PER_SECOND * 10 {
+            sky.tick(tick);
+        }
+        assert_eq!(sky.wet(), 280, "drizzle dries it as fair weather does");
     }
 
     #[test]

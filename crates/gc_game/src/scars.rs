@@ -205,11 +205,9 @@ impl ScarView {
             .skip(was.min(now))
             .take(was.abs_diff(now))
         {
-            if let Some(b) = self
-                .grid
-                .get_mut((y as usize * self.tiles + x as usize) * 4 + 3)
-            {
-                *b = mark;
+            let (x, y) = (x as usize, y as usize);
+            if x < self.tiles && y < self.tiles {
+                self.grid[(y * self.tiles + x) * 4 + 3] = mark;
             }
         }
         self.dirty = true;

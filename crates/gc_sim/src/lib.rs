@@ -1350,7 +1350,10 @@ impl World {
         if self.sky.tick(self.tick) {
             self.set_air();
         }
-        self.terrain.soak(self.sky.wet());
+        // The ground's wetness moves once a second.
+        if self.tick.is_multiple_of(TICKS_PER_SECOND) {
+            self.terrain.soak(self.sky.wet());
+        }
         // Time stands still while the armies deploy.
         if self.deploying() {
             self.judge.deploying();

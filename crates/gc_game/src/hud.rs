@@ -1789,7 +1789,7 @@ fn sky_word(world: &gc_sim::World) -> String {
         word += &format!(", march {}%", air.march_percent);
     }
     if mud {
-        word += ", mud by the water";
+        word += ", mud";
     }
     word
 }
