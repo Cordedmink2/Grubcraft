@@ -74,17 +74,7 @@ fn tip_of(kind: u32) -> vec3<f32> {
     return vec3<f32>(tip, sin(way), cos(way));
 }
 
-// A point (or normal) of the model's own space, tipped over by `t.x`
-// toward the direction (`t.y`, `t.z`) in the xz plane.
-fn tipped(p: vec3<f32>, t: vec3<f32>) -> vec3<f32> {
-    let u = t.yz;
-    let along = dot(p.xz, u);
-    let s = sin(t.x);
-    let c = cos(t.x);
-    let moved = along * c + p.y * s;
-    let flat_xz = p.xz + u * (moved - along);
-    return vec3<f32>(flat_xz.x, p.y * c - along * s, flat_xz.y);
-}
+// (`tipped` is in world.wgsl, shared with the soldiers and buildings.)
 
 // Where one vertex of one instance stands, and its normal.
 fn place(v: SceneryIn) -> vec3<f32> {

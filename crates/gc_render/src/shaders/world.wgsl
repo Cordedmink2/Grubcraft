@@ -1527,13 +1527,38 @@ fn snorm8(w: u32, i: u32) -> f32 {
     return max(f32(bitcast<i32>(w << (24u - 8u * i)) >> 24u) / 127.0, -1.0);
 }
 
-// A model-space direction moved by the blended bones, laid down with the
-// fallen, and turned to the soldier's facing. Model space is x to the
-// soldier's left, y up, z forward (glTF's convention).
-fn model_dir_to_world(m: mat3x4<f32>, d: vec3<f32>, facing: vec2<f32>, fallen: bool) -> vec3<f32> {
+// A point (or normal) of a model's own space, tipped over about its base by
+// `t.x` (radians) toward the direction (`t.y`, `t.z`) in the xz plane: a
+// tree coming down (scenery.wgsl), a building toppling or a soldier laid on
+// his back.
+fn tipped(p: vec3<f32>, t: vec3<f32>) -> vec3<f32> {
+    let u = t.yz;
+    let along = dot(p.xz, u);
+    let s = sin(t.x);
+    let c = cos(t.x);
+    let moved = along * c + p.y * s;
+    let flat_xz = p.xz + u * (moved - along);
+    return vec3<f32>(flat_xz.x, p.y * c - along * s, flat_xz.y);
+}
+
+// How far a soldier or building is tipped over and which way, from its
+// instance's `flags` word (`SoldierInstance::flags`): the third byte is the
+// tip, 0 (upright) to 255 (lying down), and the fourth the way it falls in
+// the model's own space, as a turn from its front (256ths; 0 lays a man
+// with no death clip on his back). Returned as `tipped` takes it.
+fn instance_tip(flags: u32) -> vec3<f32> {
+    let tip = f32((flags >> 16u) & 255u) * (1.5707964 / 255.0);
+    let way = f32(flags >> 24u) * (6.2831855 / 256.0);
+    return vec3<f32>(tip, sin(way), cos(way));
+}
+
+// A model-space direction moved by the blended bones, tipped with the
+// instance (`instance_tip`), and turned to the soldier's facing. Model space
+// is x to the soldier's left, y up, z forward (glTF's convention).
+fn model_dir_to_world(m: mat3x4<f32>, d: vec3<f32>, facing: vec2<f32>, tip: vec3<f32>) -> vec3<f32> {
     var l = vec3<f32>(dot(m[0].xyz, d), dot(m[1].xyz, d), dot(m[2].xyz, d));
-    if fallen {
-        l = vec3<f32>(l.x, -l.z, l.y);
+    if tip.x > 0.0 {
+        l = tipped(l, tip);
     }
     let left = vec2<f32>(facing.y, -facing.x);
     let xz = left * l.x + facing * l.z;
@@ -1766,14 +1791,14 @@ fn planted(ankle: f32, reach: f32) -> f32 {
 }
 
 // How much of foot IK the soldier at instance word `i` takes (0 for none):
-// none for a rig without legs, a model laid flat, lifted or sinking, or as
+// none for a rig without legs, a model tipped over, lifted or sinking, or as
 // much as `SoldierInstance::feet` keeps the feet as posed.
 fn feet_weight(i: u32, rig: vec4<u32>) -> f32 {
-    let fallen = ((instances[i + 5u] >> 16u) & 0xffu) > 127u;
+    let leaning = ((instances[i + 5u] >> 16u) & 0xffu) != 0u;
     let lift = bitcast<f32>(instances[i + 7u]);
     let scale = bitcast<f32>(instances[i + 8u]);
     let legs = rig_joint(rig.x, 0u) != NO_JOINT;
-    let on = legs && !fallen && lift == 0.0 && scale > 0.0;
+    let on = legs && !leaning && lift == 0.0 && scale > 0.0;
     return select(0.0, 1.0 - f32(instances[i + 15u] >> 24u) / 255.0, on);
 }
 
@@ -2054,7 +2079,7 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
     let flags = instances[i + 5u];
     let lift = bitcast<f32>(instances[i + 7u]);
     let scale = bitcast<f32>(instances[i + 8u]);
-    let fallen = ((flags >> 16u) & 0xffu) > 127u;
+    let tip = instance_tip(flags);
 
     let p = vec4<f32>(
         vec3<f32>(
@@ -2075,9 +2100,13 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
         m += palette_bone(base + ((sv.bones >> (8u * b)) & 0xffu)) * w;
     }
     var local = vec3<f32>(dot(m[0], p), dot(m[1], p), dot(m[2], p)) * scale;
-    if fallen {
-        // No death clip: lay the soldier on his back.
-        local = vec3<f32>(local.x, -local.z + 0.12 * scale, local.y);
+    if tip.x > 0.0 {
+        local = tipped(local, tip);
+    }
+    if ((flags >> 16u) & 0xffu) == 255u {
+        // Lying down (a soldier with no death clip on his back): off the
+        // ground by his thickness.
+        local.y += 0.12 * scale;
     }
     let left = vec2<f32>(facing.y, -facing.x);
     let xz = pos + left * local.x + facing * local.z;
@@ -2087,14 +2116,14 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
         m,
         vec3<f32>(snorm8(sv.normal, 0u), snorm8(sv.normal, 1u), snorm8(sv.normal, 2u)),
         facing,
-        fallen,
+        tip,
     ) + vec3<f32>(0.0, 1e-4, 0.0));
     // Textured models only: the pixel shader renormalises it anyway.
     var tangent = model_dir_to_world(
         m,
         vec3<f32>(snorm8(sv.tangent, 0u), snorm8(sv.tangent, 1u), snorm8(sv.tangent, 2u)),
         facing,
-        fallen,
+        tip,
     );
     tangent = tangent / max(length(tangent), 1e-6);
 

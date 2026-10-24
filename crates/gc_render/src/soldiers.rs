@@ -166,8 +166,12 @@ pub struct SoldierInstance {
     /// texture rows, or joint pose rows for a model fitted to a skeleton
     /// (as its clips name them).
     pub frames: [u16; 2],
-    /// Blend toward the second frame, selection highlight, and whether the
-    /// soldier lies fallen (for models without a death clip), as 0 to 255.
+    /// Blend toward the second frame and selection highlight, as 0 to 255;
+    /// then how far the model is tipped over about its base, 0 (upright) to
+    /// 255 (lying down, as a soldier without a death clip lies on his back),
+    /// and the way it falls in its own space, as a turn from its front in
+    /// 256ths (0 onto its back, 64 to its left; as scenery's `fall` reads
+    /// it). A building toppling as it falls takes both.
     pub flags: [u8; 4],
     /// Team colour (rgb), and a per-soldier tone in the last byte: 128 leaves
     /// the model as painted, lower is darker and cooler, higher is lighter and
