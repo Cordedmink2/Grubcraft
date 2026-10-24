@@ -163,6 +163,22 @@ impl Field {
         self.fx.dust_devil(centre, dt, DUST);
     }
 
+    /// Wood smoke of a hearth at `pos`, `size` tiles wide, for `dt` seconds.
+    pub fn hearth(&mut self, pos: Vec3, size: f32, dt: f32) {
+        self.fx.smoke(pos, size, 0.05, dt);
+    }
+
+    /// A lit window or lantern at `pos`, at `level` of full brightness, for
+    /// `dt` seconds.
+    pub fn lamp(&mut self, pos: Vec3, colour: [u8; 3], size: f32, level: f32, dt: f32) {
+        self.fx.lamp(pos, colour, size, level, dt);
+    }
+
+    /// Floating lights of `colour` over `pos`, `amount` of them.
+    pub fn drift(&mut self, pos: Vec3, colour: [u8; 3], amount: f32) {
+        self.fx.motes(pos, 0.4, colour, amount);
+    }
+
     /// Dust rolling out to `radius` from `puffs`, and `clods` thrown up with
     /// `power`.
     fn impact(&mut self, pos: Vec3, radius: f32, puffs: f32, clods: f32, power: f32) {

@@ -3531,6 +3531,33 @@ impl Running {
                 &mut self.effects,
             );
         }
+        // Smoke from hearths and lit windows on the buildings the viewer
+        // sees, near enough to show.
+        if live && !self.menu_open && self.viewer.is_none() && view_distance < ambient::bases::REACH
+        {
+            let sun = Vec3::from_array(self.look.look().sun).normalize_or_zero().y;
+            let dusk = ambient::touches::dusk_of(sun);
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            let shown = buildings::shown_to(self.sandbox.side, reveal);
+            for s in (self.world.structures().into_iter()).flat_map(gc_sim::Structures::iter) {
+                let Some(look) = self.siege.look(s.handle).filter(|_| shown(&s)) else {
+                    continue;
+                };
+                let centre = look.centre();
+                let at = Vec3::new(centre.x, look.base + look.top * 0.5, centre.y);
+                if cull.on_screen(at, look.top + 6.0)
+                    && (reveal || fog.sees_tile((centre.x.floor() as i32, centre.y.floor() as i32)))
+                {
+                    ambient::bases::emit(
+                        look,
+                        dt.as_secs_f32() * fx_speed,
+                        dusk,
+                        view_distance,
+                        &mut self.effects,
+                    );
+                }
+            }
+        }
         let particles = self.effects.frame(
             dt.as_secs_f32() * fx_speed,
             density,
@@ -5941,6 +5968,8 @@ impl Running {
                 owner: s.owner,
                 colour: color_of(&self.parties, s.owner),
                 stuff: siege::stuff(self.buildings.faction(s.building), stats.armour),
+                role: stats.role,
+                finished: s.finished(),
                 hp: if s.finished() {
                     s.hp as f32 / s.max_hp.max(1) as f32
                 } else {

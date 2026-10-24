@@ -16,7 +16,7 @@ use std::f32::consts::{PI, TAU};
 
 use gc_data::Faction;
 use gc_render::{BoxInstance, Effects, GHOST, ICHOR, Particle};
-use gc_sim::structures::{Armour, Breaker};
+use gc_sim::structures::{Armour, Breaker, Role};
 use gc_sim::{PlayerId, RegimentHandle, StructureHandle};
 use glam::{Vec2, Vec3};
 
@@ -69,7 +69,7 @@ const LEAN_RATE: f32 = 2.5;
 const WALL_GAP: f32 = 0.5;
 const WALL_STEP: f32 = 2.4;
 /// Below these shares of its hit points a building smokes, and burns.
-const SMOKES_BELOW: f32 = 0.7;
+pub const SMOKES_BELOW: f32 = 0.7;
 const BURNS_BELOW: f32 = 0.35;
 /// Arrows leave the bow this high (as `ARROW_HEIGHT` in the field).
 const RELEASE_HEIGHT: f32 = crate::ARROW_HEIGHT;
@@ -241,6 +241,10 @@ pub struct Look {
     pub owner: PlayerId,
     pub colour: [u8; 3],
     pub stuff: Stuff,
+    /// What the building is for, and whether its work is done (the busy
+    /// bases' smoke and lights show only on finished buildings).
+    pub role: Role,
+    pub finished: bool,
     /// Share of its hit points left, as the damage shows (1 while it goes
     /// up: it has few hit points yet, and doesn't smoke for it).
     pub hp: f32,
@@ -1227,6 +1231,8 @@ mod tests {
             owner: 1,
             colour: [200, 0, 0],
             stuff: stuff(Some(Faction::EmberClans), Armour::Structure),
+            role: Role::Housing,
+            finished: true,
             hp,
         }
     }

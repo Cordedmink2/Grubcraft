@@ -21,7 +21,7 @@ Mario wants a world that looks lived in: a base where people are doing things, l
 |---|---|---|
 | 1 | **Clearing land on screen** (idea 22). Workers swing at the tile they clear, throwing chips or leaves. When the tile is cleared its trees tip over away from the cutter, dust and leaves fly where the crown lands, the trunks lie a while and are hauled off, and bushes are torn up. | Particles (done), scenery lean (this stage) |
 | 2 | **Living touches without models** (built, except mist). Fireflies at dusk over fens and wet woods, pollen in meadows, dust devils in the waste, leaves falling in old woods. Mist pooling on low ground is left to the weather stage of the lighting thread. Particle recipes on a habitat sample of the ground round the camera, as the sound beds do ([09](09-art-and-audio.md)). | Particles, `Map.habitat` (done), lighting looks (done) |
-| 3 | **Busy bases** (idea 10). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles and stacked supplies beside the halls, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
+| 3 | **Busy bases** (idea 10; hearth smoke, lit windows and faction glows built as 3a, the rest not yet). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles and stacked supplies beside the halls, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
 | 4 | **Wildlife** (idea 3). Flocks that lift from woods when an army marches by and settle again, carrion birds over a battlefield's dead, moths round Grub seeps, butterflies in flower meadows, grazers that bolt from soldiers, fish rises and dragonflies over water. Each land has its own fauna. Creatures are a picture: soldiers walk through them. | Animal models and clips on the animation engine (T5) |
 | 5 | **Villagers** (idea 3). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
 
@@ -74,3 +74,23 @@ Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model fo
 ### Not yet
 
 - Mist (weather stage), butterflies and moths (stage 4 creatures), and a habitat for the Brood's land beyond dust (its own touches come with idea 19's veins).
+
+## Stage 3a as built: hearths and lights
+
+*2026-10-24. Game and render only; nothing in the simulation.*
+
+### What a player sees
+
+- **Ember Clans** (and any timber or stone building): a finished hall or outpost smokes from two chimneys, a kitchen or forge from one thicker column, a house from one thin wisp. At dusk one to three lanterns glow warm orange on the outside of the walls, more on bigger buildings.
+- **Carrion Concord**: green ghost-lights drift up over each finished building, with green lamps at dusk. **Shard Choir**: cyan resonance motes and glowing windows that shine a little even by day and brighten at dusk. **Brood**: pale spores breathing out of each, with pale lamps at dusk.
+- Only finished, undamaged buildings that the viewer can see (a building under 70 % hit points smokes the siege way instead, [doc 26](26-fortifications.md)); not walls or towers; not in the menu or the unit viewer. The smoke shows out to 110 tiles of camera distance (past 60 only halls and outposts make any, so a crowded town cannot flood the particles); lamps fade out between 35 and 75, where they would be under a pixel.
+
+### How it works
+
+- `gc_game::ambient::bases::emit(look, dt, dusk, distance, fx)` is called each frame for each shown building from the effects block in `main.rs`, using the siege module's `Look` (the building as last drawn: footprint, ground, height, faction material), which now also carries the building's `role` and whether it is `finished`. Positions of chimneys and windows come from a hash of the building's handle, so they stay put frame to frame without any stored state.
+- `gc_render::effects::ambient::lamp` is a steady additive glow that breathes; smoke is the existing `smoke` recipe made thin and pale. `dusk` is `touches::dusk_of(sun)`, the same dusk the fireflies use, from the look's sun elevation.
+- Cost: a few dozen particles per visible building at most; thinned by the Graphics preset like all effects.
+
+### Not yet (stage 3b)
+
+- Workers and porters walking between a base's buildings, log piles and stacked supplies, carts on the road from a seep to its granary, forge sparks, and window light that really is a model glow (the lights are particles hung just outside the walls for now, not in the windows' own frames).

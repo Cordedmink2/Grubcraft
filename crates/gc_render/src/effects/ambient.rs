@@ -109,6 +109,29 @@ impl Effects {
         }
     }
 
+    /// A lit window or lantern at `pos`, kept up by calling it every frame
+    /// with `dt` seconds of effects time: a small glow of `color` that
+    /// breathes a little, at `level` (0 to 1) of full brightness. `size` is
+    /// its radius in tiles. Lamps are not thinned by the density: a lamp
+    /// made of a third of its specks would flicker out, and there are few.
+    pub fn lamp(&mut self, pos: Vec3, color: [u8; 3], size: f32, level: f32, dt: f32) {
+        let n = 10.0 * dt;
+        let n = n.floor() as u32 + u32::from(self.rng.unit() < n.fract());
+        for _ in 0..n {
+            let c = self.jitter(color, 0.06);
+            self.out.push(Particle {
+                pos,
+                life: self.rng.between(0.6, 0.9),
+                size: [size, size * 0.8],
+                drag: 1.0,
+                shape: Shape::Glow,
+                flags: flags::ADDITIVE | flags::FLICKER,
+                seed: self.rng.byte(),
+                ..fading(c, (130.0 * level.clamp(0.0, 1.0)) as u8)
+            });
+        }
+    }
+
     /// Dust thrown up by a whirlwind standing at `centre`, for `dt` seconds
     /// of effects time: puffs that climb in a column that spreads as it rises,
     /// with a sideways push to each so it looks wound up.
@@ -151,8 +174,9 @@ mod tests {
         fx.pollen(Vec3::new(5.0, 1.0, 5.0), 5.0);
         fx.firefly(Vec3::new(5.0, 1.0, 5.0), 5.0);
         fx.dust_devil(Vec3::new(5.0, 0.0, 5.0), 1.0, [196, 172, 134]);
+        fx.lamp(Vec3::new(5.0, 1.0, 5.0), [255, 190, 100], 0.15, 1.0, 1.0);
         let made = fx.take();
-        assert_eq!(made.len(), 30 + 5 + 5 + 34);
+        assert_eq!(made.len(), 30 + 5 + 5 + 34 + 10);
         for p in &made {
             assert!(p.life > 0.0 && p.size[0] > 0.0);
             assert_eq!(p.color_end[3], 0);

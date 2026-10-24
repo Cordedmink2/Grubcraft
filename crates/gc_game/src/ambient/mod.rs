@@ -4,6 +4,7 @@
 //! and nothing here feeds back into the simulation, replays or the network,
 //! so it may use floats, frame time and its own random numbers.
 
+pub mod bases;
 pub mod felling;
 pub mod touches;
 

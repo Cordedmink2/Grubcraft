@@ -36,6 +36,12 @@ const DEVIL_SPEED: f32 = 2.2;
 /// Leaves: how high a tree sheds them.
 const LEAF_HEIGHT: [f32; 2] = [2.0, 4.0];
 
+/// How dark the light is for a sun at elevation `sun` (its y, normalised):
+/// 0 by day to 1 at dusk, fading over `DUSK_SPAN` about `DUSK_AT`.
+pub fn dusk_of(sun: f32) -> f32 {
+    ((DUSK_AT - sun) / DUSK_SPAN + 0.5).clamp(0.0, 1.0)
+}
+
 /// Which touches a habitat has.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Has {
@@ -129,8 +135,8 @@ impl Touches {
         }
         let reach = (REACH_NEAR + distance * REACH_PER_ZOOM).min(REACH_MOST);
         let area = std::f32::consts::PI * reach * reach;
-        let day = ((sun - DUSK_AT) / DUSK_SPAN + 0.5).clamp(0.0, 1.0);
-        let dusk = ((DUSK_AT - sun) / DUSK_SPAN + 0.5).clamp(0.0, 1.0);
+        let day = 1.0 - dusk_of(sun);
+        let dusk = dusk_of(sun);
         let near = 1.0 - ((distance - FADE_NEAR) / (FADE_FAR - FADE_NEAR)).clamp(0.0, 1.0);
         let tiles = map.tiles as i32;
         // The habitat on the viewer's ground at `p`; the fog is asked last,
