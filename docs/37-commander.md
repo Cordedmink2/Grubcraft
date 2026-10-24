@@ -20,6 +20,7 @@ Idea 12 of the [restart plan](29-restart-plan.md) (thread T4, with [28](28-soldi
 
 - The general is drawn a little taller than his men and in a lighter shade of his side's colour, so a player can find him without a marker. Selecting his regiment says "Your general rides here: guard him".
 - **The speech:** he raises his weapon and most of the men within reach cheer, a few at a time, over a few seconds; the battle panel says "*Side*'s general rallies his army" for six seconds.
+- **In the fight:** when a man of his regiment kills an enemy within 2.5 tiles of him, the general often steps through the ranks to stand beside him and deals the killing blow himself (screen only; the simulation's blow is unchanged), then brandishes his weapon over the man for a second, and rests a few seconds before he does it again ([28](28-soldier-combat.md) stage 5).
 - **The fall:** the battle panel says "*Side*'s general has fallen!" for eight seconds, and the men of the regiments that panic flinch as one.
 
 ## What comes later
