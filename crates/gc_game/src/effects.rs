@@ -4,7 +4,7 @@
 //! feeds back into the simulation, and effects of what the viewer cannot see
 //! are never made, so the dust never shows an army the fog hides.
 
-use gc_render::{DUST, Effects, HitStyle, Particle, Weather};
+use gc_render::{DUST, Effects, Glow, HitStyle, Particle, Weather};
 use glam::{Vec2, Vec3};
 
 use crate::ambient::Style;
@@ -73,6 +73,7 @@ impl Field {
     /// Drop what was collected and not yet handed over.
     pub fn clear(&mut self) {
         self.fx.take();
+        self.fx.take_glows();
     }
 
     /// A soldier at `pos` moved along `dir` at `speed` tiles a second for
@@ -306,6 +307,11 @@ impl Field {
         self.fx.set_density(density);
         self.fx
             .precipitation(weather, focus, radius, rate * dt.min(0.25), ground);
+    }
+
+    /// The lamps and fires that shone since this was last called.
+    pub fn take_glows(&mut self) -> Vec<Glow> {
+        self.fx.take_glows()
     }
 
     /// Everything collected this frame, ready for
