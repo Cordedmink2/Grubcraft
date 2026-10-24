@@ -250,6 +250,29 @@ impl Aftermath {
         }
     }
 
+    /// The same crows as [`Aftermath::crows`], as birds for the crow model
+    /// to draw, leaving `room` free in `out`.
+    pub fn birds(
+        &self,
+        ground: impl Fn(Vec2) -> f32,
+        sees: impl Fn(Vec3, f32) -> bool,
+        out: &mut Vec<Bird>,
+        room: usize,
+    ) {
+        for f in &self.flocks {
+            let mid = Vec3::new(f.at.x, ground(f.at), f.at.y);
+            if !sees(mid + Vec3::Y * CIRCLE_HEIGHT, SPREAD + CIRCLE_RADIUS * 2.0) {
+                continue;
+            }
+            for k in 0..crows_of(f.dead) {
+                if out.len() >= room {
+                    return;
+                }
+                out.extend(bird(f, k, mid.y, &ground));
+            }
+        }
+    }
+
     /// How dirty regiment `h`'s soldiers are, 0 (as painted) to 1.
     pub fn dirt(&self, h: RegimentHandle) -> f32 {
         self.slot(h).map_or(0.0, |s| s.fought / GRIME_SECONDS)
@@ -292,6 +315,39 @@ fn crows_of(dead: usize) -> usize {
 /// arrives, on the ground pecking among the dead, and in the air again
 /// whenever soldiers walk near.
 fn crow(s: &Flock, k: usize, floor: f32, ground: &impl Fn(Vec2) -> f32) -> Option<BoxInstance> {
+    let b = bird(s, k, floor, ground)?;
+    let wings = WING_SPAN * (0.35 + 0.65 * b.flapping);
+    Some(BoxInstance {
+        pos: b.pos.to_array(),
+        facing: b.facing.to_array(),
+        size: [
+            CROW_SIZE[0] + (wings - CROW_SIZE[0]) * b.aloft,
+            CROW_SIZE[1] * (1.0 - 0.3 * (1.0 - b.aloft) * b.peck.max(0.0)),
+            CROW_SIZE[2],
+        ],
+        color: CROW_COLOR,
+        lift: b.lift,
+    })
+}
+
+/// One crow of a flock as the picture draws it: where it is and which way it
+/// faces, its height above the ground, how far aloft it is (0 to 1), and
+/// the beat of its wings and its peck.
+#[derive(Clone, Copy, Debug)]
+pub struct Bird {
+    pub pos: Vec2,
+    pub facing: Vec2,
+    /// Tiles above the ground.
+    pub lift: f32,
+    /// 0 on the ground, 1 in the air.
+    pub aloft: f32,
+    /// A seed for where in its clip the crow is, so they do not move as one.
+    pub phase: f32,
+    flapping: f32,
+    peck: f32,
+}
+
+fn bird(s: &Flock, k: usize, floor: f32, ground: &impl Fn(Vec2) -> f32) -> Option<Bird> {
     let h = |axis| 0.5 + 0.5 * crate::spread_hash(s.seed, k, axis);
     let comes = CROW_ARRIVE + CROW_GAP * k as f32 * (0.6 + 0.8 * h(1));
     let t = s.age - comes;
@@ -326,17 +382,14 @@ fn crow(s: &Flock, k: usize, floor: f32, ground: &impl Fn(Vec2) -> f32) -> Optio
     } else {
         Vec2::from_angle(TAU * h(14) + 0.4 * peck)
     };
-    let wings = WING_SPAN * (0.35 + 0.65 * flapping);
-    Some(BoxInstance {
-        pos: pos.to_array(),
-        facing: facing.to_array(),
-        size: [
-            CROW_SIZE[0] + (wings - CROW_SIZE[0]) * aloft,
-            CROW_SIZE[1] * (1.0 - 0.3 * (1.0 - aloft) * peck.max(0.0)),
-            CROW_SIZE[2],
-        ],
-        color: CROW_COLOR,
+    Some(Bird {
+        pos,
+        facing,
         lift: aloft * (up + floor - ground(pos)) + hop * 12.0,
+        aloft,
+        phase: h(15) * 3.0,
+        flapping,
+        peck,
     })
 }
 
@@ -392,6 +445,47 @@ mod tests {
         assert_eq!(crows_at(&a).len(), crows_of(40), "all of them by now");
         a.advance(CROW_STAY + 20.0 - 63.0, std::iter::empty());
         assert!(crows_at(&a).is_empty(), "and gone again");
+    }
+
+    #[test]
+    fn the_crow_model_draws_the_crows_the_boxes_would() {
+        let mut a = after_a_wipe_out();
+        // Circling as they come, settled on the field, and flushed up again.
+        let mut aloft = false;
+        for (age, near) in [(CROW_ARRIVE + 3.0, false), (60.0, false), (0.0, true)] {
+            let scare: Vec<Vec2> = if near {
+                vec![Vec2::new(31.0, 30.0)]
+            } else {
+                vec![]
+            };
+            for _ in 0..if near { 10 } else { 1 } {
+                a.advance(if near { 0.2 } else { age }, scare.iter().copied());
+            }
+            let mut birds = Vec::new();
+            a.birds(flat, |_, _| true, &mut birds, usize::MAX);
+            let boxes = crows_at(&a);
+            assert_eq!(birds.len(), boxes.len());
+            assert!(!birds.is_empty());
+            for (b, x) in birds.iter().zip(&boxes) {
+                assert_eq!(b.pos.to_array(), x.pos);
+                assert_eq!(b.facing.to_array(), x.facing);
+                assert_eq!(b.lift, x.lift);
+                assert!((0.0..=1.0).contains(&b.aloft));
+                aloft |= b.aloft > 0.9 && b.lift > 1.0;
+            }
+        }
+        assert!(aloft, "no crow was ever up in the air");
+        let mut a = after_a_wipe_out();
+        a.advance(CROW_ARRIVE + 60.0, std::iter::empty());
+        let mut birds = Vec::new();
+        a.birds(flat, |_, _| true, &mut birds, usize::MAX);
+        assert_eq!(birds.len(), crows_of(40));
+        let mut few = Vec::new();
+        a.birds(flat, |_, _| true, &mut few, 3);
+        assert_eq!(few.len(), 3);
+        let mut none = Vec::new();
+        a.birds(flat, |_, _| false, &mut none, usize::MAX);
+        assert!(none.is_empty());
     }
 
     #[test]

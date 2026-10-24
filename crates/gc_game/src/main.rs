@@ -329,6 +329,9 @@ const HIDDEN_COLOR: [u8; 4] = [95, 150, 70, 120];
 const MAX_CORPSES: usize = 32_768;
 /// Boxes kept free of the dead for what each frame draws after them.
 const BOX_ROOM_AFTER_CORPSES: usize = 16_384;
+/// How much bigger than the model a crow of the aftermath is drawn: the model
+/// is the dove's size, a crow is bigger.
+const CROW_SCALE: f32 = 1.25;
 
 /// A body lying down shows about a third of the height of one standing, so
 /// it is drawn this many levels of detail coarser than the living; past the
@@ -963,6 +966,9 @@ struct Art {
     deer: Option<usize>,
     /// The dove of the ambient birds, if the pack has it.
     dove: Option<usize>,
+    /// The crow of the battlefield's aftermath, if the pack has it (else
+    /// the crows are boxes).
+    crow: Option<usize>,
     /// The villagers' models, by `ambient::villagers::Kind`, if the pack
     /// has them all.
     folk: Option<[usize; 4]>,
@@ -1407,6 +1413,7 @@ impl App {
             heights: models.models.iter().map(|m| m.height).collect(),
             deer: models.by_name("Deer"),
             dove: models.by_name("Dove"),
+            crow: models.by_name("Crow"),
             folk: ambient::villagers::Kind::ALL
                 .map(|k| models.by_name(k.model()))
                 .into_iter()
@@ -3151,6 +3158,7 @@ impl Running {
         }
         if !viewing {
             self.push_building_models();
+            self.push_crows();
         }
         self.mark_shooting();
         if viewing {
@@ -3580,7 +3588,7 @@ impl Running {
         if !viewing {
             self.push_arrows(now);
             self.push_siege(&cull);
-            if !self.commander {
+            if !self.commander && self.art.as_ref().is_none_or(|a| a.crow.is_none()) {
                 let hm = &self.heightmap;
                 self.aftermath.crows(
                     |p| hm.drawn_height(p.x, p.y),
@@ -6545,6 +6553,54 @@ impl Running {
                     1.0
                 },
             });
+        }
+    }
+
+    /// The crows over a battlefield, once the soldiers have moved on, with
+    /// the crow model (when the pack has it; else they are boxes). Every
+    /// match has them, not only Conquest.
+    fn push_crows(&mut self) {
+        let Some(art) = &mut self.art else {
+            return;
+        };
+        let hm = &self.heightmap;
+        let ground = |x, z| hm.drawn_height(x, z);
+        let time = self.puppets.time();
+        if let Some(crow) = art.crow
+            && !self.commander
+            && self.viewer.is_none()
+        {
+            let mut birds = Vec::new();
+            self.aftermath.birds(
+                |p| ground(p.x, p.y),
+                |at, radius| art.view.cull.sees(at, radius),
+                &mut birds,
+                usize::MAX,
+            );
+            for b in birds {
+                let foot = Vec3::new(b.pos.x, ground(b.pos.x, b.pos.y) + b.lift, b.pos.y);
+                let Some(lod) = art.view.place(art.heights[crow] * CROW_SCALE, foot) else {
+                    continue;
+                };
+                let (action, rate) = if b.aloft > 0.05 {
+                    (Action::Cheer, ambient::birds::FLAP_RATE * 0.8)
+                } else {
+                    (Action::Idle, 1.0)
+                };
+                let Some(pose) = art.clips.pose(crow, action, (time + b.phase * 4.0) * rate) else {
+                    continue;
+                };
+                art.buckets[crow * LODS + lod].push(SoldierInstance {
+                    pos: b.pos.to_array(),
+                    facing: b.facing.to_array(),
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [255, 255, 255, gc_render::TONE_NEUTRAL],
+                    lift: b.lift,
+                    scale: CROW_SCALE,
+                    ..Default::default()
+                });
+            }
         }
     }
 

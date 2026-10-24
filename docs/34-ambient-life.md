@@ -178,7 +178,7 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Carrion birds over the dead (T7's crows are still boxes), butterflies and moths, fish rises and dragonflies, the other lands' fauna, hunted deer leaving a carcass, and herds that react to fights rather than to soldiers alone.
+- Butterflies and moths, fish rises and dragonflies, the other lands' fauna, hunted deer leaving a carcass, and herds that react to fights rather than to soldiers alone.
 
 ## Stage 4b as built: doves
 
@@ -241,4 +241,16 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Villagers carrying things (a load going from a haystack to the barn, carts), other fauna and carrion birds, and villagers who react to a particular faction.
+- Villagers carrying things (a load going from a haystack to the barn, carts), other fauna, and villagers who react to a particular faction.
+
+## Stage 6 as built: crows over the dead
+
+*2026-10-24. Game and the creature pack only; nothing in the simulation. The crows themselves are battle-effects work (T7, `aftermath.rs`: when they come, how many, when soldiers flush them); this stage only gives them a body.*
+
+- The `Crow` model (`design/creatures/source/crow.py`, the dove's rig and kit in blue-black with a thick beak, about 1,000 triangles) replaces the black boxes. Its Idle is a crow on the ground looking about and pecking twice, and Cheer is the flap, played slower than a dove's for a circling bird. It is drawn 25% bigger than the dove it is built from (`CROW_SCALE`).
+- `Aftermath::birds` gives the crow model the same crows the old boxes were (same flocks, same times, same positions: a test holds them equal); `Aftermath::crows` still makes the boxes, which are drawn only if the pack lacks the model.
+- Crows are drawn as soldier instances by `push_crows` (in every kind of match, not only Conquest), not in Commander View or the unit viewer. A crow plays its flap whenever it is off the ground at all, so a crow settling or climbing never glides stiff.
+
+### Not yet
+
+- Crows perched on standards or corpses, and a crow that takes a bite.

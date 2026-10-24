@@ -2,10 +2,10 @@
 // by tools/gc_artbake
 // (`cargo run -p gc_artbake --release -- --config assets-src/buildings/creatures.ron --out assets/buildings/creatures.pak`).
 // The build script joins every pack in assets/buildings into the model pack, so these are looked up by
-// name like any model; no unit in data/ uses them, so they are only ever drawn by gc_game::ambient.
+// name like any model; no unit in data/ uses them, so they are only ever drawn by gc_game::ambient and the aftermath's crows.
 // Each is built from code in Blender (design/creatures/source/: `crit.py` is the kit) with its own small rig,
 // painted in vertex colours that are baked to the albedo map. Clips: Idle, Walk, Run, and Cheer, which
-// plays a deer's head-down feeding, a dove's flapping flight, a farmer's hoeing, a porter's brow-mopping, a child's jump and a
+// plays a deer's head-down feeding, a dove's or crow's flapping flight, a farmer's hoeing, a porter's brow-mopping, a child's jump and a
 // dog's sniffing. Faces +z, stands on the ground at the origin, `height` is the head's top.
 (
     models: [
@@ -67,6 +67,16 @@
             lod_triangles: (1400, 700, 340, 140),
             textures: Some((
                 albedo: "shared:grubcraft/creatures/dog/albedo.png",
+            )),
+        ),
+        (
+            name: "Crow",
+            source: "shared:grubcraft/creatures/crow/crow.glb",
+            height: 0.4,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Cheer": "Cheer" },
+            lod_triangles: (1100, 600, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/crow/albedo.png",
             )),
         ),
     ],
