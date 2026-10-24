@@ -32,12 +32,18 @@ const _: () = assert!(
         && record::BUILDING_TOLL == gc_sim::structures::TOLL
         && record::BUILDING_SILENCES == gc_sim::structures::SILENCES
         && record::BUILDING_GATE == gc_sim::structures::GATE
+        && record::BUILDING_LINE == gc_sim::structures::LINE
         && record::MAX_REACH_TILES == gc_sim::structures::MAX_REACH
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );
 
 /// Height of a wall, of most buildings and of a main building, in tiles.
 const WALL_HEIGHT: f32 = 1.5;
+/// How thick a drawn wall is, in tiles, and how far a piece reaches past
+/// its share of the line at a joint. At an end of the line it reaches half
+/// a step, to the edge of its tile.
+const LINE_THICK: f32 = 0.5;
+const LINE_JOINT: f32 = 0.05;
 /// A building model's walls are what stands in its lowest share.
 const WALL_SHARE: f32 = 0.3;
 /// A gate's jamb posts stand a little over its walls' height.
@@ -203,6 +209,12 @@ impl Table {
         self.factions.get(usize::from(id)).copied()
     }
 
+    /// Whether `building` is a wall drawn as a line.
+    pub fn is_wall(&self, building: BuildingId) -> bool {
+        (self.stats.get(usize::from(building)))
+            .is_some_and(|s| s.flags & gc_sim::structures::LINE != 0)
+    }
+
     /// A type's name.
     pub fn name(&self, id: BuildingId) -> &str {
         self.names.get(usize::from(id)).map_or("", String::as_str)
@@ -320,8 +332,15 @@ impl Looks {
             })
             .unzip();
         Looks {
-            stages: (table.names.iter())
-                .map(|name| core::array::from_fn(|k| models.by_name(&stage_name(name, k))))
+            // A drawn wall is a slab along its line, never a model.
+            stages: (table.names.iter().zip(&table.stats))
+                .map(|(name, stats)| {
+                    core::array::from_fn(|k| {
+                        (stats.flags & gc_sim::structures::LINE == 0)
+                            .then(|| models.by_name(&stage_name(name, k)))
+                            .flatten()
+                    })
+                })
                 .collect(),
             crews: (table.factions.iter())
                 .map(|&f| models.by_name(worker_of(f)))
@@ -477,6 +496,79 @@ fn draped(slab: Slab, height: f32, color: [u8; 4], (lo, hi): (f32, f32)) -> BoxI
     }
 }
 
+/// The part of a drawn wall one of its tiles shows: a straight piece
+/// along the line, `len` long, centred on `centre`, pointing along `dir`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WallPiece {
+    pub centre: Vec2,
+    pub dir: Vec2,
+    pub len: f32,
+}
+
+/// The piece of the wall drawn along `line` (`[x0, y0, x1, y1]`, tile
+/// coordinates) that its tile `tile` shows. The line runs from the middle
+/// of its first tile to the middle of its last; each tile has the share of
+/// it for its step along the longer axis, so neighbours meet end to end
+/// with no gap however shallow the line is (a tile of a shallow line sits
+/// up to half a tile off the line, as the walking grid's staircase does).
+/// Each piece reaches a hair past its share so they overlap, and the two
+/// ends of the line are capped out to the edge of their tiles. `None` for a line of one tile, which is
+/// drawn as the usual block.
+pub fn wall_piece(line: [i32; 4], tile: (i32, i32)) -> Option<WallPiece> {
+    let [x0, y0, x1, y1] = line;
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let steps = dx.abs().max(dy.abs());
+    if steps == 0 {
+        return None;
+    }
+    let k = if dx.abs() >= dy.abs() {
+        (tile.0 - x0).abs()
+    } else {
+        (tile.1 - y0).abs()
+    }
+    .min(steps);
+    let from = Vec2::new(x0 as f32 + 0.5, y0 as f32 + 0.5);
+    let along = Vec2::new(dx as f32, dy as f32);
+    let (lo, hi) = (
+        ((k as f32 - 0.5) / steps as f32).max(0.0),
+        ((k as f32 + 0.5) / steps as f32).min(1.0),
+    );
+    let total = along.length();
+    let cap = total / steps as f32 / 2.0;
+    let reach = |end: bool| if end { cap } else { LINE_JOINT };
+    let before = reach(k == 0);
+    let after = reach(k == steps);
+    let dir = along / total;
+    // The middle of the piece including what it reaches past each side.
+    let mid = (lo + hi) / 2.0 * total + (after - before) / 2.0;
+    Some(WallPiece {
+        centre: from + dir * mid,
+        dir,
+        len: (hi - lo) * total + before + after,
+    })
+}
+
+/// One box for the wall tile `s`: a straight slab along the line it was
+/// drawn in, or the usual block if it has no line or the line is one tile.
+fn wall_block(
+    s: &StructureView,
+    height: f32,
+    color: [u8; 4],
+    ground: &impl Fn(f32, f32) -> f32,
+) -> BoxInstance {
+    let Some(piece) = s.line.and_then(|line| wall_piece(line, s.tile)) else {
+        return block(s, height, color, ground);
+    };
+    let slab = Slab {
+        centre: piece.centre,
+        size: Vec2::new(LINE_THICK, piece.len),
+    };
+    BoxInstance {
+        facing: piece.dir.to_array(),
+        ..draped(slab, height, color, ground_range(ground, s))
+    }
+}
+
 /// A flat box seen from above: its middle and its extent along x and y.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Slab {
@@ -599,14 +691,19 @@ pub fn push(
         let [r, g, b] = shade(team(s.owner), s.hp, s.max_hp);
         match (s.gate.is_some() && s.finished(), model) {
             (true, _) => push_gate(&s, model.is_none().then_some([r, g, b]), &ground, out),
-            (false, None) => out.push(block(&s, height, [r, g, b, 0], &ground)),
+            (false, None) => out.push(wall_block(&s, height, [r, g, b, 0], &ground)),
             (false, Some(_)) => {}
         }
         if s.hp >= s.max_hp {
             continue;
         }
         let (lo, hi) = ground_range(&ground, &s);
-        let len = f32::from(s.width.max(s.depth)).max(BAR_MIN);
+        // A wall's tiles are side by side, so each bar is only a tile long.
+        let len = if s.line.is_some() {
+            1.0
+        } else {
+            f32::from(s.width.max(s.depth)).max(BAR_MIN)
+        };
         let frac = s.hp as f32 / s.max_hp.max(1) as f32;
         let fill = len * frac;
         let lift = height + (hi - lo) + BAR_LIFT;
@@ -1244,6 +1341,17 @@ fn footprint_view(tile: (i32, i32), width: u8, depth: u8, turn: u8) -> Structure
         seen: u8::MAX,
         gate: None,
         open: false,
+        line: None,
+    }
+}
+
+/// The colour of a ghost: the side's own where it fits, amber where the
+/// ground must be cleared first, red where it won't go.
+fn ghost_colour(fit: Fit, [r, g, b]: [u8; 3]) -> [u8; 4] {
+    match fit {
+        Fit::Open => [r, g, b, GHOST_GLOW],
+        Fit::Overgrown => OVERGROWN,
+        Fit::Refused => REFUSED,
     }
 }
 
@@ -1262,12 +1370,7 @@ pub fn push_ghost(
 ) {
     let (width, depth) = stats.size(turn);
     let view = footprint_view(tile, width, depth, turn);
-    let [r, g, b] = colour;
-    let colour = match fit {
-        Fit::Open => [r, g, b, GHOST_GLOW],
-        Fit::Overgrown => OVERGROWN,
-        Fit::Refused => REFUSED,
-    };
+    let colour = ghost_colour(fit, colour);
     out.push(block(&view, height_of(stats.role), colour, &ground));
     // A low step out of its front, so the player sees which way it faces.
     let facing = facing_of(turn);
@@ -1280,6 +1383,27 @@ pub fn push_ghost(
         color: colour,
         lift: 0.0,
     });
+}
+
+/// The ghost of a wall about to be drawn along `line`: each of `tiles` in
+/// the colour its `Fit` gives, as a slab along the line like the finished
+/// wall (a line of one tile is a plain block).
+pub fn push_wall_ghost(
+    line: [i32; 4],
+    tiles: impl Iterator<Item = ((i32, i32), Fit)>,
+    colour: [u8; 3],
+    ground: impl Fn(f32, f32) -> f32,
+    out: &mut Vec<BoxInstance>,
+) {
+    for (tile, fit) in tiles {
+        if out.len() >= MAX_BOX_INSTANCES {
+            return;
+        }
+        let colour = ghost_colour(fit, colour);
+        let mut view = footprint_view(tile, 1, 1, 0);
+        view.line = Some(line);
+        out.push(wall_block(&view, WALL_HEIGHT, colour, &ground));
+    }
 }
 
 /// A flat plate over the tiles `[x, y, width, depth]`, lying on the ground
@@ -1394,6 +1518,8 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::Unpowered => "It must stand inside a field of power.",
         Refusal::Cooling => "That power isn't ready again yet.",
         Refusal::NoShrine => "Edicts are cast from a finished Ancestor Shrine.",
+        Refusal::Overgrown => "Clear the ground there first.",
+        Refusal::NoRoom => "There's no room on the map for more buildings.",
     }
 }
 
@@ -1547,8 +1673,15 @@ mod tests {
             }
         }
         let still = models.models.iter().filter(|m| m.is_still()).count();
+        // The models a drawn wall's name would have found are left unused.
+        let unused = (table.names.iter().zip(&table.stats))
+            .filter(|(_, s)| s.flags & gc_sim::structures::LINE != 0)
+            .flat_map(|(n, _)| (0..STAGES).map(move |k| stage_name(n, k)))
+            .filter(|n| models.by_name(n).is_some())
+            .count();
         assert_eq!(
-            dressed, still,
+            dressed + unused,
+            still,
             "a building model's name matches no building"
         );
         assert!(
@@ -1592,6 +1725,7 @@ mod tests {
             seen: 1,
             gate: None,
             open: false,
+            line: None,
         };
         let model = |s: &StructureView| looks.model_of(s).map(|m| models.models[m].name());
         assert_eq!(model(&s), Some("Clan Hall #2"));
@@ -1684,6 +1818,61 @@ mod tests {
             let half = if turn % 2 == 0 { d } else { w };
             assert!((out_of - (f32::from(half) / 2.0 + 0.5)).abs() < 1e-3);
         }
+    }
+
+    #[test]
+    fn a_wall_line_of_one_tile_is_a_block() {
+        assert_eq!(wall_piece([5, 5, 5, 5], (5, 5)), None);
+    }
+
+    #[test]
+    fn wall_pieces_meet_end_to_end_along_the_line() {
+        for line in [
+            [2, 2, 12, 2],
+            [2, 2, 2, 9],
+            [2, 2, 9, 9],
+            [2, 2, 14, 7],
+            [20, 3, 4, 9],
+        ] {
+            let tiles = gc_sim::walls::wall_tiles((line[0], line[1]), (line[2], line[3])).unwrap();
+            let pieces: Vec<WallPiece> = tiles
+                .iter()
+                .map(|&t| wall_piece(line, t).unwrap())
+                .collect();
+            let end = |p: &WallPiece| p.centre + p.dir * (p.len / 2.0);
+            let start = |p: &WallPiece| p.centre - p.dir * (p.len / 2.0);
+            for pair in pieces.windows(2) {
+                // The next starts before the last ends: they overlap a little.
+                let gap = (start(&pair[1]) - end(&pair[0])).dot(pair[0].dir);
+                assert!(gap < 0.0 && gap > -0.2, "{line:?} {gap}");
+            }
+            // The line's own ends are capped out to their tile's edge.
+            let first = Vec2::new(line[0] as f32 + 0.5, line[1] as f32 + 0.5);
+            let behind = (first - start(&pieces[0])).dot(pieces[0].dir);
+            let step = Vec2::new((line[2] - line[0]) as f32, (line[3] - line[1]) as f32).length()
+                / (line[2] - line[0]).abs().max((line[3] - line[1]).abs()) as f32;
+            assert!((behind - step / 2.0).abs() < 1e-3, "{line:?} {behind}");
+        }
+    }
+
+    #[test]
+    fn a_wall_piece_stays_by_its_tile() {
+        for line in [[2, 2, 14, 7], [20, 3, 4, 9], [3, 3, 3, 20], [10, 10, 1, 1]] {
+            for t in gc_sim::walls::wall_tiles((line[0], line[1]), (line[2], line[3])).unwrap() {
+                let piece = wall_piece(line, t).unwrap();
+                let tile_mid = Vec2::new(t.0 as f32 + 0.5, t.1 as f32 + 0.5);
+                let off = (piece.centre - tile_mid).abs();
+                assert!(off.x <= 0.8 && off.y <= 0.8, "{line:?} {t:?} {off:?}");
+                assert!(piece.len > 0.9 && piece.len < 1.7, "{line:?} {t:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_diagonal_wall_piece_runs_corner_to_corner() {
+        let p = wall_piece([0, 0, 4, 4], (2, 2)).unwrap();
+        assert!((p.centre - Vec2::splat(2.5)).length() < 1e-4);
+        assert!((p.len - (2f32.sqrt() + 2.0 * LINE_JOINT)).abs() < 1e-4);
     }
 
     #[test]

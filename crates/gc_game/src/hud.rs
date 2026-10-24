@@ -50,6 +50,10 @@ pub enum Armed {
     Attack,
     /// Conquest: where a worker lays this building.
     Lay(gc_sim::BuildingId),
+    /// Conquest: a wall of this building, drawn by clicking its start and
+    /// then each place it bends or ends. The tile is the last click (the
+    /// tile the wall goes on from), once there is one.
+    Wall(gc_sim::BuildingId, Option<(i32, i32)>),
     /// Conquest: the ground a worker clears, chosen by a left-drag.
     Clear,
     /// Conquest: the target of this faction power (its place in the
@@ -156,6 +160,9 @@ pub struct HudState {
     /// Q or W was pressed: the next left click says where to go or whom to
     /// attack.
     pub armed: Option<Armed>,
+    /// Conquest: the wall as it would be drawn now, worked out once a
+    /// frame for both its ghost and its hint.
+    pub wall_preview: Option<crate::wall_tool::Preview>,
     /// Conquest: the workers' build menu is open on the grid.
     pub build_menu: bool,
     /// Conquest: the selected building's tips are showing (its info button
@@ -841,7 +848,7 @@ impl Running {
         match hud.armed {
             Some(Armed::Move) => grid[SLOT_MOVE].state = SlotState::Armed,
             Some(Armed::Attack) => grid[SLOT_ATTACK].state = SlotState::Armed,
-            Some(Armed::Lay(_) | Armed::Clear | Armed::Power(_)) | None => {}
+            Some(Armed::Lay(_) | Armed::Wall(..) | Armed::Clear | Armed::Power(_)) | None => {}
         }
         if let Some(Some(f)) = self.shown_formation {
             grid[SLOT_FORMATION].detail = f.name();
@@ -850,7 +857,12 @@ impl Running {
         if let Some((card, states)) = card {
             for (i, slot) in grid.iter_mut().enumerate() {
                 if card.slots[i].is_some() {
-                    let (icon, tip) = card_look(card.slots[i]);
+                    let (icon, mut tip) = card_look(card.slots[i]);
+                    if let Some(Action::Lay(b)) = card.slots[i]
+                        && self.buildings.is_wall(b)
+                    {
+                        tip = WALL_TIP;
+                    }
                     *slot = GridSlot {
                         label: &card_labels[i],
                         detail: &card_details[i],
@@ -901,7 +913,7 @@ impl Running {
         // Tips: on the building being placed, else on the selected one when
         // its info button is on.
         let laying = match hud.armed {
-            Some(Armed::Lay(b)) => Some(self.buildings.name(b)),
+            Some(Armed::Lay(b) | Armed::Wall(b, _)) => Some(self.buildings.name(b)),
             _ => None,
         };
         let selected = picked_structure
@@ -1038,6 +1050,7 @@ impl Running {
             .or_else(|| self.ride_hint())
             .or_else(|| self.place_hint())
             .or_else(|| self.clearing_hint())
+            .or_else(|| self.wall_hint())
         {
             draw_hint(&mut self.hud.draw, screen, &text);
         }
@@ -1225,6 +1238,7 @@ impl Running {
         // A click that finds nothing to attack keeps the order armed.
         match armed {
             Armed::Lay(b) => return self.finish_laying(b),
+            Armed::Wall(b, _) => return self.finish_walling(b),
             Armed::Clear => return self.finish_clearing(),
             Armed::Power(power) => return self.finish_power(power),
             Armed::Move => match self.ground_under_cursor() {
@@ -1733,6 +1747,9 @@ fn gate_now(open: bool) -> &'static str {
         "Shut right now"
     }
 }
+
+/// The tooltip of a wall on the build menu (it replaces a building's).
+const WALL_TIP: &str = "A worker draws this wall. Click its start, then click each end or bend, a tile at a time. Right-click ends it; Shift locks 15-degree steps.";
 
 /// The picture and tooltip line of a Conquest card slot.
 fn card_look(action: Option<Action>) -> (Icon, &'static str) {

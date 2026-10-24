@@ -105,7 +105,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Ancestor Shrine | 1 | 150 / 0 | 50 s | 1,200 | Structure | 3×3 |  | Hires and revives heroes and holds the Honor Edicts. Binds the Oni at tier 3. |
 | Forge | 1 | 175 / 0 | 50 s | 1,200 | Structure | 3×3 |  | Researches weapon and armour upgrades. |
 | Watchtower | 1 | 125 / 0 | 40 s | 1,000 | Fortified | 2×2 |  | Two archers that shoot at ground and air. Range 32, 2 × 5 damage every 2 s. |
-| Palisade | 1 | 20 / 0 | 8 s | 500 | Fortified | 1×2 |  | One wall segment. Blocks movement; Fire Arrows burn it. |
+| Palisade | 1 | 10 / 0 a tile | 4 s a tile | 250 a tile | Fortified | 1×1, drawn as a line | Line | A wall you draw at any angle, priced and built a tile at a time ([26](26-fortifications.md#drawn-walls)). Blocks movement; Fire Arrows burn it. |
 | Gate | 1 | 60 / 0 | 20 s | 1,000 | Fortified | 1×3 |  | A wall segment that opens for your own and allied regiments. |
 
 ## Brood

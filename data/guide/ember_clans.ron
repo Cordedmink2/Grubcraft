@@ -149,11 +149,11 @@
         ),
         (
             name: "Palisade",
-            summary: "One wall segment that blocks movement. Cheap and quick: close a choke point or screen archers. Fire Arrows burn it and rams break it, so walls buy time rather than stop a siege.",
+            summary: "A wall you draw: click the start, move, click the end; click again to bend it, right-click to finish. Shift locks 15-degree steps. Priced and built a tile at a time, and a worker walks along it building. Fire Arrows burn it and rams break it.",
             notes: [],
             tips: [
                 (icon: Alarm, text: "Close a choke point end to end, since regiments file through a gap just one tile wide."),
-                (icon: Hammer, text: "Expect walls only to buy time: Fire Arrows burn them and rams break them."),
+                (icon: Hammer, text: "Start or end near a wall end, tower or Gate and the line snaps to it, so walls join cleanly."),
                 (icon: Move, text: "Put a Gate in any wall line your own army must pass, since a Palisade blocks movement."),
             ],
         ),

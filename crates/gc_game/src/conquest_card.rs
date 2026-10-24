@@ -129,6 +129,24 @@ impl Running {
         (self.selected.iter().copied()).filter(|&h| is_worker(regiments, units, h))
     }
 
+    /// The selected worker nearest `spot`.
+    pub fn nearest_worker(&self, spot: Vec2) -> Option<RegimentHandle> {
+        let regiments = &self.world.regiments;
+        self.selected_workers().min_by(|&a, &b| {
+            let d = |h| {
+                regiments
+                    .position(h)
+                    .map_or(f32::MAX, |p| from_fx_vec(p).distance(spot))
+            };
+            d(a).total_cmp(&d(b))
+        })
+    }
+
+    /// Whether `building` is a wall drawn as a line.
+    pub fn is_wall(&self, building: BuildingId) -> bool {
+        self.buildings.is_wall(building)
+    }
+
     /// Open or close the workers' build menu; it opens only for workers.
     /// Opening it puts down an armed order; closing it puts down a building
     /// chosen to lay.
@@ -137,7 +155,7 @@ impl Running {
             return;
         }
         self.hud.build_menu = open;
-        if open || matches!(self.hud.armed, Some(Armed::Lay(_))) {
+        if open || matches!(self.hud.armed, Some(Armed::Lay(_) | Armed::Wall(..))) {
             self.hud.armed = None;
         }
     }
@@ -212,7 +230,9 @@ impl Running {
                 Action::SetGate(mode) => label.push_str(gate_name(mode)),
             }
             let armed = match action {
-                Action::Lay(b) => self.hud.armed == Some(Armed::Lay(b)),
+                Action::Lay(b) => {
+                    matches!(self.hud.armed, Some(Armed::Lay(a) | Armed::Wall(a, _)) if a == b)
+                }
                 Action::Clear => self.hud.armed == Some(Armed::Clear),
                 // The mode it is set to now.
                 Action::SetGate(mode) => gate_mode == Some(mode),
@@ -254,6 +274,19 @@ impl Running {
                 } else {
                     self.hud.armed = Some(Armed::Clear);
                     self.say("Drag over the ground to clear.".into());
+                }
+                return true;
+            }
+            Action::Lay(b) if self.is_wall(b) => {
+                // Pressing it again puts it down.
+                if matches!(self.hud.armed, Some(Armed::Wall(a, _)) if a == b) {
+                    self.hud.armed = None;
+                } else {
+                    self.arm_wall(b);
+                    self.say(format!(
+                        "Click where the {} starts, then where it ends or bends",
+                        self.buildings.name(b)
+                    ));
                 }
                 return true;
             }
@@ -307,15 +340,7 @@ impl Running {
         let turn = self.sandbox.building_turn;
         let (width, depth) = stats.size(turn);
         let spot = buildings::centre_of(tile, width, depth);
-        let regiments = &self.world.regiments;
-        let Some(regiment) = self.selected_workers().min_by(|&a, &b| {
-            let d = |h| {
-                regiments
-                    .position(h)
-                    .map_or(f32::MAX, |p| from_fx_vec(p).distance(spot))
-            };
-            d(a).total_cmp(&d(b))
-        }) else {
+        let Some(regiment) = self.nearest_worker(spot) else {
             return;
         };
         self.order(Command::Build {

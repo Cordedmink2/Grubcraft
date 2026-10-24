@@ -20,7 +20,7 @@ use crate::production::Production;
 use crate::regiments::Regiments;
 use crate::stances::Stances;
 use crate::structures::{
-    Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, NEEDS_POWER, Refusal, Role,
+    Breaker, BuildingId, BuildingStats, CANCEL_REFUND_PERCENT, LINE, NEEDS_POWER, Refusal, Role,
     StructureHandle, Structures, Work,
 };
 use crate::terrain::{Growth, Terrain};
@@ -148,7 +148,7 @@ pub struct ConquestSetup<'a> {
 
 impl ConquestSetup<'_> {
     /// Warfield sizing from docs/10-architecture.md.
-    pub const STRUCTURES: u32 = 1024;
+    pub const STRUCTURES: u32 = 2048;
     /// Standard tempo.
     pub const STANDARD: u32 = 100;
 }
@@ -188,7 +188,7 @@ pub(crate) struct Conquest {
 }
 
 /// Whether the footprints `a` and `b` (`[x, y, w, d]`) share a tile.
-fn overlaps(a: [i32; 4], b: [i32; 4]) -> bool {
+pub(crate) fn overlaps(a: [i32; 4], b: [i32; 4]) -> bool {
     a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]
 }
 
@@ -389,6 +389,22 @@ impl Conquest {
     ) -> Result<(), Refusal> {
         self.check(building, tile, turn, nav, regs, terrain)?;
         self.may_lay(player, building)?;
+        if self.structures.buildings()[usize::from(building)].flags & LINE != 0 {
+            // Drawn, not laid: see `Conquest::lay_wall`.
+            return Err(Refusal::Unknown);
+        }
+        self.powered(player, building, tile, turn)
+    }
+
+    /// Whether a building of type `building` `player` lays at `tile`,
+    /// turned `turn`, has the power it needs, if it needs any.
+    pub(crate) fn powered(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        tile: (i32, i32),
+        turn: u8,
+    ) -> Result<(), Refusal> {
         let b = self.structures.buildings()[usize::from(building)];
         let foot = b.footprint(tile, turn);
         if b.flags & NEEDS_POWER != 0 && !self.structures.power_reaches(player, foot) {

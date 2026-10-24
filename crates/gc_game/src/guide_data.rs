@@ -119,6 +119,7 @@ enum BuildingFlag {
     Toll,
     Silences,
     Gate,
+    Line,
     #[serde(other)]
     Other,
 }
@@ -500,6 +501,9 @@ fn building_flag_text(f: BuildingFlag, b: &RBuilding) -> Option<String> {
         BuildingFlag::Gate => {
             "Gate: your side walks through, enemies don't; select it to set Auto, Locked or Open"
                 .into()
+        }
+        BuildingFlag::Line => {
+            "Drawn wall: drag it out at any angle, paid and built a tile at a time".into()
         }
         BuildingFlag::Other => return None,
     })

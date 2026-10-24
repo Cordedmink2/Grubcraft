@@ -395,6 +395,19 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(21);
             w.u8(to);
         }
+        Command::BuildWall {
+            regiment,
+            building,
+            from,
+            to,
+        } => {
+            w.u8(27);
+            w.handle(regiment);
+            w.var(u64::from(building));
+            for v in [from.0, from.1, to.0, to.1] {
+                w.var(u64::from(v as u16));
+            }
+        }
         Command::SetGate { structure, mode } => {
             w.u8(26);
             w.structure(structure);
@@ -539,6 +552,12 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             on: r.bool()?,
         },
         21 => Command::HandOver { to: r.u8()? },
+        27 => Command::BuildWall {
+            regiment: r.handle()?,
+            building: r.var_as()?,
+            from: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+            to: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+        },
         26 => Command::SetGate {
             structure: r.structure()?,
             mode: gc_sim::gates::GateMode::from_u8(r.u8()?)?,
@@ -783,6 +802,15 @@ mod tests {
                     generation: 3,
                 },
                 mode: gc_sim::gates::GateMode::Locked,
+            },
+            Command::BuildWall {
+                regiment: RegimentHandle {
+                    index: 3,
+                    generation: 1,
+                },
+                building: 1,
+                from: (-2, 7),
+                to: (30, 7),
             },
             Command::FocusTower {
                 structure: StructureHandle {

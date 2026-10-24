@@ -47,6 +47,7 @@ pub mod towers;
 pub mod veins;
 pub mod verdict;
 pub mod vision;
+pub mod walls;
 
 pub use champions::Challenge;
 use conquest::Conquest;
@@ -105,7 +106,7 @@ pub const SYSTEMS: [&str; 14] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 29;
+pub const SIM_VERSION: u32 = 30;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -690,6 +691,15 @@ pub enum Command {
         structure: StructureHandle,
         mode: gates::GateMode,
     },
+    /// Conquest: one of the issuer's workers draws a wall of type
+    /// `building` from tile `from` to tile `to`, pays for it and builds it
+    /// tile by tile (see [`walls`]).
+    BuildWall {
+        regiment: RegimentHandle,
+        building: BuildingId,
+        from: (i16, i16),
+        to: (i16, i16),
+    },
 }
 
 impl Command {
@@ -718,6 +728,7 @@ impl Command {
             | Command::UsePower { .. }
             | Command::FocusTower { .. }
             | Command::SetGate { .. }
+            | Command::BuildWall { .. }
             | Command::Rally { .. }
             | Command::HandOver { .. } => true,
             Command::SpawnRegiment { .. }
@@ -1017,6 +1028,31 @@ impl World {
             &self.regiments,
             &self.terrain,
         )
+    }
+
+    /// The tiles of a wall of type `building` that `player` would draw
+    /// from tile `from` to tile `to`, each with whether it can go up there
+    /// now, or why the whole line can't (see [`walls`]). The check
+    /// [`Command::BuildWall`] makes: it goes up only if every tile can.
+    pub fn wall_plan(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        from: (i32, i32),
+        to: (i32, i32),
+    ) -> Result<Vec<walls::WallTile>, Refusal> {
+        self.conquest
+            .as_ref()
+            .ok_or(Refusal::NoBuildings)?
+            .wall_plan(
+                player,
+                building,
+                from,
+                to,
+                &self.nav,
+                &self.regiments,
+                &self.terrain,
+            )
     }
 
     /// Whether `player` could have a worker lay a building of type
@@ -1645,6 +1681,27 @@ impl World {
                         building,
                         tile,
                         turn,
+                        &mut self.nav,
+                        &mut self.regiments,
+                        &self.terrain,
+                    ),
+                    _ => false,
+                }
+            }
+            Command::BuildWall {
+                regiment,
+                building,
+                from,
+                to,
+            } => {
+                let tile = |t: (i16, i16)| (i32::from(t.0), i32::from(t.1));
+                match (self.worker_of(pc.player, regiment), &mut self.conquest) {
+                    (Some(r), Some(c)) => c.lay_wall(
+                        pc.player,
+                        r,
+                        building,
+                        tile(from),
+                        tile(to),
                         &mut self.nav,
                         &mut self.regiments,
                         &self.terrain,

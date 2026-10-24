@@ -176,6 +176,10 @@ pub enum Refusal {
     Cooling,
     /// An Edict, and its owner has no finished Shrine to cast it from.
     NoShrine,
+    /// Something grows there: a wall's ground must be cleared first.
+    Overgrown,
+    /// The match has no room for that many more buildings.
+    NoRoom,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -204,6 +208,8 @@ pub const TOLL: u16 = 512;
 pub const SILENCES: u16 = 1024;
 /// A gate: a wall its owner's side walks through (see [`crate::gates`]).
 pub const GATE: u16 = 2048;
+/// A wall drawn as a line, a building a tile (see [`crate::walls`]).
+pub const LINE: u16 = 4096;
 /// The furthest a field or tuning reaches, in tiles.
 pub const MAX_REACH: u8 = 30;
 
@@ -290,7 +296,10 @@ impl BuildingStats {
 
     /// The same stats forced into the ranges the simulation relies on.
     pub fn sanitized(self) -> BuildingStats {
+        // A wall drawn as a line is a tile a building.
+        let line = self.width == 1 && self.depth == 1;
         BuildingStats {
+            flags: if line { self.flags } else { self.flags & !LINE },
             hp: self.hp.max(1),
             width: self.width.clamp(1, MAX_FOOTPRINT),
             depth: self.depth.clamp(1, MAX_FOOTPRINT),
@@ -376,6 +385,9 @@ pub struct StructureView {
     /// A gate open to everyone (its gates swung back); a shut one still
     /// lets its own side through unless it is Locked.
     pub open: bool,
+    /// A tile of a drawn wall: the ends of the line it was drawn in, in
+    /// tiles, `[x0, y0, x1, y1]` (None for any other building).
+    pub line: Option<[i32; 4]>,
 }
 
 impl StructureView {
@@ -617,6 +629,9 @@ pub struct Structures {
     pub(crate) gate: Vec<GateMode>,
     pub(crate) gate_door: Vec<Door>,
     pub(crate) gate_hold: Vec<u16>,
+    /// Drawn walls, by slot (see [`crate::walls`]): the ends of the line
+    /// each tile was drawn in, in tiles (zero for other buildings).
+    pub(crate) line: Vec<[i16; 4]>,
 }
 
 /// The match's building table, each made sane, and with no tier upgrade
@@ -700,6 +715,7 @@ impl Structures {
             gate: vec![GateMode::Auto; n],
             gate_door: vec![Door::default(); n],
             gate_hold: vec![0; n],
+            line: vec![[0; 4]; n],
         }
     }
 
@@ -769,6 +785,7 @@ impl Structures {
             seen: self.seen(i),
             gate: self.is_gate(i).then_some(self.gate[i]),
             open: self.gate_door[i].others,
+            line: self.is_line(i).then(|| self.line[i].map(i32::from)),
         }
     }
 
@@ -1101,6 +1118,25 @@ impl Structures {
         nav: &mut Nav,
         regs: &Regiments,
     ) -> Option<StructureHandle> {
+        let i = self.take_slot(owner, building, tile, turn)?;
+        nav.set_built(self.footprint(i), true, regs);
+        Some(self.handle(i))
+    }
+
+    /// Free building slots.
+    pub(crate) fn free_slots(&self) -> usize {
+        self.free.len()
+    }
+
+    /// Take a free slot for a finished building of `owner`'s, not yet in
+    /// the walking grid. `None` when the pool is full.
+    pub(crate) fn take_slot(
+        &mut self,
+        owner: PlayerId,
+        building: BuildingId,
+        tile: (i32, i32),
+        turn: u8,
+    ) -> Option<usize> {
         let index = self.free.pop()?;
         let i = index as usize;
         self.owner[i] = owner;
@@ -1124,8 +1160,8 @@ impl Structures {
         self.gate[i] = GateMode::Auto;
         self.gate_door[i] = Door::default();
         self.gate_hold[i] = 0;
-        nav.set_built(self.footprint(i), true, regs);
-        Some(self.handle(i))
+        self.line[i] = [0; 4];
+        Some(i)
     }
 
     /// Lay the foundation of a building for `owner`: it stands at
@@ -1141,14 +1177,18 @@ impl Structures {
         regs: &Regiments,
     ) -> Option<StructureHandle> {
         let h = self.spawn(owner, building, tile, turn, nav, regs)?;
-        let i = h.index as usize;
-        let b = self.buildings[building as usize];
+        self.lay_foundation(h.index as usize);
+        Some(h)
+    }
+
+    /// Turn building slot `i`, just taken, into a foundation to build.
+    pub(crate) fn lay_foundation(&mut self, i: usize) {
+        let b = self.buildings[self.building[i] as usize];
         self.hp[i] = (u32::from(b.hp) * HP_SCALE * FOUNDATION_PERCENT / 100).max(1);
         self.work_full[i] = u32::from(b.build_ticks) * self.build_percent;
         self.work_left[i] = self.work_full[i];
         // A larvae building built from a foundation starts empty.
         self.larvae[i] = 0;
-        Some(h)
     }
 
     /// Start building slot `i`'s tier upgrade to building type `to`.
@@ -1205,6 +1245,7 @@ impl Structures {
 
     /// Free building slot `i` (standing, or just brought to nothing).
     fn remove(&mut self, i: usize, nav: &mut Nav, regs: &Regiments) {
+        self.hand_on_wall(i, regs);
         self.shut_door(i, nav, regs);
         nav.set_built(self.footprint(i), false, regs);
         self.free_slot(i);
@@ -1213,6 +1254,28 @@ impl Structures {
     /// Whether building slot `i` is a tower (it has an attack).
     pub(crate) fn is_tower(&self, i: usize) -> bool {
         self.stats_of(i).attack.is_some()
+    }
+
+    /// Building slot `i`, about to come down, is a tile of a wall not yet
+    /// built: those on their way to build it go on to the next tile of the
+    /// wall instead (see [`Structures::next_wall_tile`]), so one tile called
+    /// off or knocked down doesn't leave the rest standing unbuilt.
+    fn hand_on_wall(&mut self, i: usize, regs: &Regiments) {
+        if !self.is_line(i) || self.finished(i) {
+            return;
+        }
+        let Some(next) = self.next_wall_tile(self.owner[i], i) else {
+            return;
+        };
+        let (here, next) = (self.handle(i), self.handle(next));
+        for r in 0..self.siege.len() {
+            if self.work[r] == Work::Build && self.siege_of(regs, r) == Some(here) {
+                self.siege[r] = Some(next);
+                self.siege_clock[r] = 0;
+                self.siege_gap[r] = Fx::MAX;
+                self.siege_stalls[r] = 0;
+            }
+        }
     }
 
     /// Mark slot `i` free, its ground already given back.
@@ -1344,8 +1407,18 @@ impl Structures {
                 // A hasted building or builder builds faster (see
                 // [`crate::powers`]).
                 if !self.build(s, u32::from(regs.steps(r))) {
-                    // Built and whole: its work is done.
-                    self.siege[r] = None;
+                    // Built and whole: its work is done, but for a wall,
+                    // whose builder goes on to the next tile of it.
+                    let next = (self.is_line(s))
+                        .then(|| self.next_wall_tile(self.owner[s], s))
+                        .flatten();
+                    match next {
+                        Some(next) => {
+                            let next = self.handle(next);
+                            self.send(regs, r, next, Work::Build);
+                        }
+                        None => self.siege[r] = None,
+                    }
                 }
                 continue;
             }
@@ -1485,6 +1558,9 @@ impl Structures {
                 h.u8(u8::from(self.growing[i]));
             }
             h.u8(self.seen[i]);
+            if self.is_line(i) {
+                self.line[i].iter().for_each(|&v| h.u16(v as u16));
+            }
             if self.stats_of(i).flags & LARVAE != 0 {
                 h.u8(self.larvae[i]);
                 h.u32(self.larva_clock[i]);

@@ -110,8 +110,11 @@ pub const BUILDING_TOLL: u16 = 512;
 pub const BUILDING_SILENCES: u16 = 1024;
 /// A gate: a wall its owner's side walks through (schema 8).
 pub const BUILDING_GATE: u16 = 2048;
+/// A wall drawn as a line: its stats are for one tile, and each tile of
+/// the line is a building of its own (docs/26, "Drawn walls").
+pub const BUILDING_LINE: u16 = 4096;
 /// Every flag there is; a record with any other bit set is refused.
-const BUILDING_FLAGS: u16 = (BUILDING_GATE << 1) - 1;
+const BUILDING_FLAGS: u16 = (BUILDING_LINE << 1) - 1;
 
 /// [`BuildingRecord::tunes`]: the nodes a building tunes (schema 4).
 pub const TUNES_NOTHING: u8 = 0;
@@ -483,6 +486,9 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     }
     if b.flags & !BUILDING_FLAGS != 0 || b.pad != [0; 3] {
         return Err("unknown building flags");
+    }
+    if b.flags & BUILDING_LINE != 0 && (b.width, b.depth) != (1, 1) {
+        return Err("a wall drawn as a line has a one-tile footprint");
     }
     let fields = b.flags & (BUILDING_POWERS_FIELD | BUILDING_VEINS) != 0;
     if fields != (b.field_tiles > 0) || b.field_tiles > MAX_REACH_TILES {

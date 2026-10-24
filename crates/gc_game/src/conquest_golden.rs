@@ -78,6 +78,11 @@ const GATE_AT: u32 = 16 * TICKS_PER_SECOND;
 const LOCK_AT: u32 = 20 * TICKS_PER_SECOND;
 const HOLD_OPEN_AT: u32 = 40 * TICKS_PER_SECOND;
 const AUTO_AT: u32 = 60 * TICKS_PER_SECOND;
+/// From when a side with a drawn wall has its last worker draw a short one
+/// by its main building, as soon as it can pay for it, and how many tiles
+/// long.
+const WALL_AT: u32 = 22 * TICKS_PER_SECOND;
+const WALL_TILES: i32 = 4;
 /// Soldiers and workers each side trains up to.
 const FIGHTERS: usize = 6;
 const WORKERS: usize = 8;
@@ -103,6 +108,8 @@ pub(crate) struct Kit {
     pub tower: Option<BuildingId>,
     /// Its gate, if it builds one.
     pub gate: Option<BuildingId>,
+    /// Its wall drawn as a line, if it builds one.
+    pub wall: Option<BuildingId>,
     /// What a worker, a soldier and the upgrade cost: Grub, Marrow and
     /// supply.
     pub worker_cost: [u32; 3],
@@ -139,7 +146,9 @@ impl Kit {
             .map(|u| u as UnitId);
         let plain = ids(&|i| {
             let s = table.stats[i];
-            s.role != Role::Main && s.upgrades_from.is_none() && s.tier <= 1
+            // Not walls or gates: drawn walls are laid by the line, and the
+            // host puts the gate up.
+            s.role != Role::Main && s.role != Role::Wall && s.upgrades_from.is_none() && s.tier <= 1
         });
         let barracks = *plain
             .iter()
@@ -167,6 +176,9 @@ impl Kit {
         let gate = ids(&|i| table.stats[i].flags & gc_sim::structures::GATE != 0)
             .first()
             .copied();
+        let wall = ids(&|i| table.stats[i].flags & gc_sim::structures::LINE != 0)
+            .first()
+            .copied();
         let building_cost = |b: u16| {
             [
                 u32::from(stats(b).cost_grub),
@@ -184,6 +196,7 @@ impl Kit {
         };
         Kit {
             gate,
+            wall,
             main,
             keep,
             worker,
@@ -222,6 +235,8 @@ struct Side {
     edicts: u8,
     /// Its tower has been told whom to shoot.
     focused: bool,
+    /// The worker drawing its wall, left to it until the wall is up.
+    waller: Option<RegimentHandle>,
 }
 
 /// The Clans' Shrine and their three built Edicts, as the first side plays
@@ -429,7 +444,7 @@ impl Match {
                 let building =
                     i < builders && t >= LAY_FROM && !barracks.is_some_and(|b| b.finished())
                         || i == 0 && self.own(p, Some(k.house)).iter().any(|h| !h.finished());
-                if building || self.world.gathers_at(w).is_some() {
+                if building || self.walling(p, w) || self.world.gathers_at(w).is_some() {
                     continue;
                 }
                 let node = if trading {
@@ -643,6 +658,7 @@ impl Match {
         }
         self.tower(p, out);
         self.gate(p, out);
+        self.wall(p, &workers, out);
         if p == 1 {
             self.powers(p, out);
         } else {
@@ -743,6 +759,60 @@ impl Match {
                 mode,
             }));
         }
+    }
+
+    /// Worker `w` is drawing side `p`'s wall and some of it isn't up yet.
+    fn walling(&self, p: PlayerId, w: RegimentHandle) -> bool {
+        self.sides[usize::from(p)].waller == Some(w)
+            && self
+                .own(p, self.kits[usize::from(p)].wall)
+                .iter()
+                .any(|s| !s.finished())
+    }
+
+    /// Side `p`'s drawn wall: once it can pay for it, its last worker draws
+    /// [`WALL_TILES`] tiles of it, west to east, on the first line that fits a few tiles out from
+    /// its main building.
+    fn wall(&mut self, p: PlayerId, workers: &[RegimentHandle], out: &mut Vec<PlayerCommand>) {
+        let Some(b) = self.kits[usize::from(p)].wall else {
+            return;
+        };
+        // After the spare building is called off, so as not to take its
+        // worker or its Grub.
+        let side = self.sides[usize::from(p)];
+        if self.world.tick_count() < WALL_AT || !side.called_off || side.waller.is_some() {
+            return;
+        }
+        let (Some(main), Some(&w)) = (self.main_of(p), workers.last()) else {
+            return;
+        };
+        let foot: Foot = [
+            main.tile.0,
+            main.tile.1,
+            i32::from(main.width),
+            main.depth.into(),
+        ];
+        let fits = |from: (i32, i32), to: (i32, i32)| {
+            self.world.wall_plan(p, b, from, to).is_ok_and(|plan| {
+                plan.len() == WALL_TILES as usize && plan.iter().all(|t| t.fits.is_ok())
+            })
+        };
+        let Some(from) =
+            conquest::ring(foot, 6).find(|&(x, y)| fits((x, y), (x + WALL_TILES - 1, y)))
+        else {
+            return;
+        };
+        let to = (from.0 + WALL_TILES - 1, from.1);
+        out.push(PlayerCommand {
+            player: p,
+            command: Command::BuildWall {
+                regiment: w,
+                building: b,
+                from: (from.0 as i16, from.1 as i16),
+                to: (to.0 as i16, to.1 as i16),
+            },
+        });
+        self.sides[usize::from(p)].waller = Some(w);
     }
 
     /// Side `p`'s chord and powers: three Resonators put up, then
@@ -1057,6 +1127,14 @@ mod tests {
             let side = m.sides[usize::from(p)];
             assert!(side.helped && side.called_off);
             assert!(side.charged, "side {p} found the other's main building");
+            if let Some(wall) = k.wall {
+                let tiles = m.own(p, Some(wall));
+                assert!(side.waller.is_some(), "side {p} drew its wall");
+                assert!(
+                    tiles.len() == WALL_TILES as usize && tiles.iter().all(StructureView::finished),
+                    "side {p} built all its wall: {tiles:?}"
+                );
+            }
         }
         assert_eq!(m.sides[1].powers, 3, "side 1 used its powers");
         assert_eq!(m.sides[0].edicts, 3, "side 0 used its Edicts");

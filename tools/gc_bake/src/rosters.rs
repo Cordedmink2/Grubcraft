@@ -125,6 +125,9 @@ pub enum BuildingFlag {
     Silences,
     /// A gate: a wall its owner's side walks through (docs/26, "Gates").
     Gate,
+    /// A wall drawn as a line, its stats for one tile (docs/26, "Drawn
+    /// walls").
+    Line,
 }
 
 #[derive(Deserialize)]
