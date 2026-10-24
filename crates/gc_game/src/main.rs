@@ -5862,8 +5862,20 @@ impl Running {
             });
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));
         let fallen = self.aftermath.standards(|p| ground_of(map, p));
-        self.scenery
-            .set_extras(nodes.chain(banners).chain(falling).chain(fallen));
+        let stumps = (!self.commander)
+            .then(|| {
+                let reach = scenery::stump_reach(distance);
+                self.scars.stumps(focus, reach, |p| ground_of(map, p))
+            })
+            .into_iter()
+            .flatten();
+        self.scenery.set_extras(
+            nodes
+                .chain(banners)
+                .chain(falling)
+                .chain(fallen)
+                .chain(stumps),
+        );
         let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
         self.renderer.set_scenery_frame(instances, batches);
     }

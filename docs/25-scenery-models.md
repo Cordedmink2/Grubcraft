@@ -1,6 +1,6 @@
 # 25 · Scenery models
 
-Scenery is the trees, bushes, grass and rocks that dress the field. This document covers its 28 3D models (26 placed by land, and the two gathering spots of Conquest): what they are, the lands they grow on, how they are made and packed, and what they do not do. The look itself is described in [09 · Art and Audio](09-art-and-audio.md).
+Scenery is the trees, bushes, grass and rocks that dress the field. This document covers its 30 3D models (26 placed by land, the two gathering spots of Conquest, and the two stumps felled trees leave): what they are, the lands they grow on, how they are made and packed, and what they do not do. The look itself is described in [09 · Art and Audio](09-art-and-audio.md).
 
 ## What it is
 
@@ -45,6 +45,8 @@ Lands are the land sets in `crates/gc_game/src/scenery.rs`. Height is the `heigh
 | `bone-ribs` | rock | Waste | 1.74 | 538 | 338 | 116 | 34 |
 | `grub-seep` | rock | Conquest gathering spot, not placed by land | 0.36 | 942 | 339 | 80 | 39 |
 | `marrow-vein` | rock | Conquest gathering spot, not placed by land | 1.10 | 755 | 301 | 90 | 40 |
+| `stump-broad` | rock | Left where a felled broadleaf stood, not placed by land | 0.49 | 537 | 339 | 115 | 6 |
+| `stump-conifer` | rock | Left where a felled conifer stood, not placed by land | 0.61 | 492 | 338 | 115 | 6 |
 
 Sway (how far the top moves in a gust, at scale 1) is 0.12 tiles for trees, 0.05 for bushes, 0.10 for grass and none for rocks.
 
@@ -71,6 +73,12 @@ Conquest's gathering spots (the economy's nodes, see [04 · Economy](04-economy.
 
 A full spot is drawn at 1.2 times its baked size, about 2.5 tiles across (workers gather within 2 tiles of its centre). It shrinks to 40% of that as it runs down, is drawn a little brighter than baked while it holds, and is dark once only dregs are left. Each spot is turned by where it lies, so no two look the same way. They are culled and given levels of detail like big rocks, but they are always drawn first and at any distance. `gc_game::scenery::Scenery::set_extras` takes them each frame, with the morale standards below. If the pack lacks either model, the game falls back to the old glowing boxes. Their Blender scripts are `seep.py` and `vein.py`, and their brief is `/mnt/project-files/design/scenery/NODES-BRIEF.md`.
 
+## Stumps
+
+When workers fell a tile of woods or thicket ([32](32-changing-land.md#what-a-cleared-tile-becomes)), each tree on it leaves a stump where it stood: a cut trunk with a pale ring-marked top, a splintered edge and a few roots flaring into the ground. `stump-broad` is the stump of oaks, birches and willows (grey-brown bark, tan wood) and `stump-conifer` of pines, fir, crag pines and snags (red-brown bark, pale yellow wood). Bushes and grass leave nothing. A stump keeps its tree's turn, scale and tint, so a glade shows the size of the wood that stood there.
+
+`gc_game::scars::ScarView::stumps_left` records them as the tile is felled (`clearing.rs` calls it just before the standing scenery is removed), keeping the newest 20,000 of a match, and `stumps` hands those within the bushes' reach of the camera (55 tiles plus 1.1 a unit of zoom) to `Scenery::set_extras` each frame with the standards above, at most 8,000 of them. A stump is hidden if a building has since been built on its tile, as standing scenery is, and in the Commander View. Stumps are not sent over the network or saved: each machine records every tile the simulation clears while it is running, like the other ground marks ([35](35-ground-marks.md)) (fogged ones too). The felling demo leaves none. Their Blender script is `stumps.py`.
+
 ## Morale standards
 
 A shaken regiment plants a standard at its centre, so its nerve reads from the field without the old blinking square:
@@ -83,7 +91,7 @@ The cloth is baked near-white and tinted with the owner's colour (halved, a thir
 
 ## Pipeline
 
-1. **Blender scripts.** The models are built in Blender from code, using Blender's Python module (`bpy`), in the shared folder `/mnt/project-files/design/scenery/source/`. `skit.py` is the shared kit. `trees.py`, `trees_more.py`, `bushes.py`, `grass.py` and `rocks.py` build the models of each family, `seep.py` and `vein.py` the gathering spots, and `banners.py` the morale standards. Each script takes `--only <name>` to rebuild a single model.
+1. **Blender scripts.** The models are built in Blender from code, using Blender's Python module (`bpy`), in the shared folder `/mnt/project-files/design/scenery/source/`. `skit.py` is the shared kit. `trees.py`, `trees_more.py`, `bushes.py`, `grass.py` and `rocks.py` build the models of each family, `seep.py` and `vein.py` the gathering spots, `stumps.py` the stumps, and `banners.py` the morale standards. Each script takes `--only <name>` to rebuild a single model.
 2. **The glb.** Each model is written to `/mnt/project-files/assets-src/grubcraft/scenery/<name>/<name>.glb`. The file holds four joined meshes, `<name>_LOD0` to `<name>_LOD3`, with the origin at the base and vertex colours only. Beside it sit `facts.json` (name, family, height, radius and triangles per level) and `review.png`, which shows the four levels at one scale.
 3. **The model list.** `assets-src/scenery.ron` lists every model in pack order: its name, its glb (`shared:grubcraft/scenery/<name>/<name>.glb`), its family and its sway.
 4. **The bake.** `cargo run --release -p gc_scenebake` reads the list and the glbs and writes `assets/scenery.pak` and `assets/scenery.manifest`. It also bakes close-range ambient occlusion per vertex into the spare normal byte (`tools/gc_scenebake/src/occlusion.rs` says why and how) so the shader can darken the creases between a crown's lobes, the inside of a bush and the foot of a tuft. It refuses a level over its family's triangle budget (tree 2,500 / 900 / 300 / 80, bush 700 / 250 / 90 / 30, grass 160 / 60 / 24 / 8, rock 1,000 / 350 / 120 / 40, pebbles 300 / 120 / 40 / 12). It also refuses a level with more triangles than the one before it, and a model that reaches past 8 tiles from its origin. `--allow-missing` skips glbs that are not made yet, for development.
@@ -103,11 +111,11 @@ Added 2026-10-23, render only, without re-baking the pack. The shader (`scenery.
 
 | Surface | Models | Texture |
 |---|---|---|
-| Broadleaf bark and leaves | `oak-a`, `oak-b`, `birch`, `willow` | Bark001 (bark), Moss002 (leaves) |
-| Conifer bark and needles, dead wood | `pine-a`, `pine-b`, `thicket-fir`, `crag-pine`, `snag` | Bark014 (bark), Moss002 (needles) |
+| Broadleaf bark and leaves | `oak-a`, `oak-b`, `birch`, `willow`, `stump-broad` | Bark001 (bark), Moss002 (leaves) |
+| Conifer bark and needles, dead wood | `pine-a`, `pine-b`, `thicket-fir`, `crag-pine`, `snag`, `stump-conifer` | Bark014 (bark), Moss002 (needles) |
 | Foliage | every bush and every grass | Moss002 |
 | Stone | `boulder`, `crag`, `slab` | Rock035, the same as the cliffs |
 | Mossy stone | `mossy-boulder` | Rock035, with Moss002 on what faces up |
 | None | `pebbles`, `bone-spire`, `bone-ribs`, gathering spots, banners | |
 
-A tree's vertices are bark where their baked colour (before the instance's tint) is not green and leaves where it is. A later re-bake should carry the kind and the bark or leaf choice per vertex in the vertex's remaining spare field (`_pad`; the normal's fourth byte now holds occlusion), instead of the game matching model names and guessing from colour. Which kind a model gets is `Model::detail` in `gc_game/src/scenery.rs`. A new model with no entry fails to compile, so none is forgotten. Stumps and cleared ground ([27](27-living-land.md), idea 22) will use the bark kinds.
+A tree's vertices are bark where their baked colour (before the instance's tint) is not green and leaves where it is. A later re-bake should carry the kind and the bark or leaf choice per vertex in the vertex's remaining spare field (`_pad`; the normal's fourth byte now holds occlusion), instead of the game matching model names and guessing from colour. Which kind a model gets is `Model::detail` in `gc_game/src/scenery.rs`. A new model with no entry fails to compile, so none is forgotten. Stumps use the bark kinds of the trees they come from.

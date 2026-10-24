@@ -35,8 +35,8 @@ pub fn load(renderer: &mut gc_render::Renderer) -> Result<SceneryModels, String>
 }
 
 /// At most this many extra models (gathering spots, morale banners, trees
-/// coming down) are drawn a frame, so they never crowd the scenery out of the buffer.
-const MAX_EXTRAS: usize = 4096;
+/// coming down, stumps) are drawn a frame, so they never crowd the scenery out of the buffer.
+const MAX_EXTRAS: usize = 16384;
 
 /// Tiles per chunk side.
 const CHUNK: u32 = 16;
@@ -142,6 +142,8 @@ catalogue! {
     BoneRibs "bone-ribs" Rock 1 true NONE,
     GrubSeep "grub-seep" Rock 1 true NONE,
     MarrowVein "marrow-vein" Rock 1 true NONE,
+    StumpBroad "stump-broad" Rock 1 true BROADLEAF,
+    StumpConifer "stump-conifer" Rock 1 true CONIFER,
     BannerWavering "banner-wavering" Tree 1 true NONE,
     BannerRouting "banner-routing" Tree 1 true NONE,
     BannerShattered "banner-shattered" Tree 1 true NONE,
@@ -166,11 +168,20 @@ struct Info {
 
 /// Where each named model sits in the scenery pack (`None`: the pack
 /// lacks it, and nothing of that name is placed).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SceneryModels {
     ids: [Option<u16>; Model::COUNT],
     /// Per model of the pack.
     info: Vec<Info>,
+}
+
+impl Default for SceneryModels {
+    fn default() -> Self {
+        SceneryModels {
+            ids: [None; Model::COUNT],
+            info: Vec::new(),
+        }
+    }
 }
 
 impl SceneryModels {
@@ -478,6 +489,30 @@ pub fn turn_of(dir: Vec2) -> u8 {
     (dir.y.atan2(dir.x) / std::f32::consts::TAU * 256.0).round() as i32 as u8
 }
 
+/// The stump a felled `tree` leaves, if it leaves one.
+pub fn stump_of(tree: Model) -> Option<Model> {
+    match tree {
+        Model::OakA | Model::OakB | Model::Birch | Model::Willow => Some(Model::StumpBroad),
+        Model::PineA | Model::PineB | Model::ThicketFir | Model::CragPine | Model::Snag => {
+            Some(Model::StumpConifer)
+        }
+        _ => None,
+    }
+}
+
+impl Model {
+    /// A stump left by a felled tree.
+    pub fn is_stump(self) -> bool {
+        matches!(self, Model::StumpBroad | Model::StumpConifer)
+    }
+}
+
+/// How far from the camera's ground point stumps are drawn, in tiles: as
+/// far as the bushes and rocks, which stand among them.
+pub fn stump_reach(distance: f32) -> f32 {
+    REACH_NEAR[1] + distance * REACH_PER_ZOOM[1]
+}
+
 /// The unit direction on the map of a turn of `turn` 256ths.
 pub fn facing_of(turn: u8) -> Vec2 {
     Vec2::from_angle(f32::from(turn) / 256.0 * std::f32::consts::TAU)
@@ -715,13 +750,19 @@ impl Scenery {
     /// The extra models to draw with the next frames, replacing the last
     /// list. Those whose model the pack lacks are dropped.
     pub fn set_extras(&mut self, extras: impl Iterator<Item = Extra>) {
-        let models = &self.models;
-        self.extras.clear();
-        self.extras.extend(
+        // A stump is hidden under a building, as the scenery is.
+        let mut kept = std::mem::take(&mut self.extras);
+        kept.clear();
+        kept.extend(
             extras
-                .filter(|e| models.id(e.model).is_some())
+                .filter(|e| {
+                    let stump = e.model.is_stump();
+                    let tile = (e.at.x.floor() as i32, e.at.z.floor() as i32);
+                    self.models.id(e.model).is_some() && !(stump && self.occupied_at(tile))
+                })
                 .take(MAX_EXTRAS),
         );
+        self.extras = kept;
     }
 
     /// How tall `model` is as baked, in tiles (0 if the pack lacks it).

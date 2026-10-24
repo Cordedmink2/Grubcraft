@@ -49,7 +49,7 @@ Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model fo
 
 ### Not yet
 
-- A log pile and a stump where a tree stood (stumps are the ground thread's, T8, [32](32-changing-land.md#what-a-cleared-tile-becomes); log piles come with stage 3). Until then a hauled tree shrinks away.
+- A log pile where a tree stood (log piles come with stage 3). The stump is built: the ground thread leaves one where each felled tree stood ([25](25-scenery-models.md#stumps)), and a hauled tree still shrinks away.
 - A proper axe clip (the animation engine), and the thud and crack of a tree (the soundscape thread's hit sounds).
 - Faction twists ([32](32-changing-land.md#faction-twists)): burning, shattering and eating are built by the changing-land thread; their pictures (fire on a burning tree, crystal shards, Gnawers chewing) join this stage once they exist.
 

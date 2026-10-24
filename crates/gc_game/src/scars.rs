@@ -12,7 +12,10 @@ use std::time::{Duration, Instant};
 use gc_render::Renderer;
 use gc_sim::events::Event;
 use gc_sim::{Growth, PlayerId, World};
-use glam::Vec2;
+
+use glam::{Vec2, Vec3};
+
+use crate::scenery::{self, Extra, Model, Stood};
 
 /// Wear builds this often.
 const EVERY: Duration = Duration::from_millis(250);
@@ -27,6 +30,20 @@ const HEAL_EVERY: Duration = Duration::from_secs(5);
 /// How strongly felled ground is marked, by what stood on it.
 const SCRUB: u8 = 150;
 const WOODS: u8 = 255;
+/// Stumps are kept for this many felled trees (the oldest go first) and at
+/// most `MAX_SHOWN` are drawn a frame, so a wide view of a big clearing
+/// cannot crowd out the rest of the scenery.
+const MAX_STUMPS: usize = 20_000;
+const MAX_SHOWN: usize = 8_000;
+
+/// What a felled tree left: a stump where it stood, as it stood.
+struct Stump {
+    model: Model,
+    at: Vec2,
+    turn: u8,
+    scale: f32,
+    tint: [u8; 3],
+}
 
 #[derive(Default)]
 pub struct ScarView {
@@ -40,6 +57,7 @@ pub struct ScarView {
     healed: Option<Instant>,
     /// The grid differs from what the renderer holds.
     dirty: bool,
+    stumps: Vec<Stump>,
 }
 
 impl ScarView {
@@ -50,6 +68,49 @@ impl ScarView {
             dirty: true,
             ..Self::default()
         };
+    }
+
+    /// Leave a stump for each of `trees`, the ones about to come down.
+    pub fn stumps_left(&mut self, trees: impl Iterator<Item = Stood>) {
+        for t in trees.filter(|t| t.tree) {
+            if let Some(model) = scenery::stump_of(t.model) {
+                if self.stumps.len() >= MAX_STUMPS {
+                    self.stumps.drain(..MAX_STUMPS / 10);
+                }
+                let [r, g, b, _] = t.tint;
+                self.stumps.push(Stump {
+                    model,
+                    at: t.at,
+                    turn: t.turn,
+                    scale: t.scale,
+                    tint: [r, g, b],
+                });
+            }
+        }
+    }
+
+    /// The stumps within `reach` tiles of `focus` as scenery extras, on
+    /// `ground`.
+    pub fn stumps(
+        &self,
+        focus: Vec2,
+        reach: f32,
+        ground: impl Fn(Vec2) -> f32,
+    ) -> impl Iterator<Item = Extra> {
+        self.stumps
+            .iter()
+            .filter(move |s| s.at.distance_squared(focus) < reach * reach)
+            .take(MAX_SHOWN)
+            .map(move |s| Extra {
+                model: s.model,
+                at: Vec3::new(s.at.x, ground(s.at), s.at.y),
+                turn: s.turn,
+                scale: s.scale,
+                tint: s.tint,
+                phase: 0,
+                lean: 0,
+                fall: 0,
+            })
     }
 
     /// Mark the tiles the simulation cleared in the last tick as felled.
@@ -220,5 +281,56 @@ mod tests {
         assert!(v.dirty);
         v.reset();
         assert!(v.grid.is_empty());
+    }
+
+    fn stood(model: Model, tree: bool, at: Vec2) -> Stood {
+        Stood {
+            model,
+            at,
+            turn: 7,
+            scale: 1.2,
+            tint: [10, 20, 30, 99],
+            tree,
+        }
+    }
+
+    #[test]
+    fn felled_trees_leave_stumps_but_bushes_and_grass_do_not() {
+        let mut v = ScarView::default();
+        v.stumps_left(
+            [
+                stood(Model::OakA, true, Vec2::new(5.0, 5.0)),
+                stood(Model::PineB, true, Vec2::new(6.0, 5.0)),
+                stood(Model::OakB, false, Vec2::new(7.0, 5.0)),
+            ]
+            .into_iter(),
+        );
+        let near: Vec<Extra> = v.stumps(Vec2::new(5.0, 5.0), 70.0, |_| 2.0).collect();
+        assert_eq!(near.len(), 2);
+        assert_eq!(near[0].model, Model::StumpBroad);
+        assert_eq!(near[1].model, Model::StumpConifer);
+        // Where the tree stood, as it stood, without the wind phase.
+        assert_eq!(near[0].at, Vec3::new(5.0, 2.0, 5.0));
+        assert_eq!(
+            (near[0].turn, near[0].scale, near[0].tint),
+            (7, 1.2, [10, 20, 30])
+        );
+        assert_eq!(near[0].phase, 0);
+        // Far from the camera they are left out; a new map forgets them.
+        assert_eq!(v.stumps(Vec2::new(500.0, 5.0), 70.0, |_| 0.0).count(), 0);
+        v.reset();
+        assert_eq!(v.stumps(Vec2::new(5.0, 5.0), 70.0, |_| 0.0).count(), 0);
+    }
+
+    #[test]
+    fn the_oldest_stumps_go_when_too_many_are_kept() {
+        let mut v = ScarView::default();
+        let at = |i: usize| Vec2::new(i as f32 * 0.001, 0.0);
+        let trees = (0..MAX_STUMPS + 10).map(|i| stood(Model::Birch, true, at(i)));
+        v.stumps_left(trees);
+        assert!(v.stumps.len() <= MAX_STUMPS && v.stumps.len() > MAX_STUMPS / 2);
+        // The newest is still there; the first is not.
+        assert_eq!(v.stumps.last().map(|s| s.at), Some(at(MAX_STUMPS + 9)));
+        assert!(v.stumps.first().is_some_and(|s| s.at != at(0)));
     }
 }

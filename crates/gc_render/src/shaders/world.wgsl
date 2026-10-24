@@ -672,8 +672,12 @@ fn habitat_ground(pattern: u32, xz: vec2<f32>, px: f32) -> Habitat {
             }
             let off = (vec2<f32>(hash2(cell + vec2<f32>(3.0, 9.0)), hash2(cell + vec2<f32>(13.0, 2.0))) - 0.5) * 0.4;
             let bloom = 1.0 - smoothstep(0.1, 0.22, length(fract(grain) - 0.5 - off));
-            r.albedo = petal;
-            r.k = max(bloom * step(0.4, hash2(cell)) * (0.5 + 0.5 * fine), drift * 0.12) * (0.4 + 0.6 * drift);
+            // The wash is one colour across the drift; only the blooms take
+            // their cell's petal, or each cell would show as a tinted square.
+            let flower = bloom * step(0.4, hash2(cell)) * (0.5 + 0.5 * fine);
+            let wash = srgb_to_linear(vec3<f32>(0.62, 0.6, 0.3));
+            r.albedo = mix(wash, petal, smoothstep(0.0, 0.3, flower));
+            r.k = max(flower, drift * 0.12) * (0.4 + 0.6 * drift);
         }
         case GROUND_HEATHER: {
             let patch_ = smoothstep(0.45, 0.65, fbm(xz * 0.35 + vec2<f32>(4.0, 13.0)));

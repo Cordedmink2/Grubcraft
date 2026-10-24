@@ -6,7 +6,7 @@ is trodden into bare tracks that heal over a few minutes. This is idea 2 (the
 world that remembers, render side) and the ground half of idea 22 (clearing
 land, [32](32-changing-land.md)). Scorch (the Concord's burning, a planned
 hook from the clearing twists) has a channel waiting and nothing writing it
-yet.
+yet. Felled trees also leave stumps ([25](25-scenery-models.md#stumps)).
 
 ## What is drawn
 
@@ -65,9 +65,7 @@ adapter's own limit (every desktop GPU we target allows 128 or more).
 
 ## Not yet
 
-- Stumps and a glade look for felled tiles (a Sonnet-built scenery model).
 - Scorch for Concord-cleared tiles, when the clearing twists land (the G
   channel is ready).
-- Habitat ground materials ([27](27-living-land.md)) and moving scenery onto
-  the shared detail textures.
+- Moving scenery onto the shared detail textures.
 - Churn and blood for fights beyond bare wear.

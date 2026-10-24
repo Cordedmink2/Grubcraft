@@ -35,6 +35,9 @@
         // (not placed by land): a Grub seep and a Marrow vein.
         (name: "grub-seep", source: "shared:grubcraft/scenery/grub-seep/grub-seep.glb", family: "rock", sway: 0.0),
         (name: "marrow-vein", source: "shared:grubcraft/scenery/marrow-vein/marrow-vein.glb", family: "rock", sway: 0.0),
+        // What a felled tree leaves behind.
+        (name: "stump-broad", source: "shared:grubcraft/scenery/stump-broad/stump-broad.glb", family: "rock", sway: 0.0),
+        (name: "stump-conifer", source: "shared:grubcraft/scenery/stump-conifer/stump-conifer.glb", family: "rock", sway: 0.0),
         // Morale standards, planted at a shaken regiment's centre.
         (name: "banner-wavering", source: "shared:grubcraft/scenery/banner-wavering/banner-wavering.glb", family: "tree", sway: 0.2),
         (name: "banner-routing", source: "shared:grubcraft/scenery/banner-routing/banner-routing.glb", family: "tree", sway: 0.2),
