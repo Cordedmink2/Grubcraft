@@ -21,7 +21,7 @@ Mario wants a world that looks lived in: a base where people are doing things, l
 |---|---|---|
 | 1 | **Clearing land on screen** (idea 22). Workers swing at the tile they clear, throwing chips or leaves. When the tile is cleared its trees tip over away from the cutter, dust and leaves fly where the crown lands, the trunks lie a while and are hauled off, and bushes are torn up. | Particles (done), scenery lean (this stage) |
 | 2 | **Living touches without models** (built, except mist). Fireflies at dusk over fens and wet woods, pollen in meadows, dust devils in the waste, leaves falling in old woods. Mist pooling on low ground is left to the weather stage of the lighting thread. Particle recipes on a habitat sample of the ground round the camera, as the sound beds do ([09](09-art-and-audio.md)). | Particles, `Map.habitat` (done), lighting looks (done) |
-| 3 | **Busy bases** (idea 10; hearth smoke, lit windows and faction glows built as 3a, the rest not yet). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles and stacked supplies beside the halls, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
+| 3 | **Busy bases** (idea 10; hearth smoke, lit windows and faction glows built as 3a, walkers between buildings as 3b, the rest not yet). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles and stacked supplies beside the halls, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
 | 4 | **Wildlife** (idea 3). Flocks that lift from woods when an army marches by and settle again, carrion birds over a battlefield's dead, moths round Grub seeps, butterflies in flower meadows, grazers that bolt from soldiers, fish rises and dragonflies over water. Each land has its own fauna. Creatures are a picture: soldiers walk through them. | Animal models and clips on the animation engine (T5) |
 | 5 | **Villagers** (idea 3). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
 
@@ -91,6 +91,26 @@ Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model fo
 - `gc_render::effects::ambient::lamp` is a steady additive glow that breathes; smoke is the existing `smoke` recipe made thin and pale. `dusk` is `touches::dusk_of(sun)`, the same dusk the fireflies use, from the look's sun elevation.
 - Cost: a few dozen particles per visible building at most; thinned by the Graphics preset like all effects.
 
-### Not yet (stage 3b)
+### Not yet
 
-- Workers and porters walking between a base's buildings, log piles and stacked supplies, carts on the road from a seep to its granary, forge sparks, and window light that really is a model glow (the lights are particles hung just outside the walls for now, not in the windows' own frames).
+- Log piles and stacked supplies, carts on the road from a seep to its granary, porters with a proper carrying walk (animation engine stages 3 to 5), forge sparks, and window light that really is a model glow (the lights are particles hung just outside the walls for now, not in the windows' own frames).
+
+## Stage 3b as built: walkers between buildings
+
+*2026-10-24. Game only; nothing in the simulation, and no new model.*
+
+### What a player sees
+
+- Each finished, visible hall, outpost, workplace, barracks, tech building or heroes' building has one worker of its faction who now and then walks to another building of the same owner within 16 tiles, stands at its door for four to thirteen seconds, and walks home. They use the faction's own worker model with the ordinary walk and idle clips, in the owner's colour.
+- They are a picture. They cannot be selected or hurt, cost no supply, block nobody, and are not in the replay or the network. A trip, out or home, is only taken along a straight way that stays on dry ground, off steep slopes, out of tiles with trees (rocks are not checked; they mostly stand on slopes), and a quarter tile clear of every building and wall; otherwise the worker stays put and tries again later. A building that goes up in a walker's way, or against his door, makes him vanish rather than walk through it (he comes back at his door once it is clear).
+- Only buildings the viewer sees, on screen and within 60 tiles of the camera focus, have walkers. A walker whose home goes out of view or is destroyed is forgotten at once, so an unwatched base costs nothing; at most 160 walk at once. A door with a building against it gets no walker.
+
+### How it works
+
+- `gc_game::ambient::walkers::Walkers::advance(dt, homes, walkable, climb)` is called from the effects block each frame. `homes` is built by `Running::walker_homes` from the siege module's `Look` and the structure views: footprint, door (half a tile past the wall, the way the building faces), role, owner and the faction's worker model (`buildings::Looks::worker_of`). Walls, towers and buildings still going up are in the list as obstacles only. A walker's id is its home's handle, so a rebuilt building starts afresh.
+- Straight-line paths only, checked every 0.4 tile when a trip is picked: no pathfinding, so nothing is searched and nothing can get stuck. `push_building_models` draws each walker as a `SoldierInstance`.
+- Own xorshift generator, floats and frame time, as the rest of the ambient code.
+
+### Not yet
+
+- Porters with loads (they need the animation engine's carry), walkers that stop to talk or take a different route round a building, and wildlife and villagers (stages 4 and 5, which need models).

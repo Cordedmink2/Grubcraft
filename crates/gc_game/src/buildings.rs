@@ -386,10 +386,15 @@ impl Looks {
         }
     }
 
+    /// The worker model of a building type's faction, if it has one.
+    pub fn worker_of(&self, building: BuildingId) -> Option<usize> {
+        *self.crews.get(usize::from(building))?
+    }
+
     /// The worker model shown at work on `s`'s tier upgrade, if any.
     pub fn crew_of(&self, s: &StructureView) -> Option<usize> {
         s.upgrading?;
-        *self.crews.get(usize::from(s.building))?
+        self.worker_of(s.building)
     }
 }
 

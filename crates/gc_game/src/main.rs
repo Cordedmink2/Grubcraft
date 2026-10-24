@@ -3650,6 +3650,31 @@ impl Running {
                 }
             }
         }
+        // Workers walking between buildings, near the camera.
+        {
+            let showing = live
+                && !self.menu_open
+                && self.viewer.is_none()
+                && view_distance < ambient::walkers::REACH;
+            let homes = if showing {
+                self.walker_homes(&cull, view_focus)
+            } else {
+                Vec::new()
+            };
+            let (hm, scenery) = (&self.heightmap, &self.scenery);
+            let dry = hm.water_level() + ambient::walkers::SHORE;
+            self.ambient.walkers.advance(
+                dt.as_secs_f32() * fx_speed,
+                &homes,
+                |p| {
+                    hm.height_at(p.x, p.y) > dry
+                        && !scenery
+                            .standing((p.x.floor() as i32, p.y.floor() as i32))
+                            .any(|s| s.tree)
+                },
+                |a, b| (hm.height_at(b.x, b.y) - hm.height_at(a.x, a.y)).abs(),
+            );
+        }
         let particles = self.effects.frame(
             dt.as_secs_f32() * fx_speed,
             density,
@@ -4548,6 +4573,7 @@ impl Running {
         self.arrows = field::Arrows::new(field::MAX_STUCK);
         self.siege.clear();
         self.aftermath.clear();
+        self.ambient.walkers.clear();
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
@@ -6220,6 +6246,88 @@ impl Running {
                 });
             }
         }
+        for w in self.ambient.walkers.seen() {
+            let [r, g, b] = color_of(&self.parties, w.owner);
+            let foot = Vec3::new(w.pos.x, ground(w.pos.x, w.pos.y), w.pos.y);
+            let Some(lod) = art.view.place(art.heights[w.worker], foot) else {
+                continue;
+            };
+            let action = if w.walking {
+                Action::Walk
+            } else {
+                Action::Idle
+            };
+            let Some(pose) = art.clips.pose(w.worker, action, time + w.phase * 4.0) else {
+                continue;
+            };
+            art.buckets[w.worker * LODS + lod].push(SoldierInstance {
+                pos: w.pos.to_array(),
+                facing: w.facing.to_array(),
+                frames: pose.rows,
+                flags: models::pose_flags(pose, 0, false),
+                color: [r, g, b, gc_render::TONE_NEUTRAL],
+                lift: 0.0,
+                scale: 1.0,
+                ..Default::default()
+            });
+        }
+    }
+
+    /// The buildings walkers start from, go to and walk round: those the
+    /// viewer sees within [`ambient::walkers::REACH`] of `focus`, with the
+    /// ones on screen the only ones to live at or be visited.
+    fn walker_homes(&self, cull: &gc_render::Cull, focus: Vec2) -> Vec<ambient::walkers::Home> {
+        use gc_sim::structures::Role;
+        let Some(art) = &self.art else {
+            return Vec::new();
+        };
+        let (reveal, fog) = (self.reveal_all, &self.fog);
+        let shown = buildings::shown_to(self.sandbox.side, reveal);
+        let mut homes = Vec::new();
+        for s in (self.world.structures().into_iter()).flat_map(gc_sim::Structures::iter) {
+            let centre = buildings::centre_of(s.tile, s.width, s.depth);
+            if !shown(&s)
+                || centre.distance(focus)
+                    > ambient::walkers::REACH + ambient::walkers::OBSTACLE_MARGIN
+            {
+                continue;
+            }
+            let half = Vec2::new(f32::from(s.width), f32::from(s.depth)) / 2.0;
+            let facing = buildings::facing_of(s.turn);
+            let door = centre + facing * (facing.abs().dot(half) + ambient::walkers::DOOR);
+            let look = self.siege.look(s.handle);
+            let role = look.map(|l| l.role);
+            let on_screen = look.is_some_and(|l| {
+                let at = Vec3::new(centre.x, l.base + l.top * 0.5, centre.y);
+                cull.on_screen(at, l.top + 6.0)
+                    && (reveal || fog.sees_tile((centre.x.floor() as i32, centre.y.floor() as i32)))
+            });
+            let done = s.finished() && on_screen;
+            let worker = art.looks.worker_of(s.building);
+            homes.push(ambient::walkers::Home {
+                id: u64::from(s.handle.index) | u64::from(s.handle.generation) << 32,
+                owner: s.owner,
+                lives: done
+                    && matches!(
+                        role,
+                        Some(
+                            Role::Main
+                                | Role::Outpost
+                                | Role::Economy
+                                | Role::Production
+                                | Role::Tech
+                                | Role::Heroes
+                        )
+                    )
+                    && worker.is_some(),
+                visit: done && !matches!(role, Some(Role::Wall | Role::Defence)),
+                worker: worker.unwrap_or(0),
+                centre,
+                half,
+                door,
+            });
+        }
+        homes
     }
 
     /// A plate under the cursor the size of the regiment B would place.
