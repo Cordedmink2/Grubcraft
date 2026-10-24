@@ -68,6 +68,8 @@ pub const SLOT_FORMATION: usize = 3;
 /// Brace (Z), sharing its slot with Skirmish when that order arrives, and
 /// Fall back (V).
 pub const SLOT_BRACE: usize = 8;
+/// Torches (X): light the selection's torches or put them out.
+pub const SLOT_TORCHES: usize = 9;
 pub const SLOT_FALL_BACK: usize = 11;
 /// The first of the four slots (A, S, D, F) a hero's abilities use.
 // Run (C) shares its key with the sandbox's credits tool, which moves when
@@ -82,7 +84,7 @@ const LABELS: [&str; GRID_SLOTS] = [
     "Skill 3",
     "Ultimate",
     "Brace",
-    "Charge",
+    "Torches",
     "Run",
     "Fall back",
 ];
@@ -98,7 +100,7 @@ const ICONS: [Icon; GRID_SLOTS] = [
     Icon::Ring,
     Icon::Ultimate,
     Icon::Brace,
-    Icon::Charge,
+    Icon::Torch,
     Icon::Run,
     Icon::FallBack,
 ];
@@ -114,7 +116,7 @@ const TIPS: [&str; GRID_SLOTS] = [
     "A hero ability. Needs a hero.",
     "A hero's ultimate. Needs a hero.",
     "Spears and pikes brace against a charge. Press again to stand.",
-    "Charge at the run for a heavier first blow. Not in the game yet.",
+    "Light torches at night: seen from afar, but they see further and can't be ambushed out of the dark. Press again to put them out.",
     "Run at full pace, tiring as you go. Not in the game yet.",
     "Back out of the fight in good order, taking one parting blow.",
 ];
@@ -534,10 +536,10 @@ impl Running {
             if n == 0 {
                 (unit, icon) = (Some(r.unit), this);
                 color = crate::color_of(&self.parties, r.owner);
-                ground = ground_word(self.world.terrain(), r.position);
+                ground = standing_word(&self.world, &r);
             } else {
                 // Shown only when every selected regiment shares it.
-                if ground_word(self.world.terrain(), r.position) != ground {
+                if standing_word(&self.world, &r) != ground {
                     ground = "";
                 }
                 same &= unit == Some(r.unit);
@@ -854,6 +856,7 @@ impl Running {
         });
         grid[SLOT_BRACE].state = ready(has_orders && has_spears);
         grid[SLOT_FALL_BACK].state = ready(has_orders);
+        grid[SLOT_TORCHES].state = ready(has_orders);
         // A hero's abilities take the A, S, D and F slots.
         if let Some(h) = &hero {
             for (i, a) in h.abilities.iter().enumerate() {
@@ -1247,6 +1250,7 @@ impl Running {
             }
             SLOT_FORMATION => self.cycle_formation(),
             SLOT_BRACE => self.toggle_brace(),
+            SLOT_TORCHES => self.toggle_torches(),
             SLOT_FALL_BACK => self.fall_back(),
             _ => {}
         }
@@ -1785,8 +1789,10 @@ fn sky_word(world: &gc_sim::World) -> String {
     };
     let dark = world.daylight().dark();
     let name = match (falling, dark) {
+        (Some(w), _) if air.dark => format!("{w} in the dark"),
         (Some(w), true) => format!("{w} at night"),
         (Some(w), false) => w.to_string(),
+        (None, _) if air.dark => "Dark".to_string(),
         (None, _) => "Night".to_string(),
     };
     let mut word = format!("{name}: sight {}%", air.sight_percent);
@@ -1797,6 +1803,17 @@ fn sky_word(world: &gc_sim::World) -> String {
         word += ", mud";
     }
     word
+}
+
+/// What its torches, the dark or the ground do to regiment `r`, in a few
+/// words for the selection panel (docs/32-changing-land.md, stage 3b).
+fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static str {
+    let dark = world.air().dark;
+    match ground_word(world.terrain(), r.position) {
+        _ if dark && r.torches => "Torches lit: seen from afar",
+        "" if dark => "In the dark: unseen from afar",
+        word => word,
+    }
 }
 
 /// What the ground at `p` does to a regiment, in a few words for the selection panel (capitalised, as it stands on its own line): the readable side

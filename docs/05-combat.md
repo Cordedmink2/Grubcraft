@@ -30,7 +30,7 @@ Kept deliberately small. Every order is on the same hotkey for every regiment.
 | Move and face | right-drag | Drag a line: sets position, frontage width and facing (Total War's signature control) |
 | Attack | right-click enemy / `W` | Engage target, or attack-move to a point |
 | Hold | `E` | Hold position and facing, only fight what reaches you |
-| Charge | `X` | Cavalry and shock units charge for bonus damage and morale shock |
+| Torches | `X` | At night: light or put out the selection's torches (seen from afar, see further, can't be ambushed; [32](32-changing-land.md)). Charges need no key: closing at speed charges |
 | Skirmish / Brace | `Z` (toggle) | **Brace is built:** spears and pikes set against a charge ([below](#brace-and-fall-back)). Skirmish, where ranged units keep distance from approaching melee, comes later |
 | Formation | `R` (cycle) | Line / Tight / Loose / Shield wall (shields only); Column and Wedge (cavalry) later. See [Weapons and formations](#weapons-and-formations) |
 | Run | double right-click / `C` | Faster move, then **Winded** for 10 s |

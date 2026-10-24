@@ -46,6 +46,8 @@ pub struct Standing {
     /// them. Otherwise everyone has seen it for a while, so it is no
     /// surprise to anyone.
     pub hidden: bool,
+    /// Torches lit (they burn only in the dark).
+    pub torches: bool,
 }
 
 impl Standing {
@@ -62,6 +64,7 @@ impl Standing {
             morale_points: view.morale_points,
             morale: view.morale,
             hidden,
+            torches: view.torches,
         }
     }
 }
@@ -154,6 +157,7 @@ impl World {
             r.morale[i] = points * morale::SCALE;
         }
         r.morale_state[i] = s.morale;
+        r.light(h, s.torches);
         if s.morale.broken() {
             r.last_rout[i] = self.tick + 1;
         }

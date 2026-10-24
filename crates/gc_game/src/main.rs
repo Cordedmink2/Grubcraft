@@ -59,7 +59,9 @@
 //! pace, never charges). Z braces spears and pikes against a charge (they
 //! stand until given another order; Z again lifts them) and V pulls the
 //! selection out of its fights in good order: it backs away 8 tiles facing
-//! the enemy, who gets one parting blow and doesn't follow. Banners show morale: blinking amber is wavering,
+//! the enemy, who gets one parting blow and doesn't follow. X lights the
+//! selection's torches at night (X again puts them out): seen from afar,
+//! but they see further and can't be ambushed. Banners show morale: blinking amber is wavering,
 //! white is routing (no orders until it rallies), grey is shattered.
 //! Regiments find their own way around cliffs and deep water; a selected
 //! regiment's route shows as a dotted line, and G shows the ground no
@@ -2047,6 +2049,7 @@ impl ApplicationHandler for App {
                             }
                         }
                         KeyCode::KeyZ if grid_key => r.battle_press(hud::SLOT_BRACE),
+                        KeyCode::KeyX if grid_key => r.battle_press(hud::SLOT_TORCHES),
                         KeyCode::KeyV if grid_key => r.battle_press(hud::SLOT_FALL_BACK),
                         KeyCode::Space if grid_key => r.jump_to_alert(),
                         // F1 finds an idle worker while there is one to find,
@@ -2953,6 +2956,36 @@ impl Running {
                 .into()
         } else {
             "Spears lifted".into()
+        });
+    }
+
+    /// X: light the selection's torches, or, if they all burn already, put
+    /// them out. They burn only in the dark (docs/32-changing-land.md).
+    fn toggle_torches(&mut self) {
+        let mine: Vec<_> = self
+            .selected
+            .iter()
+            .filter_map(|&h| self.world.regiments.get(h))
+            .collect();
+        if mine.is_empty() {
+            return;
+        }
+        let lit = mine.iter().any(|r| !r.torches);
+        for r in mine.iter().filter(|r| r.torches != lit) {
+            self.human_orders.push(PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::Torches {
+                    regiment: r.handle,
+                    lit,
+                },
+            });
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        let dark = self.world.air().dark;
+        self.say(match (lit, dark) {
+            (true, true) => "Torches lit: they see further and can't be ambushed, but are seen and shot from afar".into(),
+            (true, false) => "Torches ready: they burn once it is dark".into(),
+            (false, _) => "Torches out: hidden in the dark again".into(),
         });
     }
 

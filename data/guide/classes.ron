@@ -12,7 +12,7 @@
         (name: "Light", blurb: "Fast, fragile infantry and swarms."),
         (name: "Spear", blurb: "Spear and pike lines, the answer to cavalry: brace them, keep them deep."),
         (name: "Heavy", blurb: "Armoured and elite infantry."),
-        (name: "Ranged", blurb: "Archers, crossbows, beams and acid. Fog, rain and night cut their reach: the top bar says how much."),
+        (name: "Ranged", blurb: "Archers, crossbows, beams and acid. Fog, rain and night cut their reach: the top bar says how much. In the dark they see only a few tiles, but shoot anyone carrying torches (X) at full reach."),
         (name: "Cavalry", blurb: "Riders and fast shock units: a charge ploughs through thin lines and flanks, best downhill; mud stops it, and long rain turns low ground by the water to mud."),
         (name: "Air", blurb: "Flying regiments."),
         (name: "Artillery", blurb: "Long-range area fire."),

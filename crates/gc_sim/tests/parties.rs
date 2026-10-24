@@ -54,6 +54,7 @@ fn no_standing_regiments_for_parties_past_the_limit() {
         morale_points: 60,
         morale: gc_sim::MoraleState::Steady,
         hidden: false,
+        torches: false,
     };
     assert!(scratch.spawn_standing(&standing(0), None).is_some());
     assert!(

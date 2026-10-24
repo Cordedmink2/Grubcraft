@@ -27,6 +27,21 @@
 //! chase after a target that goes out of sight becomes a march to where it
 //! was last seen.
 //!
+//! **In the dark** ([`Air::dark`], late dusk to early dawn) the open
+//! hides too: an unlit regiment there is seen only within [`DARK_STILL`]
+//! ([`DARK_MOVING`] while it marches), or its cover's distance if that is
+//! closer. A regiment with its torches lit ([`crate::Command::Torches`]) is
+//! never hidden, and lights the ground within [`TORCH_LIGHT`]: a regiment
+//! standing in the open there is seen by everyone, and archers and towers
+//! shoot a lit regiment at the weather's range, without the night's cut
+//! ([`Vision::lit`]). Out of the dark an ambush springs as out of a wood,
+//! but not on a regiment with torches lit, and not when both sides
+//! stumble on each other unseen. A regiment hidden only by the dark still
+//! counts as on the field ([`Vision::hidden`] is cover's), an archer
+//! hidden only by the dark does not hold its fire, and an army is heard in
+//! the dark: a regiment hidden only by it can still be ordered against
+//! and chased ([`Vision::faces`]).
+//!
 //! On a map with no cover all of this is switched off: everyone sees
 //! everything, nothing is a surprise, nothing is stored or hashed.
 //!
@@ -67,6 +82,12 @@ pub const SIGHT: Fx = Fx::from_int(32);
 pub const GRASS_STILL: Fx = Fx::from_int(3);
 pub const WOOD_STILL: Fx = Fx::from_int(4);
 pub const WOOD_MOVING: Fx = Fx::from_int(10);
+/// Spotting distances in the dark, in the open, edge to edge, in tiles.
+pub const DARK_STILL: Fx = Fx::from_int(6);
+pub const DARK_MOVING: Fx = Fx::from_int(12);
+/// How far lit torches light the ground round a regiment, edge to edge,
+/// in tiles.
+pub const TORCH_LIGHT: Fx = Fx::from_int(10);
 /// How long a regiment stays seen after the last reason to see it.
 pub const LINGER_TICKS: u8 = 3 * TICKS_PER_SECOND as u8;
 
@@ -116,8 +137,10 @@ struct Post {
     slot: usize,
     owner: PlayerId,
     block: Block,
-    /// How far it sees, as the sky lets it.
+    /// How far it sees, as the sky lets it, and how far it sees a
+    /// regiment in torchlight.
     sight: Fx,
+    lit_sight: Fx,
 }
 
 /// Who sees whom. All storage is reserved when the match starts.
@@ -170,6 +193,21 @@ pub(crate) struct Vision {
     post_radius: Fx,
     /// How far the sky lets anyone see in fog of war (see [`crate::sky`]).
     air: Air,
+    /// Per slot, as of the last update: in the dark, carrying lit torches
+    /// or standing in their light (see [`Vision::lit`]).
+    lit: Vec<bool>,
+    /// Per slot, as of the last update: hidden from its enemies by the
+    /// dark alone, not by cover.
+    dark_only: Vec<bool>,
+    /// Per slot: the dark, not cover, last hid it from its enemies: lost
+    /// in the dark out of their sight, and not in cover since. Kept while
+    /// seen or lit, so a charge out of the dark that torchlight shows at
+    /// the last is still one (see [`Vision::springs`]).
+    from_dark: Vec<bool>,
+    /// Any slot is lit (as of the last update).
+    any_lit: bool,
+    /// The furthest any post sees a lit regiment (see `post_sight`).
+    post_lit_sight: Fx,
 }
 
 /// The side of a cell posts are sorted into, in tiles.
@@ -224,6 +262,11 @@ impl Vision {
             cells: 0,
             post_sight: Fx::ZERO,
             post_radius: Fx::ZERO,
+            lit: Vec::new(),
+            dark_only: Vec::new(),
+            from_dark: Vec::new(),
+            any_lit: false,
+            post_lit_sight: Fx::ZERO,
         };
         if active {
             v.reserve(n);
@@ -239,6 +282,9 @@ impl Vision {
         self.revealed = vec![0; capacity];
         self.off_guard = vec![0; capacity];
         self.was_engaged = vec![false; capacity];
+        self.lit = vec![false; capacity];
+        self.dark_only = vec![false; capacity];
+        self.from_dark = vec![false; capacity];
         self.ambushes = Vec::with_capacity(MAX_AMBUSHES);
     }
 
@@ -282,6 +328,22 @@ impl Vision {
             && (!self.fog || self.in_sight[i] & (1 << party) != 0 || self.friends(party, owner))
     }
 
+    /// Whether `party` counts the regiment in slot `i`, owned by `owner`,
+    /// as facing it on the field: it sees it, or only the dark hides it
+    /// (in fog of war, only within its sight).
+    pub(crate) fn faces(&self, party: PlayerId, i: usize, owner: PlayerId) -> bool {
+        self.sees(party, i, owner)
+            || (self.in_dark(i)
+                && (!self.fog
+                    || (party as usize) < PARTIES && self.in_sight[i] & (1 << party) != 0))
+    }
+
+    /// Whether the regiment in slot `i` is hidden from its enemies by the
+    /// dark alone, as of the last update.
+    pub(crate) fn in_dark(&self, i: usize) -> bool {
+        self.active && self.dark_only[i]
+    }
+
     /// Whether cover leaves the regiment in slot `i`, owned by `owner`, open
     /// to `party` (who may still not have it in sight in fog of war).
     pub(crate) fn uncovered(&self, party: PlayerId, i: usize, owner: PlayerId) -> bool {
@@ -298,14 +360,56 @@ impl Vision {
     }
 
     /// Whether cover hides the regiment in slot `i` from every party hostile
-    /// to its owner (out of sight in fog of war is not hidden).
+    /// to its owner (out of sight in fog of war, or hidden only by the
+    /// dark, is not hidden).
     pub(crate) fn hidden(&self, i: usize, owner: PlayerId) -> bool {
         if !self.active || owner as usize >= PARTIES {
             return false;
         }
-        // Cover hides; being out of sight in fog of war is not hiding.
+        // Cover hides; being out of sight in fog of war, or in the dark,
+        // is not hiding.
+        if self.dark_only[i] {
+            return false;
+        }
         let friends = self.allies[owner as usize];
         (0..PARTIES).all(|p| friends & (1 << p) != 0 || self.sighting[i * PARTIES + p] == 0)
+    }
+
+    /// Whether an archer in slot `i`, owned by `owner`, holds its fire at
+    /// `party`'s regiments: cover hides it from them (the dark alone does
+    /// not make it hold).
+    pub(crate) fn holds_fire(&self, party: PlayerId, i: usize, owner: PlayerId) -> bool {
+        !self.uncovered(party, i, owner) && !self.dark_only[i]
+    }
+
+    /// Whether the regiment in slot `i` is in the dark and lit, by its own
+    /// torches or by standing in their light, as of the last update: it is
+    /// shot and seen at the weather's distances, without the night's cut.
+    pub(crate) fn lit(&self, i: usize) -> bool {
+        // Cleared each update while it isn't dark.
+        self.active && self.lit[i]
+    }
+
+    /// `distance` (a sight or a range) as far as it reaches in this air, at
+    /// a `lit` target or a dark one.
+    fn reach(&self, distance: Fx, lit: bool) -> Fx {
+        if lit {
+            self.air.lit_sight(distance)
+        } else {
+            self.air.sight(distance)
+        }
+    }
+
+    /// `distance` (an archer's or tower's range) as far as it reaches at the
+    /// regiment in slot `j` in this air: further at a lit one.
+    pub(crate) fn reach_at(&self, distance: Fx, j: usize) -> Fx {
+        self.reach(distance, self.lit(j))
+    }
+
+    /// `distance` as far as it reaches at the furthest target: what a
+    /// search for targets must cover (further only while anyone is lit).
+    pub(crate) fn reach_any(&self, distance: Fx) -> Fx {
+        self.reach(distance, self.active && self.any_lit)
     }
 
     /// Whether the regiment in slot `i` is caught off guard by an ambush.
@@ -345,6 +449,7 @@ impl Vision {
                 block: s.block(slot),
                 // As far as the sky lets it see.
                 sight: self.air.sight(s.sight(slot)),
+                lit_sight: self.air.lit_sight(s.sight(slot)),
             }));
             self.sort_posts();
         }
@@ -361,6 +466,8 @@ impl Vision {
             self.off_guard[i] = self.off_guard[i].saturating_sub(1);
         }
 
+        self.light(regs, combat, units, stances);
+
         // Ambushes, judged on what each side saw before this tick: volleys
         // loosed from hiding, then charges out of it.
         // (A tower that shoots is known to its target's side as it looses,
@@ -371,7 +478,7 @@ impl Vision {
             };
             self.revealed[i] = VOLLEY_REVEAL_TICKS;
             if let Some(j) = regs.resolve(target)
-                && self.surprises(i, regs.owner[j])
+                && self.springs(regs, i, j)
             {
                 self.spring(regs, combat, stances, i, j, true);
             }
@@ -383,7 +490,7 @@ impl Vision {
             let engaged = regs.foe(i);
             if let Some(j) = engaged
                 && !self.was_engaged[i]
-                && self.surprises(i, regs.owner[j])
+                && self.springs(regs, i, j)
             {
                 self.spring(regs, combat, stances, i, j, false);
             }
@@ -399,15 +506,26 @@ impl Vision {
             let friends = (self.allies.get(owner as usize))
                 .copied()
                 .unwrap_or(u8::MAX);
-            let cover = self.spotting(regs, units, terrain, i);
+            let (shade, night) = self.spotting(regs, units, terrain, i);
+            let cover = match (shade, night) {
+                (Some(c), Some(n)) => Some(c.min(n)),
+                (c, n) => c.or(n),
+            };
+            self.dark_only[i] = shade.is_none() && night.is_some();
             let fog_now = self.fog && (looks_now(i as u32, tick) || self.unlooked[i]);
             let (near, far) = match owner as usize {
                 o if o < PARTIES => {
-                    let far = fog_now.then_some(self.sight());
+                    // A lit regiment is seen as far as by day.
+                    let far = fog_now.then_some(self.reach_at(SIGHT, i));
                     self.spotters(regs, combat, units, stances, i, cover, far)
                 }
                 _ => (u8::MAX, u8::MAX),
             };
+            if shade.is_some() {
+                self.from_dark[i] = false;
+            } else if night.is_some() && near & !friends == 0 {
+                self.from_dark[i] = true;
+            }
             let direct = if cover.is_some() {
                 friends | near
             } else {
@@ -458,7 +576,8 @@ impl Vision {
             let Some(j) = regs.attack_target[i].and_then(|h| regs.resolve(h)) else {
                 continue;
             };
-            if self.sees(regs.owner[i], j, regs.owner[j]) {
+            // One lost in the dark is followed by its sound.
+            if self.faces(regs.owner[i], j, regs.owner[j]) {
                 continue;
             }
             regs.attack_target[i] = None;
@@ -492,7 +611,11 @@ impl Vision {
         self.revealed[i] = 0;
         self.off_guard[i] = 0;
         self.was_engaged[i] = false;
-        let in_open = self.spotting(regs, units, terrain, i).is_none();
+        // Placed in the dark in the open, it is in plain view as placed.
+        let in_open = self.spotting(regs, units, terrain, i).0.is_none();
+        self.lit[i] = false;
+        self.dark_only[i] = false;
+        self.from_dark[i] = false;
         let friends = self
             .allies
             .get(regs.owner[i] as usize)
@@ -533,6 +656,10 @@ impl Vision {
         self.revealed[i] = from.revealed[i];
         self.off_guard[i] = from.off_guard[i];
         self.was_engaged[i] = from.was_engaged[i];
+        self.lit[i] = from.lit[i];
+        self.any_lit |= from.lit[i];
+        self.dark_only[i] = from.dark_only[i];
+        self.from_dark[i] = from.from_dark[i];
         if self.fog && from.fog {
             self.in_sight[i] = from.in_sight[i];
             self.sight_linger[k..k + PARTIES].copy_from_slice(&from.sight_linger[k..k + PARTIES]);
@@ -544,6 +671,22 @@ impl Vision {
     /// party first saw it less than [`SURPRISE_TICKS`] ago.
     fn surprises(&self, i: usize, party: PlayerId) -> bool {
         party < PARTIES as u8 && self.sighting[i * PARTIES + party as usize] < SURPRISE_TICKS
+    }
+
+    /// Whether regiment `i` springs an ambush on regiment `j` as it shoots
+    /// or closes with it: `j`'s side first saw it only just now. Out of the
+    /// dark (hidden by it alone), not on a regiment with torches lit, which
+    /// sees what comes at it, nor when `i`'s side has only just seen `j`
+    /// too, as both stumble on each other.
+    fn springs(&self, regs: &Regiments, i: usize, j: usize) -> bool {
+        if !self.surprises(i, regs.owner[j]) {
+            return false;
+        }
+        // By day (dawn included) only cover hides, and torches don't burn.
+        if !self.from_dark[i] || !self.air.dark {
+            return true;
+        }
+        !regs.torches[j] && !self.surprises(j, regs.owner[i])
     }
 
     /// Regiment `i` springs an ambush on regiment `j`.
@@ -581,18 +724,20 @@ impl Vision {
         }
     }
 
-    /// How close, edge to edge, an enemy must come to see regiment `i`, or
-    /// `None` when everyone sees it: it stands in the open, fights, or has
-    /// just loosed a volley.
+    /// How close, edge to edge, an enemy must come to see regiment `i`: as
+    /// its cover lets it hide, and as the dark does (in the dark and
+    /// unlit); `None` for either when it doesn't hide it. Neither hides it
+    /// while it fights, has just loosed a volley, or carries lit torches in
+    /// the dark.
     fn spotting(
         &self,
         regs: &Regiments,
         units: &[UnitStats],
         terrain: &Terrain,
         i: usize,
-    ) -> Option<Fx> {
-        if regs.engaged[i].is_some() || self.revealed[i] > 0 {
-            return None;
+    ) -> (Option<Fx>, Option<Fx>) {
+        if regs.engaged[i].is_some() || self.revealed[i] > 0 || (self.air.dark && regs.torches[i]) {
+            return (None, None);
         }
         let b = Block::of(regs, units, i);
         let (c, across, along) = (b.centre, b.right * b.half_width, b.forward * b.half_depth);
@@ -614,12 +759,45 @@ impl Vision {
             }
         }
         let moving = regs.target[i].is_some();
-        if wood >= 4 {
+        let cover = if wood >= 4 {
             Some(if moving { WOOD_MOVING } else { WOOD_STILL })
         } else if covered >= 4 && !moving {
             Some(GRASS_STILL)
         } else {
             None
+        };
+        let night = (self.air.dark && !self.lit[i]).then_some(if moving {
+            DARK_MOVING
+        } else {
+            DARK_STILL
+        });
+        (cover, night)
+    }
+
+    /// Mark who is lit this tick: in the dark, every regiment with its
+    /// torches lit, and every one standing within [`TORCH_LIGHT`] of one
+    /// (theirs or anyone's).
+    fn light(&mut self, regs: &Regiments, combat: &Combat, units: &[UnitStats], stances: &Stances) {
+        self.lit.fill(false);
+        self.any_lit = false;
+        if !self.air.dark {
+            return;
+        }
+        let at = placement!(regs, stances);
+        let lit = &mut self.lit;
+        for b in (0..regs.alive.len()).filter(|&b| regs.alive[b] && regs.torches[b]) {
+            self.any_lit = true;
+            lit[b] = true;
+            let torch = Block::of(regs, units, b);
+            let reach = TORCH_LIGHT + torch.radius() + combat.max_radius();
+            let owner = regs.owner[b];
+            for whose in [Whose::Enemies(owner), Whose::Friends(owner)] {
+                combat.each_near(&at, torch.centre, reach, whose, |j| {
+                    if !lit[j] && torch.touches(&Block::of(regs, units, j), TORCH_LIGHT) {
+                        lit[j] = true;
+                    }
+                });
+            }
         }
     }
 
@@ -666,7 +844,8 @@ impl Vision {
                 }
             },
         );
-        let posts = |d: Option<Fx>| d.map_or(0, |d| self.posts_near(&me, regs.owner[i], d));
+        let lit = self.lit(i);
+        let posts = |d: Option<Fx>| d.map_or(0, |d| self.posts_near(&me, regs.owner[i], d, lit));
         (seen_near | posts(near), seen_far | posts(far))
     }
 
@@ -681,10 +860,11 @@ impl Vision {
         // Count each cell's posts, sum them so each cell holds where its
         // posts end, then fill backwards, leaving where each one starts.
         self.cell_start.fill(0);
-        (self.post_sight, self.post_radius) = (Fx::ZERO, Fx::ZERO);
+        (self.post_sight, self.post_lit_sight, self.post_radius) = (Fx::ZERO, Fx::ZERO, Fx::ZERO);
         for p in &self.posts {
             self.cell_start[cell(p)] += 1;
             self.post_sight = self.post_sight.max(p.sight);
+            self.post_lit_sight = self.post_lit_sight.max(p.lit_sight);
             self.post_radius = self.post_radius.max(p.block.radius());
         }
         for k in 1..self.cell_start.len() {
@@ -700,14 +880,20 @@ impl Vision {
     }
 
     /// The parties hostile to `owner` with a building within `distance` of
-    /// `me` (and within its own sight), edge to edge.
-    fn posts_near(&self, me: &Block, owner: PlayerId, distance: Fx) -> u8 {
+    /// `me` (and within its own sight, as far as it sees a `lit` one), edge
+    /// to edge.
+    fn posts_near(&self, me: &Block, owner: PlayerId, distance: Fx, lit: bool) -> u8 {
         if self.by_cell.is_empty() {
             return 0;
         }
         let mut seen = 0u8;
         // Only cells a post seeing `me` could stand in.
-        let reach = distance.min(self.post_sight) + me.radius() + self.post_radius;
+        let furthest = if lit {
+            self.post_lit_sight
+        } else {
+            self.post_sight
+        };
+        let reach = distance.min(furthest) + me.radius() + self.post_radius;
         let (x0, y0) = post_cell(self.cells, me.centre - FxVec2::new(reach, reach));
         let (x1, y1) = post_cell(self.cells, me.centre + FxVec2::new(reach, reach));
         for y in y0..=y1 {
@@ -719,7 +905,7 @@ impl Vision {
                     continue;
                 }
                 // Far off by the centres: no need for the block test.
-                let gap = distance.min(post.sight);
+                let gap = distance.min(if lit { post.lit_sight } else { post.sight });
                 let reach = u64::from(
                     (gap + me.radius() + post.block.radius())
                         .raw()
@@ -783,7 +969,7 @@ impl Vision {
                 },
             );
             // Each building looks as far as its own sight.
-            seen |= self.posts_near(&block, post.owner, Fx::MAX);
+            seen |= self.posts_near(&block, post.owner, Fx::MAX, false);
             structures.mark_seen(post.slot, seen);
         }
     }
@@ -803,6 +989,10 @@ impl Vision {
             h.u8(self.revealed[i]);
             h.u8(self.off_guard[i]);
             h.u8(u8::from(self.was_engaged[i]));
+            // Read by the next tick's combat (and by `hidden`).
+            h.u8(u8::from(self.lit[i])
+                | u8::from(self.dark_only[i]) << 1
+                | u8::from(self.from_dark[i]) << 2);
             if self.fog {
                 h.u8(self.in_sight[i]);
                 for k in i * PARTIES..(i + 1) * PARTIES {

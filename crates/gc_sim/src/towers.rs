@@ -163,17 +163,18 @@ impl Structures {
         i: usize,
     ) -> Option<usize> {
         let owner = self.owner_of(i);
-        let range = combat.air().sight(self.stats_of(i).attack?.range);
+        let range = self.stats_of(i).attack?.range;
         let at = self.centre(i);
+        // Further at a target in torchlight (see [`Vision::reach_at`]).
         let shootable = |j: usize| {
             foe_in_sight(owner, regs, stances, vision, j)
-                && terrain.in_range(range, at, regs.position[j])
+                && terrain.in_range(vision.reach_at(range, j), at, regs.position[j])
         };
         let focus = self.focus[i].and_then(|h| regs.resolve(h));
         if let Some(j) = focus.filter(|&j| shootable(j)) {
             return Some(j);
         }
-        let reach = terrain.reach(range) + combat.max_step();
+        let reach = terrain.reach(vision.reach_any(range)) + combat.max_step();
         let mut best: Option<(Priority, u64, usize)> = None;
         combat.near_enemies(at, reach, owner, |j| {
             if !shootable(j) {

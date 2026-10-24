@@ -139,6 +139,7 @@ fn a_scratch_world_shares_the_map() {
         morale_points: 60,
         morale: MoraleState::Steady,
         hidden: false,
+        torches: false,
     };
     let ha = a.spawn_standing(&standing, None).unwrap();
     let hb = b.spawn_standing(&standing, None).unwrap();
@@ -176,6 +177,7 @@ fn a_regiment_goes_on_the_field_as_it_stands() {
         morale_points: 20,
         morale: MoraleState::Wavering,
         hidden: false,
+        torches: false,
     };
     let h = world.spawn_standing(&s, None).unwrap();
     let r = world.regiments.get(h).unwrap();
@@ -241,6 +243,7 @@ fn morale_carries_over() {
             morale_points: points,
             morale: state,
             hidden: false,
+            torches: false,
         };
         let h = world.spawn_standing(&us, None).unwrap();
         // Two regiments of skitterlings at its front and flank.
@@ -287,6 +290,7 @@ fn morale_carries_over() {
         morale_points: 0,
         morale: MoraleState::Routing,
         hidden: false,
+        torches: false,
     };
     let h = world.spawn_standing(&routing, None).unwrap();
     world
@@ -330,6 +334,7 @@ fn a_match_world_takes_no_regiments_from_outside() {
         morale_points: 20,
         morale: MoraleState::Steady,
         hidden: false,
+        torches: false,
     };
     let before = world.state_hash();
     assert_eq!(world.spawn_standing(&s, None), None);

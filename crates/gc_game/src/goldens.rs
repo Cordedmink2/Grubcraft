@@ -65,6 +65,8 @@ struct Golden {
     /// out; its computer player takes over once the battle begins) and the
     /// other computer players are ready at once.
     deployment: bool,
+    /// The sky over the battle.
+    sky: gc_sim::Sky<'static>,
 }
 
 const fn side(faction: Faction, level: Difficulty, team: u8) -> Side {
@@ -321,6 +323,7 @@ const GOLDENS: &[Golden] = &[
         extra: no_extra,
         champions: false,
         deployment: false,
+        sky: gc_sim::Sky::STILL,
     },
     Golden {
         name: "field-2v2",
@@ -339,6 +342,7 @@ const GOLDENS: &[Golden] = &[
         extra: no_extra,
         champions: false,
         deployment: false,
+        sky: gc_sim::Sky::STILL,
     },
     Golden {
         name: "sandbox-tuning",
@@ -355,6 +359,7 @@ const GOLDENS: &[Golden] = &[
         extra: tuning,
         champions: false,
         deployment: false,
+        sky: gc_sim::Sky::STILL,
     },
     // Woods and tall grass in play (docs/20-ambushes.md): regiments hide,
     // are spotted, and spring ambushes, so the vision rules are checked on
@@ -371,6 +376,36 @@ const GOLDENS: &[Golden] = &[
         extra: no_extra,
         champions: false,
         deployment: false,
+        sky: gc_sim::Sky::STILL,
+    },
+    // A night battle in the woods, in heavy rain (docs/32-changing-land.md):
+    // troops hide in the dark, fighting regiments light their torches, the
+    // rain soaks the banks to mud.
+    Golden {
+        name: "field-night-rain-1v1",
+        seed: 0xd9,
+        map_tiles: 256,
+        sides: &[side(EmberClans, General, 0), side(Choir, General, 1)],
+        soldiers: 0,
+        rows: 1,
+        minutes: 5,
+        minds: true,
+        extra: no_extra,
+        champions: false,
+        deployment: false,
+        sky: gc_sim::Sky {
+            start: gc_sim::sky::at_hour(23, 0),
+            day_ticks: gc_sim::sky::DAY_TICKS,
+            runs: true,
+            spells: &[gc_sim::Spell {
+                at: 0,
+                weather: gc_sim::Weather {
+                    kind: gc_sim::WeatherKind::Rain,
+                    strength: 220,
+                    ..gc_sim::Weather::FAIR
+                },
+            }],
+        },
     },
     // The `gc_bench` grand battle: about 6,000 soldiers, all four armies
     // charging into one brawl in the middle. Until the army builder brings
@@ -392,6 +427,7 @@ const GOLDENS: &[Golden] = &[
         extra: charge,
         champions: false,
         deployment: false,
+        sky: gc_sim::Sky::STILL,
     },
     // Braced spears against a side that only charges, and regiments
     // falling back out of the fight (see [`braced`]).
@@ -407,6 +443,7 @@ const GOLDENS: &[Golden] = &[
         extra: braced,
         champions: false,
         deployment: false,
+        sky: gc_sim::Sky::STILL,
     },
     // Champions come out before the armies close, and one kills the other.
     Golden {
@@ -421,6 +458,7 @@ const GOLDENS: &[Golden] = &[
         extra: no_extra,
         champions: true,
         deployment: false,
+        sky: gc_sim::Sky::STILL,
     },
     // A player hands their army to an ally and takes it back (docs/11,
     // "Hand-over"; see [`handing_over`]).
@@ -441,6 +479,7 @@ const GOLDENS: &[Golden] = &[
         extra: handing_over,
         champions: false,
         deployment: false,
+        sky: gc_sim::Sky::STILL,
     },
     // The deployment phase every battle with people opens with (docs/06,
     // "Deployment"): placing inside and outside the zone, orders the phase
@@ -461,6 +500,7 @@ const GOLDENS: &[Golden] = &[
         extra: deploying,
         champions: false,
         deployment: true,
+        sky: gc_sim::Sky::STILL,
     },
 ];
 
@@ -505,7 +545,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         teams: &teams,
         ground: heightmap.ground(),
         champions: golden.champions,
-        sky: gc_sim::Sky::STILL,
+        sky: golden.sky,
         generals: true,
     };
     let world = World::new(&setup);

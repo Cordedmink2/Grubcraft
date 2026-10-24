@@ -431,7 +431,8 @@ impl Judge {
 /// (not broken, not wiped out) and sees none of its enemies' fighting
 /// regiments. It must also have one not hidden from its enemies, so
 /// survivors rallying in a wood don't drag a battle on; two armies out of
-/// each other's sight are still facing each other. With no enemy left
+/// each other's sight are still facing each other, and so are two armies
+/// hidden from each other only by the dark. With no enemy left
 /// standing at all, hiding doesn't matter. Among allies that qualify, the
 /// lowest-numbered party is named.
 pub(crate) fn holding_the_field(
@@ -459,7 +460,7 @@ pub(crate) fn holding_the_field(
             && !(0..regs.alive.len()).any(|i| {
                 fighting(regs, i)
                     && foes & (1 << regs.owner[i]) != 0
-                    && vision.sees(p, i, regs.owner[i])
+                    && vision.faces(p, i, regs.owner[i])
             })
     })
 }

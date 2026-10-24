@@ -43,12 +43,13 @@ pub mod terrain;
 use std::sync::Arc;
 
 use gc_fixed::Pcg32;
-use gc_sim::{PlayerCommand, PlayerId, World};
+use gc_sim::{Command, PlayerCommand, PlayerId, World};
 
 pub use crate::captain::{Captain, Doctrine, Plan, Posture, Role, Stance};
 pub use crate::difficulty::{Difficulty, Knobs};
 pub use crate::journal::Journal;
 pub use crate::orders::{Orders, Want};
+use crate::perception::Class;
 pub use crate::perception::Perception;
 pub use crate::personality::{Faction, Personality};
 pub use crate::rehearsal::Verdict;
@@ -81,6 +82,9 @@ pub struct Mind {
     next_think: u32,
     next_slip: u32,
     wants: Vec<Want>,
+    /// The last torches order given to each regiment, by pool index, so
+    /// one still on its way isn't given again.
+    torches_given: Vec<Option<(gc_sim::RegimentHandle, bool)>>,
     /// What its side sees, with the enemies it remembers (on a map with
     /// cover).
     sight: Perception,
@@ -144,6 +148,7 @@ impl Mind {
             next_think: u32::from(config.party) % knobs.think_ticks.max(1),
             next_slip: 0,
             wants: Vec::new(),
+            torches_given: Vec::new(),
             sight: Perception::new(),
             round: None,
             // Rounds start on a beat of their own too, so several Warlords
@@ -268,6 +273,8 @@ impl Mind {
                 next_slip: &mut self.next_slip,
             };
             realm.tick(world, ctx, out);
+            self.torches(view);
+            self.orders.release(view.tick, out);
             return;
         }
         if self.knobs.rehearse {
@@ -289,7 +296,40 @@ impl Mind {
             self.captain.think(&mut ctx, &mut self.wants);
             self.orders.decide(view, &mut self.wants);
         }
+        self.torches(view);
         self.orders.release(view.tick, out);
+    }
+
+    /// Once a second, in the dark, after its other orders: light the
+    /// torches of its melee regiments that are fighting (they are seen
+    /// anyway, and the light shows what is near), and put out every
+    /// other's, so the rest march unseen (docs/32-changing-land.md, stage
+    /// 3b).
+    fn torches(&mut self, view: &Perception) {
+        if !view.air.dark || !view.tick.is_multiple_of(gc_sim::TICKS_PER_SECOND) {
+            return;
+        }
+        for r in view.regiments.iter().filter(|r| r.owner == self.party) {
+            let lit = r.engaged && view.unit(r).class != Class::Ranged;
+            let slot = r.handle.index as usize;
+            if self.torches_given.len() <= slot {
+                self.torches_given.resize(slot + 1, None);
+            }
+            if r.torches == lit || self.torches_given[slot] == Some((r.handle, lit)) {
+                continue;
+            }
+            // Each costs an order, as a person's would.
+            if !self.orders.give(
+                view.tick,
+                Command::Torches {
+                    regiment: r.handle,
+                    lit,
+                },
+            ) {
+                break;
+            }
+            self.torches_given[slot] = Some((r.handle, lit));
+        }
     }
 
     /// Take the answer of the rehearsals under way once it is due, and

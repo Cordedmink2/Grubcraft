@@ -599,6 +599,7 @@ fn copies_of_the_field_keep_who_has_seen_whom() {
     let spotted = gc_sim::Standing {
         position: FxVec2::new(tile(15), tile(15)),
         hidden: false,
+        torches: false,
         ..into_wood
     };
     let shown = scratch.spawn_standing(&spotted, None).unwrap();

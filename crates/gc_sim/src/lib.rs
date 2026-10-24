@@ -114,7 +114,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 40;
+pub const SIM_VERSION: u32 = 41;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -605,6 +605,12 @@ pub enum Command {
     /// points (docs/05-combat.md). Only regiments with long weapons, out of
     /// melee, can brace; any move or attack order lifts it.
     Brace { regiment: RegimentHandle, on: bool },
+    /// Light a regiment's torches, or put them out (`lit` false). They burn
+    /// only in the dark ([`Air::dark`]): a lit regiment is never hidden,
+    /// and lights the ground round it, so it sees further and is seen and
+    /// shot from much further (see [`vision`]). Any of the issuer's
+    /// regiments, at any time, deploying too.
+    Torches { regiment: RegimentHandle, lit: bool },
     /// Field Battle: give the issuing player a deployment zone. The first
     /// one starts the deployment phase (see [`deploy`]); more are accepted
     /// until the battle begins, one per player.
@@ -760,6 +766,7 @@ impl Command {
             | Command::Ready
             | Command::FallBack { .. }
             | Command::Brace { .. }
+            | Command::Torches { .. }
             | Command::AttackStructure { .. }
             | Command::Gather { .. }
             | Command::Trade { .. }
@@ -1474,6 +1481,7 @@ impl World {
             &self.units,
             &self.stances,
             &self.terrain,
+            &self.vision,
             self.tick,
         );
         self.combat.push_lines(
@@ -1615,7 +1623,8 @@ impl World {
 
     fn apply(&mut self, pc: &PlayerCommand) -> bool {
         // While the armies deploy, only setting out and placing armies,
-        // formations, bracing, readiness and hand-overs are accepted.
+        // formations, bracing, torches, readiness and hand-overs are
+        // accepted.
         if self.deploying()
             && !matches!(
                 pc.command,
@@ -1625,6 +1634,7 @@ impl World {
                     | Command::MoveTo { .. }
                     | Command::SetFormation { .. }
                     | Command::Brace { .. }
+                    | Command::Torches { .. }
                     | Command::Ready
                     | Command::HandOver { .. }
             )
@@ -1701,7 +1711,7 @@ impl World {
                     (Some(owner), Some(enemy))
                         if self.stances.can_command(pc.player, owner)
                             && self.stances.hostile(owner, enemy)
-                            && self.sees(owner, target) =>
+                            && self.faces(owner, target) =>
                     {
                         let done = self.regiments.attack(regiment, target);
                         if done {
@@ -1744,6 +1754,12 @@ impl World {
             Command::Brace { regiment, on } => match self.regiments.owner(regiment) {
                 Some(owner) if self.stances.can_command(pc.player, owner) => {
                     self.regiments.brace(regiment, on, &self.units)
+                }
+                _ => false,
+            },
+            Command::Torches { regiment, lit } => match self.regiments.owner(regiment) {
+                Some(owner) if self.stances.can_command(pc.player, owner) => {
+                    self.regiments.light(regiment, lit)
                 }
                 _ => false,
             },
@@ -2431,6 +2447,28 @@ impl World {
         }
         let posts = self.vision.posts().filter(|&(owner, ..)| friend(owner));
         out.extend(posts.map(|(_, block, sight)| round(block, sight)));
+    }
+
+    /// Whether `party` may go after regiment `h`: it sees it, or only the
+    /// dark hides it from it (an army is heard in the dark, but not through
+    /// fog of war; see [`vision`]).
+    pub fn faces(&self, party: PlayerId, h: RegimentHandle) -> bool {
+        self.sees(party, h)
+            || (!self.deploying()
+                && self
+                    .regiments
+                    .resolve(h)
+                    .is_some_and(|i| self.vision.faces(party, i, self.regiments.owner[i])))
+    }
+
+    /// Whether regiment `h` is hidden from its enemies by the dark alone,
+    /// not by cover (see [`vision`]).
+    pub fn in_dark(&self, h: RegimentHandle) -> bool {
+        !self.deploying()
+            && self
+                .regiments
+                .resolve(h)
+                .is_some_and(|i| self.vision.in_dark(i))
     }
 
     /// Whether `party`'s side can see regiment `h` (see [`vision`]). Always

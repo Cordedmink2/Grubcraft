@@ -442,6 +442,11 @@ pub fn write_command(w: &mut Writer, c: &Command) {
                 w.handle(h);
             }
         }
+        Command::Torches { regiment, lit } => {
+            w.u8(34);
+            w.handle(regiment);
+            w.bool(lit);
+        }
         Command::SetGate { structure, mode } => {
             w.u8(26);
             w.structure(structure);
@@ -607,6 +612,10 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         tag @ (32 | 33) => Command::RaiseWall {
             structure: r.structure()?,
             regiment: if tag == 32 { Some(r.handle()?) } else { None },
+        },
+        34 => Command::Torches {
+            regiment: r.handle()?,
+            lit: r.bool()?,
         },
         26 => Command::SetGate {
             structure: r.structure()?,
@@ -891,6 +900,10 @@ mod tests {
                     generation: 0,
                 },
                 regiment: None,
+            },
+            Command::Torches {
+                regiment: h(8, 3),
+                lit: true,
             },
             Command::FocusTower {
                 structure: StructureHandle {

@@ -109,6 +109,8 @@ The [UI principles](08-ui-ux.md#ui-principles) say nothing important is hidden. 
 
 Planned with the M3 interface: a tooltip on any regiment showing whether it is hidden and the distance it would be spotted at; a faint "last seen" ghost where an enemy vanished; the hidden marker on the army tray.
 
+**In the dark** ([32](32-changing-land.md#torches-and-night-battles-stage-3b-idea-9), built 2026-10-24): at night the open hides as cover does, within 6 tiles standing and 12 marching, and torches give a regiment away and light the ground 10 tiles round it. A torch-bearer can't be ambushed, and two regiments that stumble on each other in the dark ambush neither.
+
 ## Counterplay
 
 An ambush must be answerable or it is just a trap. What the victim can do:

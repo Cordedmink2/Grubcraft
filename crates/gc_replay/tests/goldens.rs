@@ -87,8 +87,9 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::DropPlan { .. } => "DropPlan",
         Command::WorkPlan { .. } => "WorkPlan",
         Command::RaiseWall { .. } => "RaiseWall",
+        Command::Torches { .. } => "Torches",
     };
-    const KINDS: [&str; 32] = [
+    const KINDS: [&str; 33] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -121,6 +122,7 @@ fn the_goldens_cover_every_kind_of_command() {
         "DropPlan",
         "WorkPlan",
         "RaiseWall",
+        "Torches",
     ];
     let seen: BTreeSet<&str> = goldens()
         .iter()
@@ -146,18 +148,19 @@ fn fingerprint(replay: &Replay) -> u64 {
 /// that other builds and old replays know: this table then fails, and is
 /// updated from the test's output.
 const PINNED: (u32, &[(&str, u64)]) = (
-    40,
+    41,
     &[
-        ("conquest-ribcage-1v1", 0x7106c2f27b8500a4),
-        ("field-1v1", 0x0298fa5919f89976),
-        ("field-2v2", 0x8a7476986d9bacc7),
-        ("field-8000pt-2v2", 0xa1f8f1eaecc40830),
-        ("field-brace-1v1", 0x37eb36ee9054e374),
-        ("field-champions-1v1", 0x8e204e481edfab64),
-        ("field-deploy-1v1", 0xb9e0c38f82de2928),
-        ("field-handover-2v2", 0xabdb3c12d1d13a36),
-        ("field-woods-1v1", 0x77e00b8be2ed7eb1),
-        ("sandbox-tuning", 0xb3f79af94fd1a89e),
+        ("conquest-ribcage-1v1", 0x4bce141884f114ce),
+        ("field-1v1", 0x94c7d6a57d042e2b),
+        ("field-2v2", 0x1737e6c270982a03),
+        ("field-8000pt-2v2", 0x0ee65ee14805c27d),
+        ("field-brace-1v1", 0x800a7bd097ba93f1),
+        ("field-champions-1v1", 0xcd480d0964755b8b),
+        ("field-deploy-1v1", 0x80166e4bbe15d4a0),
+        ("field-handover-2v2", 0x71a9fc6adcdd6956),
+        ("field-night-rain-1v1", 0x662f502878db1b5e),
+        ("field-woods-1v1", 0xe3a5cfdb5db03e6b),
+        ("sandbox-tuning", 0x970fc1d5c875e9de),
     ],
 );
 

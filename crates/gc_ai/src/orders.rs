@@ -219,6 +219,14 @@ impl Orders {
         (stopped_short && s.retries < RETRIES) || walking_away
     }
 
+    /// Give `command` now if there is attention for it, outside the
+    /// look's wants (an order of its own, such as lighting torches); it
+    /// leaves after the reaction time. Returns whether it was given.
+    pub fn give(&mut self, now: u32, command: Command) -> bool {
+        self.hands.refresh(now);
+        self.hands.give(now, command)
+    }
+
     /// Send the orders whose reaction time is up.
     pub fn release(&mut self, tick: u32, out: &mut Vec<PlayerCommand>) {
         self.hands.release(tick, out);

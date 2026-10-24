@@ -1073,6 +1073,7 @@ impl Combat {
         units: &[UnitStats],
         stances: &Stances,
         terrain: &Terrain,
+        vision: &Vision,
         tick: u32,
     ) {
         self.build_grid(regs, units);
@@ -1247,7 +1248,7 @@ impl Combat {
                 continue;
             };
             let range = terrain.range(
-                self.air.sight(units[regs.unit[i] as usize].range),
+                vision.reach_at(units[regs.unit[i] as usize].range, j),
                 regs.position[i],
                 regs.position[j],
             );
@@ -1256,7 +1257,12 @@ impl Combat {
             // waits there rather than walking into the block.
             let waits =
                 parted(regs, &self.blocks, i, j) && self.blocks[i].touches(&self.blocks[j], REACH);
-            if waits || (range.raw() > 0 && to.length() <= range) {
+            // A target only heard in the dark is closed with until it is
+            // seen, however far the bows reach.
+            let shootable = range.raw() > 0
+                && to.length() <= range
+                && vision.sees(regs.owner[i], j, regs.owner[j]);
+            if waits || shootable {
                 regs.target[i] = None;
                 regs.target_facing[i] = Some(Angle::of_vec(to));
             } else {
@@ -1682,14 +1688,7 @@ impl Combat {
             {
                 continue;
             }
-            let Some(j) = self.pick_target(
-                regs,
-                stances,
-                terrain,
-                vision,
-                i,
-                self.air.sight(stats.range),
-            ) else {
+            let Some(j) = self.pick_target(regs, stances, terrain, vision, i, stats.range) else {
                 continue;
             };
             let to = regs.position[j] - regs.position[i];
@@ -1807,15 +1806,17 @@ impl Combat {
     ) -> Option<usize> {
         let me = regs.position[i];
         let owner = regs.owner[i];
+        // Further at a target in torchlight (see [`Vision::reach_at`]).
+        let range_at = |j: usize| vision.reach_at(range, j);
         if let Some(j) = regs.attack_target[i].and_then(|t| regs.resolve(t))
-            && (regs.position[j] - me).length() <= terrain.range(range, me, regs.position[j])
+            && (regs.position[j] - me).length() <= terrain.range(range_at(j), me, regs.position[j])
             && vision.sees(owner, j, regs.owner[j])
         {
             return Some(j);
         }
         let mut best: Option<(u64, usize)> = None;
         // Look as far as high ground could carry, then check each.
-        let reach = terrain.reach(range);
+        let reach = terrain.reach(vision.reach_any(range));
         self.near_enemies(me, reach, owner, |j| {
             if !regs.alive[j]
                 || !stances.hostile(owner, regs.owner[j])
@@ -1823,12 +1824,12 @@ impl Combat {
                 // A hidden archer holds its fire at enemies who can't see it
                 // for cover (being out of their sight in fog of war is not
                 // hiding).
-                || !vision.uncovered(regs.owner[j], i, owner)
+                || vision.holds_fire(regs.owner[j], i, owner)
             {
                 return;
             }
             let d = (regs.position[j] - me).length_sq_raw();
-            if terrain.in_range(range, me, regs.position[j])
+            if terrain.in_range(range_at(j), me, regs.position[j])
                 && best.is_none_or(|(bd, bj)| (d, j) < (bd, bj))
             {
                 best = Some((d, j));

@@ -270,6 +270,8 @@ regiment_fields! {
     /// Spears or pikes set against a charge (see [`Regiments::brace`]):
     /// standing until given another order.
     braced: bool = false,
+    /// Torches lit (see [`Regiments::light`]): they burn only in the dark.
+    torches: bool = false,
     /// Ticks left of pulling out of a fight in good order (see
     /// [`Regiments::fall_back`]); 0 when not falling back. It starts at
     /// [`FALL_BACK_TICKS`](crate::combat::FALL_BACK_TICKS) for the tick the
@@ -822,6 +824,15 @@ impl Regiments {
         true
     }
 
+    /// Light (or put out) a regiment's torches; returns whether that
+    /// changed anything.
+    pub(crate) fn light(&mut self, h: RegimentHandle, lit: bool) -> bool {
+        let Some(i) = self.resolve(h) else {
+            return false;
+        };
+        core::mem::replace(&mut self.torches[i], lit) != lit
+    }
+
     /// Set (or lift) a regiment's spears against a charge: it halts where
     /// it stands, and a charge into its front loses its bonus and runs
     /// onto the points instead (see [`crate::combat::Combat::before_move`]).
@@ -967,6 +978,7 @@ impl Regiments {
             ploughed_by: self.plougher(i).map(|k| self.handle(k)),
             general: self.general[i],
             braced: self.braced[i],
+            torches: self.torches[i],
             falling_back: self.falling_back[i] > 0,
         }
     }
@@ -1209,6 +1221,9 @@ pub struct RegimentView {
     pub giving_ground: bool,
     /// Spears or pikes set against a charge (see [`Regiments::brace`]).
     pub braced: bool,
+    /// Torches lit (see [`Command::Torches`](crate::Command::Torches)):
+    /// they burn only in the dark.
+    pub torches: bool,
     /// Pulling out of a fight in good order (see [`Regiments::fall_back`]).
     pub falling_back: bool,
     /// Ticks left of being driven back by a charge that ploughed into its

@@ -364,6 +364,7 @@ fn standing(r: &Seen) -> Standing {
         morale_points: r.morale_points,
         morale: r.morale,
         hidden: r.hidden,
+        torches: r.torches,
     }
 }
 

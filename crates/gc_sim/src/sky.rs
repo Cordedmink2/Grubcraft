@@ -213,10 +213,19 @@ impl Daylight {
 pub struct Air {
     pub sight_percent: u8,
     pub march_percent: u8,
+    /// Sight as the weather leaves it, without the night's cut: how far a
+    /// target in torchlight is seen and shot (see [`crate::vision`]).
+    pub lit_percent: u8,
+    /// Dark enough to hide in and to need torches: the night's share of
+    /// sight is at most [`DARK_PERCENT`].
+    pub dark: bool,
 }
 
 /// Sight in the dark of night, in percent of the day's.
 pub const NIGHT_SIGHT_PERCENT: u32 = 45;
+/// From when the night's share of sight is this low (percent) it is dark:
+/// troops in the open hide and torches burn (late dusk to early dawn).
+pub const DARK_PERCENT: u32 = 70;
 /// The light from which sight is full, so a golden-hour battle sees as far
 /// as a noon one; under it sight falls towards [`NIGHT_SIGHT_PERCENT`].
 pub const HALF_LIGHT: u16 = 500;
@@ -235,6 +244,8 @@ impl Air {
     pub const CLEAR: Air = Air {
         sight_percent: 100,
         march_percent: 100,
+        lit_percent: 100,
+        dark: false,
     };
 
     fn of(weather: Weather, light: u16) -> Air {
@@ -247,7 +258,8 @@ impl Air {
             WeatherKind::Fog => FOG_SIGHT_LOSS,
         };
         let strength = u32::from(weather.strength);
-        let sight = night * (100 - loss * strength / 255) / 100;
+        let weather_share = 100 - loss * strength / 255;
+        let sight = night * weather_share / 100;
         let march = match weather.kind {
             WeatherKind::Snow => 100 - SNOW_MARCH_LOSS * strength / 255,
             _ => 100,
@@ -257,7 +269,15 @@ impl Air {
         Air {
             sight_percent: stepped(sight),
             march_percent: stepped(march),
+            lit_percent: stepped(weather_share),
+            dark: night <= DARK_PERCENT,
         }
+    }
+
+    /// `distance` (a sight or a range) as far as it reaches at a target in
+    /// torchlight: the weather's cut, not the night's.
+    pub fn lit_sight(self, distance: Fx) -> Fx {
+        scale(distance, self.lit_percent)
     }
 
     /// `distance` (a sight or a range) as far as it reaches in this air.
