@@ -3456,6 +3456,12 @@ impl Running {
                 // Torches burn only in the dark.
                 let dark = self.world.air().dark;
                 let torchlit = r.torches && dark;
+                // The tuning panel's multipliers (F10).
+                let (torch_light, torch_flames, brood_glow) = (
+                    self.atmosphere.extra(atmosphere::Extra::TorchLight),
+                    self.atmosphere.extra(atmosphere::Extra::TorchFlames),
+                    self.atmosphere.extra(atmosphere::Extra::BroodGlow),
+                );
                 let brood =
                     self.units.factions.get(usize::from(r.unit)) == Some(&gc_ai::Faction::Brood);
                 let effects = &mut self.effects;
@@ -3465,9 +3471,19 @@ impl Running {
                 // the brighter light) is a faint lime one.
                 let light = if torchlit {
                     let count = ((width / TORCH_LIGHT_SPACING).ceil() as i32).clamp(1, 3);
-                    Some((TORCH_FIRE, TORCH_LIGHT_RADIUS, TORCH_LIGHT_STRENGTH, count))
+                    Some((
+                        TORCH_FIRE,
+                        TORCH_LIGHT_RADIUS,
+                        TORCH_LIGHT_STRENGTH * torch_light,
+                        count,
+                    ))
                 } else if brood && dark {
-                    Some((GRUB_LIME, GRUB_LIGHT_RADIUS, GRUB_LIGHT_STRENGTH, 1))
+                    Some((
+                        GRUB_LIME,
+                        GRUB_LIGHT_RADIUS,
+                        GRUB_LIGHT_STRENGTH * brood_glow,
+                        1,
+                    ))
                 } else {
                     None
                 };
@@ -3575,7 +3591,7 @@ impl Running {
                                 ground + height * TORCH_HEIGHT,
                                 s.pos.y + s.facing.x * 0.12,
                             );
-                            effects.torch(hand, fx_dt);
+                            effects.torch(hand, fx_dt * torch_flames);
                         }
                         let look = models::look(s.look);
                         let ([wr, wg, wb], tone) = aftermath::worn([cr, cg, cb], look.tone, dirt);
@@ -4019,13 +4035,14 @@ impl Running {
         // The thunder that arrives is heard even with the flash out of
         // sight, but not while paused, behind the offline menu or in the
         // unit viewer.
+        let thunder_volume = self.atmosphere.extra(atmosphere::Extra::ThunderVolume);
         while let Some(loud) = self.atmosphere.take_thunder() {
             if let Some(sounds) = &self.sounds
                 && self.viewer.is_none()
                 && !self.paused
                 && !(self.menu_open && self.online.is_none())
             {
-                sounds.thunder(loud);
+                sounds.thunder(loud, thunder_volume);
             }
         }
         // Rain and snow, the one weather clearing and the one coming in;
