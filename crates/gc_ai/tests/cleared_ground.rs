@@ -105,7 +105,11 @@ fn the_minds_see_cleared_ground() {
     let (wall, wood) = (Vec2::new(44.5, 30.5), Vec2::new(21.5, 21.5));
     assert!(minds.blocked(wall));
     assert_eq!(minds.cover(wood), Cover::Wood);
+    // The first look reads what is soft underfoot; nothing is cleared yet.
+    assert!(minds.stale(w.terrain()));
+    minds.follow(w.terrain());
     assert!(!minds.stale(w.terrain()));
+    assert!(minds.blocked(wall));
     // Minds told only the cover still see woods go.
     let mut cover_only = Terrain::new(&nav, MAP).with_cover(cover.clone());
     assert_eq!(cover_only.cover(wall), Cover::Wood);
