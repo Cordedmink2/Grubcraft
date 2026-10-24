@@ -54,6 +54,7 @@ If we change either model, say so in the credit ("adapted from ..."). The battle
 | Ant (rigged, animated) | mujtaba-io | https://opengameart.org/content/ant-3d-model-rigging-animated-low-poly-ish |
 | Alien Bug (animated) | CDmir | https://opengameart.org/content/alien-bug-animated |
 | Ultimate Monsters, Easy Enemy Pack, LowPoly RPG Characters, Ultimate Modular Men | Quaternius (quaternius.com) | https://quaternius.com/packs |
+| Universal Animation Library 1 and 2 (the Ember Clans' sword, katana and spear moves, retargeted for Grubcraft) | Quaternius, animation with Gonzalo Furnier | https://quaternius.itch.io/universal-animation-library |
 | Ground 054, Grass 001, Rock 035 textures (Rock 035 used for the in-game terrain rock) | ambientCG (ambientcg.com) | https://ambientcg.com |
 | Voice Clip Pack - Male Adventurer RPG (Ember Clans battle cries) | wolfwoot / 2DPIXX | https://opengameart.org/content/voice-clip-pack-male-adventurer-rpg |
 | Zombie / Skeleton / Monster Voice Effects (Carrion Concord and Ember Clans battle cries) | ArcadeParty / Snabisch | https://opengameart.org/content/zombie-skeleton-monster-voice-effects |

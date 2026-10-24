@@ -36,17 +36,49 @@ fn look_of(habitat: Habitat) -> [u8; 4] {
     }
 }
 
-/// The ground's look for every tile of `map`, row by row; empty for a map
-/// with no habitats, which keeps the plain ground.
+/// The look of ground that is soft underfoot (`Map::footing`) but whose
+/// habitat does not already show it: churned mud, so the soft ground reads
+/// as a place a charge bogs down. `base` is the look it had.
+fn soft_look(base: [u8; 4]) -> [u8; 4] {
+    match base[3] {
+        GROUND_BOG | GROUND_MUD => base,
+        _ => {
+            let darker = |c: u8| (u16::from(c) * 4 / 5) as u8;
+            [
+                darker(base[0]),
+                darker(base[1]),
+                darker(base[2]),
+                GROUND_MUD,
+            ]
+        }
+    }
+}
+
+/// The ground's look for every tile of `map`, row by row. A map with
+/// habitats looks as they say, and its soft ground ([`Map::footing`]) is
+/// always muddy; one without (painted ones) keeps the plain ground except
+/// for its soft ground; one with neither is empty, which keeps the plain
+/// ground everywhere.
 pub fn ground_look(map: &Map) -> Vec<[u8; 4]> {
     let tiles = (map.tiles * map.tiles) as usize;
-    if map.habitat.len() != tiles {
-        return Vec::new();
+    let soft = |i: usize| {
+        (map.footing.get(i)).is_some_and(|&f| gc_sim::Footing::from_u8(f) == gc_sim::Footing::Soft)
+    };
+    let plain = [128, 128, 128, 0];
+    if map.habitat.len() == tiles {
+        (map.habitat.iter().enumerate())
+            .map(|(i, &b)| {
+                let look = look_of(Habitat::from_u8(b));
+                if soft(i) { soft_look(look) } else { look }
+            })
+            .collect()
+    } else if map.footing.len() == tiles {
+        (0..tiles)
+            .map(|i| if soft(i) { soft_look(plain) } else { plain })
+            .collect()
+    } else {
+        Vec::new()
     }
-    map.habitat
-        .iter()
-        .map(|&b| look_of(Habitat::from_u8(b)))
-        .collect()
 }
 
 #[cfg(test)]
@@ -64,6 +96,31 @@ mod tests {
         assert_eq!(look_of(Habitat::AlderCarr)[3], GROUND_MUD);
         // Sedge stays firm and plain: it must not read as wet as the soft ground.
         assert_eq!(look_of(Habitat::SedgeTussock)[3], 0);
+    }
+
+    #[test]
+    fn soft_ground_is_always_muddy_and_firm_ground_is_left_alone() {
+        // A painted map has no habitats: only its soft ground has a look.
+        let mut map = Map::generate(1, 64);
+        assert!(ground_look(&map).is_empty());
+        map.footing = vec![0; 64 * 64];
+        map.footing[5] = 1;
+        let look = ground_look(&map);
+        assert_eq!(look.len(), 64 * 64);
+        assert_eq!(look[5][3], GROUND_MUD);
+        assert_eq!(look[4], [128, 128, 128, 0]);
+        // On a grown map a soft tile of a dry habitat gets mud in its own colour;
+        // bog and carr keep theirs.
+        map.habitat = vec![Habitat::Grassland as u8; 64 * 64];
+        map.habitat[6] = Habitat::PeatBog as u8;
+        map.footing[6] = 1;
+        let look = ground_look(&map);
+        assert_eq!(look[5], [102, 102, 102, GROUND_MUD]);
+        assert_eq!(look[6], look_of(Habitat::PeatBog));
+        map.habitat[7] = Habitat::AlderCarr as u8;
+        map.footing[7] = 1;
+        assert_eq!(ground_look(&map)[7], look_of(Habitat::AlderCarr));
+        assert_eq!(look[4], look_of(Habitat::Grassland));
     }
 
     #[test]

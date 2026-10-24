@@ -286,6 +286,13 @@ impl Weapon {
     }
 }
 
+/// How far into an attack move its blow lands, as a share of the move: the
+/// game's swing lands its blow there, and the baker retimes a move made with
+/// its blow elsewhere to match. Packs carry it baked in, so changing it
+/// needs a re-bake of every pack with timed attacks (and a baker version
+/// bump, so CI flags the stale ones).
+pub const BLOW_AT: f32 = 0.45;
+
 /// [`MoveRecord::flags`]: the move repeats (walking) rather than playing
 /// once and holding (dying).
 pub const LOOPS: u8 = 1;
@@ -364,7 +371,16 @@ pub struct FitRecord {
     /// The first of the model's fixes: its skeleton-to-model matrix, then one
     /// per bone (the model's bones, the still bone last).
     pub first_fix: u32,
-    pub _pad: u32,
+    /// What the model holds, a [`Weapon`] (0, any, in packs baked before
+    /// it): the picker prefers moves made for it.
+    pub weapon: u8,
+    pub _pad: [u8; 3],
+}
+
+impl FitRecord {
+    pub fn weapon(&self) -> Weapon {
+        Weapon::from_u8(self.weapon).unwrap_or(Weapon::Any)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -484,6 +500,7 @@ impl<'a> Anim<'a> {
             // The model's bones are the skeleton's joints plus the still one.
             if model.bones != skeleton.joints + 1
                 || f.first_fix as usize + 1 + model.bones as usize > self.fixes.len()
+                || Weapon::from_u8(f.weapon).is_none()
             {
                 return Err(bad);
             }
@@ -492,6 +509,11 @@ impl<'a> Anim<'a> {
     }
 
     /// The fit of `model`, if it is posed from a skeleton.
+    /// What model `model` holds: [`Weapon::Any`] unless its fit names one.
+    pub fn weapon_of(&self, model: usize) -> Weapon {
+        self.fit(model).map_or(Weapon::Any, FitRecord::weapon)
+    }
+
     pub fn fit(&self, model: usize) -> Option<&'a FitRecord> {
         let k = self
             .fits
@@ -572,7 +594,7 @@ impl AnimTables {
             model: f.model + first_model,
             skeleton: f.skeleton + skeletons,
             first_fix: f.first_fix + fixes,
-            _pad: 0,
+            ..*f
         }));
         self.fixes.extend_from_slice(a.fixes);
     }

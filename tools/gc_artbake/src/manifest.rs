@@ -75,6 +75,7 @@ fn sources(config: &Config) -> Vec<&str> {
     let mut all: Vec<&str> = Vec::new();
     for m in &config.models {
         all.push(&m.source);
+        all.extend(m.moves_from.as_deref());
         if let Some(t) = &m.textures {
             let maps = [Some(&t.albedo), t.team.as_ref(), t.normal.as_ref()]
                 .into_iter()
