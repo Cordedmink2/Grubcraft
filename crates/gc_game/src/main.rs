@@ -5572,7 +5572,7 @@ impl Running {
                             frames: pose.rows,
                             flags: models::pose_flags(pose, 0, flat),
                             color: [wr, wg, wb, tone],
-                            lift: -0.5 * c.sink,
+                            lift: c.lift - 0.5 * c.sink,
                             scale: look.scale,
                             feet: models::dying_feet(c.age),
                             ..Default::default()
@@ -5595,7 +5595,7 @@ impl Running {
                 facing: c.facing.to_array(),
                 size: [0.4, 0.14, SOLDIER_HEIGHT * 0.8],
                 color: [r / 2, g / 2, b / 2, 0],
-                lift: -0.16 * c.sink,
+                lift: c.lift - 0.16 * c.sink,
             });
         }
     }
