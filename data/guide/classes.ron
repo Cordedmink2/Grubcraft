@@ -9,7 +9,7 @@
 (
     classes: [
         (name: "Worker", blurb: "Gathers and builds."),
-        (name: "Light", blurb: "Fast, fragile infantry and swarms."),
+        (name: "Light", blurb: "Fast, fragile infantry and swarms. Any regiment can set the woods beside it alight (E): the fire runs with the wind and burns whoever is in it, so smoke out troops hiding in a wood, but not in the rain."),
         (name: "Spear", blurb: "Spear and pike lines, the answer to cavalry: brace them, keep them deep."),
         (name: "Heavy", blurb: "Armoured and elite infantry."),
         (name: "Ranged", blurb: "Archers, crossbows, beams and acid. Fog, rain and night cut their reach: the top bar says how much. In the dark they see only a few tiles, but shoot anyone carrying torches (X) at full reach."),

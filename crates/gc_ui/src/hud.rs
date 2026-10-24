@@ -276,7 +276,7 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("O", "Next army shape"),
             ("Shift+O", "Save this army's shape"),
             ("Z", "Brace spears"),
-            ("X", "Torches at night"),
+            ("E, X", "Burn woods; torches at night"),
             ("V", "Fall back"),
             ("Ctrl+1-9", "Save a group"),
             ("1-9", "Recall a group"),

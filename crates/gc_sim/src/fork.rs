@@ -108,6 +108,8 @@ impl World {
             conquest: None,
             // Under the same sky, so it sees and shoots as far.
             sky: self.sky.clone(),
+            // In the same fires, so it burns as the match does.
+            fires: self.fires.clone(),
             regiments: Regiments::with_capacity(n),
         }
         .with_air()

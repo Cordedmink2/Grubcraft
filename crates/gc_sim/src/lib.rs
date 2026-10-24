@@ -26,6 +26,7 @@ pub mod conquest;
 pub mod deploy;
 pub mod economy;
 pub mod events;
+pub mod fire;
 pub mod fork;
 pub mod formation;
 pub mod gates;
@@ -57,6 +58,7 @@ use conquest::Conquest;
 pub use conquest::{ConquestSetup, ConquestUnit};
 pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource, TradePost};
 pub use events::Shooter;
+pub use fire::Burn;
 pub use fork::Standing;
 pub use generals::General;
 pub use hash::StateHasher;
@@ -115,7 +117,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 43;
+pub const SIM_VERSION: u32 = 44;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -612,6 +614,12 @@ pub enum Command {
     /// shot from much further (see [`vision`]). Any of the issuer's
     /// regiments, at any time, deploying too.
     Torches { regiment: RegimentHandle, lit: bool },
+    /// Set the woods beside a regiment alight: the burnable tile (scrub,
+    /// woods or thicket) nearest its centre within a tile of its block
+    /// catches, and the fire spreads with the wind (see [`fire`]). The
+    /// issuer's own regiment, not fighting or routed; refused when nothing
+    /// is in reach or the ground is too wet to catch. Not while deploying.
+    Burn { regiment: RegimentHandle },
     /// Field Battle: give the issuing player a deployment zone. The first
     /// one starts the deployment phase (see [`deploy`]); more are accepted
     /// until the battle begins, one per player.
@@ -783,6 +791,7 @@ impl Command {
             | Command::FallBack { .. }
             | Command::Brace { .. }
             | Command::Torches { .. }
+            | Command::Burn { .. }
             | Command::AttackStructure { .. }
             | Command::Gather { .. }
             | Command::Trade { .. }
@@ -861,6 +870,8 @@ pub struct World {
     conquest: Option<Conquest>,
     /// The weather and the time of day (see [`sky`]).
     sky: SkyState,
+    /// Woods burning (see [`fire`]).
+    fires: fire::Fires,
     pub regiments: Regiments,
 }
 
@@ -902,6 +913,7 @@ impl World {
             scratch: false,
             conquest: None,
             sky: SkyState::new(&setup.sky),
+            fires: fire::Fires::new(setup.seed),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
         .with_air()
@@ -1570,6 +1582,7 @@ impl World {
             &self.units,
             &self.stances,
         );
+        self.burn();
         self.combat.after_move(
             &mut self.regiments,
             &self.units,
@@ -1644,6 +1657,7 @@ impl World {
             &self.units,
             &self.stances,
             &self.terrain,
+            &self.fires,
             self.conquest.as_mut().map(|c| &mut c.structures),
             self.tick,
         );
@@ -1832,6 +1846,19 @@ impl World {
             Command::Torches { regiment, lit } => match self.regiments.owner(regiment) {
                 Some(owner) if self.stances.can_command(pc.player, owner) => {
                     self.regiments.light(regiment, lit)
+                }
+                _ => false,
+            },
+            Command::Burn { regiment } => match self.regiments.resolve(regiment) {
+                Some(i)
+                    if self.stances.can_command(pc.player, self.regiments.owner[i])
+                        && self.regiments.engaged[i].is_none()
+                        && !self.regiments.morale_state[i].broken()
+                        && self.weather_lets_fire() =>
+                {
+                    self.fires
+                        .tinder(&self.terrain, &self.regiments, &self.units, i)
+                        .is_some_and(|(x, y)| self.fires.kindle(&self.terrain, x, y))
                 }
                 _ => false,
             },
@@ -2358,6 +2385,9 @@ impl World {
             if !self.scratch {
                 self.events.cleared(x, y, was, burnt);
             }
+            // Nothing is left to burn there (cleared by workers; a tile
+            // that burned out is out of the fires already).
+            self.fires.put_out(x, y);
         }
         if !thicket.is_empty() {
             self.nav.set_built_all(&thicket, false, &self.regiments);
@@ -2510,6 +2540,52 @@ impl World {
     /// Whether `a`'s regiments fight `b`'s (see [`Stances::hostile`]).
     pub fn hostile(&self, a: PlayerId, b: PlayerId) -> bool {
         self.stances.hostile(a, b)
+    }
+
+    /// Whether the ground is dry enough for woods to catch (see
+    /// [`Command::Burn`]).
+    pub fn weather_lets_fire(&self) -> bool {
+        self.sky.wet() < fire::DAMP_WET
+    }
+
+    /// Whether `regiment` touches burning woods (see [`fire`]): it burns,
+    /// and is never hidden.
+    pub fn in_fire(&self, regiment: RegimentHandle) -> bool {
+        self.regiments
+            .resolve(regiment)
+            .is_some_and(|i| self.vision.in_fire(i))
+    }
+
+    /// The tiles burning now, by row then column (see [`fire`]).
+    pub fn fires(&self) -> &[Burn] {
+        self.fires.burning()
+    }
+
+    /// One tick of the fires (before the fallen are taken off the field,
+    /// so those the fire kills fall with the rest): the tiles that burn out
+    /// go through the ground change as burnt.
+    fn burn(&mut self) {
+        self.fires.update(
+            self.tick,
+            &self.terrain,
+            self.sky.weather(),
+            self.sky.wet(),
+            &mut self.regiments,
+            &self.units,
+        );
+        if !self.scratch {
+            for &(x, y) in &self.fires.kindled {
+                self.events.kindled(x, y);
+            }
+        }
+        self.fires.kindled.clear();
+        if !self.fires.burnt.is_empty() {
+            let burnt = core::mem::take(&mut self.fires.burnt);
+            self.change_ground(burnt.iter().map(|&(x, y)| (x, y, true)));
+            // Put back, so the list keeps its room.
+            self.fires.burnt = burnt;
+            self.fires.burnt.clear();
+        }
     }
 
     /// The ground's heights, water and cover, and what they do in a fight.
@@ -2755,9 +2831,16 @@ impl World {
                 if self.terrain.soaked() > 0 {
                     h.u32(self.terrain.soaked());
                 }
-                if let Some(c) = &self.conquest {
+                // Changed only by clearing (in Conquest) and fire (once one
+                // has been lit), so other matches hash as before.
+                if self.conquest.is_some() || self.fires.ever() {
                     h.u64(self.terrain.changes());
+                }
+                if let Some(c) = &self.conquest {
                     c.clearing.hash_into(&self.regiments, h);
+                }
+                if self.fires.ever() {
+                    self.fires.hash_into(h);
                 }
             }
             other => unreachable!("no hash for system {other}"),

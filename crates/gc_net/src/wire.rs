@@ -463,6 +463,10 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.handle(regiment);
             w.bool(lit);
         }
+        Command::Burn { regiment } => {
+            w.u8(37);
+            w.handle(regiment);
+        }
         Command::SetGate { structure, mode } => {
             w.u8(26);
             w.structure(structure);
@@ -640,6 +644,9 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         34 => Command::Torches {
             regiment: r.handle()?,
             lit: r.bool()?,
+        },
+        37 => Command::Burn {
+            regiment: r.handle()?,
         },
         26 => Command::SetGate {
             structure: r.structure()?,
@@ -943,6 +950,7 @@ mod tests {
                 regiment: h(8, 3),
                 lit: true,
             },
+            Command::Burn { regiment: h(5, 2) },
             Command::FocusTower {
                 structure: StructureHandle {
                     index: 9,

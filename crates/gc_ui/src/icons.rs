@@ -28,6 +28,8 @@ pub enum Icon {
     FallBack,
     /// A lit torch: the battle grid's Torches toggle.
     Torch,
+    /// A tongue of flame: the battle grid's Burn order.
+    Fire,
     Help,
     Sword,
     Spear,
@@ -49,7 +51,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon that draws something.
-    pub const ALL: [Icon; 27] = [
+    pub const ALL: [Icon; 28] = [
         Icon::Move,
         Icon::Attack,
         Icon::Hold,
@@ -62,6 +64,7 @@ impl Icon {
         Icon::Run,
         Icon::FallBack,
         Icon::Torch,
+        Icon::Fire,
         Icon::Help,
         Icon::Sword,
         Icon::Spear,
@@ -208,6 +211,20 @@ impl Icon {
                 "..........##",
                 "..........##",
                 "............",
+            ],
+            Icon::Fire => [
+                ".....#......",
+                ".....##.....",
+                "....###.....",
+                "....####..#.",
+                "...#####..#.",
+                "..#######.#.",
+                "..###.####..",
+                ".###...###..",
+                ".###...####.",
+                ".####.#####.",
+                "..########..",
+                "...######...",
             ],
             Icon::Torch => [
                 ".....#......",

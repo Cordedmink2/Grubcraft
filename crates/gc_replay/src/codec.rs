@@ -375,6 +375,10 @@ impl Writer {
                 self.handle(regiment);
                 self.bool(lit);
             }
+            Command::Burn { regiment } => {
+                self.u8(39);
+                self.handle(regiment);
+            }
             Command::HandOver { to } => {
                 self.u8(21);
                 self.u8(to);
@@ -865,6 +869,9 @@ impl<'a> Reader<'a> {
                 regiment: self.handle()?,
                 lit: self.bool()?,
             },
+            39 => Command::Burn {
+                regiment: self.handle()?,
+            },
             tag @ (29 | 30) => Command::BuildWall {
                 regiment: if tag == 29 {
                     Some(self.handle()?)
@@ -1131,6 +1138,12 @@ mod tests {
                     generation: 2,
                 },
                 lit: true,
+            },
+            Command::Burn {
+                regiment: RegimentHandle {
+                    index: 6,
+                    generation: 1,
+                },
             },
             Command::PlanWall {
                 building: 2,

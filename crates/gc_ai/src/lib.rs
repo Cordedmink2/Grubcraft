@@ -44,6 +44,7 @@ use std::sync::Arc;
 
 use gc_fixed::Pcg32;
 use gc_sim::{Command, PlayerCommand, PlayerId, World};
+use glam::Vec2;
 
 pub use crate::captain::{Captain, Doctrine, Plan, Posture, Role, Stance};
 pub use crate::difficulty::{Difficulty, Knobs};
@@ -54,6 +55,60 @@ pub use crate::perception::Perception;
 pub use crate::personality::{Faction, Personality};
 pub use crate::rehearsal::Verdict;
 pub use crate::terrain::Terrain;
+
+/// How far a regiment caught in burning woods marches away from the fire,
+/// in tiles.
+const FLEE_FIRE: f32 = 8.0;
+/// The priority of marching out of a fire: before anything else.
+const FLEE_PRIORITY: u8 = u8::MAX;
+
+/// Each of `party`'s regiments that stands in burning woods, and isn't
+/// fighting, marches [`FLEE_FIRE`] tiles away from the fire's middle round
+/// it, before anything else it was to do (docs/32-changing-land.md,
+/// "Woods that burn").
+fn flee_fire(view: &Perception, world: &World, party: PlayerId, wants: &mut Vec<Want>) {
+    let fires = world.fires();
+    if fires.is_empty() {
+        return;
+    }
+    for r in view.regiments.iter().filter(|r| r.owner == party) {
+        if !r.in_fire || r.engaged || r.broken() {
+            continue;
+        }
+        // The middle of the fire near it: the rows in reach (the fires
+        // are sorted by row), then the tiles within reach.
+        let reach = r.width.max(r.depth) + 4.0;
+        let low = (r.pos.y - reach).floor() as i32;
+        let from = fires.partition_point(|b| b.y < low);
+        let (mut sum, mut n) = (Vec2::ZERO, 0.0);
+        for b in fires[from..]
+            .iter()
+            .take_while(|b| b.y as f32 <= r.pos.y + reach)
+        {
+            let at = Vec2::new(b.x as f32 + 0.5, b.y as f32 + 0.5);
+            if at.distance_squared(r.pos) <= reach * reach {
+                sum += at;
+                n += 1.0;
+            }
+        }
+        let away = if n > 0.0 {
+            (r.pos - sum / n).normalize_or(-r.facing)
+        } else {
+            -r.facing
+        };
+        wants.retain(|w| w.regiment != r.handle);
+        wants.push(Want {
+            regiment: r.handle,
+            act: orders::Act::Move {
+                to: r.pos + away * FLEE_FIRE,
+                facing: None,
+                pace: 0.0,
+            },
+            priority: FLEE_PRIORITY,
+            group: 0,
+        });
+    }
+}
 
 /// How to set up a mind.
 #[derive(Clone, Copy, Debug)]
@@ -294,6 +349,7 @@ impl Mind {
                 next_slip: &mut self.next_slip,
             };
             self.captain.think(&mut ctx, &mut self.wants);
+            flee_fire(view, world, self.party, &mut self.wants);
             self.orders.decide(view, &mut self.wants);
         }
         self.torches(view);

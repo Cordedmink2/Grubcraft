@@ -121,6 +121,8 @@ pub struct Seen {
     pub hidden: bool,
     /// Torches lit (they burn only in the dark).
     pub torches: bool,
+    /// Touching burning woods (see [`gc_sim::fire`]): it burns.
+    pub in_fire: bool,
 }
 
 impl Seen {
@@ -314,6 +316,7 @@ impl Perception {
                 morale_points: r.morale_points,
                 hidden: world.hidden(r.handle),
                 torches: r.torches,
+                in_fire: world.in_fire(r.handle),
             });
             self.heard[slot] = in_dark.then(|| (*self.regiments.last().expect("just pushed"), now));
         }

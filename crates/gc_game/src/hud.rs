@@ -64,6 +64,9 @@ pub enum Armed {
 /// Slots of the command grid, row by row (docs/08-ui-ux.md#screen-layout-1080p-reference).
 pub const SLOT_MOVE: usize = 0;
 pub const SLOT_ATTACK: usize = 1;
+/// Burn (E): set the woods beside each selected regiment alight, in the
+/// slot Hold keeps for itself until that order arrives.
+pub const SLOT_BURN: usize = 2;
 pub const SLOT_FORMATION: usize = 3;
 /// Brace (Z), sharing its slot with Skirmish when that order arrives, and
 /// Fall back (V).
@@ -77,7 +80,7 @@ pub const SLOT_FALL_BACK: usize = 11;
 const LABELS: [&str; GRID_SLOTS] = [
     "Move",
     "Attack",
-    "Hold",
+    "Burn",
     "Formation",
     "Skill 1",
     "Skill 2",
@@ -93,7 +96,7 @@ const LABELS: [&str; GRID_SLOTS] = [
 const ICONS: [Icon; GRID_SLOTS] = [
     Icon::Move,
     Icon::Attack,
-    Icon::Hold,
+    Icon::Fire,
     Icon::Formation,
     Icon::Ring,
     Icon::Ring,
@@ -109,7 +112,7 @@ const ICONS: [Icon; GRID_SLOTS] = [
 const TIPS: [&str; GRID_SLOTS] = [
     "March the selected regiments to a spot. Then click the ground.",
     "Send the selection against an enemy. Then click the enemy.",
-    "Stand and fight where you are. Not in the game yet.",
+    "Set the woods or scrub beside the selection alight. The fire spreads with the wind and burns anyone in it; rain puts it out.",
     "Change the formation: Line, Tight, Loose, Shield wall.",
     "A hero ability. Needs a hero.",
     "A hero ability. Needs a hero.",
@@ -857,6 +860,11 @@ impl Running {
         grid[SLOT_BRACE].state = ready(has_orders && has_spears);
         grid[SLOT_FALL_BACK].state = ready(has_orders);
         grid[SLOT_TORCHES].state = ready(has_orders);
+        let burnable = has_orders && !self.world.deploying() && self.world.weather_lets_fire();
+        grid[SLOT_BURN].state = ready(burnable);
+        if has_orders && !burnable {
+            grid[SLOT_BURN].tip = "Too wet to burn: the ground must dry first.";
+        }
         // A hero's abilities take the A, S, D and F slots.
         if let Some(h) = &hero {
             for (i, a) in h.abilities.iter().enumerate() {
@@ -1253,6 +1261,7 @@ impl Running {
             SLOT_FORMATION => self.cycle_formation(),
             SLOT_BRACE => self.toggle_brace(),
             SLOT_TORCHES => self.toggle_torches(),
+            SLOT_BURN => self.burn_woods(),
             SLOT_FALL_BACK => self.fall_back(),
             _ => {}
         }

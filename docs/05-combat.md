@@ -29,7 +29,8 @@ Kept deliberately small. Every order is on the same hotkey for every regiment.
 | Move | right-click / `Q` | Move in current formation, keep facing toward travel |
 | Move and face | right-drag | Drag a line: sets position, frontage width and facing (Total War's signature control) |
 | Attack | right-click enemy / `W` | Engage target, or attack-move to a point |
-| Hold | `E` | Hold position and facing, only fight what reaches you |
+| Hold | `E` | Hold position and facing, only fight what reaches you (later; `E` is Burn for now) |
+| Burn | `E` | Set the woods or scrub beside the selection alight: the fire spreads with the wind, burns anyone in it (4 hit points a second for each burning tile touched, and morale) and dies in the rain ([32](32-changing-land.md#woods-that-burn-idea-2)) |
 | Torches | `X` | At night: light or put out the selection's torches (seen from afar, see further, can't be ambushed; [32](32-changing-land.md)). Charges need no key: closing at speed charges |
 | Skirmish / Brace | `Z` (toggle) | **Brace is built:** spears and pikes set against a charge ([below](#brace-and-fall-back)). Skirmish, where ranged units keep distance from approaching melee, comes later |
 | Formation | `R` (cycle) | Line / Tight / Loose / Shield wall (shields only); Column and Wedge (cavalry) later. See [Weapons and formations](#weapons-and-formations) |

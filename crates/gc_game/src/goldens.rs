@@ -120,6 +120,23 @@ fn charge_with(world: &World, out: &mut Vec<PlayerCommand>, charging: fn(PlayerI
     }
 }
 
+/// Every 20 seconds side 0 orders each of its regiments that isn't
+/// fighting to set the woods beside it alight (refused where there are
+/// none in reach), on top of its computer player's orders.
+fn fire_setting(world: &World, out: &mut Vec<PlayerCommand>) {
+    if world.tick_count() % (20 * gc_sim::TICKS_PER_SECOND) != 7 {
+        return;
+    }
+    for r in world.regiments.iter() {
+        if r.owner == 0 && !r.engaged && !r.morale.broken() {
+            out.push(PlayerCommand {
+                player: 0,
+                command: Command::Burn { regiment: r.handle },
+            });
+        }
+    }
+}
+
 /// Four armies that only charge. A minute in, side 2 hands its army to its
 /// ally, side 0, who charges with it from then on; side 2's own order a
 /// tick later is refused, and so is side 3 handing its army to an enemy.
@@ -405,6 +422,33 @@ const GOLDENS: &[Golden] = &[
                     ..gc_sim::Weather::FAIR
                 },
             }],
+        },
+    },
+    // Woods that burn (docs/32-changing-land.md): on the woods map in a
+    // dry wind, side 0 sets fire to the woods beside its regiments every
+    // 20 seconds (see [`fire_setting`]); the fire spreads downwind, burns
+    // the troops in it, and the computer players march them out.
+    Golden {
+        name: "field-fire-1v1",
+        seed: 0xd9,
+        map_tiles: 256,
+        sides: &[side(CarrionConcord, General, 0), side(Brood, General, 1)],
+        soldiers: 0,
+        rows: 1,
+        minutes: 5,
+        minds: true,
+        extra: fire_setting,
+        champions: false,
+        deployment: false,
+        sky: gc_sim::Sky {
+            spells: &[gc_sim::Spell {
+                at: 0,
+                weather: gc_sim::Weather {
+                    wind: (16, 8),
+                    ..gc_sim::Weather::FAIR
+                },
+            }],
+            ..gc_sim::Sky::STILL
         },
     },
     // The `gc_bench` grand battle: about 6,000 soldiers, all four armies

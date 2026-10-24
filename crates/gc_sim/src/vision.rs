@@ -64,6 +64,7 @@ use alloc::vec::Vec;
 use gc_fixed::{Fx, FxVec2};
 
 use crate::combat::{Block, Combat, Whose, placement};
+use crate::fire::Fires;
 use crate::morale;
 use crate::regiments::{RegimentHandle, Regiments};
 use crate::sky::Air;
@@ -204,6 +205,11 @@ pub(crate) struct Vision {
     /// seen or lit, so a charge out of the dark that torchlight shows at
     /// the last is still one (see [`Vision::springs`]).
     from_dark: Vec<bool>,
+    /// Per slot, as of this tick's update: touching burning woods (never
+    /// hidden), and within a fire's light (lit in the dark). Worked out
+    /// from the fires each tick, so neither is hashed (see [`crate::fire`]).
+    in_fire: Vec<bool>,
+    fire_lit: Vec<bool>,
     /// Any slot is lit (as of the last update).
     any_lit: bool,
     /// The furthest any post sees a lit regiment (see `post_sight`).
@@ -265,6 +271,8 @@ impl Vision {
             lit: Vec::new(),
             dark_only: Vec::new(),
             from_dark: Vec::new(),
+            in_fire: Vec::new(),
+            fire_lit: Vec::new(),
             any_lit: false,
             post_lit_sight: Fx::ZERO,
         };
@@ -285,6 +293,8 @@ impl Vision {
         self.lit = vec![false; capacity];
         self.dark_only = vec![false; capacity];
         self.from_dark = vec![false; capacity];
+        self.in_fire = vec![false; capacity];
+        self.fire_lit = vec![false; capacity];
         self.ambushes = Vec::with_capacity(MAX_AMBUSHES);
     }
 
@@ -432,12 +442,14 @@ impl Vision {
         units: &[UnitStats],
         stances: &Stances,
         terrain: &Terrain,
+        fires: &Fires,
         structures: Option<&mut Structures>,
         tick: u32,
     ) {
         if !self.active {
             return;
         }
+        self.see_fires(regs, units, fires);
         self.ambushes.clear();
         self.posts.clear();
         if self.fog
@@ -611,6 +623,9 @@ impl Vision {
         self.revealed[i] = 0;
         self.off_guard[i] = 0;
         self.was_engaged[i] = false;
+        // A slot's last regiment's fire is not its own.
+        self.in_fire[i] = false;
+        self.fire_lit[i] = false;
         // Placed in the dark in the open, it is in plain view as placed.
         let in_open = self.spotting(regs, units, terrain, i).0.is_none();
         self.lit[i] = false;
@@ -660,6 +675,8 @@ impl Vision {
         self.any_lit |= from.lit[i];
         self.dark_only[i] = from.dark_only[i];
         self.from_dark[i] = from.from_dark[i];
+        self.in_fire[i] = from.in_fire[i];
+        self.fire_lit[i] = from.fire_lit[i];
         if self.fog && from.fog {
             self.in_sight[i] = from.in_sight[i];
             self.sight_linger[k..k + PARTIES].copy_from_slice(&from.sight_linger[k..k + PARTIES]);
@@ -736,7 +753,11 @@ impl Vision {
         terrain: &Terrain,
         i: usize,
     ) -> (Option<Fx>, Option<Fx>) {
-        if regs.engaged[i].is_some() || self.revealed[i] > 0 || (self.air.dark && regs.torches[i]) {
+        if regs.engaged[i].is_some()
+            || self.revealed[i] > 0
+            || self.in_fire[i]
+            || (self.air.dark && regs.torches[i])
+        {
             return (None, None);
         }
         let b = Block::of(regs, units, i);
@@ -774,6 +795,29 @@ impl Vision {
         (cover, night)
     }
 
+    /// Who touches burning woods, and who stands in a fire's light.
+    fn see_fires(&mut self, regs: &Regiments, units: &[UnitStats], fires: &Fires) {
+        if fires.burning().is_empty() {
+            self.in_fire.fill(false);
+            self.fire_lit.fill(false);
+            return;
+        }
+        for i in 0..regs.alive.len() {
+            (self.in_fire[i], self.fire_lit[i]) = if regs.alive[i] {
+                let (touched, lit) = fires.near(&Block::of(regs, units, i), TORCH_LIGHT);
+                (touched > 0, lit)
+            } else {
+                (false, false)
+            };
+        }
+    }
+
+    /// Whether the regiment in slot `i` touches burning woods, as of the
+    /// last update.
+    pub(crate) fn in_fire(&self, i: usize) -> bool {
+        self.active && self.in_fire[i]
+    }
+
     /// Mark who is lit this tick: in the dark, every regiment with its
     /// torches lit, and every one standing within [`TORCH_LIGHT`] of one
     /// (theirs or anyone's).
@@ -782,6 +826,13 @@ impl Vision {
         self.any_lit = false;
         if !self.air.dark {
             return;
+        }
+        // In a fire's light (see [`crate::fire`]).
+        for (b, &lit) in self.fire_lit.iter().enumerate() {
+            if lit {
+                self.lit[b] = true;
+                self.any_lit = true;
+            }
         }
         let at = placement!(regs, stances);
         let lit = &mut self.lit;

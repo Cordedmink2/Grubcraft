@@ -109,6 +109,9 @@ pub enum Event {
         was: Growth,
         burnt: bool,
     },
+    /// The tile `(x, y)` caught fire (see [`crate::fire`]): it burns until
+    /// it is cleared, burnt.
+    Kindled { x: i32, y: i32 },
 }
 
 /// Each regiment slot as it stood before the tick.
@@ -167,6 +170,11 @@ impl Events {
     /// Tell of the tile `(x, y)` cleared of `was` (burnt, if `burnt`).
     pub(crate) fn cleared(&mut self, x: i32, y: i32, was: Growth, burnt: bool) {
         self.list.push(Event::Cleared { x, y, was, burnt });
+    }
+
+    /// Tell of the tile `(x, y)` catching fire.
+    pub(crate) fn kindled(&mut self, x: i32, y: i32) {
+        self.list.push(Event::Kindled { x, y });
     }
 
     /// Tell of the bells tolled, the blows struck on buildings and the

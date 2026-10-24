@@ -130,9 +130,38 @@ Computer players plan for the shorter range and slower march (stage 3a, below).
 
 ### Later stages
 
-- **Firelight (with burnable woods, idea 2).** Burning woods and buildings light the ground round them as torches do (stage 3b, above). The sim does not track fires yet: a damaged building's flames are only drawn.
+- **Firelight.** Burning woods light the ground round them (stage 4a, [Woods that burn](#woods-that-burn-idea-2)); burning buildings don't yet: a damaged building's flames are only drawn.
 - Snow on the Highland's changing weather comes with the lands' own skies.
 - **Lightning (later).** `Event::Lightning { at, tick }` for a flash and thunder; a strike may set woods alight once woods burn (idea 2).
+
+## Woods that burn (idea 2)
+
+Fire is the first change to the ground that happens in a Field Battle as well as in Conquest. A regiment sets the woods beside it alight; the fire spreads tile by tile with the wind, dies in the rain, burns whoever stands in it, and lights the night round it. A tile that burns out is open, scorched ground for good. Stage 4a is the rules; burning buildings, lightning strikes and the computer players' own use of fire come later.
+
+### Setting it alight
+
+- **The order.** `Command::Burn { regiment }`: the regiment fires the burnable tile nearest its centre among those its block touches or comes within a tile of (scrub, woods or thicket; ties go to the lower tile index). It must be the issuer's, standing (not routed), and not fighting. Nothing happens, and the order is refused, when no tile is in reach, when that tile already burns, or when the ground is too wet to catch (`sky.wet()` at or above `DAMP_WET`, a tenth of `WET_FULL`: some 25 seconds of heavy rain, which dries off in under a minute). It needs no torches: any troops can carry fire. Not while the armies deploy.
+- **Seeing it.** A Burn button on the battle grid (key E, the slot Hold keeps for itself until that order arrives) fires the woods beside each selected regiment; while the ground is too wet the button is off and its tooltip says so. The flames, smoke and their light are drawn on the burning tiles the viewer sees near the view (`Effects::blaze`, as the Concord's workers' fires), at most 96 of them: across a bigger fire, every so many, and a tile that burns out drops its trees as ash and is drawn scorched (`Event::Cleared { burnt: true }`, [35](35-ground-marks.md)).
+
+### How a fire spreads
+
+- **Burning tiles.** `gc_sim::fire::Fires` keeps the tiles that burn, sorted by tile, each with what grew there and the ticks it has left: scrub 10 s, woods 25 s, thicket 40 s. When a tile's time is up it goes through the one ground change with `burnt: true`, so it is open from then on (thicket opens the walkable grid) and the game draws it scorched.
+- **Spreading.** Once a second, each tile that has burned at least 2 s may set each of its eight neighbours alight if it is burnable and not yet burning. The chance a second is the neighbour's: scrub 30%, woods 18%, thicket 12%. Wind blowing towards the neighbour raises it, up to three times; wind blowing away lowers it, down to a quarter (`Weather::wind`, which now moves something in play). Wet ground lowers it in step (none at `DAMP_WET`), and so does rain or snow falling (none in the heaviest), which also burns a tile out faster, up to twice as fast. The rolls are a hash of the match seed, the tick and the two tiles, so no random stream moves and a scratch world rolls the same.
+- **How big.** At most `MAX_FIRES` (2 048) tiles burn at once; beyond that a fire doesn't spread until some burn out.
+
+### What it does to troops
+
+- **Burns.** Once a second a regiment whose block touches burning tiles loses 4 hit points for each, up to six tiles (24 a second, about three soldiers), from the back ranks forward, and 3 morale points (a regiment that never routs keeps its morale). Losses to fire count as any other.
+- **Seen.** A regiment touching fire is never hidden, by cover or the dark.
+- **Firelight.** In the dark, burning tiles light the ground round them as torches do: a regiment within `TORCH_LIGHT` (10 tiles) of one is lit (stage 3b, above), so it is seen and shot from as far as by day.
+- **Computer players.** Each time a mind thinks, a regiment of its touching a burning tile that isn't fighting marches 8 tiles away from the fire's middle round it, before anything else it was to do. Minds don't set fires yet, and in Conquest they don't yet march out of them.
+
+### Shared state
+
+- `World::fires()` lists the burning tiles as (column, row, growth, ticks left, ticks in all), for the flames, smoke and their light; `Event::Kindled { x, y }` tells when a tile catches, and `Event::Cleared { burnt: true }` when it burns out. `World::in_fire` says a regiment touches fire (vision works it out from the fires each tick, so it is not hashed).
+- The fires are hashed with the ground (only once a fire has been lit). `Command::Burn` is replay tag 39 (`FORMAT` 41) and wire tag 37 (`PROTOCOL` 34); `SIM_VERSION` 44 (42 and 43 went to the walls). Rehearsal worlds burn as the match does (they copy its fires).
+- **Golden.** `field-fire-1v1` is the woods map in a dry wind: every 20 seconds the Carrion Concord sets fire to the woods beside its regiments, the fire runs downwind, and both computer players march their troops out of it.
+- **Not yet:** pathfinding doesn't steer round fire (regiments march through it and burn); burning buildings, lightning strikes and the computer players setting fires of their own come later.
 
 ## The one ground change
 
@@ -143,7 +172,7 @@ All runtime changes to the ground go through one place in the simulation, `World
 3. folds the change into the ground's running digest, which is part of the state hash,
 4. tells the game (`Event::Cleared`), which takes the trees off those tiles and redraws the ground.
 
-Burning woods will become a second growth change (woods to burnt, then open), floods a change of water, and rubble a fallen building's footprint left as rough ground. Those that change how a cell is walked on (floods) add a ground-cost change beside this one (`Nav::set_ground_all`, planned with the nav doors). Rain soaking (stage 2 of the weather, above) is the one change outside it: it only turns footing soft and back, never growth, cover or the walkable grid, so it is `Terrain::soak`, kept as a count beside the digest.
+Burning woods use the same change (`burnt: true`) when a tile burns out (see [Woods that burn](#woods-that-burn-idea-2)); floods a change of water, and rubble a fallen building's footprint left as rough ground. Those that change how a cell is walked on (floods) add a ground-cost change beside this one (`Nav::set_ground_all`, planned with the nav doors). Rain soaking (stage 2 of the weather, above) is the one change outside it: it only turns footing soft and back, never growth, cover or the walkable grid, so it is `Terrain::soak`, kept as a count beside the digest.
 
 ## Rules that stay the same
 

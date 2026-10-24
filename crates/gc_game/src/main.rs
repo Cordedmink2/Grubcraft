@@ -286,6 +286,9 @@ fn ground_of(map: &Map, p: Vec2) -> f32 {
 /// point is a poor guide.
 const RIDE_PICK_MARGIN: f32 = 0.5;
 const RIDE_PICK_HEIGHT: f32 = 3.0;
+/// The most burning tiles drawn ablaze at once: across a bigger fire,
+/// every so many (each also lights the ground).
+const MOST_FIRES_DRAWN: usize = 96;
 /// Thickness of the ground plate drawn under a selected regiment.
 const PLATE_HEIGHT: f32 = 0.05;
 /// The command grid's keys, slot by slot (`gc_ui::hud::GRID_KEYS`).
@@ -2117,6 +2120,7 @@ impl ApplicationHandler for App {
                         }
                         KeyCode::KeyZ if grid_key => r.battle_press(hud::SLOT_BRACE),
                         KeyCode::KeyX if grid_key => r.battle_press(hud::SLOT_TORCHES),
+                        KeyCode::KeyE if grid_key => r.battle_press(hud::SLOT_BURN),
                         KeyCode::KeyV if grid_key => r.battle_press(hud::SLOT_FALL_BACK),
                         KeyCode::Space if grid_key => r.jump_to_alert(),
                         // F1 finds an idle worker while there is one to find,
@@ -3044,6 +3048,35 @@ impl Running {
         } else {
             "Spears lifted".into()
         });
+    }
+
+    /// E: set the woods beside each selected regiment alight (the sim
+    /// refuses those with none in reach; docs/32-changing-land.md).
+    fn burn_woods(&mut self) {
+        if self.world.deploying() {
+            self.say("Fire can't be set until the battle begins".into());
+            return;
+        }
+        if !self.world.weather_lets_fire() {
+            self.say("Too wet to burn: the ground must dry first".into());
+            return;
+        }
+        let before = self.human_orders.len();
+        for &regiment in &self.selected {
+            if self.world.regiments.owner(regiment).is_some() {
+                self.human_orders.push(PlayerCommand {
+                    player: self.sandbox.side,
+                    command: gc_sim::Command::Burn { regiment },
+                });
+            }
+        }
+        if self.human_orders.len() == before {
+            return;
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        self.say(
+            "Burning the woods beside them, where there are any: fire spreads with the wind".into(),
+        );
     }
 
     /// X: light the selection's torches, or, if they all burn already, put
@@ -4250,6 +4283,37 @@ impl Running {
                     view_distance,
                     |p| heightmap.height_at(p.x, p.y).max(water),
                 );
+            }
+        }
+        // Woods on fire (the sim's burning tiles): a blaze on those the
+        // viewer sees, near enough to matter, at most `MOST_FIRES_DRAWN` of
+        // them (every so many across a big fire); its flames light the
+        // ground.
+        if fx_speed > 0.0 && !self.world.fires().is_empty() {
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            let fire_dt = dt.as_secs_f32() * fx_speed;
+            let centre = |b: &gc_sim::Burn| Vec2::new(b.x as f32 + 0.5, b.y as f32 + 0.5);
+            let near: Vec<_> = (self.world.fires().iter())
+                .filter(|b| {
+                    centre(b).distance_squared(view_focus) <= view_distance * view_distance
+                        && (reveal || fog.sees_tile((b.x, b.y)))
+                })
+                .collect();
+            // Thinned by a hash of the tile, so a big fire shows no stripes.
+            let every = near.len().div_ceil(MOST_FIRES_DRAWN).max(1) as i32;
+            for b in near {
+                if (b.x * 7 + b.y * 13).rem_euclid(every) != 0 {
+                    continue;
+                }
+                let at = centre(b);
+                let tall = match b.growth {
+                    gc_sim::Growth::Scrub => 0.8,
+                    gc_sim::Growth::Thicket => 3.0,
+                    _ => 2.4,
+                };
+                let ground = heightmap.height_at(at.x, at.y);
+                self.effects
+                    .blaze(glam::Vec3::new(at.x, ground, at.y), tall, fire_dt);
             }
         }
         let particles = self.effects.frame(
