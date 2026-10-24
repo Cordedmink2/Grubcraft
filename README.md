@@ -12,7 +12,11 @@ M0 (foundations) is done apart from a test run on a Windows PC. All eight M1 ste
 
 ## Building and running
 
-You need [Rust](https://rustup.rs) (stable). Then, from this folder:
+You need [Rust](https://rustup.rs). The exact version is pinned in `rust-toolchain.toml`, so with `rustup` installed the first `cargo` command in this folder fetches it by itself.
+
+On Linux, the sound output (`cpal`) also needs the ALSA headers and `pkg-config`, for example `sudo apt-get install -y libasound2-dev pkg-config` (CI installs the same; see [dependencies](docs/dependencies.md)).
+
+Then, from this folder:
 
 ```sh
 cargo run --release -p gc_game          # play the current build
