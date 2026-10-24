@@ -6,7 +6,7 @@
 // Each is built from code in Blender (design/creatures/source/: `crit.py` is the kit) with its own small rig,
 // painted in vertex colours that are baked to the albedo map. Clips: Idle, Walk, Run, and Cheer, which
 // plays a deer's head-down feeding, a dove's or crow's flapping flight, a farmer's hoeing, a porter's brow-mopping, a child's jump and a
-// dog's sniffing. The Oxcart has only Idle and Walk (its wheels turn a half turn per Walk cycle). Faces +z, stands on the ground at the origin, `height` is the head's top.
+// dog's sniffing. The Butterfly, Moth and Dragonfly (stage 7) have only Idle (wings up, trembling) and Cheer (the wing beat). The Oxcart has only Idle and Walk (its wheels turn a half turn per Walk cycle). Faces +z, stands on the ground at the origin, `height` is the head's top.
 (
     models: [
         (
@@ -87,6 +87,36 @@
             lod_triangles: (5600, 2400, 1000, 360),
             textures: Some((
                 albedo: "shared:grubcraft/creatures/oxcart/albedo.png",
+            )),
+        ),
+        (
+            name: "Butterfly",
+            source: "shared:grubcraft/creatures/butterfly/butterfly.glb",
+            height: 0.177,
+            clips: { "Idle": "Idle", "Cheer": "Cheer" },
+            lod_triangles: (500, 300, 160, 80),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/butterfly/albedo.png",
+            )),
+        ),
+        (
+            name: "Moth",
+            source: "shared:grubcraft/creatures/moth/moth.glb",
+            height: 0.194,
+            clips: { "Idle": "Idle", "Cheer": "Cheer" },
+            lod_triangles: (560, 330, 170, 80),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/moth/albedo.png",
+            )),
+        ),
+        (
+            name: "Dragonfly",
+            source: "shared:grubcraft/creatures/dragonfly/dragonfly.glb",
+            height: 0.103,
+            clips: { "Idle": "Idle", "Cheer": "Cheer" },
+            lod_triangles: (730, 420, 200, 90),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/dragonfly/albedo.png",
             )),
         ),
     ],

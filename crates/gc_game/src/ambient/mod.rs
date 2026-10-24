@@ -9,6 +9,7 @@ pub mod birds;
 pub mod caravans;
 pub mod felling;
 pub mod hamlets;
+pub mod insects;
 pub mod piles;
 pub mod touches;
 pub mod villagers;
@@ -21,6 +22,7 @@ pub use birds::Birds;
 pub use caravans::Caravans;
 pub use felling::{Felling, Style};
 pub use hamlets::Hamlets;
+pub use insects::Insects;
 pub use touches::Touches;
 pub use villagers::Villagers;
 pub use walkers::Walkers;
@@ -39,6 +41,7 @@ pub struct Ambient {
     pub hamlets: Hamlets,
     pub villagers: Villagers,
     pub caravans: Caravans,
+    pub insects: Insects,
     /// Seconds until `--fell-demo` fells the trees round the camera.
     fell_demo: Option<f32>,
     /// `--hamlet-demo`: move the camera to the first hamlet, once.
@@ -63,6 +66,7 @@ impl Ambient {
             hamlets: Hamlets::default(),
             villagers: Villagers::default(),
             caravans: Caravans::default(),
+            insects: Insects::default(),
             fell_demo: fell_demo.then_some(FELL_DEMO_AFTER),
             hamlet_demo,
         }
