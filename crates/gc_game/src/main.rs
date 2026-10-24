@@ -963,6 +963,9 @@ struct Art {
     deer: Option<usize>,
     /// The dove of the ambient birds, if the pack has it.
     dove: Option<usize>,
+    /// The villagers' models, by `ambient::villagers::Kind`, if the pack
+    /// has them all.
+    folk: Option<[usize; 4]>,
     /// This frame's camera, for choosing levels of detail.
     view: LodView,
     /// Instances per model and level of detail (model * LODS + lod).
@@ -1404,6 +1407,11 @@ impl App {
             heights: models.models.iter().map(|m| m.height).collect(),
             deer: models.by_name("Deer"),
             dove: models.by_name("Dove"),
+            folk: ambient::villagers::Kind::ALL
+                .map(|k| models.by_name(k.model()))
+                .into_iter()
+                .collect::<Option<Vec<_>>>()
+                .and_then(|v| v.try_into().ok()),
             view: LodView {
                 eye: glam::Vec3::ZERO,
                 forward: glam::Vec3::NEG_Z,
@@ -3675,7 +3683,10 @@ impl Running {
             &mut self.camera.focus,
             &mut self.scenery,
         );
-        self.ambient.hamlet_demo(&mut self.camera.focus);
+        // The demo lifts the fog too, so the villagers show.
+        if self.ambient.hamlet_demo(&mut self.camera.focus) && self.online.is_none() {
+            self.reveal_all = true;
+        }
         let heightmap = &self.heightmap;
         let scenery = &self.scenery;
         self.ambient.felling.advance(
@@ -3813,7 +3824,7 @@ impl Running {
                 && self
                     .art
                     .as_ref()
-                    .is_some_and(|a| a.deer.is_some() || a.dove.is_some());
+                    .is_some_and(|a| a.deer.is_some() || a.dove.is_some() || a.folk.is_some());
             if showing {
                 // Deer and doves stand on ground no building or tree covers, keep away
                 // from buildings, and bolt or fly from the soldiers the viewer sees
@@ -3823,6 +3834,12 @@ impl Running {
                     .regiments
                     .iter()
                     .filter(|r| reveal || world.sees(viewer, r.handle))
+                    .map(|r| from_fx_vec(r.position))
+                    .collect();
+                let fights: Vec<Vec2> = world
+                    .regiments
+                    .iter()
+                    .filter(|r| r.engaged && (reveal || world.sees(viewer, r.handle)))
                     .map(|r| from_fx_vec(r.position))
                     .collect();
                 let shown = buildings::shown_to(viewer, reveal);
@@ -3867,9 +3884,21 @@ impl Running {
                     tame,
                     &threats,
                 );
+                self.ambient.villagers.advance(
+                    step,
+                    view_focus,
+                    view_distance,
+                    &self.ambient.hamlets,
+                    ambient::villagers::Eyes {
+                        armies: &threats,
+                        fights: &fights,
+                    },
+                    |t| scenery.occupied_at(t),
+                );
             } else {
                 self.ambient.wildlife.hush();
                 self.ambient.birds.hush();
+                self.ambient.villagers.hush();
             }
         }
         // Rain and snow, the one weather clearing and the one coming in;
@@ -4866,6 +4895,7 @@ impl Running {
         self.ambient.walkers.clear();
         self.ambient.wildlife.clear();
         self.ambient.birds.clear();
+        self.ambient.villagers.clear();
         self.ambient.hamlets = ambient::Hamlets::new(&self.heightmap);
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
@@ -6662,6 +6692,39 @@ impl Running {
                     color: [255, 255, 255, gc_render::TONE_NEUTRAL],
                     lift: d.alt,
                     scale: d.scale,
+                    ..Default::default()
+                });
+            }
+        }
+        if let Some(folk) = art.folk {
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            for v in self.ambient.villagers.seen() {
+                let tile = (v.pos.x.floor() as i32, v.pos.y.floor() as i32);
+                if !(reveal || fog.sees_tile(tile)) {
+                    continue;
+                }
+                let model = folk[v.kind.index()];
+                let foot = Vec3::new(v.pos.x, ground(v.pos.x, v.pos.y), v.pos.y);
+                let Some(lod) = art.view.place(art.heights[model], foot) else {
+                    continue;
+                };
+                let action = match v.doing {
+                    ambient::villagers::Doing::Stand => Action::Idle,
+                    ambient::villagers::Doing::Walk => Action::Walk,
+                    ambient::villagers::Doing::Run => Action::Run,
+                    ambient::villagers::Doing::Work => Action::Cheer,
+                };
+                let Some(pose) = art.clips.pose(model, action, time + v.phase) else {
+                    continue;
+                };
+                art.buckets[model * LODS + lod].push(SoldierInstance {
+                    pos: v.pos.to_array(),
+                    facing: v.facing.to_array(),
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [255, 255, 255, gc_render::TONE_NEUTRAL],
+                    lift: 0.0,
+                    scale: 1.0,
                     ..Default::default()
                 });
             }

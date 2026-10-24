@@ -5,7 +5,8 @@
 // name like any model; no unit in data/ uses them, so they are only ever drawn by gc_game::ambient.
 // Each is built from code in Blender (design/creatures/source/: `crit.py` is the kit) with its own small rig,
 // painted in vertex colours that are baked to the albedo map. Clips: Idle, Walk, Run, and Cheer, which
-// plays a deer's head-down feeding and a dove's flapping flight. Faces +z, stands on the ground at the origin, `height` is the head's top.
+// plays a deer's head-down feeding, a dove's flapping flight, a farmer's hoeing, a porter's brow-mopping, a child's jump and a
+// dog's sniffing. Faces +z, stands on the ground at the origin, `height` is the head's top.
 (
     models: [
         (
@@ -26,6 +27,46 @@
             lod_triangles: (1100, 600, 300, 120),
             textures: Some((
                 albedo: "shared:grubcraft/creatures/dove/albedo.png",
+            )),
+        ),
+        (
+            name: "FolkFarmer",
+            source: "shared:grubcraft/creatures/folk-farmer/folk-farmer.glb",
+            height: 1.3,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Cheer": "Cheer" },
+            lod_triangles: (1900, 900, 420, 160),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/folk-farmer/albedo.png",
+            )),
+        ),
+        (
+            name: "FolkPorter",
+            source: "shared:grubcraft/creatures/folk-porter/folk-porter.glb",
+            height: 1.15,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Cheer": "Cheer" },
+            lod_triangles: (1900, 900, 420, 160),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/folk-porter/albedo.png",
+            )),
+        ),
+        (
+            name: "FolkChild",
+            source: "shared:grubcraft/creatures/folk-child/folk-child.glb",
+            height: 0.9,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Cheer": "Cheer" },
+            lod_triangles: (1500, 750, 360, 140),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/folk-child/albedo.png",
+            )),
+        ),
+        (
+            name: "Dog",
+            source: "shared:grubcraft/creatures/dog/dog.glb",
+            height: 0.6,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Cheer": "Cheer" },
+            lod_triangles: (1400, 700, 340, 140),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/dog/albedo.png",
             )),
         ),
     ],

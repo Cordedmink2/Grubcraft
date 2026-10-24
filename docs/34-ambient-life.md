@@ -23,7 +23,7 @@ Mario wants a world that looks lived in: a base where people are doing things, l
 | 2 | **Living touches without models** (built, except mist). Fireflies at dusk over fens and wet woods, pollen in meadows, dust devils in the waste, leaves falling in old woods. Mist pooling on low ground is left to the weather stage of the lighting thread. Particle recipes on a habitat sample of the ground round the camera, as the sound beds do ([09](09-art-and-audio.md)). | Particles, `Map.habitat` (done), lighting looks (done) |
 | 3 | **Busy bases** (idea 10; hearth smoke, lit windows and faction glows built as 3a, walkers between buildings as 3b, log piles beside halls as 3d, the rest not yet). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles beside the halls, stacked supplies, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
 | 4 | **Wildlife** (idea 3; deer built as 4a and doves as 4b, the rest not yet). Flocks that lift from woods when an army marches by and settle again, carrion birds over a battlefield's dead, moths round Grub seeps, butterflies in flower meadows, grazers that bolt from soldiers, fish rises and dragonflies over water. Each land has its own fauna. Creatures are a picture: soldiers walk through them. | Animal models and clips on the animation engine (T5) |
-| 5 | **Villagers** (idea 3; the hamlets themselves built as 5a, the people not yet). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
+| 5 | **Villagers** (idea 3; the hamlets themselves built as 5a, the people as 5b: farmers, porters, children and dogs; carts and porters carrying loads between hamlets not yet). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
 
 Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model format, so the animal models are baked once.
 
@@ -214,8 +214,31 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 ### How it works
 
 - `gc_game::ambient::hamlets::Hamlets::new(map)` lays every site out once at the start of a match from `Map.objects` (kind Village, Town or Bazaar) and keeps the lists; `near(focus, reach, occupied)` hands the scenery pass the models of the hamlets near the camera each frame, chained onto the other extras, leaving out any whose footprint touches a tile `occupied` says has a building. The big pieces (the barn) are placed first in each ring so a neighbour cannot squeeze them out. The models are `Model::GrubfolkHut`, `GrubfolkHouse`, `GrubfolkBarn`, `GrubfolkWell`, `Haystack`, `WattleFence` and `MarketStall` in `assets/scenery.pak`.
-- `--hamlet-demo` moves the camera to the first hamlet.
+- `--hamlet-demo` moves the camera to the first hamlet and lifts the fog, so the people show.
 
 ### Not yet
 
-- The people (stage 5b), ruins when a hamlet is raided (the simulation has no raiding yet), a palisade round a Town, chimney smoke and lamp light in the evening, and hamlets that grow with trading.
+- Ruins when a hamlet is raided (the simulation has no raiding yet), a palisade round a Town, chimney smoke and lamp light in the evening, and hamlets that grow with trading.
+
+## Stage 5b as built: the villagers
+
+*2026-10-24. Game and the creature pack only; nothing in the simulation.*
+
+### What a player sees
+
+- Each Grubfolk hamlet has its people while the camera is near it: a Village a farmer, a porter, a child and a dog; a Town two farmers, two porters, two children and a dog; a Bazaar four porters, a farmer, two children and a dog. They are small and round, in patched dun tunics, with a straw hat (the farmer, who carries a hoe), a cap and a sack on the back (the porter) or a bright tunic (the child), and a scruffy tan dog.
+- They go about their day between the doors of the cottages, the backs of the market stalls, the sides of the haystacks and, in a Village, the well. A farmer likes the haystacks (he hoes there for a while) and the doors, a porter the stalls (he mops his brow) and the doors, children run about and jump, the dog trots and sniffs. Now and then one goes in at a door and comes out again some seconds later.
+- An army the viewer sees within 15 tiles of a villager makes them stop and turn to look at it (not the dog) until it has gone by.
+- When a regiment the viewer sees is **fighting** within 40 tiles of a hamlet's middle, everybody out of doors runs to the nearest door and goes in. They stay in until it has been quiet for ten seconds, then come out a few at a time.
+- Unseen is not drawn: in the fog of war a hamlet's people do not show. Nothing blocks soldiers and nothing can hurt a villager.
+
+### How it works
+
+- Models by Sonnet 5.5 from `design/creatures/source/grubfolk.py` (`FolkFarmer`, `FolkPorter`, `FolkChild`: 12 bones, about 1,500 to 1,800 triangles, sacks, hats and the hoe riding one bone each) and `dog.py` (`Dog`: 15 bones, 1,500), on the same kit as the deer and doves (`crit.py`), in `assets/buildings/creatures.pak` (now 6.7 MB). Clips: Idle, Walk, Run and Cheer, which is each one's work: the farmer's hoeing, the porter's brow-mopping, the child's jump and wave, the dog's sniffing.
+- `gc_game::ambient::villagers::Villagers::advance(dt, focus, distance, hamlets, armies, fights)` makes a hamlet's people when the camera comes within `wildlife::reach` plus a hamlet's spread of its middle (from a hash of the site, so it has the same people each time) and forgets them 14 tiles farther out. `Hamlets::nodes(i)` gives the places to stand, by bearing from the middle (doors, stall backs, haystack sides, the village well); a villager hops from node to node round the ring the short way and a chord that would cut through the well or the ring of stalls bends round it, so there is no path-finding; a hop may still clip the corner of a cottage where the ground left a wide gap in the ring. `armies` are the regiments the viewer sees and `fights` those of them with `engaged` set, both gathered once in `main.rs` with the deer's threats. A hamlet's people are made without the cottages and stalls a player has built over, and a hamlet with no door gets nobody; people made while a fight is on start indoors behind a door.
+- Drawn as `SoldierInstance`s in `push_building_models`, one model per kind (`Art.folk`).
+- `--hamlet-demo` lifts the fog (`reveal_all`, offline only) so the people show without an army.
+
+### Not yet
+
+- Villagers carrying things (a load going from a haystack to the barn, carts), other fauna and carrion birds, and villagers who react to a particular faction.

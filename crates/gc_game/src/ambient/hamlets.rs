@@ -10,7 +10,7 @@ use gc_map::Map;
 use gc_map::def::Kind;
 use glam::{Vec2, Vec3};
 
-use crate::scenery::{Extra, Model, turn_of};
+use crate::scenery::{Extra, Model, facing_of, turn_of};
 
 /// The ground under a building may vary this much over its footprint (in
 /// tiles), and a building must stand this far above the water.
@@ -21,7 +21,7 @@ const TOUCH: f32 = 0.3;
 
 /// What a site is: how big its hamlet is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Size {
+pub(super) enum Size {
     Village,
     Town,
     Bazaar,
@@ -43,9 +43,19 @@ fn radius(model: Model) -> f32 {
 }
 
 /// A small random stream from a seed (xorshift).
-struct Rng(u32);
+#[derive(Clone, Debug)]
+pub(super) struct Rng(u32);
 
 impl Rng {
+    /// A stream from any seed.
+    pub(super) fn seeded(seed: u32) -> Rng {
+        let mut r = Rng(seed.wrapping_mul(0x9e37_79b1) | 1);
+        for _ in 0..4 {
+            r.unit();
+        }
+        r
+    }
+
     fn new(site: (i32, i32), size: Size) -> Rng {
         let mut x = (site.0 as u32)
             .wrapping_mul(0x9e37_79b1)
@@ -60,7 +70,7 @@ impl Rng {
         Rng(x)
     }
 
-    fn unit(&mut self) -> f32 {
+    pub(super) fn unit(&mut self) -> f32 {
         let mut x = self.0;
         x ^= x << 13;
         x ^= x >> 17;
@@ -282,6 +292,85 @@ fn built_on(e: &Extra, occupied: &impl Fn((i32, i32)) -> bool) -> bool {
     (y0..=y1).any(|y| (x0..=x1).any(|x| occupied((x, y))))
 }
 
+/// What a villager does at a [`Node`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Spot {
+    /// A cottage's or barn's door: a place to go in.
+    Door,
+    /// The back of a market stall.
+    Stall,
+    /// Beside a haystack.
+    Haystack,
+    /// The well on a village green.
+    Well,
+}
+
+/// A place in a hamlet where a villager may stand.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Node {
+    pub at: Vec2,
+    pub spot: Spot,
+    /// The way to face there: toward what the place is for.
+    pub look: Vec2,
+}
+
+/// How far in front of a model's middle its door, or the place to stand
+/// at it, is, in tiles.
+fn out_of(model: Model) -> f32 {
+    match model {
+        Model::GrubfolkHut => 1.75,
+        Model::GrubfolkHouse => 1.45,
+        Model::GrubfolkBarn => 2.0,
+        Model::MarketStall => 1.1,
+        Model::Haystack => 1.4,
+        _ => 1.5,
+    }
+}
+
+/// The places to stand in a hamlet of `extras` round `centre`, in order of
+/// their bearing from the middle: doors, the backs of stalls and the sides
+/// of haystacks, and the well where a green has no stalls round it.
+fn nodes_of(centre: Vec2, extras: &[Extra]) -> Vec<Node> {
+    let stalls = extras.iter().any(|e| e.model == Model::MarketStall);
+    let mut nodes: Vec<Node> = extras
+        .iter()
+        .filter_map(|e| {
+            let at = Vec2::new(e.at.x, e.at.z);
+            let front = facing_of(e.turn);
+            let out = out_of(e.model) * e.scale;
+            Some(match e.model {
+                Model::GrubfolkHut | Model::GrubfolkHouse | Model::GrubfolkBarn => Node {
+                    at: at + front * out,
+                    spot: Spot::Door,
+                    look: -front,
+                },
+                Model::MarketStall => Node {
+                    at: at - front * out,
+                    spot: Spot::Stall,
+                    look: front,
+                },
+                // A haystack's front faces out from the middle.
+                Model::Haystack => Node {
+                    at: at - front * out,
+                    spot: Spot::Haystack,
+                    look: front,
+                },
+                Model::GrubfolkWell if !stalls => Node {
+                    at: at + Vec2::Y * (out_of(e.model) + 0.2),
+                    spot: Spot::Well,
+                    look: -Vec2::Y,
+                },
+                _ => return None,
+            })
+        })
+        .collect();
+    nodes.sort_by(|a, b| {
+        let bearing = |n: &Node| (n.at - centre).to_angle();
+        bearing(a).total_cmp(&bearing(b))
+    });
+    nodes
+}
+
 /// The hamlets' scenery, kept for the match and handed to the scenery pass
 /// near the camera.
 #[derive(Default)]
@@ -289,15 +378,17 @@ pub struct Hamlets {
     /// Every model of every hamlet, grouped by hamlet: the middle of its
     /// site and the models laid there.
     sites: Vec<(Vec2, Vec<Extra>)>,
+    /// What size each site is, in the same order.
+    sizes: Vec<Size>,
 }
 
 /// How far from its middle a hamlet's models reach, in tiles.
-const SPREAD: f32 = 12.0;
+pub(super) const SPREAD: f32 = 12.0;
 
 impl Hamlets {
     /// Lay out the hamlets of `map`'s Villages, Towns and Bazaar.
     pub fn new(map: &Map) -> Hamlets {
-        let sites = map
+        let (sites, sizes) = map
             .objects
             .iter()
             .filter_map(|o| {
@@ -308,10 +399,10 @@ impl Hamlets {
                     _ => return None,
                 };
                 let centre = Vec2::new(o.at.0 as f32 + 0.5, o.at.1 as f32 + 0.5);
-                Some((centre, lay(map, centre, o.at, size)))
+                Some(((centre, lay(map, centre, o.at, size)), size))
             })
-            .collect();
-        Hamlets { sites }
+            .unzip();
+        Hamlets { sites, sizes }
     }
 
     /// The models of the hamlets within `reach` tiles of `focus`, but not
@@ -336,14 +427,35 @@ impl Hamlets {
     }
 
     /// How many sites have been laid out.
-    #[cfg(test)]
-    fn count(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.sites.len()
+    }
+
+    /// The middle of site `i`.
+    pub fn centre(&self, i: usize) -> Vec2 {
+        self.sites[i].0
+    }
+
+    /// How big site `i` is.
+    pub(super) fn size(&self, i: usize) -> Size {
+        self.sizes[i]
+    }
+
+    /// The places to stand at site `i`, by bearing from its middle, leaving out
+    /// the models a player has built over.
+    pub fn nodes(&self, i: usize, occupied: impl Fn((i32, i32)) -> bool) -> Vec<Node> {
+        let (centre, extras) = &self.sites[i];
+        let standing: Vec<Extra> = extras
+            .iter()
+            .copied()
+            .filter(|e| !built_on(e, &occupied))
+            .collect();
+        nodes_of(*centre, &standing)
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use gc_map::Placed;
 
@@ -355,10 +467,10 @@ mod tests {
     }
 
     /// The sites of a test map: the kind and the tile.
-    type Sites = Vec<(Kind, (i32, i32))>;
+    pub(in crate::ambient) type Sites = Vec<(Kind, (i32, i32))>;
 
     /// A level, bare, dry map with one site of each size, far apart.
-    fn flat() -> (Map, Sites) {
+    pub(in crate::ambient) fn flat() -> (Map, Sites) {
         let mut map = crate::conquest::make_map(0, 7);
         let side = map.tiles as i32;
         let top = map.max_height();
@@ -402,7 +514,7 @@ mod tests {
                 .iter()
                 .filter(|o| matches!(o.kind, Kind::Village | Kind::Town | Kind::Bazaar))
                 .count();
-            assert_eq!(a.count(), wanted);
+            assert_eq!(a.len(), wanted);
             sites += wanted;
             for ((ca, ea), (_, eb)) in a.sites.iter().zip(&b.sites) {
                 assert_eq!(ea, eb);
