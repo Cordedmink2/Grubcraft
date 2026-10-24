@@ -580,6 +580,9 @@ impl Killing {
 /// A man finishing one knocked down stands this far from him, in tiles,
 /// over his body.
 pub(crate) const FINISH_GAP: f32 = 0.55;
+/// How far behind where he stood (along his facing) a man lying dead has
+/// his chest, in tiles: what a finishing move strikes at.
+const LYING_CHEST: f32 = 0.70;
 /// He bends to it over this share of his killing blow, and straightens
 /// over this last share.
 const STOOP_IN: f32 = 0.3;
@@ -1865,6 +1868,15 @@ impl Puppets {
             .then_some(gi)
     }
 
+    /// Where a man of regiment `kr` strikes at `victim`: where he stands,
+    /// or, finishing him `lying` with a move made for it, his chest.
+    fn strike_spot(&self, kr: usize, victim: usize, lying: bool) -> Vec2 {
+        match self.kills.finisher(self.unit[kr]) {
+            Some(_) if lying => self.pos[victim] - self.facing[victim] * LYING_CHEST,
+            _ => self.pos[victim],
+        }
+    }
+
     /// How many of regiment `r`'s soldiers stand in its front rank.
     fn front(&self, r: usize) -> usize {
         (self.files[r] as usize).min(self.models[r] as usize)
@@ -2360,7 +2372,7 @@ impl Puppets {
                             BLOW_AT * SWING_SECONDS,
                         ),
                     };
-                    let spot = self.pos[victim];
+                    let spot = self.strike_spot(kr, victim, lying);
                     let toward = (self.pos[gi] - spot).normalize_or(Vec2::Y);
                     let man = self.pos[killer] - spot;
                     let away = if toward.perp_dot(man) > 0.0 {
@@ -2433,7 +2445,7 @@ impl Puppets {
                             None => (self.fighter[kr].gap() + block.fighter.gap()) / 2.0,
                         };
                         self.killing[killer] = Killing {
-                            spot: self.pos[victim],
+                            spot: self.strike_spot(kr, victim, lying),
                             gap,
                             pair,
                             finish: lying,
@@ -3981,7 +3993,13 @@ mod tests {
             });
             p.update(&b, 1, FRAME, |_| {});
             if p.corpses().last().unwrap().age >= 0.0 {
-                landed.get_or_insert(p.pos[k].distance(lay));
+                // A finishing move strikes at his chest, behind his feet.
+                let chest = if strike {
+                    lay - facing * LYING_CHEST
+                } else {
+                    lay
+                };
+                landed.get_or_insert(p.pos[k].distance(chest));
             }
         }
         assert_eq!(struck, strike);
