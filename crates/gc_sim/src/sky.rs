@@ -11,12 +11,14 @@
 //!
 //! What it does in play is the [`Air`]: how far troops see and shoot, and
 //! how fast they march. Night and weather each take a share of the sight,
-//! and snow slows the march.
+//! and snow slows the march. Rain also wets the ground, which soaks low
+//! ground near water soft ([`crate::Terrain::soak`]).
 
 use alloc::vec::Vec;
 
 use gc_fixed::{Fx, Pcg32};
 
+use crate::terrain::WET_FULL;
 use crate::{StateHasher, TICKS_PER_SECOND};
 
 /// What is falling or hanging in the air, in the order the renderer's
@@ -292,6 +294,12 @@ fn scale(v: Fx, percent: u8) -> Fx {
 /// takes about 25 seconds.
 pub const EASE_EVERY: u32 = 2;
 
+/// Rain wets the ground by its strength over this much a second (heavy
+/// rain about 3 of [`WET_FULL`]: some five minutes to soak it through).
+pub const RAIN_WETS: u16 = 64;
+/// Anything but rain dries the ground by this much a second.
+pub const DRIES: u16 = 2;
+
 /// The sky as the match plays it.
 #[derive(Clone, Debug)]
 pub(crate) struct SkyState {
@@ -303,6 +311,8 @@ pub(crate) struct SkyState {
     next: usize,
     now: Weather,
     air: Air,
+    /// How wet the ground is, 0 to [`WET_FULL`].
+    wet: u16,
 }
 
 impl SkyState {
@@ -322,6 +332,7 @@ impl SkyState {
             next: first,
             now,
             air: Air::CLEAR,
+            wet: 0,
         };
         state.air = Air::of(now, state.daylight(0).light());
         state
@@ -349,6 +360,10 @@ impl SkyState {
         self.air
     }
 
+    pub(crate) fn wet(&self) -> u16 {
+        self.wet
+    }
+
     /// The weather it is moving towards: the latest spell's, or fair.
     fn goal(&self) -> Weather {
         self.next
@@ -363,6 +378,14 @@ impl SkyState {
         }
         if tick.is_multiple_of(EASE_EVERY) {
             self.ease();
+        }
+        if tick.is_multiple_of(TICKS_PER_SECOND) {
+            self.wet = match self.now.kind {
+                WeatherKind::Rain => {
+                    (self.wet + u16::from(self.now.strength) / RAIN_WETS).min(WET_FULL)
+                }
+                _ => self.wet.saturating_sub(DRIES),
+            };
         }
         let air = Air::of(self.now, self.daylight(tick).light());
         let changed = air != self.air;
@@ -402,6 +425,7 @@ impl SkyState {
         h.u8(w.cloud);
         h.u8(w.wind.0 as u8);
         h.u8(w.wind.1 as u8);
+        h.u16(self.wet);
     }
 }
 

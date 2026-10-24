@@ -28,6 +28,10 @@
 //!   ([`SOFT_HEAVY_SPEED_PERCENT`] for heavy troops), and nobody charges out
 //!   of it or into it ([`Terrain::bears_charge`]).
 //!
+//! - **Soaking** (docs/32-changing-land.md, "Rain soaks the ground"):
+//!   low, flat, open ground near water turns soft in long rain and firms
+//!   up again in a dry spell ([`Terrain::soak`]), nearest the water first.
+//!
 //! - **Growth:** what grows on each tile, for building and clearing
 //!   ([`Growth`], docs/32-changing-land.md): scrub, woods and thicket must
 //!   be cleared before a building can rise there. Clearing changes the
@@ -78,6 +82,27 @@ pub const CHARGE_UPHILL_PERCENT: u32 = 50;
 pub const SOFT_SPEED_PERCENT: i32 = 75;
 /// Marching pace in soft ground, percent, for heavy troops.
 pub const SOFT_HEAVY_SPEED_PERCENT: i32 = 60;
+
+/// How wet the ground is, from bone dry (0) to soaked through
+/// ([`WET_FULL`]): the sky keeps it (rain wets it, anything else dries it)
+/// and [`Terrain::soak`] turns tiles soft by it.
+pub const WET_FULL: u16 = 1000;
+/// Ground soaks only this far above the water line: half a tile.
+pub const SOAK_RISE: i32 = HEIGHT_UNITS as i32 / 2;
+/// ... only where it is flat: no neighbour on land this much higher or
+/// lower.
+pub const SOAK_SLOPE: i32 = HEIGHT_UNITS as i32 / 2;
+/// ... and only this many tiles from water.
+pub const SOAK_REACH: u8 = 5;
+/// How wet the ground must be before a tile goes soft: `SOAK_FROM`, and
+/// `SOAK_PER_TILE` more for each tile from water, and up to `SOAK_HIGH`
+/// more for its height above it (at [`SOAK_RISE`]).
+const SOAK_FROM: u32 = 150;
+const SOAK_PER_TILE: u32 = 150;
+const SOAK_HIGH: u32 = 300;
+/// A soaked tile firms up again once the ground is this much drier than
+/// it took to soak it, so tiles don't flicker as the rain eases.
+pub const SOAK_DRY_MARGIN: u16 = 100;
 
 /// How a tile holds a soldier's feet (see [`Terrain::soft`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -204,7 +229,8 @@ impl Ground<'static> {
 }
 
 /// The ground during a match. Built when the match starts; clearing
-/// changes its growth and cover ([`Terrain::clear`]).
+/// changes its growth and cover ([`Terrain::clear`]), and rain soaks its
+/// footing ([`Terrain::soak`]).
 #[derive(Clone)]
 pub struct Terrain {
     tiles: i32,
@@ -219,6 +245,10 @@ pub struct Terrain {
     /// firm everywhere.
     footing: Vec<u8>,
     footing_tiles: i32,
+    /// The tiles rain can soak, as (index, how wet the ground must be),
+    /// the soonest first; the first `soaked` of them are soft now.
+    soak: Vec<(u32, u16)>,
+    soaked: u32,
     /// A running digest of every change made to the ground mid-match, for
     /// the state hash (the ground as the match started is the setup's).
     changes: u64,
@@ -271,10 +301,12 @@ impl Terrain {
                 growth,
                 footing,
                 footing_tiles,
+                soak: Vec::new(),
+                soaked: 0,
                 changes: 0,
             };
         }
-        Terrain {
+        let mut terrain = Terrain {
             tiles: map_tiles as i32,
             height: ground.heights.to_vec(),
             water_level: ground.water_level,
@@ -283,8 +315,142 @@ impl Terrain {
             growth,
             footing,
             footing_tiles,
+            soak: Vec::new(),
+            soaked: 0,
             changes: 0,
+        };
+        terrain.soak = terrain.soakable();
+        if !terrain.soak.is_empty() && terrain.footing.is_empty() {
+            // Room for the soaked tiles, firm to begin with.
+            terrain.footing = alloc::vec![Footing::Firm as u8; n * n];
+            terrain.footing_tiles = map_tiles as i32;
         }
+        terrain
+    }
+
+    /// The tiles rain can soak, the soonest first: firm, open (or grassy)
+    /// ground with nothing growing that needs clearing, flat, at most
+    /// [`SOAK_RISE`] above the water and [`SOAK_REACH`] tiles from it.
+    fn soakable(&self) -> Vec<(u32, u16)> {
+        let n = self.tiles;
+        if self.water_level == 0 {
+            return Vec::new();
+        }
+        let h = |x: i32, y: i32| i32::from(self.height[(y * n + x) as usize]);
+        let water = i32::from(self.water_level);
+        // Tiles from the nearest water, counting diagonal steps as one, out
+        // to the reach.
+        let mut from_water = alloc::vec![u8::MAX; (n * n) as usize];
+        let mut edge: Vec<(i32, i32)> = Vec::new();
+        for y in 0..n {
+            for x in 0..n {
+                if h(x, y) < water {
+                    from_water[(y * n + x) as usize] = 0;
+                    edge.push((x, y));
+                }
+            }
+        }
+        for step in 1..=SOAK_REACH {
+            let mut next = Vec::new();
+            for &(x, y) in &edge {
+                for (dx, dy) in [
+                    (-1, -1),
+                    (0, -1),
+                    (1, -1),
+                    (-1, 0),
+                    (1, 0),
+                    (-1, 1),
+                    (0, 1),
+                    (1, 1),
+                ] {
+                    let (nx, ny) = (x + dx, y + dy);
+                    let Some(i) = index_in(n, nx, ny) else {
+                        continue;
+                    };
+                    if from_water[i] == u8::MAX {
+                        from_water[i] = step;
+                        next.push((nx, ny));
+                    }
+                }
+            }
+            edge = next;
+        }
+        let mut soak = Vec::new();
+        for y in 0..n {
+            for x in 0..n {
+                let i = (y * n + x) as usize;
+                let rise = h(x, y) - water;
+                // Flat towards the land around it (the bank may drop into
+                // the water).
+                let flat = [(-1, 0), (1, 0), (0, -1), (0, 1)].iter().all(|(dx, dy)| {
+                    let (nx, ny) = ((x + dx).clamp(0, n - 1), (y + dy).clamp(0, n - 1));
+                    h(nx, ny) < water || (h(nx, ny) - h(x, y)).abs() <= SOAK_SLOPE
+                });
+                let p = FxVec2::new(Fx::from_int(x) + Fx::HALF, Fx::from_int(y) + Fx::HALF);
+                let open = self.cover(p) != Cover::Wood
+                    && matches!(self.growth(x, y), Growth::Open | Growth::Scrub);
+                let near = from_water[i];
+                if (0..=SOAK_RISE).contains(&rise)
+                    && near != u8::MAX
+                    && near > 0
+                    && flat
+                    && open
+                    && self.footing(p) == Footing::Firm
+                {
+                    let wet = SOAK_FROM
+                        + SOAK_PER_TILE * u32::from(near)
+                        + SOAK_HIGH * rise as u32 / SOAK_RISE as u32;
+                    soak.push((i as u32, wet.min(u32::from(WET_FULL)) as u16));
+                }
+            }
+        }
+        soak.sort_unstable_by_key(|&(i, wet)| (wet, i));
+        soak
+    }
+
+    /// Whether ground `wet` (see [`WET_FULL`]) would soak a tile or firm
+    /// one up: cheap, for every tick.
+    pub(crate) fn soak_due(&self, wet: u16) -> bool {
+        let n = self.soaked as usize;
+        self.soak.get(n).is_some_and(|&(_, need)| need <= wet)
+            || n.checked_sub(1)
+                .is_some_and(|i| self.soak[i].1 > wet.saturating_add(SOAK_DRY_MARGIN))
+    }
+
+    /// Soak the ground to `wet`: tiles that need no more than that go
+    /// soft, the nearest the water first, and soaked ones the ground has
+    /// dried [`SOAK_DRY_MARGIN`] below their need firm up again, the
+    /// furthest first.
+    pub(crate) fn soak(&mut self, wet: u16) {
+        while let Some(&(i, need)) = self.soak.get(self.soaked as usize) {
+            if need > wet {
+                break;
+            }
+            self.footing[i as usize] = Footing::Soft as u8;
+            self.soaked += 1;
+        }
+        while let Some(&(i, need)) = (self.soaked as usize)
+            .checked_sub(1)
+            .and_then(|k| self.soak.get(k))
+        {
+            if need <= wet.saturating_add(SOAK_DRY_MARGIN) {
+                break;
+            }
+            self.footing[i as usize] = Footing::Firm as u8;
+            self.soaked -= 1;
+        }
+    }
+
+    /// How many tiles rain has soaked soft (0 when dry): it changes
+    /// whenever the soaked ground does.
+    pub fn soaked(&self) -> u32 {
+        self.soaked
+    }
+
+    /// The tiles rain has soaked soft, as (column, row).
+    pub fn soaked_tiles(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        let n = self.tiles.max(1);
+        (self.soak[..self.soaked as usize].iter()).map(move |&(i, _)| (i as i32 % n, i as i32 / n))
     }
 
     /// The tile `p` is on, as an index into the cover and growth layers;
@@ -315,8 +481,8 @@ impl Terrain {
 
     /// Clear the tile `(x, y)`: nothing grows there and nothing covers it
     /// any more. Returns what grew there, or `None` (and no change) if
-    /// nothing did. The one place the ground changes mid-match (see
-    /// `World::change_ground`).
+    /// nothing did. The one place growth and cover change mid-match (see
+    /// `World::change_ground`); rain soaking footing is [`Terrain::soak`].
     pub(crate) fn clear(&mut self, x: i32, y: i32) -> Option<Growth> {
         let i = self.tile_of(x, y)?;
         let was = Growth::from_u8(self.growth[i]);

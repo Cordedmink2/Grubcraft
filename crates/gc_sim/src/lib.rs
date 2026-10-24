@@ -113,7 +113,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 37;
+pub const SIM_VERSION: u32 = 38;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -875,6 +875,12 @@ impl World {
         self.sky.air()
     }
 
+    /// How wet the ground is, 0 (dry) to [`terrain::WET_FULL`]: rain wets
+    /// it and soaks low ground near water soft (see [`Terrain::soaked`]).
+    pub fn wetness(&self) -> u16 {
+        self.sky.wet()
+    }
+
     /// Make this a Conquest match: buildings and the economy. Only
     /// on a match's own world with a map, before its first tick, once;
     /// returns whether it was done.
@@ -1349,6 +1355,10 @@ impl World {
         // The sky moves on even while the armies deploy.
         if self.sky.tick(self.tick) {
             self.set_air();
+        }
+        let wet = self.sky.wet();
+        if self.terrain.soak_due(wet) {
+            Arc::make_mut(&mut self.terrain).soak(wet);
         }
         // Time stands still while the armies deploy.
         if self.deploying() {
@@ -2452,9 +2462,14 @@ impl World {
                     c.production.hash_into(&c.structures, h);
                 }
             }
-            // Ground changed mid-match and land being cleared; nothing in
-            // a Field Battle, whose ground doesn't change.
+            // Ground changed mid-match: soaked by rain, and land being
+            // cleared (only in Conquest).
             "ground" => {
+                // Ground the rain has soaked (none in a dry match, which
+                // hashes as before).
+                if self.terrain.soaked() > 0 {
+                    h.u32(self.terrain.soaked());
+                }
                 if let Some(c) = &self.conquest {
                     h.u64(self.terrain.changes());
                     c.clearing.hash_into(&self.regiments, h);

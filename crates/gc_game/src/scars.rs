@@ -1,8 +1,8 @@
 //! Marks on the ground, as the field shows them (docs/35-ground-marks.md):
 //! turned earth where trees were felled (`Event::Cleared`) and bare tracks
 //! worn by regiments marching and fighting. A few times a second this fills
-//! a grid for the renderer, four bytes a tile: felled, scorched (nothing
-//! writes it yet), worn, and one spare. The shader draws the marks; this
+//! a grid for the renderer, four bytes a tile: felled, scorched, worn, and
+//! soaked (ground the rain has turned to mud, `Terrain::soaked_tiles`). The shader draws the marks; this
 //! decides only where. Wear builds where a regiment the viewing side can see moves or fights, and
 //! heals over minutes as the grass comes back. Presentation only: it reads
 //! the world and writes nothing to it, and it is not part of any replay.
@@ -59,6 +59,8 @@ pub struct ScarView {
     healed: Option<Instant>,
     /// The grid differs from what the renderer holds.
     dirty: bool,
+    /// How many tiles were soaked when last looked.
+    soaked: u32,
     stumps: Vec<Stump>,
 }
 
@@ -180,6 +182,7 @@ impl ScarView {
             self.healed = Some(now);
             self.heal(HEAL * secs);
         }
+        self.soak(world.terrain());
         if self.dirty {
             self.dirty = false;
             let marked = self.grid.iter().any(|&b| b != 0);
@@ -187,9 +190,28 @@ impl ScarView {
         }
     }
 
+    /// Mark the ground the rain has soaked, if that has changed: the same
+    /// count means the same tiles.
+    fn soak(&mut self, terrain: &gc_sim::Terrain) {
+        if terrain.soaked() == self.soaked {
+            return;
+        }
+        self.soaked = terrain.soaked();
+        for i in (0..self.grid.len()).step_by(4) {
+            self.grid[i + 3] = 0;
+        }
+        for (x, y) in terrain.soaked_tiles() {
+            if let Some(b) = (self.grid).get_mut((y as usize * self.tiles + x as usize) * 4 + 3) {
+                *b = 255;
+            }
+        }
+        self.dirty = true;
+    }
+
     fn size(&mut self, tiles: usize) {
         if self.tiles != tiles {
             self.tiles = tiles;
+            self.soaked = 0;
             self.wear = vec![0.0; tiles * tiles];
             self.grid = vec![0; tiles * tiles * 4];
         }
