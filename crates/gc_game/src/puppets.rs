@@ -92,7 +92,7 @@ const DUEL_STEP: f32 = 0.16;
 const DUEL_RATE: f32 = 0.8;
 /// A swing takes this long, in seconds, and its blow lands this far into it.
 const SWING_SECONDS: f32 = 0.7;
-const BLOW_AT: f32 = 0.45;
+const BLOW_AT: f32 = gc_assets::anim::BLOW_AT;
 /// The same as fractions of a pair's round of blows.
 const SWING_ROUND: f32 = SWING_SECONDS * DUEL_RATE;
 const BLOW_ROUND: f32 = SWING_ROUND * BLOW_AT;

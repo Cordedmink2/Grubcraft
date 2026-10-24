@@ -7,7 +7,10 @@
 // is in textures rather than vertex colours. `lod_triangles` budgets the four
 // levels of detail, from full to the one drawn smallest. Clip kinds: Idle,
 // Walk, Run, Attack, Attack2, Hit, Die, Cheer, Shoot, Block (a model without
-// a Block clip guards with its Idle). The bake also writes
+// a Block clip guards with its Idle). `weapon` names what a model posed
+// from a shared skeleton holds, so the move picker prefers the skeleton's
+// tagged `moves` made for it; `moves_from` keeps a model's tagged moves in a
+// separate glTF on its rig (a fight library). The bake also writes
 // assets/models.manifest, which `gc_artbake --check` compares with this file
 // and the sources in CI: re-bake and commit both after editing here.
 (
@@ -31,6 +34,7 @@
                 orm: Some("shared:grubcraft/yari-ashigaru/orm.png"),
                 emissive: Some("shared:grubcraft/yari-ashigaru/emissive.png"),
             )),
+            weapon: Some("Spear"),
         ),
         (
             name: "Katana Samurai",
@@ -50,6 +54,21 @@
                 orm: Some("shared:grubcraft/ember/katana-samurai/orm.png"),
                 emissive: Some("shared:grubcraft/ember/katana-samurai/emissive.png"),
             )),
+            weapon: Some("TwoHanded"),
+            // The Ember men's fight library (docs/33): Quaternius's CC0
+            // Universal Animation Library moves retargeted onto this rig in
+            // Blender (design/faction-looks/fight-library/MOVES.md). They are
+            // the skeleton's, so every model on it may play them.
+            moves_from: Some("shared:grubcraft/fight-library/ember-men/ember-men-moves.glb"),
+            moves: [
+                (anim: "F_Katana_Idle", act: "Idle", weapon: "TwoHanded"),
+                (anim: "F_Katana_Attack", act: "Attack", weapon: "TwoHanded", contact: Some(0.467)),
+                (anim: "F_Katana_Block", act: "Block", weapon: "TwoHanded"),
+                (anim: "F_Katana_Block", act: "Parry", weapon: "TwoHanded"),
+                (anim: "F_Spear_Guard", act: "Idle", weapon: "Spear"),
+                (anim: "F_Spear_Thrust", act: "Attack", weapon: "Spear", contact: Some(0.333)),
+                (anim: "F_Spear_Parry", act: "Parry", weapon: "Spear"),
+            ],
         ),
         (
             name: "Spectral Samurai",
@@ -70,6 +89,7 @@
                 orm: Some("shared:grubcraft/ember/spectral-samurai/orm.png"),
                 emissive: Some("shared:grubcraft/ember/spectral-samurai/emissive.png"),
             )),
+            weapon: Some("TwoHanded"),
         ),
         (
             name: "Fire Spirit",
@@ -110,6 +130,7 @@
                 orm: Some("shared:grubcraft/ember/oni-bound/orm.png"),
                 emissive: Some("shared:grubcraft/ember/oni-bound/emissive.png"),
             )),
+            weapon: Some("AxeMace"),
         ),
         (
             name: "Battering Ram",
@@ -208,6 +229,7 @@
                 orm: Some("shared:grubcraft/ember/ronin/orm.png"),
                 emissive: Some("shared:grubcraft/ember/ronin/emissive.png"),
             )),
+            weapon: Some("TwoHanded"),
         ),
         (
             name: "The Onmyoji",

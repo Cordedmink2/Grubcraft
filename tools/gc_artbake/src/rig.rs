@@ -236,6 +236,8 @@ pub(crate) struct Posed {
     /// joint's rest.
     pub post: Vec<Mat4>,
     pub clips: Vec<PosedClip>,
+    /// What the model holds, for the picker.
+    pub weapon: gc_assets::anim::Weapon,
 }
 
 impl Posed {
@@ -419,7 +421,8 @@ impl AnimBuilder {
             model,
             skeleton: u32::from(skeleton),
             first_fix: t.fixes.len() as u32,
-            _pad: 0,
+            weapon: posed.weapon as u8,
+            _pad: [0; 3],
         });
         t.fixes.push(rows(&posed.pre));
         t.fixes.extend(posed.post.iter().map(rows));
@@ -565,6 +568,7 @@ mod tests {
                 clip(Some(ClipKind::Attack), Tags::of_kind(ClipKind::Attack)),
                 clip(None, Tags::of_kind(ClipKind::Attack)),
             ],
+            weapon: gc_assets::anim::Weapon::Any,
         };
         let (mut t, mut b) = (AnimTables::default(), AnimBuilder::default());
         assert_eq!(b.add(&mut t, 0, &posed).unwrap().len(), 1);
