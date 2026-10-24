@@ -172,6 +172,31 @@ impl Effects {
             });
         }
     }
+
+    /// A fish rising at `pos` on the water's surface: two rings spreading
+    /// over a second or two and a bead or two thrown up. `size` scales how
+    /// far the rings reach (1 is about half to one tile across at most).
+    /// Not `SOFT`, which fades a particle near the surface it sits on (it
+    /// would leave only an arc: the ring lies flat on the water).
+    pub fn rise(&mut self, pos: Vec3, size: f32) {
+        for _ in 0..self.count(1.0) {
+            let size = size * self.rng.between(0.75, 1.3);
+            for (reach, life, alpha) in [(0.5, 1.9, 140), (0.28, 1.2, 120)] {
+                self.out.push(Particle {
+                    pos: pos + Vec3::new(0.0, 0.02, 0.0),
+                    life,
+                    size: [0.03, reach * size],
+                    color: [222, 234, 246, alpha],
+                    color_end: [222, 234, 246, 0],
+                    shape: Shape::Ring,
+                    seed: self.rng.byte(),
+                    ..Particle::default()
+                });
+            }
+            // The beads are counted by the density here, not again in `spray`.
+            self.spray(pos, Vec3::Y, [226, 238, 250], 2.0 / self.density);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -193,5 +218,23 @@ mod tests {
             assert!(p.life > 0.0 && p.size[0] > 0.0);
             assert_eq!(p.color_end[3], 0);
         }
+    }
+
+    #[test]
+    fn a_rise_is_rings_on_the_water_and_a_few_beads() {
+        let mut fx = Effects::new(3);
+        fx.rise(Vec3::new(10.0, 2.0, 20.0), 1.0);
+        let made = fx.take();
+        let rings: Vec<&Particle> = made.iter().filter(|p| p.shape == Shape::Ring).collect();
+        assert_eq!(rings.len(), 2);
+        for p in &rings {
+            assert!(p.pos.y > 2.0 && p.pos.y < 2.1 && p.size[1] > p.size[0]);
+            assert!(p.life > 1.0 && p.life < 2.0);
+        }
+        assert!(made.len() > 2, "beads");
+        let mut none = Effects::new(3);
+        none.set_density(0.0);
+        none.rise(Vec3::ZERO, 1.0);
+        assert!(none.take().is_empty());
     }
 }

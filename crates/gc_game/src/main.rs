@@ -4009,6 +4009,16 @@ impl Running {
                 |tile| reveal || fog.sees_tile(tile),
                 &mut self.effects,
             );
+            self.ambient.touches.rises(
+                dt.as_secs_f32() * fx_speed,
+                view_focus,
+                view_distance,
+                sun,
+                density,
+                &self.heightmap,
+                |tile| reveal || fog.sees_tile(tile),
+                &mut self.effects,
+            );
         }
         // Insects follow the effects clock, which stops while paused, so they
         // hang where they are; behind the menu, in the unit viewer and in

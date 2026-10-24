@@ -276,7 +276,7 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Carts and porters on the road from a faction base's seep to its granary (stage 3), a worn road where they go, dust from the wheels, carts that pitch on slopes, a cart's wheels easing to rest when it stops (they snap to the Idle pose, at most 22 degrees), other lands' fauna (butterflies, fish rises), and crows perched on standards or corpses.
+- Carts and porters on the road from a faction base's seep to its granary (stage 3), a worn road where they go, dust from the wheels, carts that pitch on slopes, a cart's wheels easing to rest when it stops (they snap to the Idle pose, at most 22 degrees), other lands' fauna (the Brood's, the Choir's), and crows perched on standards or corpses.
 
 ## Stage 7 as built: butterflies, moths and dragonflies
 
@@ -296,4 +296,17 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Fish rises (a ring spreading where a fish takes a fly) and ripples under the dragonflies, insects that shy from armies and soldiers (they ignore everyone), butterflies on particular flowers, other lands' fauna (the Brood's, the Choir's), and crows on standards or corpses.
+- Ripples under the dragonflies, fish that are seen (the rises are only their rings), insects that shy from armies and soldiers (they ignore everyone), butterflies on particular flowers, other lands' fauna (the Brood's, the Choir's), and crows on standards or corpses.
+
+## Stage 8 as built: fish rises
+
+*2026-10-24. Game and the particle kit only; presentation, nothing in the simulation, nothing hashed, saved or sent.*
+
+### What a player sees
+
+- Now and then on the deeper water near the camera a fish takes a fly: two soft rings spread over a second or two (the wider one reaches about half a tile) and a bead or two of water jumps. They happen on any map with water (Conquest's too, which has no habitats), twice as often at dusk, only where the viewer can see (fog), and the Graphics preset's effects density thins them (zero shows none). Water shallower than 0.3 over the bed has none, so a ford or a puddle has no fish. They thin out as the camera rises (as pollen does) and are gone from high up.
+
+### How it works
+
+- `Touches::rises` (in `ambient/touches.rs`, called from the same block of `main.rs` as `Touches::frame`) tries random points round the camera, `RISE_RATE` (0.003) a second for each tile of reach, doubled at dusk; one that falls on water deeper than `RISE_DEPTH` and in view calls `Field::rise`, which makes the particles (`Effects::rise`: two `Ring` particles with different reach and life, and a little `spray`). Like the other touches it keeps no state. The rings are not staggered in time (the particle kit has no delay), so they open together at different speeds.
+- Tests: rises come only on deep water, never out of view or at zero density, nor over dry land; `Effects::rise` makes two rings on the surface and beads.

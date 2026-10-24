@@ -252,6 +252,11 @@ impl Field {
         self.fx.pollen(pos, 1.0);
     }
 
+    /// A fish rising at `pos` on the water.
+    pub fn rise(&mut self, pos: Vec3) {
+        self.fx.rise(pos, 1.0);
+    }
+
     /// A firefly at `pos`.
     pub fn firefly(&mut self, pos: Vec3) {
         self.fx.firefly(pos, 1.0);

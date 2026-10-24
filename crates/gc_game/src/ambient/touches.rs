@@ -33,6 +33,11 @@ const DUSK_SPAN: f32 = 0.12;
 const DEVIL_CHANCE: f32 = 0.02;
 const DEVIL_SECONDS: f32 = 14.0;
 const DEVIL_SPEED: f32 = 2.2;
+/// Fish rises: how many a second for each tile of the camera's reach (water
+/// or not), at full density (it is doubled at dusk, when they feed), and how
+/// far below the surface the bed must be for there to be a fish.
+const RISE_RATE: f32 = 0.003;
+const RISE_DEPTH: f32 = 0.3;
 /// Leaves: how high a tree sheds them.
 const LEAF_HEIGHT: [f32; 2] = [2.0, 4.0];
 
@@ -190,6 +195,42 @@ impl Touches {
         self.whirlwind(dt, focus, reach, &habitat_at, &ground, fx);
     }
 
+    /// Fish rising on the deeper water near the camera: rings spreading
+    /// where one takes a fly. Anywhere there is water (habitats or no), a
+    /// little more at dusk. Arguments as for [`Touches::frame`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn rises(
+        &mut self,
+        dt: f32,
+        focus: Vec2,
+        distance: f32,
+        sun: f32,
+        density: f32,
+        map: &Map,
+        visible: impl Fn((i32, i32)) -> bool,
+        fx: &mut effects::Field,
+    ) {
+        if dt <= 0.0 || density <= 0.0 {
+            return;
+        }
+        let reach = (REACH_NEAR + distance * REACH_PER_ZOOM).min(REACH_MOST);
+        let near = 1.0 - ((distance - FADE_NEAR) / (FADE_FAR - FADE_NEAR)).clamp(0.0, 1.0);
+        let rate = RISE_RATE * (1.0 + dusk_of(sun)) * near;
+        let area = std::f32::consts::PI * reach * reach;
+        let (low, tiles) = (map.water_level(), map.tiles as f32);
+        for _ in 0..self.count(rate * area * dt) {
+            let p = self.near(focus, reach);
+            if p.x < 1.0 || p.y < 1.0 || p.x > tiles - 1.0 || p.y > tiles - 1.0 {
+                continue;
+            }
+            if map.height_at(p.x, p.y) < low - RISE_DEPTH
+                && visible((p.x.floor() as i32, p.y.floor() as i32))
+            {
+                fx.rise(Vec3::new(p.x, low, p.y));
+            }
+        }
+    }
+
     /// The whirlwind: one at a time, started in the waste near the camera,
     /// wandering a while and throwing up dust.
     fn whirlwind(
@@ -332,6 +373,74 @@ mod tests {
             fx.frame(0.0, 1.0, Vec2::new(32.0, 32.0), 200.0, |_| 0.0)
                 .is_empty()
         );
+    }
+
+    /// What `rises` makes over a map with a pond in its middle: the rings
+    /// (their places) in `seconds` of frames.
+    fn rings(map: &Map, visible: bool, density: f32, seconds: f32) -> Vec<Vec2> {
+        let (mut touches, mut fx) = (Touches::default(), effects::Field::new(None));
+        let at = Vec2::splat(map.tiles as f32 / 2.0);
+        let mut made = Vec::new();
+        for _ in 0..(seconds * 30.0) as usize {
+            touches.rises(
+                1.0 / 30.0,
+                at,
+                20.0,
+                0.8,
+                density,
+                map,
+                |_| visible,
+                &mut fx,
+            );
+            made.extend(
+                fx.frame(1.0 / 30.0, density, at, 200.0, |_| 0.0)
+                    .iter()
+                    .filter(|p| p.size[1] > 0.1 && p.life > 1.0)
+                    .map(|p| Vec2::new(p.pos.x, p.pos.z)),
+            );
+        }
+        made
+    }
+
+    /// A flat map with a pond in its middle.
+    fn pond() -> Map {
+        let (mut map, _) = crate::ambient::hamlets::tests::flat();
+        let (n, side) = (map.tiles as usize, map.side() as usize);
+        let (lo, hi) = (n / 2 - 12, n / 2 + 12);
+        let per = (side - 1) / n;
+        for y in lo * per..hi * per {
+            for x in lo * per..hi * per {
+                map.samples[y * side + x] = 0;
+            }
+        }
+        map
+    }
+
+    #[test]
+    fn fish_rise_only_on_deep_water_the_viewer_sees() {
+        let map = pond();
+        let (lo, hi) = (map.tiles as f32 / 2.0 - 12.5, map.tiles as f32 / 2.0 + 12.5);
+        let made = rings(&map, true, 1.0, 60.0);
+        assert!(made.len() > 10, "{}", made.len());
+        for p in &made {
+            assert!((lo..hi).contains(&p.x) && (lo..hi).contains(&p.y), "{p}");
+        }
+        assert!(rings(&map, false, 1.0, 60.0).is_empty());
+        assert!(rings(&map, true, 0.0, 60.0).is_empty());
+        // On dry land there are none, nor over shallows a fish could not
+        // rise in (a tenth of a tile of water) but there are over a deeper
+        // pond (half a tile).
+        let (dry, _) = crate::ambient::hamlets::tests::flat();
+        assert!(rings(&dry, true, 1.0, 60.0).is_empty());
+        let filled = |depth: f32| {
+            let mut map = pond();
+            let top = map.max_height();
+            let sample = ((map.water_level() - depth) / top * f32::from(u16::MAX)) as u16;
+            map.samples.iter_mut().for_each(|h| *h = (*h).max(sample));
+            map
+        };
+        assert!(rings(&filled(0.1), true, 1.0, 60.0).is_empty());
+        assert!(!rings(&filled(0.5), true, 1.0, 60.0).is_empty());
     }
 
     #[test]
