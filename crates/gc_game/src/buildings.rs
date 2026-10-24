@@ -39,6 +39,20 @@ const _: () = assert!(
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );
 
+/// How many steps back an upgrade chain runs from `stats[i]`, plus one.
+fn level_in(stats: &[BuildingStats], i: usize) -> u8 {
+    let (mut level, mut at) = (1u8, i);
+    // A bounded walk, in case a chain loops.
+    while let Some(from) = stats.get(at).and_then(|s| s.upgrades_from) {
+        level += 1;
+        at = usize::from(from);
+        if level >= 8 {
+            break;
+        }
+    }
+    level
+}
+
 /// Height of a wall, of most buildings and of a main building, in tiles.
 const WALL_HEIGHT: f32 = 1.5;
 /// How thick a drawn wall is, in tiles, and how far a piece reaches past
@@ -62,6 +76,37 @@ const RESIN_COLOR: [u8; 3] = [196, 126, 40];
 const RESIN_HEIGHT: f32 = 1.0;
 const RESIN_THICK: f32 = 0.8;
 const RESIN_GLOW: u8 = 30;
+/// Each wall level past the first stands this much taller and thicker.
+const LEVEL_RISE: f32 = 0.45;
+const LEVEL_THICKEN: f32 = 0.1;
+/// The coping slab on a raised wall, and the merlons on a third level: how
+/// tall they stand and how much of a tile's length a merlon takes.
+const COPING_HEIGHT: f32 = 0.12;
+const MERLON_HEIGHT: f32 = 0.3;
+const MERLON_SHARE: f32 = 0.3;
+/// A raised wall's colours per faction, level 2 then level 3: its body
+/// and its coping (and merlons).
+const EMBER_RAISED: [([u8; 3], [u8; 3]); 2] = [
+    ([198, 190, 172], [128, 118, 104]),
+    ([152, 148, 142], [66, 58, 64]),
+];
+const CONCORD_RAISED: [([u8; 3], [u8; 3]); 2] = [
+    ([192, 188, 172], [108, 112, 120]),
+    ([88, 86, 96], [218, 172, 72]),
+];
+const CHOIR_RAISED: [([u8; 3], [u8; 3]); 2] = [
+    ([110, 222, 236], [170, 245, 255]),
+    ([196, 240, 255], [255, 255, 255]),
+];
+const BROOD_RAISED: [([u8; 3], [u8; 3]); 2] = [
+    ([104, 72, 90], [150, 112, 120]),
+    ([62, 42, 66], [206, 176, 124]),
+];
+/// How much glow each wall level past the first adds.
+const LEVEL_GLOW: u8 = 20;
+/// How much of the owner's colour (out of 100) a raised wall's body keeps, so
+/// it still reads as that side's.
+const LEVEL_TEAM_TINT: u32 = 35;
 /// A building model's walls are what stands in its lowest share.
 const WALL_SHARE: f32 = 0.3;
 /// A gate's jamb posts stand a little over its walls' height.
@@ -187,6 +232,9 @@ pub struct Table {
     pub stats: Vec<BuildingStats>,
     names: Vec<String>,
     factions: Vec<Faction>,
+    /// Each type's level: 1 for a first-level building, one more for each
+    /// type it upgrades from.
+    levels: Vec<u8>,
     /// What the sandbox's Conquest world knows of each regiment type. The
     /// sandbox plays with the Field Battle units, which are all plain
     /// regiments (no workers, no supply); Conquest matches use their own
@@ -196,8 +244,11 @@ pub struct Table {
 
 impl Table {
     pub fn new(data: &GameData) -> Table {
+        let stats: Vec<BuildingStats> = data.buildings.iter().map(stats_of).collect();
+        let levels = (0..stats.len()).map(|i| level_in(&stats, i)).collect();
         Table {
-            stats: data.buildings.iter().map(stats_of).collect(),
+            levels,
+            stats,
             names: data
                 .buildings
                 .iter()
@@ -233,6 +284,11 @@ impl Table {
         self.factions.get(usize::from(id)).copied()
     }
 
+    /// `building`'s level: 1 unless it upgrades from another type.
+    pub fn level(&self, building: BuildingId) -> u8 {
+        self.levels.get(usize::from(building)).copied().unwrap_or(1)
+    }
+
     /// Whether `building` is a wall drawn as a line.
     pub fn is_wall(&self, building: BuildingId) -> bool {
         (self.stats.get(usize::from(building)))
@@ -258,7 +314,7 @@ impl Table {
     /// to everyone).
     pub fn wall_look(&self, building: BuildingId, open: bool) -> WallLook {
         match self.stats.get(usize::from(building)) {
-            Some(s) => wall_look(self.faction(building), s.flags, open),
+            Some(s) => wall_look(self.faction(building), s.flags, self.level(building), open),
             None => WallLook::PLAIN,
         }
     }
@@ -272,7 +328,10 @@ impl Table {
     /// of theirs but the main building and its upgrades.
     pub fn buildable(&self, faction: Faction) -> impl Iterator<Item = BuildingId> + '_ {
         (self.stats.iter().zip(&self.factions).enumerate())
-            .filter(move |(_, (s, f))| **f == faction && s.role != Role::Main)
+            // Upgrades (a wall's next level) go up on what they upgrade.
+            .filter(move |(_, (s, f))| {
+                **f == faction && s.role != Role::Main && s.upgrades_from.is_none()
+            })
             .map(|(i, _)| i as BuildingId)
     }
 
@@ -624,6 +683,10 @@ pub struct WallLook {
     pub thick: f32,
     pub colour: Option<[u8; 3]>,
     pub glow: u8,
+    /// The colour of the coping on top of a raised wall, if it has one.
+    pub cap: Option<[u8; 3]>,
+    /// Whether a battlement of merlons stands on the coping.
+    pub merlons: bool,
 }
 
 impl WallLook {
@@ -633,16 +696,20 @@ impl WallLook {
         thick: LINE_THICK,
         colour: None,
         glow: 0,
+        cap: None,
+        merlons: false,
     };
 }
 
-/// The look of a drawn wall of `faction` with building `flags`; `open` is
-/// true while its door is open to everyone (a dropped Light Curtain).
-pub fn wall_look(faction: Option<Faction>, flags: u16, open: bool) -> WallLook {
+/// The look of a drawn wall of `faction` with building `flags` at `level`
+/// (1 to 3); `open` is true while its door is open to everyone (a dropped
+/// Light Curtain).
+pub fn wall_look(faction: Option<Faction>, flags: u16, level: u8, open: bool) -> WallLook {
     use gc_sim::structures::{GROWN, PASS};
-    if flags & PASS != 0 {
-        let dropped = open;
-        return WallLook {
+    // A dropped curtain stays a faint line however high it was raised.
+    let dropped = flags & PASS != 0 && open;
+    let mut look = if flags & PASS != 0 {
+        WallLook {
             height: if dropped {
                 CURTAIN_DROPPED_HEIGHT
             } else {
@@ -655,24 +722,54 @@ pub fn wall_look(faction: Option<Faction>, flags: u16, open: bool) -> WallLook {
             } else {
                 CURTAIN_GLOW
             },
-        };
-    }
-    if flags & GROWN != 0 {
-        return WallLook {
+            ..WallLook::PLAIN
+        }
+    } else if flags & GROWN != 0 {
+        WallLook {
             height: RESIN_HEIGHT,
             thick: RESIN_THICK,
             colour: Some(RESIN_COLOR),
             glow: RESIN_GLOW,
-        };
-    }
-    if faction == Some(Faction::CarrionConcord) {
-        return WallLook {
+            ..WallLook::PLAIN
+        }
+    } else if faction == Some(Faction::CarrionConcord) {
+        WallLook {
             height: BONE_HEIGHT,
             colour: Some(BONE_COLOR),
             ..WallLook::PLAIN
-        };
+        }
+    } else {
+        WallLook::PLAIN
+    };
+    let raised = usize::from(level.clamp(1, 3)) - 1;
+    if raised == 0 || dropped {
+        return look;
     }
-    WallLook::PLAIN
+    let palette = match faction {
+        Some(Faction::CarrionConcord) => &CONCORD_RAISED,
+        Some(Faction::Choir) => &CHOIR_RAISED,
+        Some(Faction::Brood) => &BROOD_RAISED,
+        _ => &EMBER_RAISED,
+    };
+    let (body, cap) = palette[raised - 1];
+    let steps = raised as f32;
+    look.height += LEVEL_RISE * steps;
+    look.thick += LEVEL_THICKEN * steps;
+    look.colour = Some(body);
+    look.glow = look.glow.saturating_add(LEVEL_GLOW * raised as u8);
+    look.cap = Some(cap);
+    look.merlons = raised >= 2;
+    look
+}
+
+/// The colour a wall of `look` is drawn in for a side of colour `team`: a
+/// raised wall's level colour keeps a share of the side's own.
+fn wall_colour(look: &WallLook, team: [u8; 3]) -> [u8; 3] {
+    match look.colour {
+        None => team,
+        Some(body) if look.cap.is_some() => tint(body, team, LEVEL_TEAM_TINT),
+        Some(body) => body,
+    }
 }
 
 /// One box for the wall tile `s`: a straight slab along the line it was
@@ -694,6 +791,37 @@ fn wall_block(
     BoxInstance {
         facing: piece.dir.to_array(),
         ..draped(slab, height, color, ground_range(ground, s))
+    }
+}
+
+/// The top of a raised wall tile drawn as `body`: a coping slab along it
+/// in `cap`, and on a third level a pair of merlons standing on that.
+fn push_wall_top(body: &BoxInstance, look: WallLook, out: &mut Vec<BoxInstance>) {
+    let Some(cap) = look.cap else {
+        return;
+    };
+    let [x, height, z] = body.size;
+    let top = body.lift + height;
+    let color = [cap[0], cap[1], cap[2], look.glow];
+    out.push(BoxInstance {
+        size: [x + 0.08, COPING_HEIGHT, z],
+        color,
+        lift: top,
+        ..*body
+    });
+    if !look.merlons {
+        return;
+    }
+    let along = Vec2::from_array(body.facing);
+    let at = Vec2::from_array(body.pos);
+    for side in [-1.0, 1.0] {
+        out.push(BoxInstance {
+            pos: (at + along * (side * z * 0.25)).to_array(),
+            size: [x + 0.08, MERLON_HEIGHT, z * MERLON_SHARE],
+            color,
+            lift: top + COPING_HEIGHT,
+            ..*body
+        });
     }
 }
 
@@ -805,7 +933,7 @@ pub fn push(
     };
     let right = Vec2::new(-across.y, across.x);
     for s in structures.iter().filter(|s| shown(s)) {
-        if out.len() + 6 > MAX_BOX_INSTANCES {
+        if out.len() + 9 > MAX_BOX_INSTANCES {
             return;
         }
         let Some(stats) = table.stats.get(usize::from(s.building)) else {
@@ -825,16 +953,16 @@ pub fn push(
             (None, Some(_)) => look.height,
             (None, None) => height_of(stats.role),
         };
-        let [r, g, b] = shade(look.colour.unwrap_or_else(|| team(s.owner)), s.hp, s.max_hp);
+        let [r, g, b] = shade(wall_colour(&look, team(s.owner)), s.hp, s.max_hp);
         match (s.gate.is_some() && s.finished(), model) {
             (true, _) => push_gate(&s, model.is_none().then_some([r, g, b]), &ground, out),
-            (false, None) => out.push(wall_block(
-                &s,
-                height,
-                look.thick,
-                [r, g, b, look.glow],
-                &ground,
-            )),
+            (false, None) => {
+                let body = wall_block(&s, height, look.thick, [r, g, b, look.glow], &ground);
+                out.push(body);
+                if s.line.is_some() {
+                    push_wall_top(&body, look, out);
+                }
+            }
             (false, Some(_)) => {}
         }
         if s.hp >= s.max_hp {
@@ -1684,16 +1812,82 @@ mod tests {
     #[test]
     fn each_faction_wall_has_its_own_look() {
         use gc_sim::structures::{GROWN, LINE, PASS};
-        let plain = wall_look(Some(Faction::EmberClans), LINE, false);
+        let plain = wall_look(Some(Faction::EmberClans), LINE, 1, false);
         assert_eq!(plain, WallLook::PLAIN);
-        let bone = wall_look(Some(Faction::CarrionConcord), LINE, false);
+        let bone = wall_look(Some(Faction::CarrionConcord), LINE, 1, false);
         assert!(bone.colour.is_some() && bone.height < plain.height);
-        let up = wall_look(Some(Faction::Choir), LINE | PASS, false);
-        let down = wall_look(Some(Faction::Choir), LINE | PASS, true);
+        let up = wall_look(Some(Faction::Choir), LINE | PASS, 1, false);
+        let down = wall_look(Some(Faction::Choir), LINE | PASS, 1, true);
         assert!(up.thick < plain.thick && up.height > down.height);
         assert!(up.glow > down.glow);
-        let resin = wall_look(Some(Faction::Brood), LINE | GROWN, false);
+        let resin = wall_look(Some(Faction::Brood), LINE | GROWN, 1, false);
         assert!(resin.thick > plain.thick && resin.height < plain.height);
+        // A dropped curtain stays flat and bare however high it was raised.
+        let flat = wall_look(Some(Faction::Choir), LINE | PASS, 3, true);
+        assert_eq!(flat, down);
+    }
+
+    #[test]
+    fn wall_levels_follow_the_upgrade_chain() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let id = |name: &str| {
+            data.buildings
+                .iter()
+                .position(|b| b.name() == name)
+                .unwrap_or_else(|| panic!("no {name}")) as BuildingId
+        };
+        let chains = [
+            ["Palisade", "Stone Wall", "Castle Wall"],
+            ["Bone Fence", "Ossuary Wall", "Mausoleum Wall"],
+            ["Light Curtain", "Glass Wall", "Singing Wall"],
+            ["Resin Ridge", "Chitin Wall", "Thorn Bulwark"],
+        ];
+        for chain in chains {
+            let looks = chain.map(|n| {
+                let b = id(n);
+                let level = table.level(b);
+                (level, table.wall_look(b, false))
+            });
+            assert_eq!(looks.map(|l| l.0), [1, 2, 3], "{chain:?}");
+            let [a, b, c] = looks.map(|l| l.1);
+            assert!(a.cap.is_none() && !a.merlons, "{chain:?}");
+            assert!(
+                b.height > a.height && b.thick > a.thick && b.cap.is_some(),
+                "{chain:?}"
+            );
+            assert!(c.height > b.height && c.thick > b.thick, "{chain:?}");
+            assert!(c.merlons && !b.merlons, "{chain:?}");
+            assert_ne!(a.colour, b.colour);
+            assert_ne!(b.colour, c.colour);
+        }
+        assert_eq!(table.level(id("Clan Hall")), 1);
+    }
+
+    #[test]
+    fn a_raised_wall_gets_a_coping_and_merlons() {
+        let look = |level| {
+            wall_look(
+                Some(Faction::EmberClans),
+                gc_sim::structures::LINE,
+                level,
+                false,
+            )
+        };
+        let body = BoxInstance {
+            pos: [4.0, 4.0],
+            facing: [1.0, 0.0],
+            size: [0.6, 2.0, 1.0],
+            color: [1, 2, 3, 0],
+            lift: 0.0,
+        };
+        let count = |level| {
+            let l = look(level);
+            let mut out = Vec::new();
+            push_wall_top(&body, l, &mut out);
+            out.len()
+        };
+        assert_eq!((count(1), count(2), count(3)), (0, 1, 3));
     }
 
     #[test]

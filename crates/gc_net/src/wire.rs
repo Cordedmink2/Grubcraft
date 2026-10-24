@@ -431,6 +431,17 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(31);
             w.handle(regiment);
         }
+        Command::RaiseWall {
+            structure,
+            regiment,
+        } => {
+            // A grown wall, with no worker, has a tag of its own.
+            w.u8(if regiment.is_some() { 32 } else { 33 });
+            w.structure(structure);
+            if let Some(h) = regiment {
+                w.handle(h);
+            }
+        }
         Command::SetGate { structure, mode } => {
             w.u8(26);
             w.structure(structure);
@@ -592,6 +603,10 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         },
         31 => Command::WorkPlan {
             regiment: r.handle()?,
+        },
+        tag @ (32 | 33) => Command::RaiseWall {
+            structure: r.structure()?,
+            regiment: if tag == 32 { Some(r.handle()?) } else { None },
         },
         26 => Command::SetGate {
             structure: r.structure()?,
@@ -863,6 +878,20 @@ mod tests {
                 to: (5, 2),
             },
             Command::WorkPlan { regiment: h(6, 2) },
+            Command::RaiseWall {
+                structure: StructureHandle {
+                    index: 30,
+                    generation: 4,
+                },
+                regiment: Some(h(7, 1)),
+            },
+            Command::RaiseWall {
+                structure: StructureHandle {
+                    index: 31,
+                    generation: 0,
+                },
+                regiment: None,
+            },
             Command::FocusTower {
                 structure: StructureHandle {
                     index: 9,

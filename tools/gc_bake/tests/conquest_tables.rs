@@ -54,8 +54,9 @@ fn references_stay_inside_the_faction() {
                 assert_eq!(from.faction(), b.faction(), "{}", b.name());
             }
         }
-        // Each faction's main building upgrades twice.
-        assert_eq!(upgrades, 2 * Faction::ALL.len());
+        // Each faction's main building upgrades twice, and so does its
+        // drawn wall (levels 2 and 3).
+        assert_eq!(upgrades, 4 * Faction::ALL.len());
         for u in data.conquest_units {
             if u.trained_at != NONE {
                 let at = &data.buildings[usize::from(u.trained_at)];

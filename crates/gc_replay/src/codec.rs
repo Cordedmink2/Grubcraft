@@ -392,6 +392,23 @@ impl Writer {
                     self.var(u64::from(v as u16));
                 }
             }
+            Command::RaiseWall {
+                structure,
+                regiment,
+            } => {
+                // A grown wall, with no worker, has a tag of its own.
+                match regiment {
+                    Some(r) => {
+                        self.u8(34);
+                        self.structure(structure);
+                        self.handle(r);
+                    }
+                    None => {
+                        self.u8(35);
+                        self.structure(structure);
+                    }
+                }
+            }
             Command::PlanWall { building, from, to } => {
                 self.u8(31);
                 self.var(u64::from(building));
@@ -841,6 +858,14 @@ impl<'a> Reader<'a> {
             33 => Command::WorkPlan {
                 regiment: self.handle()?,
             },
+            tag @ (34 | 35) => Command::RaiseWall {
+                structure: self.structure()?,
+                regiment: if tag == 34 {
+                    Some(self.handle()?)
+                } else {
+                    None
+                },
+            },
             28 => Command::SetGate {
                 structure: self.structure()?,
                 mode: gc_sim::gates::GateMode::from_u8(self.u8()?)?,
@@ -1045,6 +1070,23 @@ mod tests {
                 building: 5,
                 from: (3, 9),
                 to: (9, 3),
+            },
+            Command::RaiseWall {
+                structure: StructureHandle {
+                    index: 6,
+                    generation: 1,
+                },
+                regiment: Some(RegimentHandle {
+                    index: 2,
+                    generation: 3,
+                }),
+            },
+            Command::RaiseWall {
+                structure: StructureHandle {
+                    index: 7,
+                    generation: 0,
+                },
+                regiment: None,
             },
             Command::PlanWall {
                 building: 2,

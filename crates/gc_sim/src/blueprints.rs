@@ -187,11 +187,7 @@ impl Conquest {
     /// Refused for a unit that isn't a worker, one used up on what it
     /// builds, or a side with nothing planned.
     pub(crate) fn work_plans(&mut self, player: PlayerId, r: usize, regs: &Regiments) -> bool {
-        let kind = self.unit(regs.unit[r]);
-        if !kind.worker
-            || kind.consumed
-            || !self.blueprints.plans().iter().any(|p| p.owner == player)
-        {
+        if !self.is_builder(r, regs) || !self.blueprints.plans().iter().any(|p| p.owner == player) {
             return false;
         }
         self.stop_work(r);

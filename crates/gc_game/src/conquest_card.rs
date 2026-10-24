@@ -11,8 +11,8 @@ use gc_data::conquest::UNIT_CONSUMED;
 use gc_sim::gates::GateMode;
 use gc_sim::structures::{CANCEL_REFUND_PERCENT, Refusal};
 use gc_sim::{
-    BuildingId, Command, PlayerCommand, RegimentHandle, Regiments, StructureHandle, StructureView,
-    TradePost, UnitId,
+    BuildingId, Command, PlayerCommand, PlayerId, RegimentHandle, Regiments, StructureHandle,
+    StructureView, TradePost, UnitId, WallRaise,
 };
 use gc_ui::hud::{GRID_SLOTS, SlotState};
 use glam::Vec2;
@@ -51,6 +51,9 @@ pub enum Action {
     Train(UnitId),
     /// Start the selected building's tier upgrade into this.
     Upgrade(BuildingId),
+    /// Raise the selected wall tile's whole joined stretch to this next
+    /// level (the sim pays for every tile now).
+    RaiseWall(BuildingId),
     /// Call off the selected building or its upgrade.
     CallOff,
     /// Set the selected gate to this mode.
@@ -82,7 +85,13 @@ impl Running {
                     *slot = Some(Action::SetGate(mode));
                 }
             }
-            if !s.finished() {
+            // Your own drawn wall's tiles are raised a stretch at a time, not
+            // upgraded one by one; a top-level wall has nothing to offer.
+            let own_wall =
+                s.owner == self.sandbox.side && s.gate.is_none() && self.is_wall(s.building);
+            if own_wall && s.finished() && s.upgrading.is_none() {
+                slots[SLOT_LAST] = structures.upgrade_of(s.building).map(Action::RaiseWall);
+            } else if !s.finished() || (own_wall && s.upgrading.is_some()) {
                 slots[SLOT_LAST] = Some(Action::CallOff);
             } else {
                 // It still trains while it upgrades.
@@ -141,15 +150,22 @@ impl Running {
 
     /// The selected worker nearest `spot`.
     pub fn nearest_worker(&self, spot: Vec2) -> Option<RegimentHandle> {
+        self.nearest_to(self.selected_workers(), spot)
+    }
+
+    /// Whichever of the regiments `from` stands nearest `spot`.
+    fn nearest_to(
+        &self,
+        from: impl Iterator<Item = RegimentHandle>,
+        spot: Vec2,
+    ) -> Option<RegimentHandle> {
         let regiments = &self.world.regiments;
-        self.selected_workers().min_by(|&a, &b| {
-            let d = |h| {
-                regiments
-                    .position(h)
-                    .map_or(f32::MAX, |p| from_fx_vec(p).distance(spot))
-            };
-            d(a).total_cmp(&d(b))
-        })
+        let dist = |h| {
+            regiments
+                .position(h)
+                .map_or(f32::MAX, |p| from_fx_vec(p).distance(spot))
+        };
+        from.min_by(|&a, &b| dist(a).total_cmp(&dist(b)))
     }
 
     /// Whether your side has walls planned (blueprints) to work.
@@ -199,9 +215,23 @@ impl Running {
         }
     }
 
+    /// What raising the selected wall's stretch would take, if `action`
+    /// raises one: asked of the simulation once, for the check and the label.
+    fn wall_raise(&self, action: Action) -> Option<Result<WallRaise, Refusal>> {
+        let Action::RaiseWall(_) = action else {
+            return None;
+        };
+        let h = self.picked_structure()?;
+        Some(self.world.wall_level(self.sandbox.side, h))
+    }
+
     /// Why `action` can't be done now, if it can't: the simulation's own
-    /// check, in the panel's words.
-    fn blocked(&self, action: Action) -> Option<&'static str> {
+    /// check, in the panel's words. `raise` is `wall_raise(action)`.
+    fn blocked(
+        &self,
+        action: Action,
+        raise: Option<Result<WallRaise, Refusal>>,
+    ) -> Option<&'static str> {
         let side = self.sandbox.side;
         let structure = self.picked_structure();
         match action {
@@ -212,6 +242,11 @@ impl Running {
             },
             Action::Train(u) => structure.and_then(|h| self.world.can_train(side, h, u).err()),
             Action::Upgrade(_) => structure.and_then(|h| self.world.can_upgrade(side, h).err()),
+            Action::RaiseWall(_) => match raise {
+                Some(Err(e)) => Some(e),
+                Some(Ok(w)) if !w.afford => Some(Refusal::Price),
+                _ => None,
+            },
             Action::OpenBuild
             | Action::Clear
             | Action::WorkPlans
@@ -230,6 +265,7 @@ impl Running {
         details: &mut [String; GRID_SLOTS],
     ) -> [SlotState; GRID_SLOTS] {
         let mut states = [SlotState::Off; GRID_SLOTS];
+        let raise = (card.slots.iter().flatten()).find_map(|&a| self.wall_raise(a));
         let gate_mode = self.gate_mode();
         for (i, action) in card.slots.iter().enumerate() {
             let (label, detail) = (&mut labels[i], &mut details[i]);
@@ -263,6 +299,14 @@ impl Running {
                         let _ = write!(label, "Tier {}", s.tier);
                     }
                 }
+                Action::RaiseWall(_) => {
+                    // The whole stretch is paid at once, so its full price
+                    // shows even when the side can't afford it yet.
+                    if let Some(Ok(w)) = raise {
+                        price(detail, w.grub, w.marrow);
+                    }
+                    label.push_str("Raise");
+                }
                 Action::Train(u) => {
                     if let Some(r) = self.data.conquest_units.get(usize::from(u)) {
                         price(detail, r.cost_grub, r.cost_marrow);
@@ -280,6 +324,7 @@ impl Running {
                 }
                 Action::SetGate(mode) => label.push_str(gate_name(mode)),
             }
+            let action_raise = raise.filter(|_| matches!(action, Action::RaiseWall(_)));
             let armed = match action {
                 Action::Lay(b) => {
                     matches!(self.hud.armed, Some(Armed::Lay(a) | Armed::Wall(a, _)) if a == b)
@@ -291,7 +336,7 @@ impl Running {
             };
             states[i] = if armed {
                 SlotState::Armed
-            } else if self.blocked(action).is_some() {
+            } else if self.blocked(action, action_raise).is_some() {
                 SlotState::Blocked
             } else {
                 SlotState::Ready
@@ -309,7 +354,7 @@ impl Running {
         let Some(action) = card.slots[slot] else {
             return card.whole;
         };
-        if let Some(why) = self.blocked(action) {
+        if let Some(why) = self.blocked(action, self.wall_raise(action)) {
             self.say(why.into());
             return true;
         }
@@ -358,6 +403,12 @@ impl Running {
                 }
                 return true;
             }
+            Action::RaiseWall(_) => {
+                if let Some(structure) = self.picked_structure() {
+                    self.raise_wall(structure);
+                }
+                return true;
+            }
             Action::Train(_) | Action::Upgrade(_) | Action::CallOff | Action::SetGate(_) => {}
         }
         // The rest are the selected building's.
@@ -371,6 +422,48 @@ impl Running {
             _ => Command::CallOff { structure },
         });
         true
+    }
+
+    /// Raise the stretch of wall joined to tile `structure` a level, naming
+    /// your nearest idle worker to go and work along it. A grown wall grows
+    /// by itself, so it names none.
+    fn raise_wall(&mut self, structure: StructureHandle) {
+        let side = self.sandbox.side;
+        let Some(structures) = self.world.structures() else {
+            return;
+        };
+        let Some(s) = structures.get(structure) else {
+            return;
+        };
+        let spot = buildings::centre_of(s.tile, s.width, s.depth);
+        let by_hand = structures.raised_by_hand(s.building);
+        let regiment = if by_hand {
+            self.nearest_idle_worker(side, spot)
+        } else {
+            None
+        };
+        self.order(Command::RaiseWall {
+            structure,
+            regiment,
+        });
+        if by_hand && regiment.is_none() {
+            self.say("Paid: send a worker to raise it (right-click the wall).".into());
+        }
+    }
+
+    /// `side`'s idle worker nearest `spot`, if it has one.
+    fn nearest_idle_worker(&self, side: PlayerId, spot: Vec2) -> Option<RegimentHandle> {
+        self.nearest_to(self.world.idle_workers(side), spot)
+    }
+
+    /// The `U` key: raises the selected wall if that is what the card
+    /// offers; false if it has nothing to raise (U then opens the guide).
+    pub fn raise_key(&mut self) -> bool {
+        let raises = matches!(
+            self.conquest_card().map(|c| c.slots[SLOT_LAST]),
+            Some(Some(Action::RaiseWall(_)))
+        );
+        raises && self.card_press(SLOT_LAST)
     }
 
     /// The selected building takes the last regiment off its queue.
@@ -681,7 +774,8 @@ pub fn gate_line(mode: GateMode) -> &'static str {
 }
 
 /// A grid slot's price: Grub, and Marrow after a slash if it costs any.
-fn price(detail: &mut String, grub: u16, marrow: u16) {
+fn price(detail: &mut String, grub: impl Into<u32>, marrow: impl Into<u32>) {
+    let (grub, marrow) = (grub.into(), marrow.into());
     let _ = match marrow {
         0 => write!(detail, "{grub}"),
         m => write!(detail, "{grub}/{m}"),
@@ -707,5 +801,31 @@ mod tests {
         assert_eq!(short("Yumi Ashigaru"), "Yumi");
         assert_eq!(short("Hands"), "Hands");
         assert_eq!(short(""), "");
+    }
+
+    #[test]
+    fn only_a_wall_with_a_next_level_can_be_raised() {
+        let data = crate::data::load();
+        let table = crate::buildings::Table::new(&data);
+        let id = |name: &str| {
+            data.buildings
+                .iter()
+                .position(|b| b.name() == name)
+                .unwrap_or_else(|| panic!("no {name}")) as BuildingId
+        };
+        let next = |b: BuildingId| {
+            (0..table.len() as BuildingId)
+                .find(|&n| table.stats[usize::from(n)].upgrades_from == Some(b))
+        };
+        // The card offers Raise on a wall that has a next level; the top
+        // level and a plain building have none.
+        let has_next_level = |name: &str| {
+            let b = id(name);
+            table.is_wall(b) && next(b).is_some()
+        };
+        assert!(has_next_level("Palisade") && has_next_level("Stone Wall"));
+        assert!(!has_next_level("Castle Wall") && !has_next_level("Clan Hall"));
+        assert_eq!(next(id("Palisade")), Some(id("Stone Wall")));
+        assert!(!table.is_wall(id("Clan Hall")));
     }
 }

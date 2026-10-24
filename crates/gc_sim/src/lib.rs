@@ -75,6 +75,7 @@ pub use verdict::{
     Victories, Win,
 };
 pub use vision::Ambush;
+pub use walls::WallRaise;
 
 use champions::Champions;
 use combat::Combat;
@@ -113,7 +114,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 39;
+pub const SIM_VERSION: u32 = 40;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -720,6 +721,16 @@ pub enum Command {
         from: (i16, i16),
         to: (i16, i16),
     },
+    /// Conquest: raise the stretch of the issuer's wall joined to tile
+    /// `structure` a level, paying for every tile now (see
+    /// [`Conquest::wall_level`](conquest::Conquest)). A drawn wall's tiles go
+    /// up as builders work them, and the worker `regiment`, if named, goes
+    /// and works along; a grown wall's grow on their own (`regiment` is
+    /// `None` for it).
+    RaiseWall {
+        structure: StructureHandle,
+        regiment: Option<RegimentHandle>,
+    },
     /// Conquest: plan a wall of type `building` from tile `from` to tile
     /// `to` as a blueprint, paid for and laid tile by tile as workers set to
     /// the plans reach it (see [`blueprints`]).
@@ -763,6 +774,7 @@ impl Command {
             | Command::FocusTower { .. }
             | Command::SetGate { .. }
             | Command::BuildWall { .. }
+            | Command::RaiseWall { .. }
             | Command::PlanWall { .. }
             | Command::DropPlan { .. }
             | Command::WorkPlan { .. }
@@ -1178,6 +1190,16 @@ impl World {
                 &self.regiments,
                 &self.terrain,
             )
+    }
+
+    /// What raising `player`'s wall tile `h` a level would do: the next
+    /// level, how many tiles it raises and what that costs, or why it
+    /// can't (see [`Command::RaiseWall`]). A side that can't pay gets
+    /// [`WallRaise::afford`] false, not a refusal, so the price can still
+    /// be shown.
+    pub fn wall_level(&self, player: PlayerId, h: StructureHandle) -> Result<WallRaise, Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        c.wall_level(player, h).map(|(raise, _)| raise)
     }
 
     /// Every side's planned wall tiles (Conquest only), in the order they
@@ -1858,11 +1880,10 @@ impl World {
                 from,
                 to,
             } => {
-                let worker = match regiment {
-                    Some(h) => self.worker_of(pc.player, h).map(Some),
-                    None => Some(None),
-                };
-                match (worker, &mut self.conquest) {
+                match (
+                    self.optional_worker(pc.player, regiment),
+                    &mut self.conquest,
+                ) {
                     (Some(r), Some(c)) => c.lay_wall(
                         pc.player,
                         r,
@@ -1873,6 +1894,20 @@ impl World {
                         &mut self.regiments,
                         &self.terrain,
                     ),
+                    _ => false,
+                }
+            }
+            Command::RaiseWall {
+                structure,
+                regiment,
+            } => {
+                match (
+                    self.optional_worker(pc.player, regiment),
+                    &mut self.conquest,
+                ) {
+                    (Some(r), Some(c)) => {
+                        c.raise_wall(pc.player, structure, r, &mut self.regiments)
+                    }
                     _ => false,
                 }
             }
@@ -2128,6 +2163,19 @@ impl World {
 
     /// The slot of `player`'s regiment `h`, if it is theirs and not
     /// broken: one they can set to work.
+    /// [`World::worker_of`] for an order that may name no worker: `None`
+    /// when one is named but isn't `player`'s, `Some(None)` when none is.
+    fn optional_worker(
+        &self,
+        player: PlayerId,
+        h: Option<RegimentHandle>,
+    ) -> Option<Option<usize>> {
+        match h {
+            Some(h) => self.worker_of(player, h).map(Some),
+            None => Some(None),
+        }
+    }
+
     fn worker_of(&self, player: PlayerId, h: RegimentHandle) -> Option<usize> {
         self.regiments.standing(h, player)
     }

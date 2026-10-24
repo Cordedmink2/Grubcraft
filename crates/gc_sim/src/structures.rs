@@ -1215,12 +1215,50 @@ impl Structures {
         self.larvae[i] = 0;
     }
 
-    /// Start building slot `i`'s tier upgrade to building type `to`.
+    /// Start building slot `i`'s upgrade to building type `to`: a tier
+    /// upgrade, which goes on by itself, or a drawn wall's next level,
+    /// which builders work on as they build (see [`Structures::by_hand`]).
     pub(crate) fn start_upgrade(&mut self, i: usize, to: BuildingId) {
-        let ticks = self.tempo_ticks(u32::from(self.buildings[to as usize].build_ticks));
+        let ticks = u32::from(self.buildings[to as usize].build_ticks);
         self.upgrade_to[i] = Some(to);
-        self.upgrade_full[i] = ticks;
+        self.upgrade_full[i] = if self.by_hand(i) {
+            ticks * self.build_percent
+        } else {
+            self.tempo_ticks(ticks)
+        };
         self.upgrade_left[i] = self.upgrade_full[i];
+    }
+
+    /// Whether building slot `i` is grown and cut off from its veins, so
+    /// it doesn't grow.
+    pub(crate) fn cut_off(&self, i: usize) -> bool {
+        self.flags_of(i) & GROWN != 0 && !self.rooted(i)
+    }
+
+    /// Whether building slot `i`'s upgrade goes on only while builders
+    /// work at it (see [`Structures::raised_by_hand`]).
+    pub(crate) fn by_hand(&self, i: usize) -> bool {
+        self.raised_by_hand(self.building[i])
+    }
+
+    /// Whether building type `b` goes up a level only while builders work
+    /// at it: a drawn wall that isn't grown.
+    pub fn raised_by_hand(&self, b: BuildingId) -> bool {
+        let f = self.buildings.get(usize::from(b)).map_or(0, |s| s.flags);
+        f & LINE != 0 && f & GROWN == 0
+    }
+
+    /// Building slot `i`'s upgrade is done: it turns into its upgrade,
+    /// keeping the damage it has taken.
+    fn finish_upgrade(&mut self, i: usize) {
+        let Some(to) = self.upgrade_to[i].take() else {
+            return;
+        };
+        let gain = u32::from(self.buildings[to as usize].hp)
+            .saturating_sub(u32::from(self.stats_of(i).hp));
+        self.hp[i] += gain * HP_SCALE;
+        self.building[i] = to;
+        self.restats = true;
     }
 
     /// What building slot `i` cost to start: a foundation's full price, or
@@ -1301,12 +1339,12 @@ impl Structures {
         self.stats_of(i).attack.is_some()
     }
 
-    /// Building slot `i`, about to come down, is a tile of a wall not yet
-    /// built: those on their way to build it go on to the next tile of the
+    /// Building slot `i`, about to come down, is a tile of a wall with work
+    /// left (see [`Structures::wall_work_left`]): those on their way to build it go on to the next tile of the
     /// wall instead (see [`Structures::next_wall_tile`]), so one tile called
     /// off or knocked down doesn't leave the rest standing unbuilt.
     fn hand_on_wall(&mut self, i: usize, regs: &Regiments) {
-        if !self.is_line(i) || self.finished(i) {
+        if !self.is_line(i) || !self.wall_work_left(i) {
             return;
         }
         let Some(next) = self.next_wall_tile(self.owner[i], i) else {
@@ -1393,8 +1431,7 @@ impl Structures {
         // A building that used up its worker grows as one builder would
         // build it; a grown wall only while its veins reach it.
         for s in 0..self.hp.len() {
-            let cut_off = || self.flags_of(s) & GROWN != 0 && !self.rooted(s);
-            if self.hp[s] > 0 && self.growing(s) && !cut_off() {
+            if self.hp[s] > 0 && self.growing(s) && !self.cut_off(s) {
                 self.build(s, 1);
             }
         }
@@ -1496,6 +1533,20 @@ impl Structures {
         if self.crew[s] >= CREW {
             return true;
         }
+        let hand = if self.crew[s] == 0 {
+            FIRST_HAND
+        } else {
+            OTHER_HAND
+        };
+        if self.finished(s) && self.upgrade_to[s].is_some() && self.by_hand(s) {
+            // A drawn wall going up a level: the builders raise it.
+            self.crew[s] += 1;
+            self.upgrade_left[s] = self.upgrade_left[s].saturating_sub(hand * steps);
+            if self.upgrade_left[s] == 0 {
+                self.finish_upgrade(s);
+            }
+            return true;
+        }
         if self.finished(s) {
             if self.hp[s] >= max {
                 return false;
@@ -1504,11 +1555,6 @@ impl Structures {
             self.heal(s, REPAIR_HP);
             return true;
         }
-        let hand = if self.crew[s] == 0 {
-            FIRST_HAND
-        } else {
-            OTHER_HAND
-        };
         self.crew[s] += 1;
         // Hit points rise with the work done, from the foundation's to
         // full, so damage taken while building stays taken.
@@ -1521,23 +1567,22 @@ impl Structures {
         true
     }
 
-    /// Tier upgrades go on by themselves; one done turns the building into
-    /// its upgrade, keeping the damage it has taken.
+    /// Tier upgrades (and grown walls' levels) go on by themselves; a
+    /// drawn wall's level goes on only as builders work it (see
+    /// [`Structures::build`]).
     fn upgrades(&mut self) {
         for i in 0..self.hp.len() {
-            let Some(to) = self.upgrade_to[i].filter(|_| self.hp[i] > 0) else {
-                continue;
-            };
-            self.upgrade_left[i] = self.upgrade_left[i].saturating_sub(self.steps(i));
-            if self.upgrade_left[i] > 0 {
+            if self.hp[i] == 0 || self.upgrade_to[i].is_none() || self.by_hand(i) {
                 continue;
             }
-            let gain = u32::from(self.buildings[to as usize].hp)
-                .saturating_sub(u32::from(self.stats_of(i).hp));
-            self.hp[i] += gain * HP_SCALE;
-            self.building[i] = to;
-            self.upgrade_to[i] = None;
-            self.restats = true;
+            if self.cut_off(i) {
+                // A grown wall cut off from its veins stops growing.
+                continue;
+            }
+            self.upgrade_left[i] = self.upgrade_left[i].saturating_sub(self.steps(i));
+            if self.upgrade_left[i] == 0 {
+                self.finish_upgrade(i);
+            }
         }
     }
 

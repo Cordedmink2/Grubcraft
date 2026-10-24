@@ -150,11 +150,33 @@
         (
             name: "Palisade",
             summary: "A wall you draw: click the start, move, click the end; click again to bend it, right-click to finish. Shift locks 15-degree steps; O draws a closed ring; B plans a blueprint. Priced and built a tile at a time by a worker. Fire Arrows burn it and rams break it.",
-            notes: [],
+            notes: [
+                ("Stone Wall", "Twice and a half as tough and no longer burns like logs. Raise the stretch facing the enemy first."),
+            ],
             tips: [
                 (icon: Alarm, text: "Close a choke point end to end, since regiments file through a gap just one tile wide."),
                 (icon: Hammer, text: "B plans it as a blueprint: workers pay tile by tile when you press A or right-click the blue tiles."),
                 (icon: Move, text: "Press O to ring your base: it leans on cliffs and marks where a Gate would suit."),
+            ],
+        ),
+        (
+            name: "Stone Wall",
+            summary: "Level 2 of the Palisade: a sloped stone wall with a plaster face, 2.5 times as tough. Select a Palisade and press U: the whole joined stretch is paid now and a worker raises it a tile at a time, and the wall stays up meanwhile.",
+            notes: [
+                ("Castle Wall", "The toughest wall the Clans build: four times a Palisade. Needs a Castle Keep."),
+            ],
+            tips: [
+                (icon: Hammer, text: "Select the wall and press U: the joined stretch is paid now, then raised a tile at a time."),
+                (icon: Alarm, text: "Raise the side facing the enemy first; it stays standing while workers raise it."),
+            ],
+        ),
+        (
+            name: "Castle Wall",
+            summary: "Level 3, the top: a castle wall with loopholes and corner turrets, 4 times as tough as a Palisade. Needs a Castle Keep. Select a Stone Wall and press U to raise its stretch.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Select a Stone Wall and press U once you have a Castle Keep."),
+                (icon: Grub, text: "Each tile costs 20 Grub and 5 Marrow, paid for the whole stretch up front."),
             ],
         ),
         (

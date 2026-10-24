@@ -1860,6 +1860,10 @@ fn card_look(action: Option<Action>) -> (Icon, &'static str) {
         ),
         Some(Action::Train(_)) => (Icon::Flag, "Train this regiment at the building."),
         Some(Action::Upgrade(_)) => (Icon::Ultimate, "Raise the building to its next tier."),
+        Some(Action::RaiseWall(_)) => (
+            Icon::Ultimate,
+            "Raise the whole joined stretch of this wall a level. The stretch is paid now; builders then raise it a tile at a time (a grown wall grows by itself). U does the same.",
+        ),
         Some(Action::SetGate(mode)) => (
             match mode {
                 GateMode::Auto => Icon::Flag,

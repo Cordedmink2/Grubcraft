@@ -2047,7 +2047,12 @@ impl ApplicationHandler for App {
                             r.hud.toggle_hero_preview();
                         }
                         KeyCode::KeyH if down && !event.repeat => r.toggle_help(),
-                        KeyCode::KeyU if down && !event.repeat => r.open_guide(),
+                        KeyCode::KeyU if down && !event.repeat => {
+                            // A selected wall is raised; otherwise U is the guide.
+                            if !r.raise_key() {
+                                r.open_guide();
+                            }
+                        }
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
                         }

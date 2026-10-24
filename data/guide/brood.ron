@@ -109,11 +109,33 @@
         (
             name: "Resin Ridge",
             summary: "A wall the Hive grows: click the start, move, click the end; click again to bend it, right-click to finish. It goes only where your root-veins reach, takes no Gnawer and grows every tile at once. It heals on the veins and withers off them.",
-            notes: [],
+            notes: [
+                ("Chitin Wall", "Twice and a half as tough, grown with no Gnawer while the veins reach it."),
+            ],
             tips: [
                 (icon: Hammer, text: "Spread veins first: a ridge grows only where your root-veins reach."),
                 (icon: Alarm, text: "Cut the veins under an enemy ridge and it withers away on its own."),
                 (icon: Move, text: "Press O to ring your hive: every tile grows at once and the ring leans on cliffs."),
+            ],
+        ),
+        (
+            name: "Chitin Wall",
+            summary: "Level 2 of the Resin Ridge: overlapping chitin plates, 2.5 times as tough. Select a ridge and press U: the joined stretch is paid now and grows up on its own while the veins reach it, with no Gnawer.",
+            notes: [
+                ("Thorn Bulwark", "The Brood's toughest wall: four times a Resin Ridge. Needs tier 2."),
+            ],
+            tips: [
+                (icon: Hammer, text: "Select the ridge and press U: the joined stretch is paid now and grows up on its own."),
+                (icon: Alarm, text: "Cut off from the veins it stops growing, so guard the relays behind it."),
+            ],
+        ),
+        (
+            name: "Thorn Bulwark",
+            summary: "Level 3, the top: a spined bulwark, 4 times as tough as a Resin Ridge. Needs tier 2. Select a Chitin Wall and press U; it grows on its own while the veins reach it.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Select a Chitin Wall and press U once you reach tier 2."),
+                (icon: Grub, text: "Each tile costs 20 Grub and 5 Marrow, paid for the whole stretch up front."),
             ],
         ),
         (

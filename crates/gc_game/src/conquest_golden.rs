@@ -244,6 +244,9 @@ struct Side {
     /// east end as a blueprint (the last tile dropped again) for its waller
     /// to work.
     planned: bool,
+    /// Whether, once the plans were built too, its waller raised the wall
+    /// a level.
+    raised: bool,
 }
 
 /// The Clans' Shrine and their three built Edicts, as the first side plays
@@ -771,13 +774,57 @@ impl Match {
         }
     }
 
-    /// Worker `w` is drawing side `p`'s wall and some of it isn't up yet.
+    /// Worker `w` is drawing (or raising) side `p`'s wall and some of it
+    /// isn't up yet, or the plans aren't.
     fn walling(&self, p: PlayerId, w: RegimentHandle) -> bool {
+        let wall = self.kits[usize::from(p)].wall;
+        let rising = |s: &StructureView| !s.finished() || s.upgrading.is_some();
         self.sides[usize::from(p)].waller == Some(w)
-            && self
-                .own(p, self.kits[usize::from(p)].wall)
-                .iter()
-                .any(|s| !s.finished())
+            && (self.own(p, wall).iter().any(rising)
+                || self.raised_walls(p).iter().any(rising)
+                || self.world.plans().iter().any(|plan| plan.owner == p))
+    }
+
+    /// Side `p`'s wall tiles a level up.
+    fn raised_walls(&self, p: PlayerId) -> Vec<StructureView> {
+        let Some(b) = self.kits[usize::from(p)].wall else {
+            return Vec::new();
+        };
+        let up = self.world.structures().and_then(|s| s.upgrade_of(b));
+        up.map_or_else(Vec::new, |up| self.own(p, Some(up)))
+    }
+
+    /// Side `p`'s wall and its plans are up: waller `w` raises the stretch
+    /// a level, if it can (a grown wall grows up with no worker).
+    fn raise(
+        &mut self,
+        p: PlayerId,
+        b: BuildingId,
+        w: RegimentHandle,
+        out: &mut Vec<PlayerCommand>,
+    ) {
+        let Some(&tile) = self.own(p, Some(b)).first() else {
+            return;
+        };
+        if !self
+            .world
+            .wall_level(p, tile.handle)
+            .is_ok_and(|w| w.afford)
+        {
+            return;
+        }
+        let grown = self
+            .world
+            .structures()
+            .is_some_and(|s| !s.raised_by_hand(b));
+        out.push(PlayerCommand {
+            player: p,
+            command: Command::RaiseWall {
+                structure: tile.handle,
+                regiment: (!grown).then_some(w),
+            },
+        });
+        self.sides[usize::from(p)].raised = true;
     }
 
     /// Side `p`'s drawn wall: once it can pay for it, its last worker draws
@@ -793,6 +840,8 @@ impl Match {
         if let Some(w) = side.waller {
             if !side.planned && !self.walling(p, w) {
                 self.plan(p, b, w, out);
+            } else if side.planned && !side.raised && !self.walling(p, w) {
+                self.raise(p, b, w, out);
             }
             return;
         }
@@ -1197,7 +1246,8 @@ mod tests {
             assert!(side.helped && side.called_off);
             assert!(side.charged, "side {p} found the other's main building");
             if let Some(wall) = k.wall {
-                let tiles = m.own(p, Some(wall));
+                let mut tiles = m.own(p, Some(wall));
+                tiles.extend(m.raised_walls(p));
                 assert!(side.waller.is_some(), "side {p} drew its wall");
                 let more = if side.planned {
                     PLAN_TILES as usize - 1
@@ -1216,6 +1266,17 @@ mod tests {
             "a side worked a blueprint"
         );
         assert!(m.world.plans().is_empty(), "every plan was built");
+        for (p, _) in m.sides.iter().enumerate().filter(|(_, s)| s.raised) {
+            let p = p as PlayerId;
+            let (old, up) = (m.own(p, m.kits[usize::from(p)].wall), m.raised_walls(p));
+            assert!(
+                old.is_empty() && up.iter().all(|s| s.upgrading.is_none()),
+                "side {p} raised its whole wall a level: {} left, {} rising",
+                old.len(),
+                up.iter().filter(|s| s.upgrading.is_some()).count()
+            );
+        }
+        assert!(m.sides.iter().any(|s| s.raised), "a side raised its wall");
         assert_eq!(m.sides[1].powers, 3, "side 1 used its powers");
         assert_eq!(m.sides[0].edicts, 3, "side 0 used its Edicts");
         assert!(m.own(0, Some(m.kits[0].barracks)).is_empty(), "removed");

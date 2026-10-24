@@ -765,6 +765,11 @@ impl Conquest {
         h: StructureHandle,
     ) -> Result<(usize, BuildingId), Refusal> {
         let i = self.structures.owned(h, player).ok_or(Refusal::Unknown)?;
+        if self.structures.is_line(i) {
+            // A wall goes up a level a stretch at a time (see
+            // [`Conquest::wall_level`]).
+            return Err(Refusal::Unknown);
+        }
         let to = self
             .structures
             .upgrade_of(self.structures.kind_of(i))

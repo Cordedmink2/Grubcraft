@@ -143,8 +143,9 @@ pub struct BuildingRecord {
     pub build_ticks: u16,
     pub cost_grub: u16,
     pub cost_marrow: u16,
-    /// For a main building's tier 2 and 3: the building it upgrades, as an
-    /// index into the building table; [`NONE`] otherwise.
+    /// For a main building's tier 2 and 3, or a drawn wall's level 2 and
+    /// 3: the building it upgrades, as an index into the building table;
+    /// [`NONE`] otherwise.
     pub upgrades_from: u16,
     /// Damage per shot of a tower.
     pub attack_damage: u16,
@@ -536,8 +537,11 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
 }
 
 /// What building `i`'s upgrade must be: a Main building of the same
-/// faction, one tier below it (so a chain of upgrades can't loop). The
-/// table has passed [`validate_building`].
+/// faction, one tier below it (so a chain of upgrades can't loop), or a
+/// drawn wall's next level: a drawn wall of the same faction and kind
+/// (passable or grown alike) needing no lower tier, and only one level
+/// per wall (so a chain can't loop either). The table has passed
+/// [`validate_building`].
 pub fn validate_upgrade(table: &[BuildingRecord], i: usize) -> Result<(), &'static str> {
     let b = &table[i];
     if b.upgrades_from == NONE {
@@ -545,10 +549,36 @@ pub fn validate_upgrade(table: &[BuildingRecord], i: usize) -> Result<(), &'stat
     }
     let from = &table[usize::from(b.upgrades_from)];
     let main = Role::Main as u8;
-    if b.role != main || from.role != main {
+    let line = |r: &BuildingRecord| r.flags & BUILDING_LINE != 0;
+    if line(b) || line(from) {
+        let kind = BUILDING_LINE | BUILDING_PASS | BUILDING_GROWN;
+        if !line(b) || !line(from) || b.flags & kind != from.flags & kind {
+            return Err("a drawn wall's level upgrades from a drawn wall of the same kind");
+        }
+        if from.faction != b.faction || from.tier > b.tier {
+            return Err("a wall's level upgrades from its own faction's wall, at no higher tier");
+        }
+        let levels = table
+            .iter()
+            .filter(|o| o.upgrades_from == b.upgrades_from)
+            .count();
+        if levels > 1 {
+            return Err("a wall has one next level");
+        }
+        // Follow the levels down: they must end, not come back round.
+        let mut at = b.upgrades_from;
+        for _ in 0..table.len() {
+            if at as usize == i {
+                return Err("a wall's levels go round in a loop");
+            }
+            match table.get(usize::from(at)) {
+                Some(r) if r.upgrades_from != NONE => at = r.upgrades_from,
+                _ => break,
+            }
+        }
+    } else if b.role != main || from.role != main {
         return Err("only a Main building upgrades, and only from a Main building");
-    }
-    if from.faction != b.faction || from.tier + 1 != b.tier {
+    } else if from.faction != b.faction || from.tier + 1 != b.tier {
         return Err("upgrades from a building of its own faction one tier below");
     }
     if (from.width, from.depth) != (b.width, b.depth) {
@@ -653,5 +683,72 @@ mod tests {
             ..p
         };
         assert_eq!(validate_power(&theirs, 2, &units(Faction::Brood)), Ok(()));
+    }
+
+    /// Three 1x1 drawn walls of `Faction::EmberClans`, each a level above
+    /// the one before (tiers 0, 1 and 2).
+    fn wall_levels() -> [BuildingRecord; 3] {
+        let mut w = BuildingRecord::zeroed();
+        w.flags = BUILDING_LINE;
+        w.faction = Faction::EmberClans as u8;
+        w.width = 1;
+        w.depth = 1;
+        w.upgrades_from = NONE;
+        [
+            w,
+            BuildingRecord {
+                upgrades_from: 0,
+                tier: 1,
+                ..w
+            },
+            BuildingRecord {
+                upgrades_from: 1,
+                tier: 2,
+                ..w
+            },
+        ]
+    }
+
+    #[test]
+    fn a_wall_level_upgrades_its_own_kind_of_wall() {
+        let t = wall_levels();
+        for i in 0..3 {
+            assert_eq!(validate_upgrade(&t, i), Ok(()), "level {}", i + 1);
+        }
+        // A different kind of wall: a gated one, or one that isn't drawn.
+        let mut kind = t;
+        kind[1].flags |= BUILDING_PASS;
+        assert!(validate_upgrade(&kind, 1).is_err());
+        let mut drawn = t;
+        drawn[0].flags = 0;
+        assert!(validate_upgrade(&drawn, 1).is_err());
+        // Another faction's, or from a higher tier.
+        let mut theirs = t;
+        theirs[1].faction = Faction::Brood as u8;
+        assert!(validate_upgrade(&theirs, 1).is_err());
+        let mut lower = t;
+        lower[2].tier = 0;
+        assert!(validate_upgrade(&lower, 2).is_err());
+        // A different footprint.
+        let mut wide = t;
+        wide[1].width = 2;
+        assert!(validate_upgrade(&wide, 1).is_err());
+    }
+
+    #[test]
+    fn a_wall_has_one_next_level_and_no_loop() {
+        let t = wall_levels();
+        // Two levels above the first.
+        let mut two = t;
+        two[2].upgrades_from = 0;
+        assert!(validate_upgrade(&two, 2).is_err());
+        // Levels that come back round (at one tier, so only the loop is
+        // wrong).
+        let mut round = t.map(|w| BuildingRecord { tier: 1, ..w });
+        round[0].upgrades_from = 2;
+        assert_eq!(
+            validate_upgrade(&round, 0),
+            Err("a wall's levels go round in a loop")
+        );
     }
 }

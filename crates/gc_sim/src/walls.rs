@@ -39,6 +39,9 @@ pub const WITHER_PER_SECOND: u32 = 10;
 /// next to build.
 const CARRY_ON: i32 = 2;
 
+/// The most tiles one order raises a level (see [`Conquest::wall_level`]).
+pub const MAX_RAISE_TILES: usize = 128;
+
 /// The tiles of a wall drawn from tile `from` to tile `to`, both included,
 /// in order: a line from centre to centre, a tile wide (8-connected, so a
 /// diagonal is a staircase of tiles meeting at corners). `None` when it
@@ -102,16 +105,23 @@ impl Structures {
         self.flags_of(i) & LINE != 0
     }
 
+    /// Whether wall slot `j` has work left for a builder: unfinished, or
+    /// going up a level by hand.
+    pub(crate) fn wall_work_left(&self, j: usize) -> bool {
+        !self.finished(j) || (self.upgrading(j) && self.by_hand(j))
+    }
+
     /// The next tile of `owner`'s walls to build after slot `i`: the
-    /// nearest unfinished one within [`CARRY_ON`] tiles of it, those drawn
-    /// in the same line first, then the lowest slot; failing that the
-    /// nearest within [`MAX_WALL_TILES`], so a builder at the end of one
-    /// line goes back for the rest of the wall.
+    /// nearest with work left (see [`Structures::wall_work_left`]) within
+    /// [`CARRY_ON`] tiles of it, those drawn in the same line first, then
+    /// the lowest slot; failing that the nearest within [`MAX_WALL_TILES`],
+    /// so a builder at the end of one line goes back for the rest of the
+    /// wall.
     pub(crate) fn next_wall_tile(&self, owner: PlayerId, i: usize) -> Option<usize> {
         let [x, y, _, _] = self.footprint(i);
         self.standing()
             .filter(|&j| {
-                j != i && self.owner_of(j) == owner && self.is_line(j) && !self.finished(j)
+                j != i && self.owner_of(j) == owner && self.is_line(j) && self.wall_work_left(j)
             })
             .map(|j| {
                 let [jx, jy, _, _] = self.footprint(j);
@@ -163,7 +173,7 @@ impl Structures {
     pub(crate) fn wither(&mut self, nav: &mut Nav, regs: &Regiments) {
         let mut falling = Vec::new();
         for i in 0..self.line.len() {
-            if !self.stands(i) || self.flags_of(i) & GROWN == 0 || self.rooted(i) {
+            if !self.stands(i) || !self.cut_off(i) {
                 continue;
             }
             if self.wear(i, WITHER_PER_SECOND) {
@@ -338,13 +348,7 @@ impl Conquest {
         // up on the building it starts, which would leave the rest unbuilt.
         let worker = match (r, stats.flags & GROWN != 0) {
             (None, true) => None,
-            (Some(r), false) => {
-                let kind = self.unit(regs.unit[r]);
-                if !kind.worker || kind.consumed {
-                    return false;
-                }
-                Some(r)
-            }
+            (Some(r), false) if self.is_builder(r, regs) => Some(r),
             _ => return false,
         };
         let Ok(plan) = self.wall_plan(player, building, from, to, nav, regs, terrain) else {
@@ -384,6 +388,130 @@ impl Conquest {
         let first = if gap(&b) < gap(&a) { b } else { a };
         self.stop_work(r);
         self.structures.send(regs, r, first, Work::Build);
+        true
+    }
+}
+
+/// What raising a stretch of wall a level would do (see
+/// [`Conquest::wall_level`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WallRaise {
+    /// The next level's building type.
+    pub to: BuildingId,
+    /// How many tiles go up.
+    pub tiles: usize,
+    /// What raising them all costs.
+    pub grub: u32,
+    pub marrow: u32,
+    /// Whether the side can pay for it now.
+    pub afford: bool,
+}
+
+impl Conquest {
+    /// Whether regiment slot `r` can build: a worker that isn't used up
+    /// on the first building it starts.
+    pub(crate) fn is_builder(&self, r: usize, regs: &Regiments) -> bool {
+        let kind = self.unit(regs.unit[r]);
+        kind.worker && !kind.consumed
+    }
+
+    /// What raising `player`'s wall tile `h` a level would do, with the
+    /// slots of the tiles it raises (the stretch of the same wall joined to
+    /// `h`, finished and not already going up, at most
+    /// [`MAX_RAISE_TILES`], nearest first by the order they join), or why
+    /// it can't. Not being able to pay isn't a refusal here: see
+    /// [`WallRaise::afford`].
+    pub(crate) fn wall_level(
+        &self,
+        player: PlayerId,
+        h: StructureHandle,
+    ) -> Result<(WallRaise, Vec<usize>), Refusal> {
+        let s = &self.structures;
+        let i = s.owned(h, player).ok_or(Refusal::Unknown)?;
+        let from = s.kind_of(i);
+        if !s.is_line(i) {
+            return Err(Refusal::Unknown);
+        }
+        let to = s.upgrade_of(from).ok_or(Refusal::Unknown)?;
+        let b = s.buildings()[usize::from(to)];
+        if s.tier_of(player) < b.tier.max(1) {
+            return Err(Refusal::Tier);
+        }
+        if !s.finished(i) || s.upgrading(i) {
+            return Err(Refusal::Busy);
+        }
+        // The stretch: tiles of the same wall touching edge or corner. A
+        // tile leaves `others` as it joins, so each is looked at once.
+        let ready = |j: usize| s.owner_of(j) == player && s.kind_of(j) == from;
+        let ready = |j: usize| ready(j) && s.finished(j) && !s.upgrading(j);
+        let mut others: Vec<(i32, i32, usize)> = (s.standing())
+            .filter(|&j| j != i && ready(j))
+            .map(|j| {
+                let [x, y, _, _] = s.footprint(j);
+                (x, y, j)
+            })
+            .collect();
+        let mut stretch = Vec::from([i]);
+        let mut k = 0;
+        while k < stretch.len() && stretch.len() < MAX_RAISE_TILES {
+            let [x, y, _, _] = s.footprint(stretch[k]);
+            k += 1;
+            let mut o = 0;
+            while o < others.len() && stretch.len() < MAX_RAISE_TILES {
+                let (ox, oy, j) = others[o];
+                if (ox - x).abs() <= 1 && (oy - y).abs() <= 1 {
+                    // Keeps the order of the rest, so the stretch is the
+                    // same every run.
+                    others.remove(o);
+                    stretch.push(j);
+                } else {
+                    o += 1;
+                }
+            }
+        }
+        let n = stretch.len() as u32;
+        let (grub, marrow) = (u32::from(b.cost_grub) * n, u32::from(b.cost_marrow) * n);
+        let raise = WallRaise {
+            to,
+            tiles: stretch.len(),
+            grub,
+            marrow,
+            afford: self.economy.can_afford(player, grub, marrow),
+        };
+        Ok((raise, stretch))
+    }
+
+    /// `player` raises the stretch of wall joined to tile `h` a level (see
+    /// [`Conquest::wall_level`]), paying for every tile now. A drawn
+    /// wall's tiles go up as builders work them, so worker slot `r`, if
+    /// named, goes to the tile `h` and works along; a grown wall's (the
+    /// Brood's) grow on their own and take no worker. Refused if the side
+    /// can't pay, or for a worker that isn't a builder.
+    pub(crate) fn raise_wall(
+        &mut self,
+        player: PlayerId,
+        h: StructureHandle,
+        r: Option<usize>,
+        regs: &mut Regiments,
+    ) -> bool {
+        let Ok((raise, stretch)) = self.wall_level(player, h) else {
+            return false;
+        };
+        if !raise.afford {
+            return false;
+        }
+        let by_hand = self.structures.by_hand(stretch[0]);
+        if r.is_some_and(|r| !by_hand || !self.is_builder(r, regs)) {
+            return false;
+        }
+        self.economy.spend(player, raise.grub, raise.marrow);
+        for &j in &stretch {
+            self.structures.start_upgrade(j, raise.to);
+        }
+        if let Some(r) = r {
+            self.stop_work(r);
+            self.structures.send(regs, r, h, Work::Build);
+        }
         true
     }
 }

@@ -110,11 +110,33 @@
         (
             name: "Light Curtain",
             summary: "A wall of light you draw inside your power: click the start, move, click the end; click again to bend it, right-click to finish. Your own troops walk straight through it, so the Choir needs no gates. Enemies can't, until its power is cut and it drops.",
-            notes: [],
+            notes: [
+                ("Glass Wall", "Twice and a half as tough, still open to your own troops. Keep its power safe."),
+            ],
             tips: [
                 (icon: Move, text: "Your army marches through your own curtains, so wall every way in and keep moving freely."),
                 (icon: Alarm, text: "Guard the Resonators that power it: lose them and the curtain drops for everyone."),
                 (icon: Hammer, text: "B plans it as a blueprint (press A with Tuners selected to build it); O rings your base."),
+            ],
+        ),
+        (
+            name: "Glass Wall",
+            summary: "Level 2 of the Light Curtain: solid crystal, 2.5 times as tough. Your troops still walk through it and it still drops without power. Select a curtain and press U: the joined stretch is paid now and raised a tile at a time.",
+            notes: [
+                ("Singing Wall", "The Choir's toughest wall: four times a Light Curtain. Needs tier 2."),
+            ],
+            tips: [
+                (icon: Hammer, text: "Select the curtain and press U: the joined stretch is paid now, then raised a tile at a time."),
+                (icon: Alarm, text: "It still drops without power, so guard the pylons behind it."),
+            ],
+        ),
+        (
+            name: "Singing Wall",
+            summary: "Level 3, the top: humming crystal, 4 times as tough as a Light Curtain. Needs tier 2. Your troops walk through it; it drops without power. Select a Glass Wall and press U.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Select a Glass Wall and press U once you reach tier 2."),
+                (icon: Grub, text: "Each tile costs 20 Grub and 5 Marrow, paid for the whole stretch up front."),
             ],
         ),
     ],

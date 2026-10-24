@@ -27,6 +27,9 @@ const PYLON: u16 = 4;
 /// A gate one tile wide and three deep.
 const GATE_3: u16 = 5;
 const GATE_COST: u32 = 60;
+const STONE: u16 = 6;
+const STONE_COST: u32 = 15;
+const CHITIN: u16 = 7;
 const HALL_VEINS: u8 = 12;
 const PYLON_FIELD: u8 = 20;
 const RIDGE_HP: u16 = 200;
@@ -131,6 +134,26 @@ fn world_with(grub: u32) -> World {
                 hp: 1000,
                 depth: 3,
                 flags: GATE,
+                ..palisade
+            },
+            BuildingStats {
+                upgrades_from: Some(PALISADE),
+                cost_grub: STONE_COST as u16,
+                hp: 625,
+                build_ticks: 50,
+                ..palisade
+            },
+            BuildingStats {
+                upgrades_from: Some(RIDGE),
+                flags: LINE | GROWN,
+                armour: Armour::Living,
+                hp: 500,
+                ..palisade
+            },
+            BuildingStats {
+                upgrades_from: Some(STONE),
+                tier: 2,
+                hp: 1000,
                 ..palisade
             },
         ],
@@ -828,4 +851,111 @@ fn a_planned_tile_someone_stands_by_waits_for_them_to_go() {
     assert!(w.plans().iter().any(|p| p.tile == (30, 11)));
     assert!(!walls(&w, 0).0.contains(&(30, 11)));
     assert!(!walls(&w, 0).0.is_empty(), "{:?}", w.plans());
+}
+
+fn raise(w: &mut World, player: u8, tile: (i32, i32), r: Option<RegimentHandle>) -> bool {
+    let s = w.structures().unwrap();
+    let structure = s
+        .iter()
+        .find(|v| v.owner == player && v.tile == tile)
+        .unwrap()
+        .handle;
+    order(
+        w,
+        player,
+        Command::RaiseWall {
+            structure,
+            regiment: r,
+        },
+    )
+}
+
+fn kinds(w: &World, player: u8) -> Vec<u16> {
+    let s = w.structures().unwrap();
+    s.iter()
+        .filter(|v| v.owner == player && v.line.is_some())
+        .map(|v| v.building)
+        .collect()
+}
+
+#[test]
+fn a_wall_goes_up_a_level_a_stretch_at_a_time_as_a_worker_raises_it() {
+    let mut w = world();
+    let worker = spawn(&mut w, 0, 16, 12);
+    assert!(draw(&mut w, 0, worker, (20, 10), (20, 14)));
+    // Not while it is still going up.
+    assert!(!raise(&mut w, 0, (20, 12), Some(worker)));
+    build_all(&mut w, 0, 300);
+    // A second, separate wall is another stretch.
+    assert!(draw(&mut w, 0, worker, (30, 10), (30, 11)));
+    build_all(&mut w, 0, 300);
+    // A single tile can't be upgraded on its own; the next level needs
+    // the tier, and the stretch is paid for now.
+    let s = w.structures().unwrap();
+    let tile = s.iter().find(|v| v.tile == (20, 12)).unwrap().handle;
+    assert!(!order(&mut w, 0, Command::Upgrade { structure: tile }));
+    let before = grub(&w, 0);
+    assert!(raise(&mut w, 0, (20, 12), Some(worker)));
+    assert_eq!(grub(&w, 0), before - 5 * STONE_COST);
+    // Raised by hand: nothing happens without a builder.
+    assert!(!raise(&mut w, 0, (20, 10), None));
+    let mut t = 0;
+    while kinds(&w, 0).iter().filter(|&&k| k == STONE).count() < 5 {
+        w.tick(&[]);
+        t += 1;
+        assert!(t < 120 * TICKS_PER_SECOND, "{:?}", kinds(&w, 0));
+    }
+    // It stood the whole time, and the other wall stayed as it was.
+    assert_eq!(walls(&w, 0).0.len(), 7);
+    assert_eq!(kinds(&w, 0).iter().filter(|&&k| k == PALISADE).count(), 2);
+    // Level 3 (the Castle) needs tier 2.
+    let s = w.structures().unwrap();
+    let tile = s.iter().find(|v| v.tile == (20, 12)).unwrap().handle;
+    assert!(matches!(
+        w.wall_level(0, tile),
+        Err(gc_sim::structures::Refusal::Tier)
+    ));
+    assert!(!raise(&mut w, 0, (20, 12), Some(worker)));
+    // Without a worker a drawn wall's stretch is paid and waits.
+    let idle = spawn(&mut w, 0, 26, 12);
+    assert!(raise(&mut w, 0, (30, 10), None));
+    for _ in 0..20 * TICKS_PER_SECOND {
+        w.tick(&[]);
+    }
+    assert_eq!(kinds(&w, 0).iter().filter(|&&k| k == PALISADE).count(), 2);
+    // A worker sent to build it raises it.
+    let s = w.structures().unwrap();
+    let at = s.iter().find(|v| v.tile == (30, 10)).unwrap().handle;
+    assert!(order(
+        &mut w,
+        0,
+        Command::Construct {
+            regiment: idle,
+            structure: at
+        }
+    ));
+    let mut t = 0;
+    while kinds(&w, 0).contains(&PALISADE) {
+        w.tick(&[]);
+        t += 1;
+        assert!(t < 120 * TICKS_PER_SECOND, "{:?}", kinds(&w, 0));
+    }
+}
+
+#[test]
+fn a_grown_wall_grows_up_a_level_on_its_own() {
+    let mut w = world();
+    assert!(draw_as(&mut w, 0, None, RIDGE, (6, 10), (9, 10)));
+    build_all(&mut w, 0, 300);
+    let worker = spawn(&mut w, 0, 16, 12);
+    // No worker raises a grown wall.
+    assert!(!raise(&mut w, 0, (7, 10), Some(worker)));
+    assert!(raise(&mut w, 0, (7, 10), None));
+    let mut t = 0;
+    while kinds(&w, 0).contains(&RIDGE) {
+        w.tick(&[]);
+        t += 1;
+        assert!(t < 120 * TICKS_PER_SECOND, "{:?}", kinds(&w, 0));
+    }
+    assert!(kinds(&w, 0).iter().all(|&k| k == CHITIN));
 }
