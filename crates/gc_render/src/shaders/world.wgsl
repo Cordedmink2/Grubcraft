@@ -18,7 +18,8 @@ struct Globals {
     map: vec4<f32>,
     // rgb: fog colour, a: fog density
     fog: vec4<f32>,
-    // x: water level in tiles, y: time in seconds
+    // x: water level in tiles, y: time in seconds, z: the effects clock,
+    // w: how soaked the ground is (rain that has fallen)
     misc: vec4<f32>,
     // World to the sun's shadow map (x, y in [-1, 1], z the depth).
     sun_view_proj: mat4x4<f32>,
@@ -1119,6 +1120,25 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         land_glow = l.glow * keep;
         land_rough = mix(1.0, l.rough, k);
         landed = k > 0.0;
+    }
+    // Rain that has fallen: the earth darkens and shines, and puddles
+    // collect in the hollows of flat ground, mirroring the sky. Rock sheds it.
+    let soaked = g.misc.w * (1.0 - rock);
+    if soaked > 0.0 {
+        let flat_ground = 1.0 - smoothstep(0.015, 0.07, slope);
+        // Puddles grow with the wet: none before it is well under way.
+        let pool = smoothstep(0.78 - 0.2 * g.misc.w, 0.86 - 0.2 * g.misc.w, fbm(xz * 0.3 + vec2<f32>(13.0, 41.0)))
+            * smoothstep(0.0, 0.3, g.misc.w) * flat_ground * (1.0 - fringe) * (1.0 - rock);
+        albedo = albedo * mix(1.0, 0.72, soaked) * mix(1.0, 0.7, pool);
+        if pool > 0.0 {
+            nd = normalize(mix(nd, vec3<f32>(0.0, 1.0, 0.0), pool));
+            wet = max(wet, pool);
+            let to_eye = normalize(g.camera_pos.xyz - in.world);
+            let r = reflect(-to_eye, nd);
+            let mirror = 0.06 + 0.5 * pow(1.0 - max(dot(to_eye, nd), 0.0), 4.0);
+            land_glow = land_glow + sky_color(vec3<f32>(r.x, abs(r.y), r.z), false) * mirror * pool;
+            landed = true;
+        }
     }
     // Standing water shines.
     if wet > 0.0 {

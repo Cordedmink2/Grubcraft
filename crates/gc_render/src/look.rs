@@ -245,6 +245,7 @@ const GOLDEN_HOUR: Look = Look {
     foliage_glow: 0.45,
     cloud_shadows: 0.4,
     ground_occlusion: 1.0,
+    wet: 0.0,
     exposure: 0.9,
     contrast: 1.1,
     saturation: 1.15,
@@ -284,6 +285,10 @@ pub struct Look {
     /// How strongly the ground is darkened in valleys and at the foot of
     /// slopes, 0 off.
     pub ground_occlusion: f32,
+    /// How soaked the ground is, 0 dry to 1 sodden: darker, shinier earth
+    /// with puddles in the hollows. The game sets it from the rain that has
+    /// fallen, so it outlasts the rain and dries slowly.
+    pub wet: f32,
     /// The film curve's input scale.
     pub exposure: f32,
     /// Contrast round mid grey, 1 neutral.
@@ -398,6 +403,37 @@ impl Look {
         }
     }
 
+    /// This look in a flash of lightning at `flash` (0 none, 1 the
+    /// brightest): the sky and the air go white-blue, the shade lifts and
+    /// the sun's light takes a cold edge, so the land is lit from above for
+    /// an instant. The grade is untouched.
+    pub fn flashed(&self, flash: f32) -> Look {
+        let flash = flash.clamp(0.0, 1.0);
+        if flash <= 0.0 {
+            return *self;
+        }
+        // sRGB colours toward white-blue, HDR light up by a multiple.
+        let whiten = |c: [f32; 3]| {
+            let bolt = [0.86, 0.9, 1.0];
+            [0, 1, 2].map(|i| c[i] + (bolt[i] - c[i]) * flash * 0.8)
+        };
+        let boost = |c: [f32; 3], k: f32| c.map(|v| v * (1.0 + k * flash));
+        Look {
+            sun_color: [
+                self.sun_color[0] * (1.0 + 0.6 * flash),
+                self.sun_color[1] * (1.0 + 0.8 * flash),
+                self.sun_color[2] * (1.0 + 1.4 * flash),
+            ],
+            sky_ambient: boost(self.sky_ambient, FLASH_LIFT),
+            ground_ambient: boost(self.ground_ambient, FLASH_LIFT * 0.5),
+            fog: whiten(self.fog),
+            haze: whiten(self.haze),
+            sky_top: whiten(self.sky_top),
+            sky_horizon: whiten(self.sky_horizon),
+            ..*self
+        }
+    }
+
     /// The same light for competitive play (the Clarity setting): no
     /// vignette, no film grain and no heavy grading, so colours, team
     /// banners and fog of war read the same in every look. The light itself
@@ -426,6 +462,9 @@ impl Look {
         look
     }
 }
+
+/// How many times brighter the sky's light is at the height of a flash.
+const FLASH_LIFT: f32 = 6.0;
 
 /// The most contrast and saturation Clarity leaves in.
 const CLEAR_CONTRAST: f32 = 1.05;
@@ -908,5 +947,35 @@ mod tests {
         let (_, pit) = ground_occlusion(&heights, size, per, 10.0);
         assert!(pit[(mid - 1) * 32 + mid - 1] < 255);
         assert_eq!(pit[0], 255);
+    }
+
+    #[test]
+    fn a_flash_lights_the_sky_and_air_and_no_flash_changes_nothing() {
+        for preset in LookPreset::ALL {
+            let look = preset.look();
+            assert_eq!(look.flashed(0.0), look);
+            let lit = look.flashed(1.0);
+            assert!(
+                lit.sky_ambient[2] > look.sky_ambient[2] * 4.0,
+                "{}",
+                preset.name()
+            );
+            assert!(lit.sun_color[2] > look.sun_color[2], "{}", preset.name());
+            assert!(lit.sky_top[2] > look.sky_top[2] - 1e-6);
+            assert!(lit.fog.iter().all(|&v| v <= 1.0));
+            // The grade and the shadows' reach are the look's own.
+            assert_eq!(lit.exposure, look.exposure);
+            assert_eq!(lit.fog_density, look.fog_density);
+            let half = look.flashed(0.5);
+            assert!(
+                half.sky_ambient[2] > look.sky_ambient[2]
+                    && half.sky_ambient[2] < lit.sky_ambient[2]
+            );
+        }
+    }
+
+    #[test]
+    fn every_look_starts_dry() {
+        assert!(LookPreset::ALL.iter().all(|p| p.look().wet == 0.0));
     }
 }

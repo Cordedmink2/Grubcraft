@@ -1724,7 +1724,12 @@ impl Renderer {
                 CHUNK_QUADS as f32,
             ],
             fog: [fog_color[0], fog_color[1], fog_color[2], look.fog_density],
-            misc: [terrain.water_level, frame.time_seconds, self.fx_time, 0.0],
+            misc: [
+                terrain.water_level,
+                frame.time_seconds,
+                self.fx_time,
+                look.wet.clamp(0.0, 1.0),
+            ],
             sun_view_proj: sun_view_proj.to_cols_array_2d(),
             shadow: [
                 texel * 1.5,

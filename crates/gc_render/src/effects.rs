@@ -661,6 +661,31 @@ impl Effects {
         }
     }
 
+    /// Rain striking the ground: `amount` of small rings spreading over
+    /// the land of a disc of `radius` round `centre`, each gone in a moment.
+    pub fn splashes(
+        &mut self,
+        centre: Vec2,
+        radius: f32,
+        amount: f32,
+        ground: impl Fn(Vec2) -> f32,
+    ) {
+        for _ in 0..self.count(amount) {
+            let at = centre + self.rng.disc() * radius;
+            let reach = self.rng.between(0.07, 0.12);
+            self.out.push(Particle {
+                pos: Vec3::new(at.x, ground(at) + 0.03, at.y),
+                life: self.rng.between(0.2, 0.32),
+                size: [0.012, reach],
+                color: [214, 226, 240, 150],
+                color_end: [214, 226, 240, 0],
+                shape: Shape::Ring,
+                seed: self.rng.byte(),
+                ..Particle::default()
+            });
+        }
+    }
+
     /// What a blow throws up at `pos`, flying along `dir`: sparks when it
     /// rang on armour (`armoured`), then the faction's wound. `power` is 1
     /// for an ordinary blow, more for a crushing one.
@@ -816,6 +841,20 @@ mod tests {
                 // Inside the disc it was asked for.
                 assert!(Vec2::new(p.pos.x, p.pos.z).distance(Vec2::new(50.0, 50.0)) <= 10.01);
             }
+        }
+    }
+
+    #[test]
+    fn splashes_are_short_rings_on_the_ground_inside_the_disc() {
+        let mut fx = Effects::default();
+        fx.splashes(Vec2::new(50.0, 50.0), 8.0, 200.0, |_| 3.0);
+        let splashes = fx.take();
+        assert!(splashes.len() >= 190);
+        for p in splashes {
+            assert_eq!(p.shape, Shape::Ring);
+            assert!(p.life < 0.4 && p.pos.y > 3.0 && p.pos.y < 3.1);
+            assert!(p.size[1] > p.size[0], "a splash spreads");
+            assert!(Vec2::new(p.pos.x, p.pos.z).distance(Vec2::new(50.0, 50.0)) <= 8.01);
         }
     }
 

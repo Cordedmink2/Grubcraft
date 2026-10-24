@@ -90,6 +90,16 @@ const FAST: f32 = 10.0;
 const WEATHER_SETTLE: f32 = 3.0;
 /// How much of its weather a look keeps under Clarity.
 const CLARITY_WEATHER: f32 = 0.35;
+/// Seconds the ground takes to soak through in full rain, and to dry again
+/// (time constants): rain wets it quickly and it dries over minutes.
+const SOAK_SETTLE: f32 = 12.0;
+const DRY_SETTLE: f32 = 90.0;
+/// How little wet is dry.
+const DRY_BELOW: f32 = 0.002;
+/// How much of the full rain it takes to storm, and the seconds between
+/// flashes (shortest, longest).
+const STORM_AT: f32 = 0.75;
+const STRIKE_GAP: (f32, f32) = (5.0, 16.0);
 
 /// The light of a match.
 pub struct Atmosphere {
@@ -110,7 +120,79 @@ pub struct Atmosphere {
     /// The weather that was here before the last change, and how much of
     /// it is left, so one weather clears as the next comes in.
     leaving: (Weather, f32),
+    /// How wet the ground is (0 to 1), which outlasts the rain.
+    soaked: f32,
+    storm: Storm,
     tuning: Tuning,
+}
+
+/// The lightning of a heavy rain: seconds to the next flash, how long the
+/// last has been going, and a random state (the picture's own, not the
+/// simulation's, so it needs no seed from the match).
+struct Storm {
+    next: f32,
+    age: Option<f32>,
+    rng: u32,
+}
+
+impl Storm {
+    fn new() -> Storm {
+        let mut storm = Storm {
+            next: 0.0,
+            age: None,
+            rng: 0x9E37_79B9,
+        };
+        storm.next = storm.gap();
+        storm
+    }
+
+    /// Seconds to the next flash.
+    fn gap(&mut self) -> f32 {
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 17;
+        self.rng ^= self.rng << 5;
+        let unit = (self.rng >> 8) as f32 / (1u32 << 24) as f32;
+        STRIKE_GAP.0 + (STRIKE_GAP.1 - STRIKE_GAP.0) * unit
+    }
+
+    /// Move on `dt` seconds, `stormy` or not, and say how bright the sky
+    /// is with lightning now (0 none, 1 the brightest). A flash that has
+    /// begun plays out whatever the weather does.
+    fn step(&mut self, dt: f32, stormy: bool) -> f32 {
+        if stormy {
+            self.next -= dt;
+            if self.next <= 0.0 {
+                self.age = Some(0.0);
+                self.next = self.gap();
+            }
+        }
+        let Some(age) = self.age.as_mut() else {
+            return 0.0;
+        };
+        *age += dt;
+        let level = bolt(*age);
+        if *age > BOLT_LENGTH {
+            self.age = None;
+        }
+        level
+    }
+}
+
+/// Seconds a flash lasts, a sharp stroke and a dimmer one after it.
+const BOLT_LENGTH: f32 = 1.0;
+
+/// The sky's brightness `age` seconds into a flash.
+fn bolt(age: f32) -> f32 {
+    let stroke = |t: f32, peak: f32| {
+        if t < 0.0 {
+            0.0
+        } else if t < 0.04 {
+            peak * t / 0.04
+        } else {
+            peak * (-(t - 0.04) / 0.12).exp()
+        }
+    };
+    stroke(age, 1.0).max(stroke(age - 0.22, 0.6))
 }
 
 /// The tuning panel's state.
@@ -139,6 +221,8 @@ impl Atmosphere {
             weather_flag: None,
             fade: 0.0,
             leaving: (Weather::Clear, 0.0),
+            soaked: 0.0,
+            storm: Storm::new(),
             tuning: Tuning::default(),
         }
     }
@@ -183,6 +267,9 @@ impl Atmosphere {
         self.preset = self.look_flag.unwrap_or(preset);
         self.shares = None;
         self.start_weather();
+        self.leaving = (Weather::Clear, 0.0);
+        self.soaked = 0.0;
+        self.storm = Storm::new();
     }
 
     /// F9: the next prepared look.
@@ -219,6 +306,24 @@ impl Atmosphere {
         if self.leaving.1 < 0.01 {
             self.leaving = (Weather::Clear, 0.0);
         }
+        // The ground soaks up the rain that falls, and keeps it a while.
+        let rain = [self.leaving, (self.weather, self.fade)]
+            .into_iter()
+            .filter(|&(weather, _)| weather == Weather::Rain)
+            .map(|(_, amount)| amount)
+            .fold(0.0, f32::max);
+        let settle = if rain > self.soaked {
+            SOAK_SETTLE
+        } else {
+            DRY_SETTLE
+        };
+        self.soaked += (rain - self.soaked) * (1.0 - (-dt.max(0.0) / settle).exp());
+        // Dry, not a trace of wet for ever.
+        if rain == 0.0 && self.soaked < DRY_BELOW {
+            self.soaked = 0.0;
+        }
+        let stormy = self.weather == Weather::Rain && self.fade >= STORM_AT;
+        let flash = self.storm.step(dt.max(0.0), stormy);
         // Under Clarity the weather dims the light and thickens the air
         // only a little, so the field stays readable whatever the sky does.
         let share = if clarity { CLARITY_WEATHER } else { 1.0 };
@@ -228,12 +333,14 @@ impl Atmosphere {
             .in_air(&LandAir::mixed(&AIRS, &shares))
             .in_weather(self.leaving.0, self.leaving.1 * share)
             .in_weather(self.weather, self.fade * share);
+        look.wet = self.soaked * share;
         if clarity {
             look = look.clear();
         }
         self.tuning.under = look;
         self.tuning.shown = look.tuned(&self.tuning.deltas);
-        self.tuning.shown
+        // The flash is on the picture only, not the values the panel shows.
+        self.tuning.shown.flashed(flash * share)
     }
 
     pub fn panel_open(&self) -> bool {
@@ -477,6 +584,98 @@ mod tests {
         assert!(amount > 0.7 && amount < 1.0, "{amount}");
         atmosphere.start(LookPreset::GoldenHour);
         assert_eq!(atmosphere.weather(), (Weather::Clear, 0.0));
+    }
+
+    fn run(atmosphere: &mut Atmosphere, seconds: f32) -> Look {
+        let map = Map::generate(1, 64);
+        let mut look = Look::default();
+        for _ in 0..(seconds * 10.0) as usize {
+            look = atmosphere.look(0.1, &map, Vec2::new(32.0, 32.0), 40.0, false);
+        }
+        look
+    }
+
+    #[test]
+    fn the_ground_soaks_in_rain_and_dries_slowly_after() {
+        let mut atmosphere = Atmosphere::new(None, None).with_weather(Some(Weather::Rain));
+        assert!(run(&mut atmosphere, 0.1).wet < 0.05, "dry at first");
+        let wet = run(&mut atmosphere, 40.0).wet;
+        assert!(wet > 0.9, "sodden after a while of rain: {wet}");
+        atmosphere.next_weather();
+        atmosphere.next_weather();
+        atmosphere.next_weather();
+        assert_eq!(atmosphere.weather().0, Weather::Clear);
+        let later = run(&mut atmosphere, 30.0).wet;
+        assert!(later > 0.6 && later < wet, "still wet 30 s on: {later}");
+        assert_eq!(
+            run(&mut atmosphere, 900.0).wet,
+            0.0,
+            "dry in the end, not a trace"
+        );
+    }
+
+    #[test]
+    fn snow_and_fog_do_not_wet_the_ground_and_a_new_match_starts_dry() {
+        for weather in [Weather::Snow, Weather::Fog] {
+            let mut atmosphere = Atmosphere::new(None, None).with_weather(Some(weather));
+            assert_eq!(run(&mut atmosphere, 60.0).wet, 0.0);
+        }
+        // Rain by F12, then on to snow, and a match begins as it clears.
+        let mut atmosphere = Atmosphere::new(None, None);
+        atmosphere.next_weather();
+        assert_eq!(atmosphere.weather().0, Weather::Rain);
+        assert!(run(&mut atmosphere, 60.0).wet > 0.9);
+        atmosphere.next_weather();
+        atmosphere.start(LookPreset::Noon);
+        assert_eq!(atmosphere.soaked, 0.0);
+        let map = Map::generate(1, 64);
+        let fresh = atmosphere.look(0.1, &map, Vec2::new(32.0, 32.0), 40.0, false);
+        assert_eq!(
+            fresh.wet, 0.0,
+            "the last match's rain does not wet this one"
+        );
+    }
+
+    #[test]
+    fn a_bolt_is_a_sharp_flash_then_a_dimmer_one_and_dies_away() {
+        assert_eq!(bolt(0.0), 0.0);
+        assert!(bolt(0.04) > 0.99);
+        assert!(bolt(0.15) < bolt(0.04));
+        assert!(bolt(0.26) > bolt(0.18), "the second stroke");
+        assert!(bolt(0.26) < bolt(0.04));
+        assert!(bolt(BOLT_LENGTH) < 0.02);
+    }
+
+    #[test]
+    fn lightning_comes_in_heavy_rain_only_and_lights_the_sky() {
+        let (map, at) = (Map::generate(1, 64), Vec2::new(32.0, 32.0));
+        // The brightest the sky gets in a minute, and its first frame.
+        let sky = |weather| {
+            let mut atmosphere = Atmosphere::new(None, None).with_weather(Some(weather));
+            let first = atmosphere.look(0.0, &map, at, 40.0, false).sky_ambient[2];
+            let most = (0..1200)
+                .map(|_| atmosphere.look(0.05, &map, at, 40.0, false).sky_ambient[2])
+                .fold(first, f32::max);
+            (first, most)
+        };
+        let (calm, brightest) = sky(Weather::Rain);
+        assert!(brightest > calm * 3.0, "{brightest} against {calm}");
+        for weather in [Weather::Clear, Weather::Snow, Weather::Fog] {
+            let (first, most) = sky(weather);
+            assert_eq!(first, most, "{weather:?}");
+        }
+    }
+
+    #[test]
+    fn clarity_keeps_a_little_of_the_flash() {
+        let (map, at) = (Map::generate(1, 64), Vec2::new(32.0, 32.0));
+        let peak = |clarity| {
+            let mut sky = Atmosphere::new(None, None).with_weather(Some(Weather::Rain));
+            (0..1200)
+                .map(|_| sky.look(0.05, &map, at, 40.0, clarity).sky_ambient[2])
+                .fold(0.0, f32::max)
+        };
+        assert!(peak(true) < peak(false));
     }
 
     #[test]
