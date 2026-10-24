@@ -286,6 +286,7 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             (", .", "Turn the view"),
             ("Home", "Reset rotation"),
             ("Y", "Ride with banner"),
+            ("F8", "Director camera"),
             ("G", "Show blocked ground"),
             ("F9", "Change the light"),
             ("F10", "Tune the light"),

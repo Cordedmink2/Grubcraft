@@ -47,6 +47,8 @@ pub struct Cinema {
     /// Seconds since the bars started to slide in; `None` when they are
     /// not showing.
     bars: Option<f32>,
+    /// How far the bars of a film have slid in, 0 to 1.
+    film: f32,
 }
 
 impl Cinema {
@@ -68,8 +70,9 @@ impl Cinema {
 
     /// The bars and the shake for a frame `dt` seconds on. `still` is a
     /// player who asked for no screen shake (Reduced screen shake);
-    /// `bars` is whether bars may show (not with Clarity).
-    pub fn frame(&mut self, dt: f32, still: bool, bars: bool) -> Frame {
+    /// `bars` is whether bars may show (not with Clarity); `film` keeps them
+    /// in while a replay is being filmed by the director camera.
+    pub fn frame(&mut self, dt: f32, still: bool, bars: bool, film: bool) -> Frame {
         // The wobble's clock only runs while there is a shake to wobble, so
         // it stays small.
         if self.trauma > 0.0 {
@@ -83,7 +86,7 @@ impl Cinema {
             let t = self.clock * WOBBLE;
             [power * wobble(t, 0.0), power * wobble(t * 1.31, 5.7)]
         };
-        let bars = match self.bars {
+        let height = match self.bars {
             Some(age) if bars => {
                 let age = age + dt;
                 // Gone once they have slid out.
@@ -97,6 +100,13 @@ impl Cinema {
             }
             None => 0.0,
         };
+        let slide = dt / BAR_IN;
+        self.film = if film && bars {
+            (self.film + slide).min(1.0)
+        } else {
+            (self.film - slide).max(0.0)
+        };
+        let bars = height.max(BAR_HEIGHT * smooth(0.0, 1.0, self.film));
         Frame { shake, bars }
     }
 
@@ -129,13 +139,13 @@ mod tests {
     fn a_blow_shakes_the_screen_and_the_shake_dies_away() {
         let mut c = Cinema::default();
         c.blow(AT, AT, DEFAULT_DISTANCE, CHARGE_HIT);
-        let shaken = c.frame(0.016, false, true).shake;
+        let shaken = c.frame(0.016, false, true, false).shake;
         assert!(shaken.iter().any(|v| v.abs() > 0.0), "{shaken:?}");
         assert!(shaken.iter().all(|v| v.abs() <= MOST));
         for _ in 0..200 {
-            c.frame(0.016, false, true);
+            c.frame(0.016, false, true, false);
         }
-        assert_eq!(c.frame(0.016, false, true).shake, [0.0; 2]);
+        assert_eq!(c.frame(0.016, false, true, false).shake, [0.0; 2]);
     }
 
     #[test]
@@ -154,18 +164,18 @@ mod tests {
     fn reduced_shake_keeps_the_screen_still() {
         let mut c = Cinema::default();
         c.blow(AT, AT, 20.0, 1.0);
-        assert_eq!(c.frame(0.016, true, true).shake, [0.0; 2]);
+        assert_eq!(c.frame(0.016, true, true, false).shake, [0.0; 2]);
     }
 
     #[test]
     fn the_bars_slide_in_hold_and_slide_out() {
         let mut c = Cinema::default();
-        assert_eq!(c.frame(0.1, false, true).bars, 0.0);
+        assert_eq!(c.frame(0.1, false, true, false).bars, 0.0);
         c.battle_begins();
         let mut tallest = 0.0f32;
         let mut seen = Vec::new();
         for _ in 0..400 {
-            let bars = c.frame(0.016, false, true).bars;
+            let bars = c.frame(0.016, false, true, false).bars;
             assert!((0.0..=BAR_HEIGHT).contains(&bars));
             tallest = tallest.max(bars);
             seen.push(bars);
@@ -182,7 +192,25 @@ mod tests {
         let mut c = Cinema::default();
         c.battle_begins();
         for _ in 0..100 {
-            assert_eq!(c.frame(0.016, false, false).bars, 0.0);
+            assert_eq!(c.frame(0.016, false, false, false).bars, 0.0);
+        }
+    }
+
+    #[test]
+    fn a_film_keeps_the_bars_in_and_lets_them_out_when_it_ends() {
+        let mut c = Cinema::default();
+        for _ in 0..200 {
+            c.frame(0.016, false, true, true);
+        }
+        assert!((c.frame(0.016, false, true, true).bars - BAR_HEIGHT).abs() < 1e-4);
+        for _ in 0..200 {
+            c.frame(0.016, false, true, false);
+        }
+        assert_eq!(c.frame(0.016, false, true, false).bars, 0.0);
+        // Clarity: no bars even in a film.
+        let mut c = Cinema::default();
+        for _ in 0..200 {
+            assert_eq!(c.frame(0.016, false, false, true).bars, 0.0);
         }
     }
 }

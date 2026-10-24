@@ -145,6 +145,7 @@ mod conquest_golden;
 mod conquest_soak;
 mod credits;
 mod data;
+mod director;
 mod effects;
 mod faction_powers;
 mod field;
@@ -402,6 +403,8 @@ struct Options {
     /// Stand these models in a row to look at (`--showroom`), doing this
     /// (`--showroom-clip`).
     showroom: Option<Vec<usize>>,
+    /// Open this recorded battle at once, as a film (`--watch FILE`).
+    watch: Option<std::path::PathBuf>,
     showroom_clip: Option<showroom::Clip>,
     /// Open the unit viewer at start (`--viewer`): on this unit, or the
     /// first one for "start".
@@ -441,6 +444,7 @@ fn parse_args() -> Options {
         crash_test: false,
         lod: None,
         showroom: None,
+        watch: None,
         showroom_clip: None,
         viewer: None,
         look: None,
@@ -558,6 +562,10 @@ fn parse_args() -> Options {
                 }
                 _ => false,
             },
+            "--watch" if !value.trim().is_empty() => {
+                opts.watch = Some(value.trim().into());
+                true
+            }
             "--showroom" if !value.trim().is_empty() => {
                 opts.showroom = Some(showroom_models(&value));
                 true
@@ -659,7 +667,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look] [--viewer NAME|start] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -675,6 +683,8 @@ struct Running {
     cinema: cinema::Cinema,
     /// Whether the deployment was still going last frame, to see a battle begin.
     was_deploying: bool,
+    /// The camera that finds the fight (F8; starts on for a replay).
+    director: director::Director,
     /// How far the camera starts from the ground when `--distance` says.
     start_distance: Option<f32>,
     camera: RtsCamera,
@@ -1469,9 +1479,12 @@ impl App {
         let mut menu = Menu::new(lan, settings, settings_path, &online::version());
         menu.set_roster(roster);
         menu.set_host_map_seed(opts.seed);
-        let show_menu = opts
-            .menu
-            .unwrap_or(opts.frames.is_none() && opts.battle.is_none() && opts.conquest.is_none());
+        let show_menu = opts.menu.unwrap_or(
+            opts.frames.is_none()
+                && opts.battle.is_none()
+                && opts.conquest.is_none()
+                && opts.watch.is_none(),
+        );
         let sounds = if opts.audio {
             tagged_alloc::scope(Tag::Audio, || {
                 sounds::Sounds::start(capacities.regiments as usize, volumes.0, volumes.1)
@@ -1487,6 +1500,7 @@ impl App {
             atmosphere: atmosphere::Atmosphere::new(opts.look, opts.air),
             cinema: cinema::Cinema::default(),
             was_deploying: false,
+            director: director::Director::default(),
             start_distance: opts.distance,
             camera,
             ride: None,
@@ -1623,6 +1637,25 @@ impl App {
             if let Some(level) = opts.battle {
                 let setup = battle::quick_battle(level, r.menu.settings(), opts.seed);
                 r.start_match(MatchKind::Battle(setup));
+            }
+            if let Some(path) = &opts.watch {
+                match gc_replay::Replay::load(path) {
+                    Ok(replay) => {
+                        match replays::unplayable(&replay.info(), &r.unit_types(), r.capacities) {
+                            None => r.start_match(MatchKind::Replay(Box::new(replay))),
+                            Some(why) => {
+                                logln!("grubcraft: can't watch {}: {why}", path.display());
+                                r.menu.tell(why);
+                                r.open_menu();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        logln!("grubcraft: can't open {}: {e}", path.display());
+                        r.menu.tell(format!("Can't open that replay: {e}"));
+                        r.open_menu();
+                    }
+                }
             }
             if let Some(choice) = opts.conquest {
                 let setup = conquest::quick_conquest(choice, r.menu.settings(), opts.seed);
@@ -1853,6 +1886,7 @@ impl ApplicationHandler for App {
                         // Ride with the banner. Chords with Ctrl, Cmd or Alt
                         // are the system's.
                         KeyCode::KeyY if grid_key => r.toggle_ride(),
+                        KeyCode::F8 if down && !event.repeat => r.toggle_director(),
                         KeyCode::F11 | KeyCode::Backquote if down && !event.repeat => {
                             r.overlay = !r.overlay;
                             r.refresh_overlay();
@@ -2498,6 +2532,7 @@ impl Running {
             self.leave_ride();
             return;
         }
+        self.director.stop();
         if !self.match_started || self.menu_open || self.showroom.is_some() || self.viewer.is_some()
         {
             return;
@@ -2517,6 +2552,25 @@ impl Running {
             regiment: r.handle,
             camera,
         });
+    }
+
+    /// F8: the director camera takes over the view, or gives it back.
+    fn toggle_director(&mut self) {
+        if self.director.is_on() {
+            self.director.stop();
+            self.say("Director camera off.".to_string());
+            return;
+        }
+        if !self.match_started || self.menu_open || self.showroom.is_some() || self.viewer.is_some()
+        {
+            return;
+        }
+        self.leave_ride();
+        self.director.start(&self.camera);
+        self.say(
+            "Director camera on: it follows the fight. Move the view, or press F8, to take over."
+                .to_string(),
+        );
     }
 
     /// Back to the bird's-eye camera, over the regiment we were riding with
@@ -2861,7 +2915,7 @@ impl Running {
         let game_dt = if self.paused {
             Duration::ZERO
         } else {
-            dt.mul_f32(SPEEDS[self.speed])
+            dt.mul_f32(SPEEDS[self.speed] * self.film_pace())
         };
         // The sim stands still behind the menu, except in a network match,
         // which runs on the host's clock.
@@ -3479,7 +3533,11 @@ impl Running {
         // Dust, sparks and worn ground go with game time: still while paused
         // or behind the menu, slow in slow motion.
         let live = !self.paused && !(self.menu_open && self.online.is_none());
-        let pace = if live { SPEEDS[self.speed] } else { 0.0 };
+        let pace = if live {
+            SPEEDS[self.speed] * self.film_pace()
+        } else {
+            0.0
+        };
         self.scars.update(
             self.last_frame,
             &mut self.renderer,
@@ -3545,6 +3603,7 @@ impl Running {
             if live { dt.as_secs_f32() } else { 0.0 },
             settings.reduced_shake,
             !settings.clarity,
+            self.watching.is_some() && self.director.is_on(),
         );
         self.renderer.set_cinema(picture);
         // Pollen, fireflies, leaves and whirlwinds, where the land has them;
@@ -4450,6 +4509,7 @@ impl Running {
         self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
         self.cinema.reset();
+        self.director.stop();
         self.was_deploying = false;
         self.land.reset();
         // The lobby's time of day lights the match, unless `--look` says.
@@ -4742,6 +4802,8 @@ impl Running {
             stats_before,
             diverged_at: None,
         });
+        // A replay is a film: the director frames it until the viewer moves.
+        self.director.start(&self.camera);
     }
 
     /// After a replay tick: if it was a checkpoint and the state no longer
@@ -5103,6 +5165,27 @@ impl Running {
                         }
                     }
                 }
+                Event::Losses { regiment, lost }
+                    if self.director.is_on() && self.world.regiments.get(regiment).is_some() =>
+                {
+                    let seen = self.reveal_all || self.world.sees(self.sandbox.side, regiment);
+                    if let (true, Some(r)) = (seen, self.world.regiments.get(regiment)) {
+                        self.director.note(
+                            from_fx_vec(r.position),
+                            f32::from(lost) * director::PER_LOSS,
+                        );
+                    }
+                }
+                Event::Morale {
+                    regiment,
+                    to: MoraleState::Routing,
+                    ..
+                } if self.director.is_on() => {
+                    let seen = self.reveal_all || self.world.sees(self.sandbox.side, regiment);
+                    if let (true, Some(r)) = (seen, self.world.regiments.get(regiment)) {
+                        self.director.note(from_fx_vec(r.position), director::ROUT);
+                    }
+                }
                 Event::Losses { regiment, .. } if self.world.regiments.get(regiment).is_none() => {
                     let owner = self.puppets.wiped(regiment);
                     // A viewer catching up on a match plays all of its
@@ -5134,14 +5217,16 @@ impl Running {
                         let ground = self.heightmap.height_at(p.x, p.y);
                         self.effects.charge_hit(glam::Vec3::new(p.x, ground, p.y));
                         self.cinema.blow(p, focus, distance, cinema::CHARGE_HIT);
+                        self.director.note(p, director::CHARGE_HIT);
                     }
                 }
                 Event::Ambush(a) => {
                     // Your own regiments are always seen by you.
                     let seen = self.reveal_all || self.world.sees(self.sandbox.side, a.victim);
                     if let (true, Some(r)) = (seen, self.world.regiments.get(a.victim)) {
-                        self.cinema
-                            .blow(from_fx_vec(r.position), focus, distance, cinema::AMBUSH);
+                        let at = from_fx_vec(r.position);
+                        self.cinema.blow(at, focus, distance, cinema::AMBUSH);
+                        self.director.note(at, director::AMBUSH);
                     }
                 }
                 Event::Struck { structure, by } => {
@@ -5168,6 +5253,7 @@ impl Running {
                         if let Some(l) = look {
                             self.cinema
                                 .blow(l.centre(), focus, distance, cinema::BUILDING_FELL);
+                            self.director.note(l.centre(), director::BUILDING_FELL);
                         }
                         self.siege.fallen(structure);
                     } else {
@@ -5299,6 +5385,12 @@ impl Running {
         if let Some(viewer) = &mut self.viewer {
             viewer.update(dt, &mut self.camera);
             return;
+        }
+        if self.director.is_on() && !self.menu_open {
+            // (Riding stops it: `toggle_ride`.)
+            let (world, side, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
+            self.director
+                .step(dt, &mut self.camera, || see_the_field(world, side, reveal));
         }
         if self.menu_open && !self.match_started {
             // A slow sway behind the main menu.
@@ -6318,6 +6410,16 @@ impl Running {
         true
     }
 
+    /// How fast the director slows a replay for a big moment; a live match
+    /// always runs at its own pace.
+    fn film_pace(&self) -> f32 {
+        if self.watching.is_some() {
+            self.director.pace()
+        } else {
+            1.0
+        }
+    }
+
     /// Where the view in use is looking and how far it is from the ground:
     /// the bird's-eye camera's focus, or a little ahead of a ride.
     fn view_focus(&self) -> (Vec2, f32) {
@@ -6734,6 +6836,23 @@ fn to_fx(v: f32) -> gc_fixed::Fx {
 
 fn fx_to_f32(v: gc_fixed::Fx) -> f32 {
     v.raw() as f32 / 65536.0
+}
+
+/// What the director sees of the field: where the regiments in melee are, and
+/// where every regiment is, those the viewer sees.
+fn see_the_field(world: &World, side: gc_sim::PlayerId, reveal: bool) -> (Vec<Vec2>, Vec<Vec2>) {
+    let (mut melee, mut everyone) = (Vec::new(), Vec::new());
+    for r in world.regiments.iter() {
+        if r.morale == MoraleState::Shattered || !(reveal || world.sees(side, r.handle)) {
+            continue;
+        }
+        let at = from_fx_vec(r.position);
+        if r.engaged {
+            melee.push(at);
+        }
+        everyone.push(at);
+    }
+    (melee, everyone)
 }
 
 fn from_fx_vec(v: gc_fixed::FxVec2) -> Vec2 {
