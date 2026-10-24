@@ -50,6 +50,10 @@ const JOLT_SECONDS: f32 = 0.35;
 const FLASH_SECONDS: f32 = 0.14;
 /// A building brought down takes this long to sink.
 const COLLAPSE_SECONDS: f32 = 2.4;
+/// A wall or tower topples over the first part of it, this share, then
+/// sinks (the sinking starts a little before it lies down).
+const TOPPLE_SHARE: f32 = 0.6;
+const SINK_FROM: f32 = TOPPLE_SHARE * 0.9;
 /// Its rubble lies this long, smoulders for the first part of it, and
 /// sinks away over the last part.
 const RUBBLE_SECONDS: f32 = 90.0;
@@ -425,6 +429,12 @@ impl Shot {
     }
 }
 
+/// Whether a building of `role` comes down by toppling over: walls and
+/// towers, which are tall for how wide they stand.
+fn topples(role: Role) -> bool {
+    matches!(role, Role::Wall | Role::Defence)
+}
+
 /// A building brought down: sinking, then rubble.
 #[derive(Clone, Copy, Debug)]
 struct Fall {
@@ -435,6 +445,9 @@ struct Fall {
     seed: u32,
     /// Whether its burst of chips and its crash have gone off yet.
     burst: bool,
+    /// The way it topples (a unit step on the map), if it does: tall, thin
+    /// things fall along the last blow instead of only sinking.
+    topple: Option<Vec2>,
 }
 
 /// A fallen building's model, sinking, for the game to draw.
@@ -444,6 +457,10 @@ pub struct Sinking {
     pub pos: Vec2,
     pub lift: f32,
     pub colour: [u8; 3],
+    /// How far it has tipped over, 0 (upright) to 1 (lying), and toward
+    /// which way on the map (zero when it only sinks).
+    pub tip: f32,
+    pub way: Vec2,
 }
 
 /// Where a regiment's soldiers swung at a building's wall.
@@ -782,6 +799,17 @@ impl Siege {
         let Some(look) = self.look(structure).copied() else {
             return;
         };
+        let topple = topples(look.role).then(|| {
+            // Along the shot still in flight that brought it down, else the
+            // last blow; with none told, any way by the seed.
+            let shot = (self.shots.iter())
+                .filter(|s| s.structure == structure)
+                .max_by(|a, b| a.born.total_cmp(&b.born))
+                .map(|s| s.dir);
+            (shot.or_else(|| self.jolt_of(structure).map(|j| j.dir)))
+                .and_then(Vec2::try_normalize)
+                .unwrap_or_else(|| Vec2::from_angle(hash(self.seed, 0, 0) * PI))
+        });
         self.forget(structure);
         let due = (self.shots.iter())
             .filter(|s| s.structure == structure)
@@ -794,6 +822,7 @@ impl Siege {
             born: due,
             seed: self.seed,
             burst: now,
+            topple,
         };
         let k = self.pick(MAX_FALLS);
         push_capped(&mut self.falls, MAX_FALLS, k, fall);
@@ -1125,8 +1154,20 @@ impl Siege {
             if t >= 1.0 {
                 return None;
             }
-            // Slow to give, then gone in a rush, shuddering as it goes.
-            let down = t * t * (3.0 - 2.0 * t);
+            // Slow to give, then gone in a rush, shuddering as it goes. A
+            // toppling one tips over first (slowly, then faster) and sinks
+            // when it nearly lies.
+            let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
+            let (down, tip) = match f.topple {
+                Some(_) => {
+                    let u = (t / TOPPLE_SHARE).min(1.0);
+                    (
+                        smooth(((t - SINK_FROM) / (1.0 - SINK_FROM)).clamp(0.0, 1.0)),
+                        u * u,
+                    )
+                }
+                None => (smooth(t), 0.0),
+            };
             let going = if now < f.born { 0.0 } else { 1.0 - t };
             let shudder = (now * 41.0).sin() * 0.06 * going;
             let across = Vec2::new((now * 37.0).cos(), (now * 29.0).sin()) * shudder;
@@ -1135,6 +1176,8 @@ impl Siege {
                 pos: f.look.centre() + across,
                 lift: f.look.lift - f.look.top * 1.05 * down,
                 colour: f.look.colour,
+                tip,
+                way: f.topple.unwrap_or(Vec2::ZERO),
             })
         })
     }
@@ -1544,6 +1587,49 @@ mod tests {
         // None for a building the camera does not see.
         s.emit_damage([h].into_iter(), |_, _| false);
         assert!(s.take_particles().is_empty());
+    }
+
+    #[test]
+    fn a_wall_topples_along_the_last_blow_then_sinks_and_a_house_only_sinks() {
+        let mut s = Siege::new(8);
+        let (wall, house) = (handle(0), handle(1));
+        s.remember(Look {
+            role: Role::Wall,
+            ..look(wall, 0.9)
+        });
+        s.remember(look(house, 0.9));
+        // The wall is struck from the south, so the blow travels north.
+        s.struck(wall, blade(Vec2::new(12.0, 16.0)));
+        let along = s.jolt_of(wall).expect("jolted").dir;
+        s.fallen(wall);
+        s.fallen(house);
+        let tips = |s: &Siege| s.sinking().map(|f| f.tip).fold(0.0_f32, f32::max);
+        assert_eq!(tips(&s), 0.0, "upright at first");
+        let way = s
+            .sinking()
+            .find(|f| f.way != Vec2::ZERO)
+            .expect("toppling")
+            .way;
+        assert!(way.dot(along) > 0.99, "falls the way the blow went");
+        assert!(
+            way.y < -0.99,
+            "north, away from the attacker in the south: {way}"
+        );
+        assert_eq!(
+            s.sinking().filter(|f| f.way == Vec2::ZERO).count(),
+            1,
+            "the house"
+        );
+        s.advance(COLLAPSE_SECONDS * TOPPLE_SHARE * 0.5, flat);
+        let half = tips(&s);
+        assert!(half > 0.1 && half < 0.9, "tipping: {half}");
+        s.advance(COLLAPSE_SECONDS * TOPPLE_SHARE * 0.5 + 0.01, flat);
+        assert!(tips(&s) > 0.99, "lying down");
+        assert!(
+            s.sinking()
+                .filter(|f| f.way == Vec2::ZERO)
+                .all(|f| f.tip == 0.0)
+        );
     }
 
     #[test]

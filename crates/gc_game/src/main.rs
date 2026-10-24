@@ -7222,11 +7222,18 @@ impl Running {
             let still = art.clips.pose(fall.model, Action::Idle, time);
             if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
                 let [r, g, b] = fall.colour;
+                let mut flags = models::pose_flags(pose, 0, false);
+                if fall.tip > 0.0 {
+                    // Tipped over toward its way, which the model reads in
+                    // its own space (turned to face south, as drawn).
+                    flags[2] = (fall.tip * 255.0).round() as u8;
+                    flags[3] = scenery::fall_of(scenery::turn_of(Vec2::Y), fall.way);
+                }
                 art.buckets[fall.model * LODS + lod].push(SoldierInstance {
                     pos: fall.pos.to_array(),
                     facing: [0.0, 1.0],
                     frames: pose.rows,
-                    flags: models::pose_flags(pose, 0, false),
+                    flags,
                     color: [r, g, b, gc_render::TONE_NEUTRAL],
                     lift: fall.lift,
                     scale: 1.0,
