@@ -125,13 +125,13 @@ Each stage is playable on its own.
 
 **The dials.** Plains, Mixed and Wild set the share of mountain country (11%, 30%, 44%), crest height, how sharp bench edges are, where crags begin and how tall they are, forest density and how much flow makes a river.
 
-**Cover for idea 22.** Woods, tall grass and thicket stay the tile cover layer the sim already reads, written into the `Map` at load, never baked into the ground. Scrub (scrub edge and the like) is its own habitat with lighter cover: tall grass, or woods where the canopy allows, so it can be cleared differently from old growth. Every tile keeps its habitat (`Map.habitat`), ready for a cleared tile to become a glade or rough grass. Nothing reads the habitat yet; the biome look (stage 4) will.
+**Cover for idea 22.** Woods, tall grass and thicket stay the tile cover layer the sim already reads, written into the `Map` at load, never baked into the ground. Scrub (scrub edge and the like) is its own habitat with lighter cover: tall grass, or woods where the canopy allows, so it can be cleared differently from old growth. Every tile keeps its habitat (`Map.habitat`), ready for a cleared tile to become a glade or rough grass. The ground now reads it ([36](36-habitat-ground.md)); the scenery does not yet.
 
 **Sites and set pieces.** The starts are the seeded map's plateaus. The sites (village, company camp, old fort, lair, standing stones) are placed in the north half on standable ground and turned for the south; placing them by reason is stage 4. The set pieces are found from the built land: "The heights" and "The far heights" where ground stands well above its surroundings, and "The ford" where enough ford tiles gather. A map with fewer than two gets a knoll at each side.
 
 **Measured (2026-10-23, release build).** A 768 map builds in about 2.1 to 2.4 seconds (`grown_load_time`, run by hand, on a machine busy with other builds), inside the 3-second target. `every_grown_map_passes_the_checker` builds each wildness at 256, 512 and 768 for four seeds (36 maps) and runs them through `gc_mapcheck`'s checks. All pass, and none needed a reroll; the test allows a reroll for one map in five, as the lobby rerolls a map whose starts aren't joined. `cargo run -p gc_mapcheck -- gen Land-Wild 512 SEED OUT.ron` (or `Land-Plains`, `Land-Mixed`) writes a grown map. Screenshots are in the project files under `screenshots/living-land/`.
 
-**Not in stage 1.** Ways through (the pass and ford carver) and the AI's route check are stage 2; fairness is still the turned copy until stage 3; grown maps use today's ground colours by land, not the habitat materials, until stage 4.
+**Not in stage 1.** Ways through (the pass and ford carver) and the AI's route check are stage 2; fairness is still the turned copy until stage 3; grown maps use today's ground colours by land, not the habitat materials, until stage 4 (the habitat ground is built, [36](36-habitat-ground.md); scenery by habitat is not).
 
 ## Costs and risks
 

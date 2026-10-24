@@ -19,16 +19,20 @@ pub const WARP: f32 = 0.5;
 /// which never reads higher than the heightmap's top, so it adds nothing.
 pub const RELIEF_MAX: f32 = SMALL_RELIEF + CRAG_RELIEF + SPIRE_RELIEF;
 
-/// The world shader with the relief's and the lands' constants in front of it.
+/// The world shader with the relief's, the lands' and the ground patterns'
+/// constants in front of it.
 pub(crate) fn world_source() -> String {
-    format!(
-        "const SMALL_RELIEF: f32 = {SMALL_RELIEF:?};\nconst CRAG_RELIEF: f32 = {CRAG_RELIEF:?};\nconst SPIRE_RELIEF: f32 = {SPIRE_RELIEF:?};\nconst WARP: f32 = {WARP:?};\nconst LAND_BROOD: u32 = {}u;\nconst LAND_CLANS: u32 = {}u;\nconst LAND_CHOIR: u32 = {}u;\nconst LAND_CONCORD: u32 = {}u;\n{}",
+    let mut head = format!(
+        "const SMALL_RELIEF: f32 = {SMALL_RELIEF:?};\nconst CRAG_RELIEF: f32 = {CRAG_RELIEF:?};\nconst SPIRE_RELIEF: f32 = {SPIRE_RELIEF:?};\nconst WARP: f32 = {WARP:?};\nconst LAND_BROOD: u32 = {}u;\nconst LAND_CLANS: u32 = {}u;\nconst LAND_CHOIR: u32 = {}u;\nconst LAND_CONCORD: u32 = {}u;\n",
         crate::LAND_BROOD,
         crate::LAND_CLANS,
         crate::LAND_CHOIR,
         crate::LAND_CONCORD,
-        include_str!("shaders/world.wgsl")
-    )
+    );
+    for (name, value) in crate::GROUND_CLASSES {
+        head.push_str(&format!("const GROUND_{name}: u32 = {value}u;\n"));
+    }
+    head + include_str!("shaders/world.wgsl")
 }
 
 /// The cliff mask texture's contents: for each half-tile cell, 0 unless

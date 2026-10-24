@@ -100,6 +100,9 @@ const HIGHLIGHT: f32 = 1.6;
 // How the ground has been marked (Renderer::set_scars), one texel a tile: r
 // felled, g scorched, b worn by marching and fighting.
 @group(0) @binding(17) var scar_map: texture_2d<f32>;
+// How each tile's ground looks (Terrain::look), one texel a tile: rgb multiplies
+// the grass (128 leaves it), a is the `GROUND_*` pattern drawn over it.
+@group(0) @binding(18) var ground_look: texture_2d<f32>;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -612,6 +615,118 @@ fn ground_layer(layer: i32, mean: vec3<f32>, p: vec2<f32>, dx: vec2<f32>, dy: ve
     return r;
 }
 
+// ---------------------------------------------------------------- habitat ground
+//
+// What a habitat's ground is like, past the colour it gives the grass: bog
+// with pools of black water, mud, flowers in a meadow, heather, gravel, crazed
+// crust, ripples of bone dust, and so on. Worked out from the position alone;
+// the map decides where (`Terrain::look`). Fine detail fades with `px`, the
+// tiles a pixel covers.
+
+struct Habitat {
+    albedo: vec3<f32>,
+    // 0 none, 1 covers the ground.
+    k: f32,
+    // 0 dry, 1 standing water: glossy.
+    wet: f32,
+};
+
+fn habitat_ground(pattern: u32, xz: vec2<f32>, px: f32) -> Habitat {
+    var r = Habitat(vec3<f32>(0.0), 0.0, 0.0);
+    let fine = 1.0 - smoothstep(0.08, 0.2, px);
+    switch pattern {
+        case GROUND_BOG: {
+            // Hummocks of dark peat between pools of black water.
+            let pool = smoothstep(0.5, 0.62, fbm(xz * 0.3 + vec2<f32>(11.0, 4.0)));
+            let peat = srgb_to_linear(vec3<f32>(0.2, 0.15, 0.1)) * (0.7 + 0.6 * nz(xz * 1.9));
+            r.albedo = mix(peat, srgb_to_linear(vec3<f32>(0.08, 0.12, 0.13)), pool);
+            r.k = mix(0.6, 0.92, pool);
+            r.wet = pool;
+        }
+        case GROUND_MUD: {
+            // Trampled, sodden mud in patches.
+            let m = smoothstep(0.45, 0.65, fbm(xz * 0.45 + vec2<f32>(2.0, 19.0)));
+            r.albedo = srgb_to_linear(vec3<f32>(0.24, 0.19, 0.11)) * (0.8 + 0.4 * nz(xz * 2.0));
+            r.k = m * 0.7;
+            r.wet = m * 0.6;
+        }
+        case GROUND_DAMP: {
+            let m = smoothstep(0.5, 0.7, fbm(xz * 0.4 + vec2<f32>(8.0, 3.0)));
+            r.albedo = srgb_to_linear(vec3<f32>(0.2, 0.26, 0.13));
+            r.k = m * 0.4;
+            r.wet = m * 0.25;
+        }
+        case GROUND_FLOWERS: {
+            // Drifts of flowers: one in the middle of each cell of a grain
+            // two thirds of a tile, in the half that fall in a drift, over a
+            // faint wash of colour.
+            let grain = xz * 1.6;
+            let cell = floor(grain);
+            let drift = smoothstep(0.3, 0.55, fbm(xz * 0.25 + vec2<f32>(14.0, 6.0)));
+            let pick = hash2(cell + vec2<f32>(5.0, 1.0));
+            var petal = srgb_to_linear(vec3<f32>(0.95, 0.85, 0.2));
+            if pick > 0.66 {
+                petal = srgb_to_linear(vec3<f32>(0.95, 0.93, 0.88));
+            } else if pick > 0.33 {
+                petal = srgb_to_linear(vec3<f32>(0.82, 0.4, 0.66));
+            }
+            let off = (vec2<f32>(hash2(cell + vec2<f32>(3.0, 9.0)), hash2(cell + vec2<f32>(13.0, 2.0))) - 0.5) * 0.4;
+            let bloom = 1.0 - smoothstep(0.1, 0.22, length(fract(grain) - 0.5 - off));
+            r.albedo = petal;
+            r.k = max(bloom * step(0.4, hash2(cell)) * (0.5 + 0.5 * fine), drift * 0.12) * (0.4 + 0.6 * drift);
+        }
+        case GROUND_HEATHER: {
+            let patch_ = smoothstep(0.45, 0.65, fbm(xz * 0.35 + vec2<f32>(4.0, 13.0)));
+            let purple = srgb_to_linear(vec3<f32>(0.42, 0.22, 0.4));
+            let dry = srgb_to_linear(vec3<f32>(0.5, 0.42, 0.25));
+            r.albedo = mix(dry, purple, patch_);
+            r.k = 0.35 + 0.4 * patch_;
+        }
+        case GROUND_GRAVEL: {
+            let stone = srgb_to_linear(vec3<f32>(0.5, 0.46, 0.4));
+            let pebble = 0.6 + 0.8 * nz(xz * 3.1);
+            r.albedo = stone * pebble * mix(1.0, 0.7, step(0.7, nz(xz * 7.0)) * fine);
+            r.k = 0.8;
+        }
+        case GROUND_CRUST: {
+            // Pale crust crazed with dark cracks.
+            let crack = crease(xz * 0.9 + vec2<f32>(6.0, 2.0), 0.075) * (0.5 + 0.5 * fine);
+            let crust = srgb_to_linear(vec3<f32>(0.62, 0.56, 0.45)) * (0.85 + 0.3 * nz(xz * 1.7));
+            r.albedo = mix(crust, srgb_to_linear(vec3<f32>(0.2, 0.17, 0.13)), crack);
+            r.k = 0.85;
+        }
+        case GROUND_RIPPLE: {
+            // Bone dust combed into ripples by the wind.
+            let rip = 0.5 + 0.5 * sin(dot(xz, vec2<f32>(0.8, 0.6)) * 5.0 + 3.0 * fbm(xz * 0.25));
+            r.albedo = srgb_to_linear(vec3<f32>(0.78, 0.74, 0.62)) * (0.85 + 0.2 * mix(0.5, rip, fine));
+            r.k = 0.8;
+        }
+        case GROUND_STRAW: {
+            let m = smoothstep(0.35, 0.6, fbm(xz * 0.3 + vec2<f32>(9.0, 5.0)));
+            r.albedo = srgb_to_linear(vec3<f32>(0.6, 0.52, 0.3)) * (0.85 + 0.3 * nz(xz * 1.5));
+            r.k = m * 0.65;
+        }
+        case GROUND_LITTER: {
+            // Leaf litter and moss under the trees.
+            let litter = smoothstep(0.42, 0.62, fbm(xz * 0.6 + vec2<f32>(1.0, 7.0)));
+            let moss = smoothstep(0.55, 0.75, fbm(xz * 0.4 + vec2<f32>(17.0, 3.0)));
+            let leaf = srgb_to_linear(vec3<f32>(0.3, 0.2, 0.1)) * (0.8 + 0.4 * nz(xz * 2.4));
+            r.albedo = mix(leaf, srgb_to_linear(vec3<f32>(0.14, 0.24, 0.1)), moss);
+            r.k = max(litter * 0.45, moss * 0.5);
+        }
+        case GROUND_BONE: {
+            r.albedo = srgb_to_linear(vec3<f32>(0.78, 0.74, 0.62)) * (0.8 + 0.3 * nz(xz * 2.5));
+            r.k = 0.7;
+        }
+        case GROUND_MOSS: {
+            r.albedo = srgb_to_linear(vec3<f32>(0.12, 0.3, 0.12));
+            r.k = smoothstep(0.4, 0.65, fbm(xz * 0.5 + vec2<f32>(5.0, 21.0))) * 0.55;
+        }
+        default: {}
+    }
+    return r;
+}
+
 // ---------------------------------------------------------------- faction lands
 //
 // Where a faction's land has spread, the ground is that faction's. Each land is
@@ -844,6 +959,19 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let tint = textureSampleLevel(ground_tint, soft_sampler, (xz + wobble * 10.0) / tiles, 0.0);
         grass = mix(grass, srgb_to_linear(tint.rgb), tint.a);
     }
+    // The habitat's own grass colour, its borders wobbled the same way. A map
+    // without habitats has a single neutral texel, and nothing to look up.
+    let look_tiles = f32(textureDimensions(ground_look).x);
+    let has_look = textureDimensions(ground_look).x > 1u;
+    var look_at = xz;
+    if has_look {
+        let look_wobble = (vec2<f32>(vnoise(xz * 0.3), vnoise(xz * 0.3 + vec2<f32>(23.0, 5.0))) - 0.5) * 2.6
+            + (vec2<f32>(vnoise(xz * 1.1), vnoise(xz * 1.1 + vec2<f32>(7.0, 31.0))) - 0.5) * 0.8;
+        // Kept to the map: the sampler repeats.
+        look_at = clamp(xz + look_wobble, vec2<f32>(0.5), vec2<f32>(look_tiles - 0.5));
+        let look_mult = textureSampleLevel(ground_look, soft_sampler, look_at / look_tiles, 0.0).rgb;
+        grass = grass * look_mult * (255.0 / 128.0);
+    }
     let dry = srgb_to_linear(vec3<f32>(0.62, 0.55, 0.33));
     let bone = srgb_to_linear(vec3<f32>(0.85, 0.8, 0.68));
     let grass_in = smoothstep(0.16, 0.26, h);
@@ -873,6 +1001,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     // dirt fringe are soil's), the small scale put on the palette. Fully
     // rock ground has none of it.
     var nd = n;
+    var wet = 0.0;
     if rock < 1.0 {
         let grassy = grass_in * (1.0 - dry_in) * (1.0 - fringe * 0.7);
         let m = ground_blend(xz);
@@ -893,6 +1022,19 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         // map's plane being the ground's).
         // Steeper ground takes less of it, so it cannot turn the normal over.
         nd = normalize(vec3<f32>(n.x + detail.tilt.x * n.y, n.y, n.z + detail.tilt.y * n.y));
+
+        // The habitat's ground over it: bog pools, flowers, gravel and the
+        // like, the pattern the tile's own (a nearest lookup), its edge ragged
+        // by the wobble.
+        if has_look {
+            let tile = vec2<i32>(look_at);
+            let pattern = u32(textureLoad(ground_look, tile, 0).a * 255.0 + 0.5);
+            if pattern > 0u {
+                let hg = habitat_ground(pattern, xz, max(length(dpx.xz), length(dpy.xz)));
+                albedo = mix(albedo, hg.albedo, hg.k);
+                wet = hg.wet;
+            }
+        }
     }
 
     // Marks on the ground (and none on rock): worn tracks of bare dirt where
@@ -911,6 +1053,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.37, 0.29, 0.18)) * grit, worn * 0.85);
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.27, 0.17, 0.1)) * grit, felled);
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.05, 0.045, 0.04)) * grit, burnt);
+        wet = wet * (1.0 - max(worn, max(felled, burnt)));
         // Turned earth lies in clods.
         let clod = vec2<f32>(vnoise(xz * 3.3) - 0.5, vnoise(xz * 3.3 + vec2<f32>(6.0, 2.0)) - 0.5);
         nd = normalize(nd + vec3<f32>(clod.x, 0.0, clod.y) * 0.45 * max(felled, worn * 0.5));
@@ -929,10 +1072,16 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let l = faction_land(xz, land.r, land.b * 255.0 / 4.0, max(length(dpx.xz), length(dpy.xz)));
         let k = l.cover * keep;
         albedo = mix(albedo, l.albedo, k);
+        wet = wet * (1.0 - k);
         nd = normalize(nd + vec3<f32>(l.tilt.x, 0.0, l.tilt.y) * keep);
         land_glow = l.glow * keep;
         land_rough = mix(1.0, l.rough, k);
         landed = k > 0.0;
+    }
+    // Standing water shines.
+    if wet > 0.0 {
+        land_rough = min(land_rough, mix(1.0, 0.25, wet));
+        landed = true;
     }
 
     var c: vec3<f32>;
@@ -1459,7 +1608,7 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
         in.team_color * min(grey * 1.25, 1.2) * tone_mul(in.tone / 3.0),
         a.a,
     );
-    // Surface detail over the baked atlas: the class's grain at its own
+    // Surface detail over the baked atlas: the pattern's grain at its own
     // repeat, which shades the colour, leans the normal, shifts the roughness
     // and darkens the cavities. Mips fade it to nothing with distance.
     var nxy = b.xy * 2.0 - 1.0;
