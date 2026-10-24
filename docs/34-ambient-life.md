@@ -21,7 +21,7 @@ Mario wants a world that looks lived in: a base where people are doing things, l
 |---|---|---|
 | 1 | **Clearing land on screen** (idea 22). Workers swing at the tile they clear, throwing chips or leaves. When the tile is cleared its trees tip over away from the cutter, dust and leaves fly where the crown lands, the trunks lie a while and are hauled off, and bushes are torn up. | Particles (done), scenery lean (this stage) |
 | 2 | **Living touches without models** (built, except mist). Fireflies at dusk over fens and wet woods, pollen in meadows, dust devils in the waste, leaves falling in old woods. Mist pooling on low ground is left to the weather stage of the lighting thread. Particle recipes on a habitat sample of the ground round the camera, as the sound beds do ([09](09-art-and-audio.md)). | Particles, `Map.habitat` (done), lighting looks (done) |
-| 3 | **Busy bases** (idea 10; hearth smoke, lit windows and faction glows built as 3a, walkers between buildings as 3b, the rest not yet). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles and stacked supplies beside the halls, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
+| 3 | **Busy bases** (idea 10; hearth smoke, lit windows and faction glows built as 3a, walkers between buildings as 3b, log piles beside halls as 3d, the rest not yet). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles beside the halls, stacked supplies, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
 | 4 | **Wildlife** (idea 3). Flocks that lift from woods when an army marches by and settle again, carrion birds over a battlefield's dead, moths round Grub seeps, butterflies in flower meadows, grazers that bolt from soldiers, fish rises and dragonflies over water. Each land has its own fauna. Creatures are a picture: soldiers walk through them. | Animal models and clips on the animation engine (T5) |
 | 5 | **Villagers** (idea 3). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
 
@@ -93,7 +93,7 @@ Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model fo
 
 ### Not yet
 
-- Log piles and stacked supplies, carts on the road from a seep to its granary, porters with a proper carrying walk (animation engine stages 3 to 5), forge sparks, and window light that really is a model glow (the lights are particles hung just outside the walls for now, not in the windows' own frames).
+- Stacked supplies, carts on the road from a seep to its granary, porters with a proper carrying walk (animation engine stages 3 to 5), forge sparks, and window light that really is a model glow (the lights are particles hung just outside the walls for now, not in the windows' own frames).
 
 ## Stage 3b as built: walkers between buildings
 
@@ -139,3 +139,22 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 ### Not yet
 
 - Burnt trunks lying instead of crumbling, and the Ember Clans' hauling carts. (The scorched ground and charred stumps a burnt tile leaves are the ground thread's, [35](35-ground-marks.md).)
+
+## Stage 3d as built: log piles beside halls
+
+*2026-10-24. Game and scenery pack only; nothing in the simulation. Two new scenery models ([25](25-scenery-models.md#log-piles)).*
+
+### What a player sees
+
+- A finished Ember Clans (timber) or stone-built main hall has a stack of logs against its back wall and a loose heap against a side wall; an outpost has a heap; about six in ten houses, workshops and farms of those factions have a stack or a heap (which one is the building's own). Bone, crystal and chitin buildings have none, and neither do walls, towers, tech and heroes' buildings or anything still going up.
+- A pile stands about two thirds of a tile outside the wall, lying along it, off the wall's middle by up to a fifth of its half-length and a little off square. The stack is on the side away from the door (so the door's way stays clear for the walkers). Each building always shows the same piles: they come from a hash of its handle. A pile is left out where its middle or either end would be on wet ground, in the fog, or within half a tile of any building's walls, or where the ground under it changes by more than 0.15 of a tile (it stands level, so it would hang in the air).
+- They are scenery, not things: no one carries logs to them and they do not grow with the wood a player holds.
+
+### How it works
+
+- `gc_game::ambient::piles::extras(look, facing, ground, free)` gives the one or two `scenery::Extra` of a building from its `siege::Look` and the way its door faces; `Running::wood_piles` calls it for the visible buildings within the bushes' reach of the camera (as stumps are) and chains the result onto the frame's extras. Not drawn in the Commander View or the unit viewer. Nothing is stored between frames.
+- The extras limit (16,384) is shared with stumps, banners and falling trees; a base has at most two piles a building.
+
+### Not yet
+
+- Stacks that grow with the owner's wood, stacked supplies and sacks for other buildings, carts, and piles for the bone, crystal and chitin factions (which would want their own models).

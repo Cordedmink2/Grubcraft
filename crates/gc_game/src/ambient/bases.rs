@@ -35,7 +35,7 @@ fn lived_in(role: Role) -> bool {
 }
 
 /// A number from 0 to 1 that stays the same for a building and a `salt`.
-fn hash(look: &Look, salt: u32) -> f32 {
+pub(super) fn hash(look: &Look, salt: u32) -> f32 {
     let mut x = look
         .handle
         .index

@@ -6064,6 +6064,7 @@ impl Running {
             });
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));
         let fallen = self.aftermath.standards(|p| ground_of(map, p));
+        let piled = self.wood_piles(focus, distance);
         let stumps = (!self.commander)
             .then(|| {
                 let reach = scenery::stump_reach(distance);
@@ -6076,10 +6077,52 @@ impl Running {
                 .chain(banners)
                 .chain(falling)
                 .chain(fallen)
-                .chain(stumps),
+                .chain(stumps)
+                .chain(piled),
         );
         let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
         self.renderer.set_scenery_frame(instances, batches);
+    }
+
+    /// The stacks and heaps of logs against the finished halls and
+    /// workshops the viewer can see near `focus` (docs/34 stage 3d).
+    fn wood_piles(&self, focus: Vec2, distance: f32) -> Vec<scenery::Extra> {
+        if self.commander || self.viewer.is_some() {
+            return Vec::new();
+        }
+        let reach = scenery::stump_reach(distance);
+        let (reveal, fog) = (self.reveal_all, &self.fog);
+        let shown = buildings::shown_to(self.sandbox.side, reveal);
+        let mut looks = Vec::new();
+        for s in (self.world.structures().into_iter()).flat_map(gc_sim::Structures::iter) {
+            let Some(look) = self.siege.look(s.handle).filter(|_| shown(&s)) else {
+                continue;
+            };
+            let centre = look.centre();
+            if centre.distance(focus) <= reach + 8.0 {
+                looks.push((look, buildings::facing_of(s.turn)));
+            }
+        }
+        let hm = &self.heightmap;
+        let dry = hm.water_level() + ambient::walkers::SHORE;
+        let free = |p: Vec2| {
+            let tile = (p.x.floor() as i32, p.y.floor() as i32);
+            hm.height_at(p.x, p.y) > dry
+                && (reveal || fog.sees_tile(tile))
+                && !looks.iter().any(|(l, _)| l.gap(p) < ambient::piles::CLEAR)
+        };
+        let mut out = Vec::new();
+        for (look, facing) in &looks {
+            if look.centre().distance(focus) <= reach {
+                out.extend(ambient::piles::extras(
+                    look,
+                    *facing,
+                    |p| ground_of(hm, p),
+                    free,
+                ));
+            }
+        }
+        out
     }
 
     /// `--siege`: Ember Clans troops of every kind attack buildings in
