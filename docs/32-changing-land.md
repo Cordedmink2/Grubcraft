@@ -106,8 +106,8 @@ Computer players plan for the shorter range and slower march (stage 3a, below).
 
 **Built (2026-10-24):** no sim change (the minds sit outside it).
 
-- **Range and march.** `Perception` reads the units under the world's `Air` (`UnitInfo::in_air`): archers' range is what fog, rain and night leave, and the march is what snow leaves. Everything that reads a unit's range (the estimator's who-outshoots-whom, when a line is under fire, how far archers stand off, the bank a line waits behind) now plans with the shorter reach, and closes in under fewer volleys. The table is rebuilt when the air changes (in steps of 5%).
-- **Mud.** `Perception` keeps a clone of the sim's ground (cheap: its layers are shared) and asks it which tiles are soft underfoot (bog, and mud the rain has soaked, `Perception::soft`), and `GroundLine::footing` counts mud as bad footing as it counts water, so the Captain doesn't put a battle line in a bog or on a soaked bank. Routes and charges still ignore it.
+- **Range and march.** `Perception` reads the units under the world's `Air` (`UnitInfo::in_air`): archers' range is what fog, rain and night leave, and the march is what snow leaves. Everything that reads a unit's range (the estimator's who-outshoots-whom, when a line is under fire, how far archers stand off, the bank a line waits behind) now plans with the shorter reach, and closes in under fewer volleys. The table is rebuilt when the air changes (in steps of 5%), and the Conquest battle views the Marshal hands its Captains carry it too.
+- **Mud.** The minds' own ground map (`gc_ai::Terrain`) reads which tiles are soft underfoot (bog, and mud the rain has soaked, `Terrain::soft`) at the first look and again whenever the soaked count changes, and `GroundLine::footing` counts mud as bad footing as it counts water, so the Captain doesn't put a battle line in a bog or on a soaked bank. Routes and charges still ignore it.
 - **Towers.** The Spymaster's sums use Conquest towers' range under the same air, as the sim shoots them.
 
 ### Later stages

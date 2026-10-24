@@ -2,15 +2,18 @@
 //! and the time of day"): archers' reach as fog, rain and night leave it,
 //! the march as snow leaves it, and mud underfoot.
 
-use gc_ai::Perception;
+use gc_ai::ground::Line;
+use gc_ai::{Perception, Terrain};
 use gc_map::{FieldMap, GROWN};
 use gc_sim::scenario::DRILL_UNITS;
-use gc_sim::{Capacities, Ground, MatchSetup, Sky, Spell, Weather, WeatherKind, World};
+use gc_sim::{
+    Capacities, Ground, MatchSetup, Sky, Spell, TICKS_PER_SECOND, Weather, WeatherKind, World,
+};
 use glam::Vec2;
 
 const ARCHERS: usize = 2;
 /// Six minutes of heavy rain: long enough to soak the banks through.
-const RAIN_TICKS: u32 = 20 * 60 * 6;
+const RAIN_TICKS: u32 = TICKS_PER_SECOND * 60 * 6;
 
 fn spell(kind: WeatherKind) -> [Spell; 1] {
     [Spell {
@@ -64,7 +67,7 @@ fn fog_shortens_the_archers_the_minds_see_and_snow_their_march() {
 }
 
 #[test]
-fn the_minds_see_the_mud_the_rain_has_soaked() {
+fn the_minds_ground_follows_the_mud_the_rain_soaks() {
     let map = FieldMap {
         choice: GROWN,
         tiles: 192,
@@ -75,23 +78,35 @@ fn the_minds_see_the_mud_the_rain_has_soaked() {
     let spells = spell(WeatherKind::Rain);
     let mut w = world(map.ground(), &nav, map.tiles, &spells);
     let n = map.tiles;
-    let soft_tiles = |view: &Perception| {
-        (0..n * n)
-            .filter(|t| view.soft(Vec2::new((t % n) as f32 + 0.5, (t / n) as f32 + 0.5)))
-            .count()
-    };
-    let mut view = Perception::new();
-    view.capture(&w);
-    let soft_before = soft_tiles(&view);
+    let soft_tiles = |t: &Terrain| (0..n * n).filter(|i| t.soft(centre(i % n, i / n))).count();
+    let mut minds = Terrain::new(&nav, n);
+    assert!(minds.stale(w.terrain()));
+    minds.follow(w.terrain());
+    let soft_before = soft_tiles(&minds);
     for _ in 0..RAIN_TICKS {
         w.tick(&[]);
     }
     assert!(w.terrain().soaked() > 0);
-    view.capture(&w);
-    let (x, y) = w.terrain().soaked_tiles().next().unwrap();
-    assert!(view.soft(Vec2::new(x as f32 + 0.5, y as f32 + 0.5)));
+    assert!(minds.stale(w.terrain()));
+    minds.follow(w.terrain());
+    assert!(!minds.stale(w.terrain()));
     assert_eq!(
-        soft_tiles(&view),
+        soft_tiles(&minds),
         soft_before + w.terrain().soaked() as usize
     );
+    // A battle line on the soaked bank has worse footing than it did dry.
+    let (x, y) = w.terrain().soaked_tiles().next().unwrap();
+    let line = Line {
+        centre: centre(x as u32, y as u32),
+        forward: Vec2::Y,
+        width: 4.0,
+        depth: 2.0,
+    };
+    let mut dry = Terrain::new(&nav, n);
+    dry.follow(world(map.ground(), &nav, n, &spells).terrain());
+    assert!(line.footing(&minds, 0.0) < line.footing(&dry, 0.0));
+}
+
+fn centre(x: u32, y: u32) -> Vec2 {
+    Vec2::new(x as f32 + 0.5, y as f32 + 0.5)
 }

@@ -213,9 +213,6 @@ pub struct Perception {
     memory: Vec<(Seen, u32)>,
     /// What the sky does to the fight now: `units` are read under it.
     pub air: Air,
-    /// The ground as the simulation has it now, for what is soft underfoot
-    /// (a clone shares its layers, so it costs a few counts).
-    ground: Option<gc_sim::Terrain>,
 }
 
 /// How long a mind counts an enemy it has lost sight of, in ticks
@@ -258,7 +255,6 @@ impl Perception {
             self.units
                 .extend(world.units().iter().map(|u| UnitInfo::in_air(u, air)));
         }
-        self.ground = Some(world.terrain().clone());
         if self.stances != *world.stances() {
             self.stances = world.stances().clone();
         }
@@ -360,12 +356,14 @@ impl Perception {
     pub fn subset(&self, out: &mut Perception, keep: impl Fn(&Seen) -> bool) {
         out.tick = self.tick;
         if out.units.len() != self.units.len()
+            || out.air != self.air
             || out
                 .units
                 .iter()
                 .zip(&self.units)
                 .any(|(a, b)| a.stats != b.stats)
         {
+            out.air = self.air;
             out.units.clone_from(&self.units);
         }
         if out.stances != self.stances {
@@ -393,12 +391,6 @@ impl Perception {
 
     pub fn unit(&self, r: &Seen) -> &UnitInfo {
         &self.units[r.unit as usize]
-    }
-
-    /// Whether `p` is soft underfoot: bog, or mud the rain has soaked
-    /// (slow going, and no charges out of it or into it).
-    pub fn soft(&self, p: Vec2) -> bool {
-        self.ground.as_ref().is_some_and(|g| g.soft(to_fx_vec(p)))
     }
 
     /// How fast `r` marches in its formation, tiles per second.

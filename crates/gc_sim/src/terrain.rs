@@ -259,16 +259,6 @@ pub struct Terrain {
     changes: u64,
 }
 
-impl core::fmt::Debug for Terrain {
-    /// Just the sizes and the soaked count: the layers are a whole map.
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Terrain")
-            .field("tiles", &self.tiles)
-            .field("soaked", &self.soaked)
-            .finish_non_exhaustive()
-    }
-}
-
 /// The index of tile `(x, y)` in a layer `side` tiles a side, row by row;
 /// `None` off it or for an empty layer (`side` 0).
 fn index_in(side: i32, x: i32, y: i32) -> Option<usize> {

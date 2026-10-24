@@ -79,7 +79,7 @@ impl Captain {
                 width,
                 depth,
             };
-            if line.footing(t, ctx.view, rear) < FOOTING {
+            if line.footing(t, rear) < FOOTING {
                 return None;
             }
             let mut s = 0.0;

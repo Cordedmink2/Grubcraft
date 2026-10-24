@@ -20,7 +20,7 @@
 
 use glam::Vec2;
 
-use crate::perception::{Perception, right_of};
+use crate::perception::right_of;
 use crate::terrain::Terrain;
 
 /// How far out from the end of a line ground still counts as cover, tiles.
@@ -60,8 +60,8 @@ impl Line {
 
     /// Share of the places under the line, and under a row `behind` tiles
     /// behind it (the archers), where a regiment can stand out of the water
-    /// and the mud (as `view` sees it).
-    pub fn footing(&self, terrain: &Terrain, view: &Perception, behind: f32) -> f32 {
+    /// and the mud.
+    pub fn footing(&self, terrain: &Terrain, behind: f32) -> f32 {
         let rows = [
             self.depth * 0.5 - 0.5,
             0.0,
@@ -69,7 +69,7 @@ impl Line {
             -self.depth * 0.5 - behind,
         ];
         self.share(&rows, 2.0, |p| {
-            terrain.walkable(p) && !terrain.wet(p) && !view.soft(p)
+            terrain.walkable(p) && !terrain.wet(p) && !terrain.soft(p)
         })
     }
 
@@ -341,10 +341,9 @@ mod tests {
     #[test]
     fn footing_keeps_the_line_out_of_the_water_and_off_the_cliff() {
         let t = ground();
-        let v = Perception::new();
-        assert_eq!(line(Vec2::new(20.0, 32.0)).footing(&t, &v, 6.0), 1.0);
-        assert!(line(Vec2::new(32.0, 53.0)).footing(&t, &v, 6.0) < 0.5);
-        assert!(line(Vec2::new(40.0, 32.0)).footing(&t, &v, 6.0) < 0.8);
+        assert_eq!(line(Vec2::new(20.0, 32.0)).footing(&t, 6.0), 1.0);
+        assert!(line(Vec2::new(32.0, 53.0)).footing(&t, 6.0) < 0.5);
+        assert!(line(Vec2::new(40.0, 32.0)).footing(&t, 6.0) < 0.8);
     }
 
     #[test]
