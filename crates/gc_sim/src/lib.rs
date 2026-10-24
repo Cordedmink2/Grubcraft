@@ -115,7 +115,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 42;
+pub const SIM_VERSION: u32 = 43;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -759,6 +759,14 @@ pub enum Command {
         regiment: RegimentHandle,
         structure: StructureHandle,
     },
+    /// Conquest: a regiment of foot or archers climbs an enemy's wall of
+    /// level 2 or 3 at tile `structure` on ladders: it fights whoever
+    /// holds that tile from the ladder head, then takes the wall (see
+    /// [`manning`]).
+    Climb {
+        regiment: RegimentHandle,
+        structure: StructureHandle,
+    },
 }
 
 impl Command {
@@ -794,6 +802,7 @@ impl Command {
             | Command::DropPlan { .. }
             | Command::WorkPlan { .. }
             | Command::ManWall { .. }
+            | Command::Climb { .. }
             | Command::Rally { .. }
             | Command::HandOver { .. } => true,
             Command::SpawnRegiment { .. }
@@ -1215,6 +1224,28 @@ impl World {
         let i = self.regiments.resolve(r).ok_or(Refusal::Unknown)?;
         c.man_check(self.regiments.owner[i], i, &self.regiments, h)
             .map(|_| ())
+    }
+
+    /// Whether regiment `r` may climb enemy wall tile `h` on ladders (see
+    /// [`Command::Climb`]), or why not.
+    pub fn climb_check(&self, r: RegimentHandle, h: StructureHandle) -> Result<(), Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        let i = self.regiments.resolve(r).ok_or(Refusal::Unknown)?;
+        if !self.may_assault(self.regiments.owner[i], h) {
+            return Err(Refusal::Unknown);
+        }
+        c.climb_check(i, &self.regiments, h).map(|_| ())
+    }
+
+    /// Whether `player`'s regiments may assault building `h`: an enemy's,
+    /// and in fog of war only one their side has seen.
+    fn may_assault(&self, player: PlayerId, h: StructureHandle) -> bool {
+        let Some(s) = self.conquest.as_ref().map(|c| &c.structures) else {
+            return false;
+        };
+        s.owner(h)
+            .is_some_and(|enemy| self.stances.hostile(player, enemy))
+            && s.get(h).is_some_and(|v| v.seen_by(player))
     }
 
     /// Whether regiment `h` stands on a wall (see [`manning`]).
@@ -1858,29 +1889,19 @@ impl World {
                 regiment,
                 structure,
             } => {
-                let Some(conquest) = &mut self.conquest else {
+                let r = self.regiments.resolve(regiment).filter(|&r| {
+                    self.stances.can_command(pc.player, self.regiments.owner[r])
+                        && self.may_assault(self.regiments.owner[r], structure)
+                        && !self.regiments.morale_state[r].broken()
+                });
+                let (Some(r), Some(conquest)) = (r, &mut self.conquest) else {
                     return false;
                 };
-                match (
-                    self.regiments.resolve(regiment),
-                    conquest.structures.owner(structure),
-                ) {
-                    (Some(r), Some(enemy))
-                        if self.stances.can_command(pc.player, self.regiments.owner[r])
-                            && self.stances.hostile(self.regiments.owner[r], enemy)
-                            && !self.regiments.morale_state[r].broken()
-                            // In fog of war, only a building its side has seen.
-                            && (conquest.structures.get(structure))
-                                .is_some_and(|s| s.seen_by(self.regiments.owner[r])) =>
-                    {
-                        conquest.stop_work(r);
-                        conquest
-                            .structures
-                            .besiege(&mut self.regiments, r, structure);
-                        true
-                    }
-                    _ => false,
-                }
+                conquest.stop_work(r);
+                conquest
+                    .structures
+                    .besiege(&mut self.regiments, r, structure);
+                true
             }
             Command::Gather { regiment, node } => {
                 let Some(conquest) = &mut self.conquest else {
@@ -2002,6 +2023,19 @@ impl World {
                     }
                     _ => false,
                 }
+            }
+            Command::Climb {
+                regiment,
+                structure,
+            } => {
+                let r = self.regiments.resolve(regiment).filter(|&r| {
+                    self.stances.can_command(pc.player, self.regiments.owner[r])
+                        && self.may_assault(self.regiments.owner[r], structure)
+                });
+                let (Some(r), Some(conquest)) = (r, &mut self.conquest) else {
+                    return false;
+                };
+                conquest.climb_wall(r, structure, &mut self.regiments, &self.units, &self.nav)
             }
             Command::WorkPlan { regiment } => {
                 match (self.worker_of(pc.player, regiment), &mut self.conquest) {

@@ -537,6 +537,8 @@ pub(crate) enum Work {
     Build = 1,
     /// Climb up onto the wall by it (its owner's; see [`crate::manning`]).
     Man = 2,
+    /// Climb onto it on ladders (an enemy's wall; see [`crate::manning`]).
+    Climb = 3,
 }
 
 /// Every building on the field, and which regiments are attacking which.
@@ -1484,7 +1486,7 @@ impl Structures {
                 continue;
             }
             way.arrive(regs, r);
-            if self.work[r] == Work::Man {
+            if matches!(self.work[r], Work::Man | Work::Climb) {
                 // At the foot of the wall: it climbs (see `crate::manning`).
                 self.climbed.push(regs.handle(r));
                 self.siege[r] = None;

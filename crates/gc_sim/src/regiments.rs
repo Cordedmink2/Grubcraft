@@ -303,6 +303,9 @@ regiment_fields! {
     /// walking grid, out of reach of melee from the ground, and moved only
     /// by the wall.
     on_wall: bool = false,
+    /// On a wall, fighting at the head of a ladder it climbed (see
+    /// [`crate::manning`]): head on, a few wide, at a disadvantage.
+    climber: bool = false,
 }
 
 impl Regiments {
@@ -1005,6 +1008,7 @@ impl Regiments {
             torches: self.torches[i],
             falling_back: self.falling_back[i] > 0,
             on_wall: self.on_wall[i],
+            climber: self.climber[i],
         }
     }
 
@@ -1263,6 +1267,8 @@ pub struct RegimentView {
     /// Standing on a wall's walkway (see [`crate::manning`]; its soldiers
     /// stand on the tiles [`crate::World::wall_tiles`] names).
     pub on_wall: bool,
+    /// On a wall at the head of a ladder, fighting its way onto it.
+    pub climber: bool,
 }
 
 impl RegimentView {

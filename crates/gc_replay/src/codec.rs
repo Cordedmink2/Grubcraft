@@ -440,6 +440,14 @@ impl Writer {
                 self.handle(regiment);
                 self.structure(structure);
             }
+            Command::Climb {
+                regiment,
+                structure,
+            } => {
+                self.u8(38);
+                self.handle(regiment);
+                self.structure(structure);
+            }
             Command::SetGate { structure, mode } => {
                 self.u8(28);
                 self.structure(structure);
@@ -883,6 +891,10 @@ impl<'a> Reader<'a> {
                 regiment: self.handle()?,
                 structure: self.structure()?,
             },
+            38 => Command::Climb {
+                regiment: self.handle()?,
+                structure: self.structure()?,
+            },
             tag @ (34 | 35) => Command::RaiseWall {
                 structure: self.structure()?,
                 regiment: if tag == 34 {
@@ -1133,6 +1145,16 @@ mod tests {
                 regiment: RegimentHandle {
                     index: 9,
                     generation: 3,
+                },
+            },
+            Command::Climb {
+                regiment: RegimentHandle {
+                    index: 5,
+                    generation: 1,
+                },
+                structure: StructureHandle {
+                    index: 13,
+                    generation: 4,
                 },
             },
             Command::ManWall {

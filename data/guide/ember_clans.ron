@@ -177,7 +177,7 @@
             notes: [],
             tips: [
                 (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),
-                (icon: Hammer, text: "Select a Stone Wall and press U once you have a Castle Keep."),
+                (icon: Alarm, text: "Right-click an enemy raised wall with foot or archers to climb it; spears stop climbers."),
                 (icon: Grub, text: "Each tile costs 20 Grub and 5 Marrow, paid for the whole stretch up front."),
             ],
         ),

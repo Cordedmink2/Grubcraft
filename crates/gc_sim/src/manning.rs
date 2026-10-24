@@ -10,11 +10,21 @@
 //! other order brings it down at the foot it climbed from. When a tile it
 //! holds falls (or a Choir wall under it loses power) the whole regiment
 //! comes down with it into the breach, hurt and in disorder.
+//!
+//! Foot and archers of an enemy can climb a walkway on ladders
+//! ([`LADDER_TICKS`]). Where a defender holds the tile they climbed to,
+//! they fight it at the ladder head ([`Regiments`] `climber`): head on, at
+//! most [`LADDER_FRONT`] wide, dealing [`LADDER_DAMAGE_PERCENT`] of their
+//! damage and taking [`REACH_VS_LADDER_PERCENT`] from spears. Once no
+//! defender holds it they spread along the walkway like a regiment
+//! manning it, facing in, and come down inside the walls.
 
 use crate::Formation;
+use crate::combat::Block;
 use crate::conquest::Conquest;
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments};
+use crate::stances::Stances;
 use crate::structures::{Refusal, StructureHandle, Work, footprint_centre};
 use crate::veins::foot_reaches;
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats, Vec};
@@ -32,6 +42,14 @@ pub const MAX_HELD: usize = 24;
 pub const MAX_HOLDS: usize = 256;
 /// Ticks a regiment takes to climb at the foot of the wall.
 pub const CLIMB_TICKS: u16 = 3 * TICKS_PER_SECOND as u16;
+/// Ticks a regiment takes to climb an enemy's wall on ladders.
+pub const LADDER_TICKS: u16 = 3 * CLIMB_TICKS;
+/// The most soldiers a side fights with at the head of a ladder.
+pub const LADDER_FRONT: u16 = 3;
+/// What climbers' blows do at the head of a ladder, in percent.
+pub const LADDER_DAMAGE_PERCENT: u64 = 50;
+/// What spears and pikes do to climbers, in percent.
+pub const REACH_VS_LADDER_PERCENT: u64 = 150;
 /// Hit points each soldier on a tile that falls loses.
 pub const FALL_HP: u32 = 10;
 /// How far along a wall a regiment looks for its stair, in tiles.
@@ -40,7 +58,8 @@ const STAIR_TILES: usize = 128;
 /// Where a regiment sent onto a wall is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
-    /// Walking to the stair (its [`Work::Man`] job).
+    /// Walking to the stair (its [`Work::Man`] job), or to the foot of an
+    /// enemy's wall ([`Work::Climb`]).
     Going,
     /// Climbing at the foot: ticks left.
     Climbing(u16),
@@ -53,6 +72,8 @@ enum Phase {
 struct Hold {
     regiment: RegimentHandle,
     phase: Phase,
+    /// Climbing an enemy's wall on ladders, rather than its own.
+    ladder: bool,
     /// The tile it was sent to: it spreads out from there.
     tile: StructureHandle,
     /// Where it stood to climb, and comes down to.
@@ -100,9 +121,30 @@ impl Manning {
 
     /// Whether wall slot handle `t` is held by any regiment.
     fn taken(&self, t: StructureHandle) -> bool {
-        self.holds
-            .iter()
-            .any(|h| h.tiles[..usize::from(h.held)].contains(&t))
+        self.held_by_other(t, usize::MAX)
+    }
+
+    /// Whether wall slot handle `t` is held by a regiment other than hold
+    /// `k`'s.
+    fn held_by_other(&self, t: StructureHandle, k: usize) -> bool {
+        (self.holds.iter().enumerate())
+            .any(|(n, h)| n != k && h.tiles[..usize::from(h.held)].contains(&t))
+    }
+
+    /// The regiment slot holding wall slot handle `t` against hold `k`'s
+    /// (another's, hostile to it), if any.
+    fn defender(
+        &self,
+        t: StructureHandle,
+        k: usize,
+        regs: &Regiments,
+        stances: &Stances,
+    ) -> Option<usize> {
+        let me = regs.owner[self.holds[k].regiment.index as usize];
+        (self.holds.iter().enumerate())
+            .filter(|&(n, h)| n != k && h.tiles[..usize::from(h.held)].contains(&t))
+            .filter_map(|(_, h)| regs.resolve(h.regiment))
+            .find(|&j| stances.hostile(me, regs.owner[j]))
     }
 
     /// The tiles regiment `h` holds, if it is on a wall.
@@ -128,6 +170,7 @@ impl Manning {
                 }
                 Phase::Holding => h.u8(2),
             }
+            h.u8(u8::from(o.ladder));
             h.u32(o.tile.index);
             h.u16(o.tile.generation);
             h.i32(o.foot.x.raw());
@@ -161,8 +204,15 @@ impl Conquest {
         regs: &Regiments,
         h: StructureHandle,
     ) -> Result<usize, Refusal> {
+        let i = self.structures.owned(h, player).ok_or(Refusal::Unknown)?;
+        self.walkway_check(i, r, regs)
+    }
+
+    /// Whether regiment slot `r` may go onto wall slot `i`, whoever's it
+    /// is: a finished wall with a walkway, powered if it needs power, and
+    /// a regiment that mans walls, steady and not fighting. `i` if so.
+    fn walkway_check(&self, i: usize, r: usize, regs: &Regiments) -> Result<usize, Refusal> {
         let s = &self.structures;
-        let i = s.owned(h, player).ok_or(Refusal::Unknown)?;
         if !s.is_line(i) || !self.unit(regs.unit[r]).mans_walls {
             return Err(Refusal::Unknown);
         }
@@ -196,19 +246,40 @@ impl Conquest {
         units: &[UnitStats],
         nav: &Nav,
     ) -> bool {
-        let Ok(i) = self.man_check(player, r, regs, h) else {
+        if self.man_check(player, r, regs, h).is_err() {
             return false;
-        };
+        }
+        self.set_off(r, h, false, regs, units, nav);
+        true
+    }
+
+    /// Regiment slot `r` sets off for wall tile `h` (checked): off
+    /// whatever wall it was on, it leaves its work and walks to the
+    /// nearest stair, or for `ladder`s to the tile itself, a hold going.
+    fn set_off(
+        &mut self,
+        r: usize,
+        h: StructureHandle,
+        ladder: bool,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        nav: &Nav,
+    ) {
         if let Some(k) = self.manning.find(r) {
             let foot = self.manning.holds[k].foot;
             self.come_down(k, foot, regs, units, nav);
         }
         self.stop_work(r);
-        let stair = self.stair(i, regs.position[r]);
-        self.structures.send(regs, r, stair, Work::Man);
+        let (to, work) = match self.structures.resolve(h) {
+            Some(i) if !ladder => (self.stair(i, regs.position[r]), Work::Man),
+            Some(_) => (h, Work::Climb),
+            None => return,
+        };
+        self.structures.send(regs, r, to, work);
         self.manning.holds.push(Hold {
             regiment: regs.handle(r),
             phase: Phase::Going,
+            ladder,
             tile: h,
             foot: regs.position[r],
             from: regs.position[r],
@@ -218,6 +289,35 @@ impl Conquest {
             tiles: [h; MAX_HELD],
             at: [(0, 0); MAX_HELD],
         });
+    }
+
+    /// Whether regiment slot `r` may climb wall tile `h` on ladders, and
+    /// the tile's slot: as [`Conquest::man_check`], but anyone's wall (the
+    /// caller checks the owner is hostile, and seen).
+    pub(crate) fn climb_check(
+        &self,
+        r: usize,
+        regs: &Regiments,
+        h: StructureHandle,
+    ) -> Result<usize, Refusal> {
+        let i = self.structures.resolve(h).ok_or(Refusal::Unknown)?;
+        self.walkway_check(i, r, regs)
+    }
+
+    /// Regiment slot `r` goes to climb enemy wall tile `h` on ladders (see
+    /// [`Conquest::climb_check`]), off whatever wall it was on.
+    pub(crate) fn climb_wall(
+        &mut self,
+        r: usize,
+        h: StructureHandle,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        nav: &Nav,
+    ) -> bool {
+        if self.climb_check(r, regs, h).is_err() {
+            return false;
+        }
+        self.set_off(r, h, true, regs, units, nav);
         true
     }
 
@@ -315,24 +415,36 @@ impl Conquest {
     /// One tick of the regiments on the walls, after the buildings: those
     /// at the foot of their stair climb, those done climbing spread along
     /// the walkway, and those whose tiles fell come down with them.
-    pub(crate) fn man_walls(&mut self, regs: &mut Regiments, units: &[UnitStats], nav: &Nav) {
+    pub(crate) fn man_walls(
+        &mut self,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        nav: &Nav,
+        stances: &Stances,
+    ) {
         self.manning
             .holds
             .retain(|o| regs.resolve(o.regiment).is_some());
         let mut k = 0;
         while k < self.manning.holds.len() {
-            let (regiment, phase) = {
+            let (regiment, phase, ladder) = {
                 let o = &self.manning.holds[k];
-                (o.regiment, o.phase)
+                (o.regiment, o.phase, o.ladder)
             };
             let r = regiment.index as usize;
+            let work = if ladder { Work::Climb } else { Work::Man };
             match phase {
                 Phase::Going => {
                     if self.structures.climbed.contains(&regiment) {
                         let hold = &mut self.manning.holds[k];
-                        hold.phase = Phase::Climbing(CLIMB_TICKS);
+                        hold.phase =
+                            Phase::Climbing(if ladder { LADDER_TICKS } else { CLIMB_TICKS });
                         hold.foot = regs.position[r];
-                    } else if !matches!(self.structures.job_of(regs, r), Some((_, Work::Man))) {
+                    } else if self
+                        .structures
+                        .job_of(regs, r)
+                        .is_none_or(|(_, w)| w != work)
+                    {
                         // Given another order, routed, or no way there.
                         self.manning.holds.remove(k);
                         continue;
@@ -347,7 +459,15 @@ impl Conquest {
                     let left = left.saturating_sub(regs.steps(r));
                     if left > 0 {
                         self.manning.holds[k].phase = Phase::Climbing(left);
-                    } else if !self.mount(k, r, regs) {
+                        k += 1;
+                        continue;
+                    }
+                    let up = if ladder {
+                        self.top(k, r, regs, units, stances)
+                    } else {
+                        self.mount(k, r, regs)
+                    };
+                    if !up {
                         // No room left on that wall.
                         self.manning.holds.remove(k);
                         continue;
@@ -364,10 +484,115 @@ impl Conquest {
                         self.fall(k, r, f, regs, units, nav);
                         continue;
                     }
+                    if regs.climber[r]
+                        && regs.engaged[r].is_none()
+                        && (self.manning.defender(o.tile, k, regs, stances)).is_none()
+                    {
+                        // No one holds the ladder head now: onto the wall.
+                        self.take_the_wall(k, r, regs);
+                    }
                 }
             }
             k += 1;
         }
+    }
+
+    /// Hold `k`'s regiment, slot `r`, at the top of its ladders: it fights
+    /// whoever holds the tile it climbed to from the ladder head (one tile
+    /// out from the wall, facing in, a few wide), or, if no one does,
+    /// takes the wall. False if the wall is gone, or full.
+    fn top(
+        &mut self,
+        k: usize,
+        r: usize,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        stances: &Stances,
+    ) -> bool {
+        let (tile, foot) = (self.manning.holds[k].tile, self.manning.holds[k].foot);
+        let s = &self.structures;
+        let Some(i) = s.resolve(tile).filter(|&i| s.walkway(i) && s.powered(i)) else {
+            return false;
+        };
+        let Some(j) = self.manning.defender(tile, k, regs, stances) else {
+            return self.take_the_wall(k, r, regs);
+        };
+        let centre = s.centre(i);
+        let out = Angle::of_vec(foot - centre);
+        let [x, y, _, _] = s.footprint(i);
+        let hold = &mut self.manning.holds[k];
+        hold.phase = Phase::Holding;
+        hold.held = 1;
+        hold.tiles[0] = tile;
+        hold.at[0] = (x as i16, y as i16);
+        regs.formation[r] = Formation::Line;
+        regs.braced[r] = false;
+        regs.leave_fight(r);
+        let head = centre + out.to_vec();
+        regs.place(
+            regs.handle(r),
+            head,
+            out.wrapping_add(Angle::HALF),
+            LADDER_FRONT,
+        );
+        // Up against the defender's front (on the side it climbed), where
+        // the tile is beyond the end of the defender's block, at that end.
+        let (them, me) = (Block::of(regs, units, j), Block::of(regs, units, r));
+        let along = (head - them.centre).dot(them.right);
+        let along = along.clamp(-them.half_width, them.half_width);
+        let side = if (foot - them.centre).dot(them.forward) < Fx::ZERO {
+            them.forward * -Fx::ONE
+        } else {
+            them.forward
+        };
+        let gap = them.half_depth + me.half_depth;
+        regs.position[r] = them.centre + them.right * along + side * gap;
+        regs.facing[r] = Angle::of_vec(side * -Fx::ONE);
+        regs.on_wall[r] = true;
+        regs.climber[r] = true;
+        true
+    }
+
+    /// Hold `k`'s climbers, slot `r`, with no one holding the tile they
+    /// climbed to, spread along the walkway from it as a regiment manning
+    /// it would, facing in, and will come down inside the walls. False if
+    /// there is no room (they stay as they were).
+    fn take_the_wall(&mut self, k: usize, r: usize, regs: &mut Regiments) -> bool {
+        let hold = self.manning.holds[k];
+        let s = &self.structures;
+        let Some(i) = s.resolve(hold.tile) else {
+            return false;
+        };
+        // The inside: across the wall as drawn from the foot of its ladders
+        // (or, climbed at an end along the wall, from where it was sent).
+        let centre = s.centre(i);
+        let [x0, y0, x1, y1] = s.line[i];
+        let n = FxVec2::from_ints(-i32::from(y1 - y0), i32::from(x1 - x0));
+        let n = if n == FxVec2::ZERO {
+            hold.foot - centre
+        } else {
+            n
+        };
+        let mut side = (hold.foot - centre).dot(n);
+        if side == Fx::ZERO {
+            side = (hold.from - centre).dot(n);
+        }
+        let n = Angle::of_vec(n).to_vec() * Fx::from_ratio(3, 2);
+        let o = &mut self.manning.holds[k];
+        o.held = 0;
+        o.foot = if side < Fx::ZERO {
+            centre + n
+        } else {
+            centre - n
+        };
+        // It faces away from its ladders: in.
+        o.from = hold.foot;
+        if !self.mount(k, r, regs) {
+            self.manning.holds[k] = hold;
+            return false;
+        }
+        regs.climber[r] = false;
+        true
     }
 
     /// Hold `k`'s regiment, slot `r`, done climbing, takes up to one tile a
@@ -456,6 +681,7 @@ impl Conquest {
             return;
         }
         regs.on_wall[r] = false;
+        regs.climber[r] = false;
         regs.formation[r] = o.formation;
         regs.set_frontage(r, o.frontage);
         let at = nav.settle(regs.owner[r], at, regs.berth(units, r));

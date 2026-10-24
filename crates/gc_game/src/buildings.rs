@@ -1807,6 +1807,27 @@ pub fn wall_slots<'a>(
         })
 }
 
+/// Where the three ladders against the wall tile regiment `h` climbs go:
+/// centre, facing (into the wall) and across unit vector, with the height
+/// of the wall there. `from` is where the regiment stands.
+pub fn ladder_props(
+    world: &World,
+    table: &Table,
+    h: gc_sim::RegimentHandle,
+    from: Vec2,
+) -> Option<([Vec2; 3], Vec2, f32)> {
+    let slot = wall_slots(world, table, h).next()?;
+    let out = (from - slot.centre).try_normalize()?;
+    let facing = -out;
+    let across = Vec2::new(-facing.y, facing.x);
+    let at = slot.centre + out * 0.52;
+    Some((
+        [at - across * 0.9, at, at + across * 0.9],
+        facing,
+        slot.lift,
+    ))
+}
+
 /// A refusal in the panel's words.
 pub fn why(refusal: Refusal) -> &'static str {
     match refusal {

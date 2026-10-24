@@ -1609,13 +1609,24 @@ impl Combat {
             }
             let (files, models) = (regs.files[i], regs.models[i]);
             // Soldiers who can reach the foe, in percent of a soldier.
-            let my_side = me.side_facing(them.centre);
+            // At the head of a ladder the fight is head on, and only a few
+            // wide (see `crate::manning`).
+            let ladder = regs.climber[i] || regs.climber[j];
+            let (my_side, side, width) = if ladder {
+                (Side::Front, Side::Front, crate::manning::LADDER_FRONT)
+            } else {
+                (
+                    me.side_facing(them.centre),
+                    them.side_facing(me.centre),
+                    u16::MAX,
+                )
+            };
             let fighters = match my_side {
                 Side::Front => attacker.front_fighters_percent(files, models),
                 Side::Flank => 100 * u64::from(formation::ranks(files, models)),
                 Side::Rear => 100 * u64::from(files.min(models).div_ceil(2)),
-            };
-            let side = them.side_facing(me.centre);
+            }
+            .min(100 * u64::from(width));
             // Not marching: a disciplined regiment holds its ground (see
             // `UnitStats::melee_defence_in`).
             let defence =
@@ -1655,6 +1666,11 @@ impl Combat {
             if regs.led[i] && attacker.morale == 0 {
                 landed = landed * crate::generals::DRIVEN_PERCENT / 100;
             }
+            if regs.climber[i] {
+                landed = landed * crate::manning::LADDER_DAMAGE_PERCENT / 100;
+            } else if regs.climber[j] && attacker.reach {
+                landed = landed * crate::manning::REACH_VS_LADDER_PERCENT / 100;
+            }
             landed = landed * BATTLE_PACE_PERCENT / 100;
             // Even a blow that can't wound shoves, by the weight of all the
             // blows the regiment strikes.
@@ -1677,7 +1693,9 @@ impl Combat {
                     side,
                     hit,
                     landed,
-                    reach: attacker.reach,
+                    // No second rank reaches past a ladder head.
+                    reach: attacker.reach && !ladder,
+                    width,
                 },
                 rng,
                 blows,
@@ -1712,9 +1730,9 @@ impl Combat {
                 continue;
             }
             // Up on a wall it shoots further, and along the wall's whole
-            // length without turning.
+            // length without turning (not from the head of a ladder).
             let mut range = stats.range;
-            if regs.on_wall[i] {
+            if regs.on_wall[i] && !regs.climber[i] {
                 range = range * crate::manning::WALL_RANGE_PERCENT / 100;
             }
             let Some(j) = self.pick_target(regs, stances, terrain, vision, i, range) else {
@@ -1800,8 +1818,9 @@ impl Combat {
                 / (100 * 100)
                 * VOLLEY_PACE_PERCENT
                 / 100;
-            // A wall's parapet covers those on it.
-            let expected = if regs.on_wall[j] {
+            // A wall's parapet covers those on it, not those still on
+            // their ladders.
+            let expected = if regs.on_wall[j] && !regs.climber[j] {
                 expected * crate::manning::WALL_COVER_PERCENT / 100
             } else {
                 expected
@@ -1978,6 +1997,8 @@ struct Fight {
     landed: u64,
     /// Spears and pikes: the second rank fights too.
     reach: bool,
+    /// The most soldiers abreast who strike (a ladder head's few).
+    width: u16,
 }
 
 /// The soldiers of a regiment along one side of its block, in order from
@@ -2107,6 +2128,7 @@ fn duel(
         hit,
         landed,
         reach,
+        width,
     } = fight;
     struck_on(regs, j, side);
     let models = regs.models[i];
@@ -2129,7 +2151,7 @@ fn duel(
         generation: regs.generation[j],
     };
     // Who strikes: the first `second` of them with a whole blow each.
-    let front = mine.files.min(models);
+    let front = mine.files.min(models).min(width);
     let (count, second) = match my_side {
         Side::Front if reach => (front + front.min(models - front), front),
         Side::Front => (front, front),
@@ -2182,7 +2204,11 @@ fn duel(
 /// broken one, cut down as it runs, has no line to hold and stays put.
 fn step_up(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, j: usize, ranks_before: u16) {
     let ranks_after = formation::ranks(regs.files[j], regs.models[j]);
-    if regs.models[j] > 0 && ranks_after < ranks_before && !regs.morale_state[j].broken() {
+    if regs.models[j] > 0
+        && ranks_after < ranks_before
+        && !regs.morale_state[j].broken()
+        && !regs.on_wall[j]
+    {
         let (_, spacing) = units[regs.unit[j] as usize].spacing(regs.formation[j]);
         let step = Fx::from_raw(spacing.raw() * i32::from(ranks_before - ranks_after) / 2);
         let to = regs.position[j] + regs.facing[j].to_vec() * step;

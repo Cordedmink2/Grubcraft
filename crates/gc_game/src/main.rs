@@ -2337,6 +2337,16 @@ impl Running {
                     self.input.right_down = None;
                     return;
                 }
+                // An enemy's raised wall: the regiments that can climb it do
+                // (Ctrl+right-click besieges it instead).
+                if drag.is_none()
+                    && body.is_none()
+                    && plain.and_then(|p| self.enemy_at(p)).is_none()
+                    && self.climb_right_click()
+                {
+                    self.input.right_down = None;
+                    return;
+                }
                 if body.is_none() && plain.is_some_and(|p| self.conquest_right_click(p)) {
                     self.input.right_down = None;
                     return;
@@ -3329,7 +3339,18 @@ impl Running {
                 fighter: fighter_of(stats, &r),
             };
             // Manning a wall, the soldiers stand on its tiles.
-            if r.on_wall || self.puppets.on_wall(r.handle) {
+            // At the head of a ladder they stand in their block, lifted to
+            // the wall top, with ladders against the wall below them.
+            let ladder = r
+                .climber
+                .then(|| buildings::ladder_props(&self.world, &self.buildings, r.handle, pos))
+                .flatten();
+            if let Some((_, _, top)) = ladder {
+                self.puppets.stand_on_ladder(r.handle, top);
+            } else if r.on_wall
+                || self.puppets.on_wall(r.handle)
+                || self.puppets.on_ladder(r.handle)
+            {
                 let slots = buildings::wall_slots(&self.world, &self.buildings, r.handle);
                 self.puppets.stand_on_wall(r.handle, slots);
             }
@@ -3342,6 +3363,17 @@ impl Running {
                 let tile_centre = Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5);
                 let from = if seen { pos } else { tile_centre };
                 self.ambient.felling.cutting(tile, from, clearing_style);
+            }
+            if let (true, Some((spots, facing, top))) = (seen, ladder) {
+                for at in spots {
+                    self.instances.push(BoxInstance {
+                        pos: at.to_array(),
+                        facing: facing.to_array(),
+                        size: [0.5, top + 0.2, 0.1],
+                        color: [120, 84, 48, 255],
+                        lift: 0.0,
+                    });
+                }
             }
             if !seen {
                 self.puppets.update_on(

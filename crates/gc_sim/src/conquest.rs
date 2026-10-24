@@ -264,7 +264,7 @@ impl Conquest {
         // After the power, which the Choir's walls read.
         self.structures.work_gates(regs, nav, stances);
         // After every building that fell or lost power this tick.
-        self.man_walls(regs, stats, nav);
+        self.man_walls(regs, stats, nav, stances);
         self.structures.charge_resonance();
         self.structures.grow_larvae();
         self.economy

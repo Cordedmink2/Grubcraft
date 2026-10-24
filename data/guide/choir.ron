@@ -136,7 +136,7 @@
             summary: "Level 3, the top: humming crystal, 4 times as tough as a Light Curtain. Needs tier 2. Your troops walk through it; it drops without power. Select a Glass Wall and press U.",
             notes: [],
             tips: [
-                (icon: Hammer, text: "Select a Glass Wall and press U once you reach tier 2."),
+                (icon: Alarm, text: "Right-click an enemy raised wall with foot or archers to climb it; spears stop climbers."),
                 (icon: Grub, text: "Each tile costs 20 Grub and 5 Marrow, paid for the whole stretch up front."),
                 (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),
             ],

@@ -468,3 +468,146 @@ fn shooters_attack_from_the_wall_and_melee_comes_down_to() {
     assert!(stays_up_to_attack(ARCHERS));
     assert!(!stays_up_to_attack(FOOT));
 }
+
+fn climb_order(w: &mut World, player: u8, r: RegimentHandle, at: (i32, i32)) -> bool {
+    let structure = tile(w, at);
+    order(
+        w,
+        player,
+        Command::Climb {
+            regiment: r,
+            structure,
+        },
+    )
+}
+
+#[test]
+fn only_enemy_foot_may_climb_a_walkway_on_ladders() {
+    let mut w = world();
+    let ours = spawn(&mut w, 0, FOOT, 14, 20);
+    let theirs = spawn(&mut w, 1, FOOT, 30, 20);
+    let worker = spawn(&mut w, 1, WORKER, 30, 26);
+    let stone = tile(&w, (WALL_X, 20));
+    let palisade = tile(&w, (10, 50));
+    assert_eq!(w.climb_check(ours, stone), Err(Refusal::Unknown));
+    assert_eq!(w.climb_check(worker, stone), Err(Refusal::Unknown));
+    assert_eq!(w.climb_check(theirs, palisade), Err(Refusal::NoWalkway));
+    assert_eq!(w.climb_check(theirs, stone), Ok(()));
+    assert!(!climb_order(&mut w, 0, ours, (WALL_X, 20)));
+    assert!(!climb_order(&mut w, 0, theirs, (WALL_X, 20)));
+    assert!(climb_order(&mut w, 1, theirs, (WALL_X, 20)));
+}
+
+#[test]
+fn climbers_take_an_empty_wall_and_come_down_inside() {
+    let mut w = world();
+    let theirs = spawn(&mut w, 1, FOOT, 26, 24);
+    assert!(climb_order(&mut w, 1, theirs, (WALL_X, 24)));
+    let started = w.tick_count();
+    climb(&mut w, theirs);
+    // Ladders are slow: three times the stair.
+    assert!(w.tick_count() - started >= 9 * TICKS_PER_SECOND);
+    let v = view(&w, theirs).unwrap();
+    assert!(!v.climber);
+    assert!(!w.wall_tiles(theirs).is_empty());
+    // Facing in, over the wall from where they came.
+    assert_eq!(v.facing, Angle::of_vec(FxVec2::from_ints(-1, 0)));
+    assert!(move_to(&mut w, 1, theirs, 10, 24));
+    let v = view(&w, theirs).unwrap();
+    assert!(!v.on_wall);
+    assert!(v.position.x < Fx::from_int(WALL_X), "{:?}", v.position);
+}
+
+/// Hit points lost by side 0's foot manning the wall and by side 1's foot
+/// climbing to it, in `seconds` after the climbers reach the top.
+fn ladder_fight(seconds: u32) -> (u32, u32) {
+    let mut w = world();
+    let ours = spawn(&mut w, 0, FOOT, 14, 24);
+    assert!(man(&mut w, 0, ours, (WALL_X, 24)));
+    climb(&mut w, ours);
+    let theirs = spawn(&mut w, 1, FOOT, 26, 30);
+    assert!(climb_order(&mut w, 1, theirs, (WALL_X, 30)));
+    climb(&mut w, theirs);
+    let v = view(&w, theirs).unwrap();
+    assert!(v.climber);
+    assert_eq!(v.frontage, 3);
+    let (a, b) = (hp(&w, ours), hp(&w, theirs));
+    let mut fought = false;
+    for _ in 0..seconds * TICKS_PER_SECOND {
+        w.tick(&[]);
+        fought |= view(&w, theirs).is_some_and(|v| v.engaged);
+    }
+    assert!(fought, "they fought at the ladder head");
+    (a - hp(&w, ours), b - hp(&w, theirs))
+}
+
+#[test]
+fn climbers_fight_the_defenders_at_a_disadvantage() {
+    let (defenders, climbers) = ladder_fight(20);
+    assert!(climbers > 0);
+    assert!(
+        climbers * 4 > defenders * 5,
+        "defenders lost {defenders}, climbers {climbers}"
+    );
+}
+
+#[test]
+fn climbers_who_beat_the_defenders_take_the_wall() {
+    let mut w = world();
+    // Two lone defenders, a regiment of climbers.
+    let ours = spawn(&mut w, 0, FOOT, 14, 24);
+    assert!(man(&mut w, 0, ours, (WALL_X, 24)));
+    climb(&mut w, ours);
+    let theirs = spawn(&mut w, 1, FOOT, 26, 30);
+    assert!(climb_order(&mut w, 1, theirs, (WALL_X, 30)));
+    climb(&mut w, theirs);
+    assert!(view(&w, theirs).unwrap().climber);
+    // The defenders are ordered off: the ladder head is free.
+    assert!(move_to(&mut w, 0, ours, 10, 24));
+    w.tick(&[]);
+    w.tick(&[]);
+    let v = view(&w, theirs).unwrap();
+    assert!(v.on_wall && !v.climber);
+    assert!(w.wall_tiles(theirs).len() > 1);
+}
+
+#[test]
+fn friends_climbing_the_same_tile_both_take_the_wall() {
+    let mut w = world();
+    let a = spawn(&mut w, 1, FOOT, 26, 22);
+    let b = spawn(&mut w, 1, FOOT, 26, 28);
+    assert!(climb_order(&mut w, 1, a, (WALL_X, 25)));
+    assert!(climb_order(&mut w, 1, b, (WALL_X, 25)));
+    climb(&mut w, a);
+    climb(&mut w, b);
+    for _ in 0..TICKS_PER_SECOND {
+        w.tick(&[]);
+    }
+    for r in [a, b] {
+        let v = view(&w, r).unwrap();
+        assert!(v.on_wall && !v.climber, "{r:?} stuck at the ladder head");
+    }
+}
+
+#[test]
+fn climbers_reach_a_defender_that_holds_their_tile_from_afar() {
+    let mut w = world();
+    // The defender spreads out from y = 10: its block's middle is far
+    // from the last tile it holds.
+    let ours = spawn(&mut w, 0, FOOT, 14, 12);
+    assert!(man(&mut w, 0, ours, (WALL_X, 10)));
+    climb(&mut w, ours);
+    let last = *w.wall_tiles(ours).last().unwrap();
+    let s = w.structures().unwrap();
+    let at = s.iter().find(|v| v.handle == last).unwrap().tile;
+    let theirs = spawn(&mut w, 1, FOOT, 26, at.1);
+    assert!(climb_order(&mut w, 1, theirs, at));
+    climb(&mut w, theirs);
+    assert!(view(&w, theirs).unwrap().climber);
+    let mut fought = false;
+    for _ in 0..5 * TICKS_PER_SECOND {
+        w.tick(&[]);
+        fought |= view(&w, theirs).is_some_and(|v| v.engaged);
+    }
+    assert!(fought, "the climbers met the defender");
+}

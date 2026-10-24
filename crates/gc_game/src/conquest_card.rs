@@ -609,6 +609,77 @@ impl Running {
         }
     }
 
+    /// The raised wall of an enemy under the mouse that some of the
+    /// selection could climb, with how many could and the refusal that
+    /// tells why none can. `None` unless regiments are selected over a
+    /// building of a side hostile to yours.
+    fn climbing_under_cursor(&self) -> Option<(StructureHandle, usize, Option<Refusal>)> {
+        let wall = self.enemy_wall_under_cursor()?;
+        let (climbers, why) = man_verdict(&self.selected, |h| self.world.climb_check(h, wall));
+        Some((wall, climbers, why))
+    }
+
+    /// The enemy building under the cursor, with regiments selected, in a
+    /// Conquest match you play in.
+    fn enemy_wall_under_cursor(&self) -> Option<StructureHandle> {
+        if !self.conquest_match() || self.watching.is_some() || self.selected.is_empty() {
+            return None;
+        }
+        let side = self.sandbox.side;
+        self.building_under_cursor(|o| self.world.hostile(side, o))
+    }
+
+    /// A right-click on a raised wall of an enemy: the selected regiments
+    /// that can climb it are sent up ladders, and the rest lay siege to it.
+    /// Ctrl+right-click sends all of them to siege instead (returns false,
+    /// leaving that to the usual right-click). Returns whether any
+    /// regiment was sent up.
+    pub fn climb_right_click(&mut self) -> bool {
+        if self.input.command {
+            return false;
+        }
+        let Some(wall) = self.enemy_wall_under_cursor() else {
+            return false;
+        };
+        let (up, rest): (Vec<_>, Vec<_>) =
+            (self.selected.iter()).partition(|&&h| self.world.climb_check(h, wall).is_ok());
+        if up.is_empty() {
+            return false;
+        }
+        self.orders(up.into_iter().map(|regiment| Command::Climb {
+            regiment,
+            structure: wall,
+        }));
+        if !rest.is_empty() {
+            let selected = std::mem::replace(&mut self.selected, rest);
+            self.issue_siege(wall);
+            self.selected = selected;
+        }
+        true
+    }
+
+    /// The line under the cursor over an enemy wall with regiments
+    /// selected: that they can climb it, or why they can't.
+    pub fn climb_hint(&self) -> Option<String> {
+        let (_, climbers, why) = self.climbing_under_cursor()?;
+        if self.input.command {
+            return Some("Right-click to attack the wall".into());
+        }
+        if climbers > 0 {
+            return Some("Right-click to climb the wall on ladders (Ctrl: attack it)".into());
+        }
+        Some(
+            match why? {
+                Refusal::NoWalkway => "Only a raised wall (level 2 or 3) can be climbed.",
+                Refusal::Busy => "They can't climb now: it isn't finished, or they are fighting.",
+                Refusal::Unpowered => "That wall stands open without its power.",
+                Refusal::Unknown => "Only foot and archers can climb walls.",
+                r => buildings::why(r),
+            }
+            .into(),
+        )
+    }
+
     /// A right-click in Conquest that means more than a move: the rally
     /// point of a selected building that trains, or workers (and only
     /// workers) sent to a seep, a vein or one of your buildings. Returns

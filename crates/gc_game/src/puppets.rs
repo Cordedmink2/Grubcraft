@@ -886,6 +886,9 @@ pub struct Puppets {
     /// by [`Puppets::stand_on_wall`]; and per puppet how high he stands.
     wall: Vec<Vec<WallSlot>>,
     lift: Vec<f32>,
+    /// Per regiment, how high its soldiers stand in their block at the
+    /// head of a ladder (0: not on one), set by [`Puppets::stand_on_ladder`].
+    ladder: Vec<f32>,
     duel: Option<Duel>,
     /// The tick the duel the puppets are done with was called.
     duel_over: Option<u32>,
@@ -939,6 +942,7 @@ impl Puppets {
             time: 0.0,
             dt: 0.0,
             wall: vec![Vec::new(); regiment_capacity],
+            ladder: vec![0.0; regiment_capacity],
             lift: vec![0.0; regiment_capacity * SLOTS],
             duel: None,
             duel_over: None,
@@ -962,6 +966,24 @@ impl Puppets {
         };
         held.clear();
         held.extend(slots);
+        self.ladder[handle.index as usize] = 0.0;
+    }
+
+    /// Lift regiment `handle`'s soldiers to `height` where they stand in
+    /// their block, as at the head of a ladder against a wall that high
+    /// (0 puts them down). Call it every frame before the regiment's
+    /// update.
+    pub fn stand_on_ladder(&mut self, handle: RegimentHandle, height: f32) {
+        let i = handle.index as usize;
+        if let (Some(w), Some(l)) = (self.wall.get_mut(i), self.ladder.get_mut(i)) {
+            w.clear();
+            *l = height;
+        }
+    }
+
+    /// Whether regiment `handle`'s soldiers are lifted on a ladder.
+    pub fn on_ladder(&self, handle: RegimentHandle) -> bool {
+        (self.ladder.get(handle.index as usize)).is_some_and(|&h| h > 0.0)
     }
 
     /// Whether regiment `handle`'s soldiers are set to stand on a wall.
@@ -974,8 +996,10 @@ impl Puppets {
     /// How high the top of the wall regiment `handle` stands on is (the
     /// highest of its tiles), or 0 if it is not on one.
     pub fn wall_top(&self, handle: RegimentHandle) -> f32 {
-        (self.wall.get(handle.index as usize))
-            .map_or(0.0, |w| w.iter().map(|s| s.lift).fold(0.0, f32::max))
+        let i = handle.index as usize;
+        let slots =
+            (self.wall.get(i)).map_or(0.0, |w| w.iter().map(|s| s.lift).fold(0.0, f32::max));
+        slots.max(self.ladder.get(i).copied().unwrap_or(0.0))
     }
 
     /// Follow the generals (see [`gc_sim::generals`]) at the simulation's
@@ -1686,7 +1710,7 @@ impl Puppets {
             // On a wall each man stands on his tile, and climbs to its top.
             let held =
                 (!self.wall[r].is_empty()).then(|| wall_stand(&self.wall[r], k, models, right));
-            let up = held.map_or(0.0, |(_, lift)| lift);
+            let up = held.map_or(self.ladder[r], |(_, lift)| lift);
             let climb = CLIMB_RATE * dt.max(0.0);
             self.lift[i] = if fresh {
                 up
@@ -2277,6 +2301,10 @@ mod tests {
         // Down again: the men leave the wall.
         p.stand_on_wall(b.handle, std::iter::empty());
         assert!(!p.on_wall(b.handle) && p.wall_top(b.handle) == 0.0);
+        p.stand_on_ladder(b.handle, 1.5);
+        assert!(p.on_ladder(b.handle) && p.wall_top(b.handle) == 1.5);
+        p.stand_on_wall(b.handle, std::iter::empty());
+        assert!(!p.on_ladder(b.handle));
         for _ in 0..600 {
             last.clear();
             p.update(&b, 0, 0.016, |s| last.push(s));

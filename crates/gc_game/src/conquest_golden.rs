@@ -253,6 +253,10 @@ struct Side {
     manned: bool,
     /// The most workers it had at once (raids kill some later).
     workers: usize,
+    /// The soldier it sent up the other side's raised wall on ladders,
+    /// once on the march and in sight of it, and whether it got up.
+    climber: Option<RegimentHandle>,
+    climbed: bool,
 }
 
 /// The Clans' Shrine and their three built Edicts, as the first side plays
@@ -655,8 +659,10 @@ impl Match {
             let seen = target.is_some_and(|m| m.seen_by(p));
             if let Some(target) = target.filter(|_| seen || t.is_multiple_of(TICKS_PER_SECOND)) {
                 // Routers take no orders.
+                let climber = self.sides[usize::from(p)].climber;
                 let fighters = (self.world.regiments.iter()).filter(|r| {
                     r.owner == p
+                        && Some(r.handle) != climber
                         && r.unit == k.fighter
                         && k.fighter != k.worker
                         && !r.morale.broken()
@@ -679,6 +685,9 @@ impl Match {
                 }
             }
             self.sides[usize::from(p)].charged = seen || target.is_none();
+        }
+        if t >= march_at {
+            self.ladder(p, out);
         }
         self.tower(p, out);
         self.gate(p, out);
@@ -836,6 +845,37 @@ impl Match {
                 },
             });
             self.sides[usize::from(p)].manning = true;
+        }
+    }
+
+    /// Side `p`'s army is on the march: the first of its soldiers that can
+    /// climbs the other side's raised wall on ladders, once seen.
+    fn ladder(&mut self, p: PlayerId, out: &mut Vec<PlayerCommand>) {
+        let side = self.sides[usize::from(p)];
+        if let Some(c) = side.climber {
+            let up = (self.world.regiments.iter()).any(|r| r.handle == c && r.on_wall);
+            self.sides[usize::from(p)].climbed |= up;
+            return;
+        }
+        let fighter = self.kits[usize::from(p)].fighter;
+        let walls = self.raised_walls(1 - p);
+        let pick = (self.world.regiments.iter())
+            .filter(|r| r.owner == p && r.unit == fighter && !r.engaged)
+            .find_map(|r| {
+                let tile = walls
+                    .iter()
+                    .find(|t| self.world.climb_check(r.handle, t.handle).is_ok())?;
+                Some((r.handle, tile.handle))
+            });
+        if let Some((regiment, structure)) = pick {
+            out.push(PlayerCommand {
+                player: p,
+                command: Command::Climb {
+                    regiment,
+                    structure,
+                },
+            });
+            self.sides[usize::from(p)].climber = Some(regiment);
         }
     }
 
@@ -1328,6 +1368,10 @@ mod tests {
         }
         assert!(m.sides.iter().any(|s| s.raised), "a side raised its wall");
         assert!(m.sides.iter().any(|s| s.manned), "a side manned its wall");
+        assert!(
+            m.sides.iter().any(|s| s.climbed),
+            "a side climbed the other's wall"
+        );
         assert_eq!(m.sides[1].powers, 3, "side 1 used its powers");
         assert_eq!(m.sides[0].edicts, 3, "side 0 used its Edicts");
         assert!(m.own(0, Some(m.kits[0].barracks)).is_empty(), "removed");
