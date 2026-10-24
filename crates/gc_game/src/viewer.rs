@@ -423,7 +423,7 @@ impl Viewer {
             lift: 0.0,
         });
         let hold = self.panel.clip().and_then(|k| look.clips.get(k)).copied();
-        let Some((pose, flat)) = showroom::pose(&art.clips, look.model, hold, self.time) else {
+        let Some(shown) = showroom::pose(&art.clips, look.model, hold, self.time) else {
             return;
         };
         showroom::stand(
@@ -432,7 +432,7 @@ impl Viewer {
             self.spot,
             self.ground,
             PLINTH_HEIGHT,
-            (pose, flat),
+            &shown,
             color,
         );
     }

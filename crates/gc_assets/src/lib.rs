@@ -17,6 +17,7 @@
 
 extern crate alloc;
 
+pub mod anim;
 pub mod detail;
 pub mod manifest;
 pub mod model;

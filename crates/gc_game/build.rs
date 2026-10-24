@@ -72,24 +72,35 @@ fn join_models(assets: &std::path::Path, out_dir: &std::path::Path) {
         .collect();
     more.sort();
     packs.extend(more);
+    // Load `bytes` as a model pack and hand its models to `then`.
+    fn with_models(
+        bytes: &[u8],
+        then: impl FnOnce(&Models<'_>) -> Result<(), String>,
+    ) -> Result<(), String> {
+        // Tables are read in place, so the bytes must sit 16-byte aligned.
+        let mut store = vec![0u128; bytes.len().div_ceil(16)];
+        bytemuck::cast_slice_mut::<u128, u8>(&mut store)[..bytes.len()].copy_from_slice(bytes);
+        let view = &bytemuck::cast_slice::<u128, u8>(&store)[..bytes.len()];
+        let pack = gc_assets::Pack::parse(view).map_err(|e| e.to_string())?;
+        then(&Models::from_pack(&pack).map_err(|e| e.to_string())?)
+    }
     let mut joined = ModelTables::default();
     for path in &packs {
         println!("cargo:rerun-if-changed={}", path.display());
         let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        // Tables are read in place, so the bytes must sit 16-byte aligned.
-        let mut store = vec![0u128; bytes.len().div_ceil(16)];
-        bytemuck::cast_slice_mut::<u128, u8>(&mut store)[..bytes.len()].copy_from_slice(&bytes);
-        let view = &bytemuck::cast_slice::<u128, u8>(&store)[..bytes.len()];
-        let models = gc_assets::Pack::parse(view)
-            .map_err(|e| e.to_string())
-            .and_then(|p| Models::from_pack(&p).map_err(|e| e.to_string()))
-            .and_then(|m| joined.append(&m).map_err(|e| e.to_string()));
-        if let Err(e) = models {
+        if let Err(e) = with_models(&bytes, |m| joined.append(m).map_err(|e| e.to_string())) {
             eprintln!("error: {}: {e}", path.display());
             std::process::exit(1);
         }
     }
     let mut pack = gc_assets::PackWriter::new();
     joined.write(&mut pack);
-    std::fs::write(out_dir.join("models.pak"), pack.finish()).expect("write joined model pack");
+    let bytes = pack.finish();
+    // The game turns every model off if the joined pack does not load (too
+    // many rows or materials together, say), so fail the build instead.
+    if let Err(e) = with_models(&bytes, |_| Ok(())) {
+        eprintln!("error: the joined model pack does not load: {e}");
+        std::process::exit(1);
+    }
+    std::fs::write(out_dir.join("models.pak"), bytes).expect("write joined model pack");
 }

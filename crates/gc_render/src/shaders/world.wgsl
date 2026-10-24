@@ -1275,11 +1275,17 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
 @group(1) @binding(8) var bones: texture_2d<f32>;
 @group(1) @binding(9) var<storage, read> set_vertices: array<SetVertex>;
 @group(1) @binding(10) var<storage, read> instances: array<u32>;
-@group(1) @binding(11) var<uniform> jobs: Jobs;
+@group(1) @binding(11) var<storage, read> jobs: Jobs;
 @group(1) @binding(12) var<storage, read_write> out_pos: array<f32>;
 @group(1) @binding(13) var<storage, read_write> out_shade: array<u32>;
 // The model vertices past `jobs.count.z`, when a GPU binds too few at once.
 @group(1) @binding(14) var<storage, read> set_vertices_hi: array<SetVertex>;
+// Every drawn soldier's final bone matrices (three rows of four floats a
+// bone), written by `cs_pose` and read by `cs_skin`.
+@group(1) @binding(15) var<storage, read_write> palette: array<vec4<f32>>;
+// Shared skeletons, their joint poses and each fitted model's fixes (see
+// `AnimGpu` in soldiers.rs for the layout), as vectors of four floats.
+@group(1) @binding(16) var<storage, read> anim: array<vec4<u32>>;
 
 fn set_vertex(i: u32) -> SetVertex {
     if i < jobs.count.z {
@@ -1302,19 +1308,24 @@ struct SetVertex {
     uv: u32,
 };
 
-// A run of soldiers of one model at one level of detail: their first
+// A run of soldiers of one model at one level of detail. `run`: their first
 // instance, the first vertex of the level's vertices and how many there are,
-// and the first output slot. Thread `n` of the pass belongs to the last job
-// whose slot is at or before it.
+// and the first output slot. `pose`: the first palette entry of the run's
+// first soldier, the model's bones (each soldier has that many entries),
+// where the model's fit starts in `anim` (0 for a model posed from bone
+// rows), and the run's first soldier counted over the frame. A skinning
+// thread belongs to the last job whose slot is at or before it, a posing
+// workgroup to the last whose first soldier is.
 struct Job {
     run: vec4<u32>,
+    pose: vec4<u32>,
 };
 
 struct Jobs {
-    // x: jobs, y: threads, z: model vertices in `set_vertices` (the rest
-    // are in `set_vertices_hi`)
+    // x: jobs, y: skinning threads, z: model vertices in `set_vertices`
+    // (the rest are in `set_vertices_hi`), w: soldiers posed
     count: vec4<u32>,
-    job: array<Job, 1023>,
+    job: array<Job>,
 };
 
 struct SoldierIn {
@@ -1370,6 +1381,11 @@ fn tone_mul(tone: f32) -> vec3<f32> {
     return (1.0 + 0.08 * tone) * (1.0 + tone * vec3<f32>(0.04, 0.015, -0.03));
 }
 
+// One bone's final matrix rows from the palette.
+fn palette_bone(slot: u32) -> mat3x4<f32> {
+    return mat3x4<f32>(palette[slot * 3u], palette[slot * 3u + 1u], palette[slot * 3u + 2u]);
+}
+
 fn bone_texel(row: u32, bone: u32, r: u32) -> vec4<f32> {
     return textureLoad(bones, vec2<i32>(i32(bone * 3u + r), i32(row)), 0);
 }
@@ -1401,6 +1417,271 @@ fn model_dir_to_world(m: mat3x4<f32>, d: vec3<f32>, facing: vec2<f32>, fallen: b
     return vec3<f32>(xz.x, l.y, xz.y);
 }
 
+// Words in a `SoldierInstance`.
+const INSTANCE_WORDS: u32 = 16u;
+// Layers a soldier may play on top of its base move (`PoseLayer`).
+const POSE_LAYERS: u32 = 3u;
+// Joints a skeleton may have, plus the still bone: one posing thread each.
+const POSE_GROUP: u32 = 64u;
+// Soldiers posed along the dispatch's first dimension.
+const POSE_ROW: u32 = 256u;
+
+// One layer of a soldier's pose: two frame rows, the blend between them and
+// how much of the layer shows, on which joints and how.
+struct Layer {
+    frames: vec2<u32>,
+    blend: f32,
+    weight: f32,
+    mask: u32,
+    additive: bool,
+};
+
+// Layer `k` of the instance at word `i`: 0 is the base move (its weight is
+// one), then `POSE_LAYERS` more.
+fn instance_layer(i: u32, k: u32) -> Layer {
+    var l: Layer;
+    if k == 0u {
+        l.frames = vec2<u32>(instances[i + 4u] & 0xffffu, instances[i + 4u] >> 16u);
+        l.blend = f32(instances[i + 5u] & 0xffu) / 255.0;
+        l.weight = 1.0;
+        l.mask = 0u;
+        l.additive = false;
+        return l;
+    }
+    let at = i + 9u + (k - 1u) * 2u;
+    let info = instances[at + 1u];
+    l.frames = vec2<u32>(instances[at] & 0xffffu, instances[at] >> 16u);
+    l.blend = f32(info & 0xffu) / 255.0;
+    l.weight = f32((info >> 8u) & 0xffu) / 255.0;
+    l.mask = (info >> 16u) & 0xffu;
+    l.additive = ((info >> 24u) & 1u) != 0u;
+    return l;
+}
+
+// A joint's pose: rotation, then translation and scale.
+struct JointPose {
+    r: vec4<f32>,
+    ts: vec4<f32>,
+};
+
+// Where a skeleton's poses start in `anim`, and its joints (a row's length).
+struct Poses {
+    at: u32,
+    joints: u32,
+};
+
+// The two half floats in `w` (low first), decoded by hand: `unpack2x16float`
+// needs a capability not every GPU has. No infinities or NaNs are stored.
+fn halves(w: vec2<u32>) -> vec4<f32> {
+    let h = vec4<u32>(w.x & 0xffffu, w.x >> 16u, w.y & 0xffffu, w.y >> 16u);
+    let sign = (h & vec4<u32>(0x8000u)) << vec4<u32>(16u);
+    let e = (h >> vec4<u32>(10u)) & vec4<u32>(0x1fu);
+    let m = h & vec4<u32>(0x3ffu);
+    let normal = bitcast<vec4<f32>>(sign | ((e + vec4<u32>(112u)) << vec4<u32>(23u)) | (m << vec4<u32>(13u)));
+    let tiny = vec4<f32>(m) * 5.9604645e-8 * select(vec4<f32>(1.0), vec4<f32>(-1.0), sign != vec4<u32>(0u));
+    return select(normal, tiny, e == vec4<u32>(0u));
+}
+
+// A joint's pose in frame `row`, from eight half floats.
+fn joint_pose(poses: Poses, row: u32, joint: u32) -> JointPose {
+    let v = anim[poses.at + row * poses.joints + joint];
+    return JointPose(halves(v.xy), halves(v.zw));
+}
+
+// Normalised blend of two rotations, the short way round.
+fn quat_nlerp(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> {
+    let b2 = select(b, -b, dot(a, b) < 0.0);
+    return normalize(mix(a, b2, t));
+}
+
+fn quat_mul(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(
+        a.w * b.xyz + b.w * a.xyz + cross(a.xyz, b.xyz),
+        a.w * b.w - dot(a.xyz, b.xyz),
+    );
+}
+
+// A layer's pose of a joint, between its two frames.
+fn layer_pose(poses: Poses, l: Layer, joint: u32) -> JointPose {
+    let a = joint_pose(poses, l.frames.x, joint);
+    let b = joint_pose(poses, l.frames.y, joint);
+    return JointPose(quat_nlerp(a.r, b.r, l.blend), mix(a.ts, b.ts, l.blend));
+}
+
+// Rotation, translation and uniform scale as a matrix.
+fn pose_matrix(p: JointPose) -> mat4x4<f32> {
+    let q = p.r;
+    let s = p.ts.w;
+    let x2 = q.x + q.x;
+    let y2 = q.y + q.y;
+    let z2 = q.z + q.z;
+    let xx = q.x * x2;
+    let yy = q.y * y2;
+    let zz = q.z * z2;
+    let xy = q.x * y2;
+    let xz = q.x * z2;
+    let yz = q.y * z2;
+    let wx = q.w * x2;
+    let wy = q.w * y2;
+    let wz = q.w * z2;
+    return mat4x4<f32>(
+        vec4<f32>(1.0 - (yy + zz), xy + wz, xz - wy, 0.0) * s,
+        vec4<f32>(xy - wz, 1.0 - (xx + zz), yz + wx, 0.0) * s,
+        vec4<f32>(xz + wy, yz - wx, 1.0 - (xx + yy), 0.0) * s,
+        vec4<f32>(p.ts.xyz, 1.0),
+    );
+}
+
+// Three rows of floats in `anim` from `at` as a matrix.
+fn anim_matrix(at: u32) -> mat4x4<f32> {
+    return transpose(mat4x4<f32>(
+        bitcast<vec4<f32>>(anim[at]),
+        bitcast<vec4<f32>>(anim[at + 1u]),
+        bitcast<vec4<f32>>(anim[at + 2u]),
+        vec4<f32>(0.0, 0.0, 0.0, 1.0),
+    ));
+}
+
+// The job holding thread `n`, counting threads by `run.w` (skinning) or
+// soldiers by `pose.w` (posing): the last job starting at or before it.
+fn find_job(n: u32, posing: bool) -> u32 {
+    var lo = 0u;
+    var hi = jobs.count.x;
+    while hi - lo > 1u {
+        let mid = (lo + hi) / 2u;
+        let start = select(jobs.job[mid].run.w, jobs.job[mid].pose.w, posing);
+        if start <= n {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn write_palette(slot: u32, m: mat3x4<f32>) {
+    palette[slot * 3u] = m[0];
+    palette[slot * 3u + 1u] = m[1];
+    palette[slot * 3u + 2u] = m[2];
+}
+
+// The rows of a matrix (as `bone_rows` returns them).
+fn matrix_rows(m: mat4x4<f32>) -> mat3x4<f32> {
+    let t = transpose(m);
+    return mat3x4<f32>(t[0], t[1], t[2]);
+}
+
+var<workgroup> pose_globals: array<mat4x4<f32>, POSE_GROUP>;
+
+// Build one soldier's final bone matrices, a thread per bone, into the
+// palette, where every vertex that follows a bone then reads it.
+//
+// A model posed from bone rows blends its layers' matrices (a layer it
+// cannot hold, an additive one, is skipped). A model fitted to a skeleton
+// mixes each joint's pose from its layers (a layer only moves the joints its
+// mask covers; an additive layer adds its change on top), builds the joints'
+// matrices parent by parent, depth by depth (the roots taking the model's
+// `pre`, from the skeleton's space to its own), and ends each with its
+// bone's fix: `pre * global * post`.
+@compute @workgroup_size(POSE_GROUP)
+fn cs_pose(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(local_invocation_index) bone: u32,
+) {
+    let k = group.y * POSE_ROW + group.x;
+    if k >= jobs.count.w {
+        return;
+    }
+    let job = jobs.job[find_job(k, true)];
+    let nth = k - job.pose.w;
+    let soldier = job.run.x + nth;
+    let bones = job.pose.y;
+    let slot = job.pose.x + nth * bones + bone;
+    let i = soldier * INSTANCE_WORDS;
+    let fit = job.pose.z;
+
+    if fit == 0u {
+        if bone >= bones {
+            return;
+        }
+        let base = instance_layer(i, 0u);
+        var m = bone_rows(base.frames, bone, base.blend);
+        for (var l = 1u; l <= POSE_LAYERS; l++) {
+            let layer = instance_layer(i, l);
+            if layer.weight > 0.0 && layer.mask == 0u && !layer.additive {
+                let o = bone_rows(layer.frames, bone, layer.blend);
+                m = mat3x4<f32>(
+                    mix(m[0], o[0], layer.weight),
+                    mix(m[1], o[1], layer.weight),
+                    mix(m[2], o[2], layer.weight),
+                );
+            }
+        }
+        write_palette(slot, m);
+        return;
+    }
+
+    // The fit: the skeleton's joints, how deep they nest and where its poses
+    // start, then the model's fixes.
+    let head = anim[fit];
+    let joints_at = head.x;
+    let joints = head.y;
+    let deepest = head.z;
+    let poses = Poses(head.w, joints);
+    let joint = anim[joints_at + min(bone, joints - 1u)];
+    let parent = joint.x;
+    let depth = joint.y;
+    let masks = joint.z;
+
+    var local = mat4x4<f32>();
+    if bone < joints {
+        let base = instance_layer(i, 0u);
+        var p = layer_pose(poses, base, bone);
+        for (var l = 1u; l <= POSE_LAYERS; l++) {
+            let layer = instance_layer(i, l);
+            if layer.weight <= 0.0 || ((masks >> layer.mask) & 1u) == 0u {
+                continue;
+            }
+            let o = layer_pose(poses, layer, bone);
+            if layer.additive {
+                // The layer's rows hold changes from its first frame.
+                let id = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+                p.r = normalize(quat_mul(quat_nlerp(id, o.r, layer.weight), p.r));
+                p.ts = vec4<f32>(p.ts.xyz + o.ts.xyz * layer.weight, p.ts.w * mix(1.0, o.ts.w, layer.weight));
+            } else {
+                p.r = quat_nlerp(p.r, o.r, layer.weight);
+                p.ts = mix(p.ts, o.ts, layer.weight);
+            }
+        }
+        local = pose_matrix(p);
+    }
+    // Parents before children: one depth at a time.
+    for (var d = 0u; d <= deepest; d++) {
+        if bone < joints && depth == d {
+            if parent == 255u {
+                pose_globals[bone] = anim_matrix(fit + 1u) * local;
+            } else {
+                pose_globals[bone] = pose_globals[parent] * local;
+            }
+        }
+        workgroupBarrier();
+    }
+    if bone > joints || bone >= bones {
+        return;
+    }
+    if bone == joints {
+        // The still bone never moves.
+        write_palette(slot, mat3x4<f32>(
+            vec4<f32>(1.0, 0.0, 0.0, 0.0),
+            vec4<f32>(0.0, 1.0, 0.0, 0.0),
+            vec4<f32>(0.0, 0.0, 1.0, 0.0),
+        ));
+        return;
+    }
+    let post = anim_matrix(fit + 4u + bone * 3u);
+    write_palette(slot, matrix_rows(pose_globals[bone] * post));
+}
+
 // Pose one vertex of one soldier and keep it for the passes that draw it.
 @compute @workgroup_size(128)
 fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -1408,30 +1689,20 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
     if n >= jobs.count.y {
         return;
     }
-    var lo = 0u;
-    var hi = jobs.count.x;
-    while hi - lo > 1u {
-        let mid = (lo + hi) / 2u;
-        if jobs.job[mid].run.w <= n {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    let run = jobs.job[lo].run;
+    let job = find_job(n, false);
+    let run = jobs.job[job].run;
+    let run_pose = jobs.job[job].pose;
     let at = n - run.w;
     let soldier = run.x + at / run.z;
     let sv = set_vertex(run.y + at % run.z);
 
-    // The instance (`SoldierInstance`), nine words.
-    let i = soldier * 9u;
+    // The instance (`SoldierInstance`).
+    let i = soldier * INSTANCE_WORDS;
     let pos = vec2<f32>(bitcast<f32>(instances[i]), bitcast<f32>(instances[i + 1u]));
     let facing = vec2<f32>(bitcast<f32>(instances[i + 2u]), bitcast<f32>(instances[i + 3u]));
-    let frames = vec2<u32>(instances[i + 4u] & 0xffffu, instances[i + 4u] >> 16u);
     let flags = instances[i + 5u];
     let lift = bitcast<f32>(instances[i + 7u]);
     let scale = bitcast<f32>(instances[i + 8u]);
-    let t = f32(flags & 0xffu) / 255.0;
     let fallen = ((flags >> 16u) & 0xffu) > 127u;
 
     let p = vec4<f32>(
@@ -1443,13 +1714,14 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
         1.0,
     );
     // Most vertices follow one or two bones; stop at the first empty slot.
-    var m = bone_rows(frames, sv.bones & 0xffu, t) * (f32(sv.weights & 0xffu) / 255.0);
+    let base = run_pose.x + (soldier - run.x) * run_pose.y;
+    var m = palette_bone(base + (sv.bones & 0xffu)) * (f32(sv.weights & 0xffu) / 255.0);
     for (var b = 1u; b < 4u; b++) {
         let w = f32((sv.weights >> (8u * b)) & 0xffu) / 255.0;
         if w <= 0.0 {
             break;
         }
-        m += bone_rows(frames, (sv.bones >> (8u * b)) & 0xffu, t) * w;
+        m += palette_bone(base + ((sv.bones >> (8u * b)) & 0xffu)) * w;
     }
     var local = vec3<f32>(dot(m[0], p), dot(m[1], p), dot(m[2], p)) * scale;
     if fallen {

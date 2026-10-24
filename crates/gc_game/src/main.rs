@@ -121,7 +121,8 @@
 //! `assets-src/models.ron` and `assets-src/buildings/*.ron`; `all` is every
 //! soldier, `buildings` every building stage) in a row on an empty field under a fixed camera,
 //! cycling through idle, walk, attack and death, and `--showroom-clip
-//! idle|walk|attack|shoot|cheer|die` holds one clip instead;
+//! idle|walk|attack|shoot|cheer|die|march` holds one clip instead (`march`
+//! walks with the attack on the upper body);
 //! `--viewer NAME|start` opens the Unit viewer (main menu) on the named unit,
 //! or on the first unit with a model; `--fx-demo` sets off every particle
 //! effect at the camera's focus in slow motion, and `--fx-still` freezes them
@@ -158,6 +159,7 @@ mod hud;
 mod lens;
 mod map_preview;
 mod models;
+mod moves;
 mod online;
 mod profile;
 mod puppets;
@@ -656,7 +658,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march] [--viewer NAME|start] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -3349,6 +3351,7 @@ impl Running {
                             color: [wr, wg, wb, tone],
                             lift: 0.0,
                             scale: look.scale,
+                            ..Default::default()
                         });
                     },
                 );
@@ -4987,6 +4990,7 @@ impl Running {
                             color: [wr, wg, wb, tone],
                             lift: -0.5 * c.sink,
                             scale: look.scale,
+                            ..Default::default()
                         });
                         continue;
                     }
@@ -6015,6 +6019,7 @@ impl Running {
                     color: [r, g, b, gc_render::TONE_NEUTRAL],
                     lift: fall.lift,
                     scale: 1.0,
+                    ..Default::default()
                 });
             }
         }
@@ -6038,6 +6043,7 @@ impl Running {
                         color: [r, g, b, gc_render::TONE_NEUTRAL],
                         lift,
                         scale: 1.0,
+                        ..Default::default()
                     });
                 }
             }
@@ -6067,6 +6073,7 @@ impl Running {
                     color: [r, g, b, gc_render::TONE_NEUTRAL],
                     lift: 0.0,
                     scale: 1.0,
+                    ..Default::default()
                 });
             }
         }

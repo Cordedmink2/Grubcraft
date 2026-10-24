@@ -5,7 +5,11 @@
 use glam::{Vec2, Vec3};
 
 use crate::camera::{MIN_DISTANCE, RtsCamera};
+use gc_assets::anim::Mask;
+use gc_render::{POSE_LAYERS, PoseLayer};
+
 use crate::models::{Action, Clips, Pose, pose_flags};
+use crate::moves::MoveClip;
 
 /// Models in a row before the next row starts behind it.
 const ROW_LEN: usize = 8;
@@ -33,11 +37,14 @@ pub(crate) const FACING: Vec2 = Vec2::Y;
 const _: () = assert!(FURTHEST < crate::COMMANDER_OUT);
 const _: () = assert!(NEAREST < MIN_DISTANCE);
 
-/// What a model shows: one of the clips soldiers play, or a fall.
+/// What a model shows: one of the clips soldiers play, a fall, or a march:
+/// walking legs under an attacking upper body, to show the pose pass's
+/// masked layers (docs/33; a model still on bone rows only walks).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Clip {
     Play(Action),
     Die,
+    March,
 }
 
 impl Clip {
@@ -57,6 +64,7 @@ impl Clip {
             "shoot" => Clip::Play(Action::Shoot),
             "cheer" => Clip::Play(Action::Cheer),
             "die" => Clip::Die,
+            "march" => Clip::March,
             _ => return None,
         })
     }
@@ -75,17 +83,36 @@ fn at(hold: Option<Clip>, time: f32) -> (Clip, f32) {
     (Clip::CYCLE[k], round - k as f32 * CLIP_SECONDS)
 }
 
-/// The pose of `model` `time` seconds into the show, and whether to lay it
-/// flat (a fall on a model with no death clip).
-pub(crate) fn pose(
-    clips: &Clips,
-    model: usize,
-    hold: Option<Clip>,
-    time: f32,
-) -> Option<(Pose, bool)> {
+/// What a model shows at one moment.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Shown {
+    pub pose: Pose,
+    /// Lay it flat (a fall on a model with no death clip).
+    pub flat: bool,
+    pub layers: [PoseLayer; POSE_LAYERS],
+}
+
+/// What `model` shows `time` seconds into the show.
+pub(crate) fn pose(clips: &Clips, model: usize, hold: Option<Clip>, time: f32) -> Option<Shown> {
+    let shown = |(pose, flat)| Shown {
+        pose,
+        flat,
+        layers: Default::default(),
+    };
     match at(hold, time) {
-        (Clip::Die, t) => clips.death(model, t),
-        (Clip::Play(action), t) => clips.pose(model, action, t).map(|p| (p, false)),
+        (Clip::Die, t) => clips.death(model, t).map(shown),
+        (Clip::Play(action), t) => clips.pose(model, action, t).map(|p| shown((p, false))),
+        (Clip::March, t) => {
+            let mut s = shown((clips.pose(model, Action::Walk, t)?, false));
+            if let Some(attack) = clips.clip(model, Action::Attack) {
+                let upper = MoveClip {
+                    mask: Mask::Upper,
+                    ..attack
+                };
+                s.layers[0] = upper.layer(attack.looping(t), 1.0);
+            }
+            Some(s)
+        }
     }
 }
 
@@ -247,24 +274,25 @@ impl Showroom {
             } else {
                 self.hold
             };
-            if let Some((pose, flat)) = pose(&art.clips, model, hold, time) {
-                stand(art, model, pos, ground(pos), 0.0, (pose, flat), color);
+            if let Some(shown) = pose(&art.clips, model, hold, time) {
+                stand(art, model, pos, ground(pos), 0.0, &shown, color);
             }
         }
     }
 }
 
 /// Stand `model` at `pos` on ground `ground` high, raised by `lift`, facing
-/// the camera in the `pose` (which may lie flat), in this frame's drawing.
+/// the camera as `shown`, in this frame's drawing.
 pub(crate) fn stand(
     art: &mut crate::Art,
     model: usize,
     pos: Vec2,
     ground: f32,
     lift: f32,
-    (pose, flat): (Pose, bool),
+    shown: &Shown,
     color: [u8; 3],
 ) {
+    let Shown { pose, flat, layers } = *shown;
     let at = Vec3::new(pos.x, ground + lift, pos.y);
     let lod = art.view.lod(art.heights[model], at);
     art.buckets[model * gc_assets::model::LODS + lod].push(gc_render::SoldierInstance {
@@ -275,6 +303,8 @@ pub(crate) fn stand(
         color: [color[0], color[1], color[2], gc_render::TONE_NEUTRAL],
         lift,
         scale: 1.0,
+        layers,
+        ..Default::default()
     });
 }
 
@@ -435,18 +465,23 @@ mod tests {
         let clips = Clips::new(&models);
         let m = models.by_name("Bone Pikes").unwrap();
         let die = Some(Clip::Die);
-        let start = pose(&clips, m, die, 0.0).unwrap().0;
-        let end = pose(&clips, m, die, 50.0).unwrap().0;
+        let start = pose(&clips, m, die, 0.0).unwrap().pose;
+        let end = pose(&clips, m, die, 50.0).unwrap().pose;
         assert_ne!(start.rows, end.rows);
-        assert_eq!(end, pose(&clips, m, die, 500.0).unwrap().0);
+        assert_eq!(end, pose(&clips, m, die, 500.0).unwrap().pose);
         // The cycle's fall starts where the clip does and ends held, too.
-        assert_eq!(pose(&clips, m, None, 12.0).unwrap().0, start);
-        assert_eq!(pose(&clips, m, None, 15.9).unwrap().0.rows, end.rows);
+        assert_eq!(pose(&clips, m, None, 12.0).unwrap().pose, start);
+        assert_eq!(pose(&clips, m, None, 15.9).unwrap().pose.rows, end.rows);
         // Every model has a pose in every clip.
         for m in 0..models.models.len() {
-            for clip in ["idle", "walk", "attack", "shoot", "cheer", "die"] {
+            for clip in ["idle", "walk", "attack", "shoot", "cheer", "die", "march"] {
                 assert!(pose(&clips, m, Clip::parse(clip), 1.3).is_some());
             }
         }
+        // A march swings the attack on the upper body over the walk.
+        let march = pose(&clips, m, Some(Clip::March), 1.3).unwrap();
+        assert_eq!(march.pose, clips.pose(m, Action::Walk, 1.3).unwrap());
+        assert_eq!(march.layers[0].mask, Mask::Upper as u8);
+        assert_eq!(march.layers[0].weight, 255);
     }
 }

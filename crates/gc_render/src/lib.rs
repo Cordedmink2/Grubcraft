@@ -70,7 +70,10 @@ pub use particles::{MAX_PARTICLES, Particle, Shape, flags as particle_flags};
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
 pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
-pub use soldiers::{MAX_SOLDIER_INSTANCES, SoldierBatch, SoldierInstance, TONE_NEUTRAL};
+pub use soldiers::{
+    LAYER_ADDITIVE, MAX_SOLDIER_INSTANCES, POSE_LAYERS, PoseLayer, SoldierBatch, SoldierInstance,
+    TONE_NEUTRAL,
+};
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 use shadows::{SHADOW_BIAS, SHADOW_FORMAT, SHADOW_SIZE};
 /// The colour a frame with nothing drawn shows, in sRGB.
@@ -507,6 +510,11 @@ impl Renderer {
                 return Err(InitError::Unsupported(what));
             }
         }
+        if adapter.limits().max_storage_buffers_per_shader_stage < soldiers::POSE_STORAGE_BUFFERS {
+            return Err(InitError::Unsupported(
+                "bind the eight storage buffers soldier posing needs",
+            ));
+        }
         // The HDR image at 4 bytes a pixel where the GPU can draw into that
         // format (Apple, most desktop GPUs), else 8.
         let small_hdr = adapter
@@ -533,8 +541,8 @@ impl Renderer {
                         .limits()
                         .max_storage_buffer_binding_size,
                     max_buffer_size: adapter.limits().max_buffer_size,
-                    // Five for the skinning pass (the model vertices take
-                    // two); every desktop GPU has at least eight.
+                    // Eight for posing and skinning soldiers (see
+                    // `POSE_STORAGE_BUFFERS`); every desktop GPU has them.
                     max_storage_buffers_per_shader_stage: adapter
                         .limits()
                         .max_storage_buffers_per_shader_stage,
@@ -2642,7 +2650,7 @@ mod tests {
     #[test]
     fn regiment_instance_layout_is_stable() {
         assert_eq!(size_of::<BoxInstance>(), 36);
-        assert_eq!(size_of::<SoldierInstance>(), 36);
+        assert_eq!(size_of::<SoldierInstance>(), 64);
     }
 
     #[test]
