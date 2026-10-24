@@ -101,6 +101,48 @@ const DRY_BELOW: f32 = 0.002;
 const STORM_AT: f32 = 0.75;
 const STRIKE_GAP: (f32, f32) = (5.0, 16.0);
 
+/// The sky the simulation says there is over the match (docs/32), for the
+/// picture to follow.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkyView {
+    pub weather: Weather,
+    /// How much of the weather there is, 0 to 1 (the simulation's strength
+    /// over 255). It already eases in and out.
+    pub amount: f32,
+    /// Cloud cover, 0 a clear sky to 1 overcast.
+    pub cloud: f32,
+    /// The hour of the day, 0 to 24.
+    pub hour: f32,
+    /// How light the day is, 0 night to 1 day.
+    pub light: f32,
+}
+
+impl SkyView {
+    /// The sky the simulation's `world` has now.
+    pub fn of(world: &gc_sim::World) -> SkyView {
+        SkyView::at(world.weather(), world.daylight())
+    }
+
+    /// The sky of this `weather` at this time of day.
+    pub fn at(weather: gc_sim::Weather, daylight: gc_sim::Daylight) -> SkyView {
+        use gc_sim::WeatherKind;
+        let kind = match weather.kind {
+            WeatherKind::Clear => Weather::Clear,
+            WeatherKind::Rain => Weather::Rain,
+            WeatherKind::Snow => Weather::Snow,
+            WeatherKind::Fog => Weather::Fog,
+        };
+        let day = daylight.day_ticks.max(1);
+        SkyView {
+            weather: kind,
+            amount: f32::from(weather.strength) / 255.0,
+            cloud: f32::from(weather.cloud) / 255.0,
+            hour: (daylight.tick_of_day % day) as f32 / day as f32 * 24.0,
+            light: f32::from(daylight.light()) / 1000.0,
+        }
+    }
+}
+
 /// The light of a match.
 pub struct Atmosphere {
     preset: LookPreset,
@@ -123,6 +165,12 @@ pub struct Atmosphere {
     /// How wet the ground is (0 to 1), which outlasts the rain.
     soaked: f32,
     storm: Storm,
+    /// The sky the match has now, which the weather and the light follow
+    /// until F12 (weather) or F9 (look) takes them over, or `--weather` or
+    /// `--look` has.
+    sky: Option<SkyView>,
+    weather_preview: bool,
+    look_preview: bool,
     tuning: Tuning,
 }
 
@@ -223,8 +271,34 @@ impl Atmosphere {
             leaving: (Weather::Clear, 0.0),
             soaked: 0.0,
             storm: Storm::new(),
+            sky: None,
+            weather_preview: false,
+            look_preview: false,
             tuning: Tuning::default(),
         }
+    }
+
+    /// Whether the light follows the match's clock (not `--look` or F9).
+    fn following_day(&self) -> bool {
+        self.look_flag.is_none() && !self.look_preview
+    }
+
+    /// What lights the picture, for the panel and the log: the look's name,
+    /// or the clock's hour while it follows the match's day.
+    fn light_name(&self) -> String {
+        match self.sky {
+            Some(sky) if self.following_day() => {
+                let minutes = (sky.hour * 60.0).floor() as u32 % (24 * 60);
+                format!("{:02}:{:02}", minutes / 60, minutes % 60)
+            }
+            _ => self.preset.name().to_string(),
+        }
+    }
+
+    /// The sky the match has this frame: the weather and the light follow
+    /// it, unless a flag or F12 or F9 chose their own.
+    pub fn follow(&mut self, sky: SkyView) {
+        self.sky = Some(sky);
     }
 
     /// Every match opens in this weather (`--weather`).
@@ -235,6 +309,7 @@ impl Atmosphere {
     }
 
     fn start_weather(&mut self) {
+        self.weather_preview = self.weather_flag.is_some();
         self.weather = self.weather_flag.unwrap_or_default();
         self.fade = if self.weather == Weather::Clear {
             0.0
@@ -245,6 +320,7 @@ impl Atmosphere {
 
     /// F12: the next weather; it comes in over a few seconds.
     pub fn next_weather(&mut self) {
+        self.weather_preview = true;
         self.leaving = (self.weather, self.fade);
         self.weather = self.weather.next();
         self.fade = 0.0;
@@ -265,6 +341,8 @@ impl Atmosphere {
     /// and let the air start right in the lands where the camera is.
     pub fn start(&mut self, preset: LookPreset) {
         self.preset = self.look_flag.unwrap_or(preset);
+        self.look_preview = false;
+        self.sky = None;
         self.shares = None;
         self.start_weather();
         self.leaving = (Weather::Clear, 0.0);
@@ -274,6 +352,7 @@ impl Atmosphere {
 
     /// F9: the next prepared look.
     pub fn next_preset(&mut self) {
+        self.look_preview = true;
         self.preset = self.preset.next();
     }
 
@@ -298,13 +377,20 @@ impl Atmosphere {
             }
             none => *none.insert(target),
         };
-        let k = 1.0 - (-dt.max(0.0) / WEATHER_SETTLE).exp();
-        if self.weather != Weather::Clear {
-            self.fade += (1.0 - self.fade) * k;
-        }
-        self.leaving.1 *= 1.0 - k;
-        if self.leaving.1 < 0.01 {
+        if let Some(sky) = self.sky.filter(|_| !self.weather_preview) {
+            // The simulation eases its weather in and out itself.
+            self.weather = sky.weather;
+            self.fade = sky.amount.clamp(0.0, 1.0);
             self.leaving = (Weather::Clear, 0.0);
+        } else {
+            let k = 1.0 - (-dt.max(0.0) / WEATHER_SETTLE).exp();
+            if self.weather != Weather::Clear {
+                self.fade += (1.0 - self.fade) * k;
+            }
+            self.leaving.1 *= 1.0 - k;
+            if self.leaving.1 < 0.01 {
+                self.leaving = (Weather::Clear, 0.0);
+            }
         }
         // The ground soaks up the rain that falls, and keeps it a while.
         let rain = [self.leaving, (self.weather, self.fade)]
@@ -327,10 +413,25 @@ impl Atmosphere {
         // Under Clarity the weather dims the light and thickens the air
         // only a little, so the field stays readable whatever the sky does.
         let share = if clarity { CLARITY_WEATHER } else { 1.0 };
-        let mut look = self
-            .preset
-            .look()
+        // The light of the hour the match's clock says (unless a look was
+        // chosen), under the cloud the weather leaves over.
+        // A look or a weather chosen by hand is the whole picture: it takes
+        // the simulation's cloud with it.
+        let (day, cloud, light) = match self.sky {
+            Some(sky) if self.following_day() => (Look::of_day(sky.hour), sky.cloud, sky.light),
+            _ => (self.preset.look(), 0.0, 1.0),
+        };
+        let cloud = if self.weather_preview { 0.0 } else { cloud };
+        // Weather that falls carries its own cloud: the one clearing counts too.
+        let weather_left = 1.0
+            - [(self.weather, self.fade), self.leaving]
+                .into_iter()
+                .filter(|&(weather, _)| weather != Weather::Clear)
+                .map(|(_, amount)| amount)
+                .fold(0.0, f32::max);
+        let mut look = day
             .in_air(&LandAir::mixed(&AIRS, &shares))
+            .clouded(cloud * weather_left * share, light)
             .in_weather(self.leaving.0, self.leaving.1 * share)
             .in_weather(self.weather, self.fade * share);
         look.wet = self.soaked * share;
@@ -388,7 +489,7 @@ impl Atmosphere {
         let mut text = format!(
             "LIGHT TUNING                                   F10 closes\n\
              {} light{}, {}{}\n",
-            self.preset.name(),
+            self.light_name(),
             self.weather_note(),
             self.forced
                 .map_or("the air of the land round the camera".to_string(), |l| {
@@ -426,7 +527,7 @@ impl Atmosphere {
             });
         let mut lines = vec![format!(
             "light tuning on {}{} in {air}'s air (air, weather and Clarity included):",
-            self.preset.name(),
+            self.light_name(),
             self.weather_note()
         )];
         for (knob, value, d) in self.knobs() {
@@ -593,6 +694,170 @@ mod tests {
             look = atmosphere.look(0.1, &map, Vec2::new(32.0, 32.0), 40.0, false);
         }
         look
+    }
+
+    fn sim_sky(kind: gc_sim::WeatherKind, strength: u8, cloud: u8, hour: u32) -> SkyView {
+        SkyView::at(
+            gc_sim::Weather {
+                kind,
+                strength,
+                cloud,
+                wind: (0, 0),
+            },
+            gc_sim::Daylight {
+                tick_of_day: gc_sim::sky::at_hour(hour, 0),
+                day_ticks: gc_sim::sky::DAY_TICKS,
+            },
+        )
+    }
+
+    /// One frame of `atmosphere` over the 64-tile test map.
+    fn frame(atmosphere: &mut Atmosphere, dt: f32) -> Look {
+        let map = Map::generate(1, 64);
+        atmosphere.look(dt, &map, Vec2::new(32.0, 32.0), 40.0, false)
+    }
+
+    #[test]
+    fn the_sky_view_reads_the_simulations_weather_and_clock() {
+        use gc_sim::WeatherKind;
+        let view = sim_sky(WeatherKind::Rain, 255, 51, 17);
+        assert_eq!(view.weather, Weather::Rain);
+        assert_eq!(view.amount, 1.0);
+        assert!((view.cloud - 0.2).abs() < 1e-3);
+        assert!((view.hour - 17.0).abs() < 0.01, "{}", view.hour);
+        assert!(view.light > 0.9);
+        let night = sim_sky(WeatherKind::Fog, 0, 0, 23);
+        assert_eq!(
+            (night.weather, night.amount, night.light),
+            (Weather::Fog, 0.0, 0.0)
+        );
+        assert_eq!(sim_sky(WeatherKind::Snow, 9, 0, 3).weather, Weather::Snow);
+        assert_eq!(
+            sim_sky(WeatherKind::Clear, 0, 0, 12).weather,
+            Weather::Clear
+        );
+    }
+
+    #[test]
+    fn the_weather_follows_the_simulation_with_no_easing_of_its_own() {
+        use gc_sim::WeatherKind;
+        let mut atmosphere = Atmosphere::new(None, None);
+        atmosphere.follow(sim_sky(WeatherKind::Rain, 128, 0, 12));
+        frame(&mut atmosphere, 0.016);
+        let (weather, amount) = atmosphere.weather();
+        assert_eq!(weather, Weather::Rain);
+        assert!((amount - 128.0 / 255.0).abs() < 1e-3);
+        // The simulation fades one weather out before the next grows, so
+        // nothing is left behind.
+        atmosphere.follow(sim_sky(WeatherKind::Clear, 0, 0, 12));
+        frame(&mut atmosphere, 0.016);
+        assert_eq!(atmosphere.weather(), (Weather::Clear, 0.0));
+        assert_eq!(atmosphere.leaving(), (Weather::Clear, 0.0));
+    }
+
+    #[test]
+    fn f12_and_the_weather_flag_take_the_weather_over_and_a_new_match_gives_it_back() {
+        use gc_sim::WeatherKind;
+        let calm = sim_sky(WeatherKind::Clear, 0, 0, 12);
+        let mut atmosphere = Atmosphere::new(None, None);
+        atmosphere.follow(calm);
+        atmosphere.next_weather();
+        frame(&mut atmosphere, 0.016);
+        assert_eq!(atmosphere.weather().0, Weather::Rain, "the preview stays");
+        atmosphere.start(LookPreset::Noon);
+        atmosphere.follow(sim_sky(WeatherKind::Snow, 255, 0, 12));
+        frame(&mut atmosphere, 0.016);
+        assert_eq!(atmosphere.weather(), (Weather::Snow, 1.0));
+        let mut flagged = Atmosphere::new(None, None).with_weather(Some(Weather::Fog));
+        flagged.follow(calm);
+        frame(&mut flagged, 0.016);
+        assert_eq!(flagged.weather(), (Weather::Fog, 1.0));
+    }
+
+    #[test]
+    fn the_light_follows_the_clock_unless_a_look_was_chosen() {
+        use gc_sim::WeatherKind;
+        let sun = |atmosphere: &mut Atmosphere, hour| {
+            atmosphere.follow(sim_sky(WeatherKind::Clear, 0, 0, hour));
+            frame(atmosphere, 0.016).sun_color[0]
+        };
+        let mut atmosphere = Atmosphere::new(None, None);
+        let (noon, night) = (sun(&mut atmosphere, 12), sun(&mut atmosphere, 23));
+        assert!(noon > 1.5 && night < 0.5, "{noon} {night}");
+        // 17:00 is golden hour, the game's usual look.
+        let golden = sun(&mut atmosphere, 17);
+        assert!((golden - LookPreset::GoldenHour.look().sun_color[0]).abs() < 0.2);
+        // `--look` and F9 keep their look whatever the hour.
+        let mut flagged = Atmosphere::new(Some(LookPreset::Noon), None);
+        assert_eq!(sun(&mut flagged, 23), LookPreset::Noon.look().sun_color[0]);
+        atmosphere.next_preset();
+        let kept = sun(&mut atmosphere, 12);
+        assert_eq!(kept, sun(&mut atmosphere, 23));
+        // A new match follows the clock again.
+        atmosphere.start(LookPreset::Noon);
+        assert!(sun(&mut atmosphere, 23) < 0.5);
+    }
+
+    #[test]
+    fn a_look_or_a_weather_chosen_by_hand_takes_no_cloud_and_clearing_weather_counts() {
+        use gc_sim::WeatherKind;
+        let overcast = sim_sky(WeatherKind::Clear, 0, 220, 12);
+        let sun = |atmosphere: &mut Atmosphere| {
+            atmosphere.follow(overcast);
+            frame(atmosphere, 0.016).sun_color[0]
+        };
+        let plain = |preset| {
+            let mut atmosphere = Atmosphere::new(Some(preset), None);
+            sun(&mut atmosphere)
+        };
+        // `--look overcast` is the prepared Overcast, not cloud on top of it.
+        assert_eq!(
+            plain(LookPreset::Overcast),
+            LookPreset::Overcast.look().sun_color[0]
+        );
+        let mut hand = Atmosphere::new(None, None);
+        hand.next_preset();
+        assert!(sun(&mut hand) > 1.0, "F9's look is whole");
+        // A weather chosen by hand brings no cloud with it.
+        let mut clear = Atmosphere::new(None, None).with_weather(Some(Weather::Clear));
+        let mut followed = Atmosphere::new(None, None);
+        assert!(sun(&mut clear) > sun(&mut followed) * 1.3);
+        // F12 from rain: no jump as the cloud would land on the clearing rain.
+        let mut raining = Atmosphere::new(None, None);
+        raining.follow(sim_sky(WeatherKind::Rain, 200, 230, 12));
+        let before = frame(&mut raining, 0.016).sun_color[0];
+        raining.next_weather();
+        raining.follow(sim_sky(WeatherKind::Rain, 200, 230, 12));
+        let after = frame(&mut raining, 0.016).sun_color[0];
+        assert!(after > before * 0.8, "{before} to {after}");
+    }
+
+    #[test]
+    fn the_panel_names_the_hour_while_it_follows_the_clock() {
+        use gc_sim::WeatherKind;
+        let mut atmosphere = Atmosphere::new(None, None);
+        atmosphere.follow(sim_sky(WeatherKind::Clear, 0, 0, 23));
+        frame(&mut atmosphere, 0.016);
+        assert!(atmosphere.panel_text().contains("23:00 light"));
+        atmosphere.next_preset();
+        assert!(!atmosphere.panel_text().contains("23:00"));
+    }
+
+    #[test]
+    fn cloud_dims_the_day_but_heavy_rain_does_not_dim_it_twice() {
+        use gc_sim::WeatherKind;
+        let sun = |kind, strength, cloud| {
+            let mut atmosphere = Atmosphere::new(None, None);
+            atmosphere.follow(sim_sky(kind, strength, cloud, 12));
+            frame(&mut atmosphere, 0.016).sun_color[0]
+        };
+        let clear = sun(WeatherKind::Clear, 0, 0);
+        let overcast = sun(WeatherKind::Clear, 0, 220);
+        assert!(overcast < clear * 0.7, "{overcast} {clear}");
+        // Rain at full strength already means heavy cloud.
+        let rain = sun(WeatherKind::Rain, 255, 0);
+        assert_eq!(sun(WeatherKind::Rain, 255, 255), rain);
+        assert!(rain < overcast);
     }
 
     #[test]

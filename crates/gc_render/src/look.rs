@@ -403,6 +403,93 @@ impl Look {
         }
     }
 
+    /// This look `t` of the way to `other` (0 is this, 1 is `other`), every
+    /// number and colour blended straight. The sun's direction blends as a
+    /// vector, so it sweeps between the two.
+    pub fn blend(&self, other: &Look, t: f32) -> Look {
+        let t = t.clamp(0.0, 1.0);
+        let n = |a: f32, b: f32| a + (b - a) * t;
+        let v = |a: [f32; 3], b: [f32; 3]| [n(a[0], b[0]), n(a[1], b[1]), n(a[2], b[2])];
+        Look {
+            sun: v(self.sun_dir().to_array(), other.sun_dir().to_array()),
+            sun_color: v(self.sun_color, other.sun_color),
+            sky_ambient: v(self.sky_ambient, other.sky_ambient),
+            ground_ambient: v(self.ground_ambient, other.ground_ambient),
+            fog: v(self.fog, other.fog),
+            haze: v(self.haze, other.haze),
+            fog_density: n(self.fog_density, other.fog_density),
+            fog_falloff: n(self.fog_falloff, other.fog_falloff),
+            rim: n(self.rim, other.rim),
+            foliage_glow: n(self.foliage_glow, other.foliage_glow),
+            cloud_shadows: n(self.cloud_shadows, other.cloud_shadows),
+            ground_occlusion: n(self.ground_occlusion, other.ground_occlusion),
+            wet: n(self.wet, other.wet),
+            exposure: n(self.exposure, other.exposure),
+            contrast: n(self.contrast, other.contrast),
+            saturation: n(self.saturation, other.saturation),
+            vignette: n(self.vignette, other.vignette),
+            grain: n(self.grain, other.grain),
+            shadow_tint: v(self.shadow_tint, other.shadow_tint),
+            light_tint: v(self.light_tint, other.light_tint),
+            sky_top: v(self.sky_top, other.sky_top),
+            sky_horizon: v(self.sky_horizon, other.sky_horizon),
+        }
+    }
+
+    /// The light at `hour` of the day (0 to 24, the simulation's clock):
+    /// night, a dawn that comes up through dusk's colours into golden hour
+    /// and a high noon, then golden hour, dusk and night again, blended
+    /// between [`DAY`]'s hours. 17:00 is the golden hour look, 18:00 dusk and
+    /// 23:00 night. The sun comes from the east in the morning and the west
+    /// in the afternoon (it turns round the compass between 10:00 and
+    /// 14:00, and the moon between 3:00 and 6:00), at the height of the
+    /// look it blends.
+    pub fn of_day(hour: f32) -> Look {
+        let hour = hour.rem_euclid(24.0);
+        let mut look = day_blend(hour);
+        // The sun turns in steps, not continuously: the shadow map snaps to
+        // texels only while the sun holds still, and a sun that moved every
+        // frame would make every shadow edge crawl.
+        let held = (hour * SUN_STEPS).floor() / SUN_STEPS;
+        let sun = day_blend(held).sun_dir();
+        let (sin, cos) = (std::f32::consts::PI * sun_turn(held)).sin_cos();
+        look.sun = [sun.x * cos - sun.z * sin, sun.y, sun.x * sin + sun.z * cos];
+        look
+    }
+
+    /// This look under cloud cover `cloud` (0 clear sky, 1 overcast) when
+    /// it is `light` bright (0 night to 1 day): the sun dims and the shade
+    /// fills, colour drains from the sky and the air, and the hard edges
+    /// of the light soften. Weather has its own cloud in [`Look::in_weather`],
+    /// so ask for the cloud that weather leaves over.
+    pub fn clouded(&self, cloud: f32, light: f32) -> Look {
+        let cloud = cloud.clamp(0.0, 1.0);
+        if cloud <= 0.0 {
+            return *self;
+        }
+        let light = light.clamp(0.0, 1.0);
+        let mix = |a: f32, b: f32| a + (b - a) * cloud;
+        let scale = |c: [f32; 3], k: f32| c.map(|v| v * mix(1.0, k));
+        let drain = |c: [f32; 3]| {
+            let l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+            c.map(|v| v + (l - v) * cloud * 0.8)
+        };
+        Look {
+            sun_color: scale(self.sun_color, 0.6),
+            sky_ambient: scale(self.sky_ambient, 1.0 + 0.45 * light),
+            ground_ambient: scale(self.ground_ambient, 1.0 + 0.1 * light),
+            fog: drain(self.fog),
+            haze: drain(self.haze),
+            rim: mix(self.rim, self.rim * 0.7),
+            foliage_glow: mix(self.foliage_glow, self.foliage_glow * 0.35),
+            cloud_shadows: mix(self.cloud_shadows, self.cloud_shadows.max(0.5)),
+            saturation: mix(self.saturation, self.saturation * 0.88),
+            sky_top: drain(self.sky_top),
+            sky_horizon: drain(self.sky_horizon),
+            ..*self
+        }
+    }
+
     /// This look in a flash of lightning at `flash` (0 none, 1 the
     /// brightest): the sky and the air go white-blue, the shade lifts and
     /// the sun's light takes a cold edge, so the land is lit from above for
@@ -460,6 +547,55 @@ impl Look {
             }
         }
         look
+    }
+}
+
+/// The looks of the day, by hour of the clock: [`Look::of_day`] blends
+/// between neighbours. Dusk's colours serve the dawn too.
+const DAY: [(f32, LookPreset); 10] = [
+    (0.0, LookPreset::Night),
+    (4.8, LookPreset::Night),
+    (6.2, LookPreset::Dusk),
+    (7.5, LookPreset::GoldenHour),
+    (9.5, LookPreset::Noon),
+    (14.5, LookPreset::Noon),
+    (17.0, LookPreset::GoldenHour),
+    (18.0, LookPreset::Dusk),
+    (19.5, LookPreset::Night),
+    (24.0, LookPreset::Night),
+];
+
+/// The prepared looks blended for `hour` (0 to 24), the sun as blended,
+/// before it is turned round the compass.
+fn day_blend(hour: f32) -> Look {
+    let next = DAY
+        .iter()
+        .position(|&(h, _)| h > hour)
+        .unwrap_or(DAY.len() - 1);
+    let (from, to) = (DAY[next.max(1) - 1], DAY[next]);
+    let t = ((hour - from.0) / (to.0 - from.0).max(1e-3)).clamp(0.0, 1.0);
+    from.1.look().blend(&to.1.look(), t * t * (3.0 - 2.0 * t))
+}
+
+/// How many steps an hour of the day's sun is moved in: the sun holds for
+/// five minutes of the game's clock (a hundred seconds of play) at a time.
+const SUN_STEPS: f32 = 12.0;
+
+/// How far round the compass the sun has turned from its afternoon side at
+/// `hour`, in half turns: 0 in the afternoon and evening (and the small
+/// hours, so the moon stays put all night), 1 in the morning, easing
+/// between.
+fn sun_turn(hour: f32) -> f32 {
+    let smooth = |x: f32| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    if hour < 3.0 {
+        0.0
+    } else if hour < 10.0 {
+        smooth((hour - 3.0) / 3.0)
+    } else {
+        1.0 - smooth((hour - 10.0) / 4.0)
     }
 }
 
@@ -972,6 +1108,116 @@ mod tests {
                     && half.sky_ambient[2] < lit.sky_ambient[2]
             );
         }
+    }
+
+    #[test]
+    fn blending_the_ends_gives_the_ends_and_the_middle_lies_between() {
+        let (day, night) = (LookPreset::Noon.look(), LookPreset::Night.look());
+        assert_eq!(day.blend(&night, 0.0).sun_color, day.sun_color);
+        assert_eq!(day.blend(&night, 1.0).exposure, night.exposure);
+        let half = day.blend(&night, 0.5);
+        assert!(half.sun_color[0] < day.sun_color[0] && half.sun_color[0] > night.sun_color[0]);
+        assert!(half.sun_dir().y > night.sun_dir().y - 1e-4);
+    }
+
+    #[test]
+    fn the_day_goes_through_the_prepared_looks_at_their_hours() {
+        for (hour, preset) in [
+            (17.0, LookPreset::GoldenHour),
+            (18.0, LookPreset::Dusk),
+            (23.0, LookPreset::Night),
+            (0.0, LookPreset::Night),
+        ] {
+            let (day, want) = (Look::of_day(hour), preset.look());
+            assert_eq!(day.sun_color, want.sun_color, "{hour}");
+            assert_eq!(day.sky_top, want.sky_top, "{hour}");
+        }
+        // Noon's sun is round the compass but as high as the preset's.
+        let noon = Look::of_day(12.0);
+        assert_eq!(noon.sky_ambient, LookPreset::Noon.look().sky_ambient);
+        assert!((noon.sun_dir().y - LookPreset::Noon.look().sun_dir().y).abs() < 1e-4);
+        // The clock wraps.
+        assert_eq!(Look::of_day(25.0).sun_color, Look::of_day(1.0).sun_color);
+    }
+
+    #[test]
+    fn the_sun_rises_to_noon_and_sets_and_the_moon_stays_low() {
+        let height = |h: f32| Look::of_day(h).sun_dir().y;
+        // Up from the night through the morning, down through the evening.
+        let mut last = height(6.2);
+        for h in (62..=120).map(|m| m as f32 / 10.0) {
+            assert!(height(h) >= last - 1e-4, "rising at {h}");
+            last = height(h);
+        }
+        let mut last = height(14.5);
+        for h in (146..=180).map(|m| m as f32 / 10.0) {
+            assert!(height(h) <= last + 1e-4, "setting at {h}");
+            last = height(h);
+        }
+        for h in [0.0, 2.0, 4.0, 20.0, 22.0, 23.9] {
+            assert!(height(h) < 0.3, "the moon is low at {h}");
+        }
+        // The sun is in the east in the morning, the west in the afternoon.
+        let (am, pm) = (Look::of_day(8.0).sun_dir(), Look::of_day(16.0).sun_dir());
+        assert!(am.x * pm.x < 0.0 || am.z * pm.z < 0.0, "{am} {pm}");
+    }
+
+    #[test]
+    fn nothing_jumps_across_the_day() {
+        let mut last = Look::of_day(0.0);
+        for step in 1..=2400 {
+            let now = Look::of_day(step as f32 / 100.0);
+            assert!(
+                now.sun_dir().dot(last.sun_dir()) > 0.99,
+                "sun jumps at {}",
+                step as f32 / 100.0
+            );
+            assert!((now.exposure - last.exposure).abs() < 0.02);
+            assert!((now.sky_ambient[2] - last.sky_ambient[2]).abs() < 0.02);
+            last = now;
+        }
+        // Midnight joins up.
+        assert!(
+            Look::of_day(23.999)
+                .sun_dir()
+                .dot(Look::of_day(0.0).sun_dir())
+                > 0.9999
+        );
+    }
+
+    #[test]
+    fn the_sun_holds_still_for_five_minutes_of_the_clock_at_a_time() {
+        // Five minutes of the game's clock: the shadow map's texel snapping
+        // only works while the sun does not move.
+        for hour in [5.2, 8.0, 11.0, 12.5, 16.0, 18.5] {
+            let at = |h: f32| Look::of_day(h).sun;
+            let start = (hour * 12.0_f32).floor() / 12.0;
+            assert_eq!(at(start + 0.001), at(start + 0.08), "{hour}");
+        }
+        // The colours still change smoothly inside a step.
+        assert_ne!(
+            Look::of_day(8.0).sky_ambient,
+            Look::of_day(8.05).sky_ambient
+        );
+    }
+
+    #[test]
+    fn cloud_dims_the_sun_and_greys_the_sky_and_clear_sky_changes_nothing() {
+        let noon = LookPreset::Noon.look();
+        assert_eq!(noon.clouded(0.0, 1.0), noon);
+        let grey = noon.clouded(1.0, 1.0);
+        assert!(grey.sun_color[0] < noon.sun_color[0] * 0.7);
+        assert!(grey.sky_ambient[2] > noon.sky_ambient[2]);
+        let spread = |c: [f32; 3]| c[2] - c[0];
+        assert!(spread(grey.sky_top) < spread(noon.sky_top) * 0.5);
+        // Heavy cloud at noon is near the prepared overcast look.
+        let overcast = LookPreset::Overcast.look();
+        assert!((grey.sun_color[0] - overcast.sun_color[0]).abs() < 0.1);
+        // At night the sky light is not lifted.
+        let night = LookPreset::Night.look();
+        assert!(night.clouded(1.0, 0.0).sky_ambient[2] <= night.sky_ambient[2] + 1e-6);
+        let half = noon.clouded(0.5, 1.0);
+        assert!(half.sun_color[0] < noon.sun_color[0] && half.sun_color[0] > grey.sun_color[0]);
     }
 
     #[test]
