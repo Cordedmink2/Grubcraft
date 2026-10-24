@@ -74,6 +74,7 @@ fn world() -> World {
         field: 0,
         tunes: None,
         links: 0,
+        twist: gc_sim::structures::WallTwist::None,
     };
     let soldier = ConquestUnit {
         mans_walls: true,

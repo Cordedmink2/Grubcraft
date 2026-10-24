@@ -142,7 +142,7 @@
         ),
         (
             name: "Mausoleum Wall",
-            summary: "Level 3, the top: a lantern-lit wall of burial niches, 4 times as tough as a Bone Fence. Needs tier 2. Select an Ossuary Wall and press U to raise its stretch.",
+            summary: "Level 3, the top: a lantern-lit wall of burial niches, 4 times as tough as a Bone Fence. Needs tier 2. Select an Ossuary Wall and press U to raise its stretch. Its twist: every soldier who dies near it, friend or foe, mends it by 15.",
             notes: [],
             tips: [
                 (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),

@@ -705,24 +705,41 @@ impl Regiments {
         self.haste_left[i] > 0 && extra_turn(u64::from(tick) + i as u64, self.haste[i])
     }
 
-    /// A tick of every regiment's haste, march and steadfastness goes by.
+    /// A tick of every regiment's haste, march, steadfastness and wall
+    /// twists (see [`crate::twists`]) goes by, and the dead counted.
     pub(crate) fn wear_powers(&mut self) {
-        for left in (self.haste_left.iter_mut())
-            .chain(&mut self.march_left)
-            .chain(&mut self.steadfast_left)
-        {
-            *left = left.saturating_sub(1);
+        // One plain loop each, which the compiler turns into a few wide
+        // steps (a chain of them it doesn't).
+        for lefts in [
+            &mut self.haste_left,
+            &mut self.march_left,
+            &mut self.steadfast_left,
+            &mut self.stoned_left,
+            &mut self.sung_left,
+        ] {
+            for left in lefts.iter_mut() {
+                *left = left.saturating_sub(1);
+            }
         }
+        self.deaths.fill(0);
     }
 
     /// How far regiment slot `i` goes at `pace` this tick: further on a
-    /// march (see [`PowerEffect::March`]).
+    /// march (see [`PowerEffect::March`]), less while a Singing Wall slows
+    /// it.
     pub(crate) fn marched(&self, i: usize, pace: Fx) -> Fx {
-        if self.march_left[i] == 0 {
+        let mut percent = 100;
+        if self.march_left[i] > 0 {
+            percent += i64::from(self.march[i].min(MAX_HASTE));
+        }
+        if self.sung_left[i] > 0 {
+            // Slowed by a Choir Singing Wall (see [`crate::twists`]).
+            percent = percent * crate::twists::SUNG_PACE_PERCENT / 100;
+        }
+        if percent == 100 {
             return pace;
         }
-        let percent = i64::from(self.march[i].min(MAX_HASTE));
-        Fx::from_raw((i64::from(pace.raw()) * (100 + percent) / 100) as i32)
+        Fx::from_raw((i64::from(pace.raw()) * percent / 100) as i32)
     }
 
     /// Regiment `h`'s march: ticks left, 0 for none.

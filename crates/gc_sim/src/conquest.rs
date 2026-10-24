@@ -265,6 +265,9 @@ impl Conquest {
         self.structures.work_gates(regs, nav, stances);
         // After every building that fell or lost power this tick.
         self.man_walls(regs, stats, nav, stances);
+        // After every death of the tick so far (a fall off a wall hurts but
+        // doesn't kill).
+        self.structures.mend_by_the_dead(regs);
         self.structures.charge_resonance();
         self.structures.grow_larvae();
         self.economy

@@ -16,7 +16,7 @@ use std::f32::consts::{PI, TAU};
 
 use gc_data::Faction;
 use gc_render::{BoxInstance, Effects, GHOST, ICHOR, Particle};
-use gc_sim::structures::{Armour, Breaker, Role};
+use gc_sim::structures::{Armour, Breaker, Role, WallTwist};
 use gc_sim::{PlayerId, RegimentHandle, StructureHandle};
 use glam::{Vec2, Vec3};
 
@@ -62,6 +62,16 @@ const COLLAPSE_DUST_RATE: f32 = 36.0;
 /// Sounds kept for the game to play at most (more at once are lost in the
 /// din, and none pile up while nothing plays them).
 const MAX_NOISES: usize = 32;
+/// Walls whose twist is remembered, and the seconds before one shows its
+/// twist again.
+const MAX_TWISTED: usize = 24;
+const TWIST_GAP: f32 = 0.5;
+/// Thorn splinters and blood, a Singing Wall's pale violet and a mended
+/// wall's pale green-white.
+const THORN_WOOD: [u8; 3] = [52, 38, 30];
+const THORN_BLOOD: [u8; 3] = [110, 22, 28];
+const SONG_COLOUR: [u8; 3] = [200, 180, 255];
+const MEND_COLOUR: [u8; 3] = [200, 255, 225];
 /// How fast soldiers close up to the wall once at a siege, as a share a
 /// second; how near it they stand to swing, and how far at most they step
 /// up to it on screen.
@@ -310,6 +320,14 @@ pub enum Sound {
     Impact,
     /// A building comes down.
     Collapse,
+    /// A stone drops from a Castle Wall.
+    Stone,
+    /// Thorns bite a striker.
+    Thorn,
+    /// A Singing Wall hums.
+    Hum,
+    /// A Mausoleum Wall is mended.
+    Chime,
 }
 
 /// A soldier at a building's wall on screen: where he stands, the way he
@@ -464,6 +482,9 @@ pub struct Siege {
     /// building last frame.
     touches: Vec<Option<Touches>>,
     noises: Vec<Noise>,
+    /// When each wall last showed its twist, so a crowd at one wall does
+    /// not show it every tick.
+    twisted: Vec<(StructureHandle, f32)>,
     /// Dust, sparks, smoke and fire collected for the frame.
     fx: Effects,
     /// The last frame's length, for the effects that go on and on.
@@ -485,6 +506,7 @@ impl Siege {
             lean: vec![0.0; regiments],
             touches: vec![None; regiments],
             noises: Vec::new(),
+            twisted: Vec::new(),
             fx: Effects::new(0x51e6_e000),
             dt: 0.0,
         }
@@ -592,6 +614,62 @@ impl Siege {
         };
         self.land(&look, a.kind, point, height, toward);
         self.noise(a.kind.sound(), point);
+    }
+
+    /// Wall `structure`'s twist answered (an `Event::Twist`): `front` is
+    /// where the regiment it answered stands, if there is one. A stone
+    /// drops from the wall top; thorns throw splinters and blood; a song
+    /// rings the tile; a mended tile gives off a pale glow.
+    pub fn twisted(&mut self, structure: StructureHandle, twist: WallTwist, front: Option<Vec2>) {
+        let Some(look) = self.look(structure).copied() else {
+            return;
+        };
+        // Stones come three seconds apart already; the rest show at most
+        // twice a second at one wall.
+        if twist != WallTwist::Stones {
+            let now = self.time;
+            match (self.twisted.iter()).position(|t| t.0 == structure) {
+                Some(k) if now - self.twisted[k].1 < TWIST_GAP => return,
+                Some(k) => self.twisted[k].1 = now,
+                None => {
+                    let k = self.pick(MAX_TWISTED);
+                    push_capped(&mut self.twisted, MAX_TWISTED, k, (structure, now));
+                }
+            }
+        }
+        let top = look.base + look.top;
+        let centre = look.centre();
+        // The wall's foot where the regiment is (or the middle).
+        let foot = front.map_or(centre, |f| look.nearest(f));
+        let out = (front.map_or(Vec2::ZERO, |f| f - foot)).normalize_or(Vec2::X);
+        match twist {
+            WallTwist::Stones => {
+                let colour = look.stuff.colours[self.pick(3)];
+                let spin = self.roll() * 6.0;
+                self.chip(foot + out * 0.1, top, out * 0.6, 0.0, 0.3, colour, spin);
+                let at = foot + out * 0.5;
+                self.fx
+                    .dust_cloud(up(at, look.base + 0.2), 0.6, 2.0, rgb(look.stuff.dust));
+                self.noise(Sound::Stone, at);
+            }
+            WallTwist::Thorns => {
+                let p = up(foot + out * 0.1, look.base + 0.6);
+                self.fx.chips(p, out, THORN_WOOD, 3.0, 0.06);
+                self.fx.spray(p, up(out, 0.4), THORN_BLOOD, 5.0);
+                self.noise(Sound::Thorn, foot);
+            }
+            WallTwist::Sings => {
+                self.fx.ring(up(centre, top + 0.05), SONG_COLOUR, 1.4);
+                self.fx.motes(up(centre, top), 0.4, SONG_COLOUR, 2.0);
+                self.noise(Sound::Hum, centre);
+            }
+            WallTwist::Mends => {
+                self.fx.motes(up(centre, top), 0.3, MEND_COLOUR, 3.0);
+                self.fx.glow_puff(up(centre, top), MEND_COLOUR);
+                self.noise(Sound::Chime, centre);
+            }
+            WallTwist::None => {}
+        }
     }
 
     fn noise(&mut self, sound: Sound, at: Vec2) {
@@ -1268,6 +1346,41 @@ mod tests {
         ps.iter()
             .filter(|p| p.flags & gc_render::particle_flags::ADDITIVE != 0)
             .count()
+    }
+
+    #[test]
+    fn each_wall_twist_shows_and_sounds_and_a_crowd_does_not_repeat_it() {
+        let mut s = Siege::new(8);
+        let h = handle(0);
+        s.remember(look(h, 1.0));
+        let front = Some(Vec2::new(12.0, 16.0));
+        // A stone drops from the wall top onto the front.
+        s.twisted(h, WallTwist::Stones, front);
+        assert_eq!(s.chips.len(), 1);
+        assert_eq!(s.chips[0].y, 3.0);
+        assert_eq!(s.drain_noises().next().map(|n| n.sound), Some(Sound::Stone));
+        let _ = s.take_particles();
+        // Thorns throw flecks; a second blow at once shows nothing more.
+        s.twisted(h, WallTwist::Thorns, front);
+        assert!(!s.take_particles().is_empty());
+        s.twisted(h, WallTwist::Thorns, front);
+        assert!(s.take_particles().is_empty());
+        assert_eq!(s.drain_noises().count(), 1);
+        // A song rings the tile; a mended tile glows.
+        let (song, tomb) = (handle(1), handle(2));
+        s.remember(look(song, 1.0));
+        s.remember(look(tomb, 1.0));
+        s.twisted(song, WallTwist::Sings, front);
+        let made = s.take_particles();
+        assert!(made.iter().any(|p| p.shape == gc_render::Shape::Ring));
+        s.twisted(tomb, WallTwist::Mends, None);
+        let made = s.take_particles();
+        assert!(made.iter().any(|p| p.shape == gc_render::Shape::Glow));
+        let sounds: Vec<_> = s.drain_noises().map(|n| n.sound).collect();
+        assert_eq!(sounds, [Sound::Hum, Sound::Chime]);
+        // An unknown wall shows nothing.
+        s.twisted(handle(5), WallTwist::Sings, front);
+        assert!(s.take_particles().is_empty());
     }
 
     #[test]

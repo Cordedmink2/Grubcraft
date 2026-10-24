@@ -12,8 +12,9 @@ use gc_fixed::FxVec2;
 use crate::combat::Combat;
 use crate::morale::MoraleState;
 use crate::regiments::{RegimentHandle, Regiments};
-use crate::structures::StructureHandle;
+use crate::structures::{StructureHandle, WallTwist};
 use crate::terrain::Growth;
+use crate::twists::Twisted;
 use crate::vision::Ambush;
 
 /// One volley, from when it is loosed until it comes down: the pool slot it
@@ -95,6 +96,14 @@ pub enum Event {
     },
     /// A building was brought down (its handle is no longer live).
     Fallen { structure: StructureHandle },
+    /// A wall's faction twist answered (see [`crate::twists`]): a stone,
+    /// a thorn or a song on regiment `on`, or (no regiment) a Mausoleum
+    /// Wall mended by the dead.
+    Twist {
+        structure: StructureHandle,
+        twist: WallTwist,
+        on: Option<RegimentHandle>,
+    },
     /// A worker was used up to start a building growing (the Brood's
     /// Gnawers; its handle is no longer live). It is not told as a loss.
     Consumed {
@@ -158,12 +167,15 @@ impl Events {
     }
 
     /// Room for two events per building too (Conquest), one falling and
-    /// one tolling, a blow on a building by each of the `regiments`, and
-    /// one for each regiment clearing a tile.
+    /// one tolling, a blow on a building by each of the `regiments` and
+    /// its wall's answer, a mended wall for each, and one for each
+    /// regiment clearing a tile.
     pub(crate) fn reserve(&mut self, structures: usize, regiments: usize) {
         // `reserve` counts from the length, not the capacity.
-        let room =
-            self.list.capacity() - self.list.len() + 2 * structures + regiments + self.before.len();
+        let room = self.list.capacity() - self.list.len()
+            + 2 * structures
+            + 4 * regiments
+            + self.before.len();
         self.list.reserve(room);
     }
 
@@ -177,12 +189,13 @@ impl Events {
         self.list.push(Event::Kindled { x, y });
     }
 
-    /// Tell of the bells tolled, the blows struck on buildings and the
-    /// buildings brought down in the tick just played.
+    /// Tell of the bells tolled, the blows struck on buildings, the walls'
+    /// answers and the buildings brought down in the tick just played.
     pub(crate) fn fallen(
         &mut self,
         tolled: &[StructureHandle],
         struck: &[(StructureHandle, RegimentHandle)],
+        twisted: &[Twisted],
         fallen: &[StructureHandle],
     ) {
         self.list
@@ -191,6 +204,13 @@ impl Events {
             struck
                 .iter()
                 .map(|&(structure, by)| Event::Struck { structure, by }),
+        );
+        self.list.extend(
+            (twisted.iter()).map(|&(structure, twist, on)| Event::Twist {
+                structure,
+                twist,
+                on,
+            }),
         );
         self.list
             .extend(fallen.iter().map(|&structure| Event::Fallen { structure }));

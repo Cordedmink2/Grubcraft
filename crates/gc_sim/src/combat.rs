@@ -1756,7 +1756,14 @@ impl Combat {
             if !self.loose(regs, j, shot, tick) {
                 continue;
             }
-            regs.reload[i] = stats.reload_ticks.max(1);
+            regs.reload[i] = if regs.loophole[i] {
+                // Shooting through a Castle Wall's loopholes.
+                let percent = 100 + crate::twists::LOOPHOLE_PERCENT;
+                (u32::from(stats.reload_ticks) * 100 / u32::from(percent)) as u16
+            } else {
+                stats.reload_ticks
+            }
+            .max(1);
         }
 
         // Volleys landing this tick.

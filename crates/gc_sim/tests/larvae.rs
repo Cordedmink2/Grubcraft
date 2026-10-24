@@ -107,6 +107,7 @@ fn buildings() -> [BuildingStats; 4] {
         field: 0,
         tunes: None,
         links: 0,
+        twist: gc_sim::structures::WallTwist::None,
     };
     let small =
         |role: Role, cost_grub: u16, build_ticks: u16, side: u8, flags: u16| BuildingStats {

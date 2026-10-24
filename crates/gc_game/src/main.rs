@@ -3478,6 +3478,7 @@ impl Running {
                     buildings::Aura::Spectral,
                     self.world.regiment_summoned(r.handle),
                 ),
+                (buildings::Aura::Sung, u16::from(r.sung)),
             ];
             for (aura, left) in auras {
                 if left == 0 {
@@ -5971,6 +5972,23 @@ impl Running {
                     if let Some(a) = a.filter(|_| seen || friendly) {
                         self.siege.struck(structure, a);
                         shown.push(structure);
+                    }
+                }
+                // A wall's twist is shown where the regiment it answered is
+                // seen, or for a wall of your side's.
+                Event::Twist {
+                    structure,
+                    twist,
+                    on,
+                } => {
+                    let side = self.sandbox.side;
+                    let friendly = (self.siege.look(structure))
+                        .is_some_and(|l| !self.world.hostile(side, l.owner));
+                    let on = on.and_then(|h| self.world.regiments.get(h));
+                    let seen = on.as_ref().is_some_and(|r| self.world.sees(side, r.handle));
+                    if seen || friendly || self.reveal_all {
+                        let front = on.map(|r| from_fx_vec(r.position));
+                        self.siege.twisted(structure, twist, front);
                     }
                 }
                 // Nor is its fall, unless the blow that felled it was.

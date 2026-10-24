@@ -297,7 +297,14 @@ fn building_record(
         },
         tune_tiles: b.tunes.as_ref().map_or(0, |t| t.tiles),
         link_tiles: b.links,
-        pad: [0; 3],
+        twist: match b.twist {
+            rosters::Twist::None => cq::TWIST_NONE,
+            rosters::Twist::Stones => cq::TWIST_STONES,
+            rosters::Twist::Mends => cq::TWIST_MENDS,
+            rosters::Twist::Sings => cq::TWIST_SINGS,
+            rosters::Twist::Thorns => cq::TWIST_THORNS,
+        },
+        pad: [0; 2],
     })
 }
 

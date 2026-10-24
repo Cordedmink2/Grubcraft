@@ -37,6 +37,7 @@ fn building(hp: u16, armour: Armour, width: u8, depth: u8) -> BuildingStats {
         field: 0,
         tunes: None,
         links: 0,
+        twist: gc_sim::structures::WallTwist::None,
     }
 }
 

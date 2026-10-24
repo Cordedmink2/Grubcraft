@@ -48,6 +48,7 @@ mod state;
 pub mod structures;
 pub mod terrain;
 pub mod towers;
+pub mod twists;
 pub mod veins;
 pub mod verdict;
 pub mod vision;
@@ -117,7 +118,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 44;
+pub const SIM_VERSION: u32 = 45;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1674,7 +1675,8 @@ impl World {
             );
             if let Some(conquest) = &self.conquest {
                 let s = &conquest.structures;
-                self.events.fallen(&s.tolled, &s.struck, &s.fallen);
+                self.events
+                    .fallen(&s.tolled, &s.struck, &s.twisted, &s.fallen);
             }
         }
         self.tick += 1;

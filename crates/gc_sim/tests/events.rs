@@ -127,6 +127,7 @@ fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
                 | Event::Struck { .. }
                 | Event::Consumed { .. }
                 | Event::Tolled { .. }
+                | Event::Twist { .. }
                 | Event::Cleared { .. } => {
                     unreachable!("no buildings or workers in a battle")
                 }

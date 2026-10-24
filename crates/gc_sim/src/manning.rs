@@ -484,6 +484,14 @@ impl Conquest {
                         self.fall(k, r, f, regs, units, nav);
                         continue;
                     }
+                    // Its own side's Castle Wall under every soldier gives its
+                    // shooters loopholes (see [`crate::twists`]); a wall
+                    // raised under it does too.
+                    regs.loophole[r] = !regs.climber[r]
+                        && held.iter().all(|&t| {
+                            let t = t.index as usize;
+                            s.loopholes(t) && s.owner_of(t) == regs.owner[r]
+                        });
                     if regs.climber[r]
                         && regs.engaged[r].is_none()
                         && (self.manning.defender(o.tile, k, regs, stances)).is_none()
@@ -682,6 +690,7 @@ impl Conquest {
         }
         regs.on_wall[r] = false;
         regs.climber[r] = false;
+        regs.loophole[r] = false;
         regs.formation[r] = o.formation;
         regs.set_frontage(r, o.frontage);
         let at = nav.settle(regs.owner[r], at, regs.berth(units, r));

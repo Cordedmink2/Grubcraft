@@ -254,7 +254,8 @@
             armour: Fortified,
             footprint: (1, 1),
             flags: [Line, Pass, NeedsPower],
-            effect: "Raises a Glass Wall stretch to a humming crystal wall: 4 times a Light Curtain's toughness. Needs tier 2. Your troops walk through it; it drops without power.",
+            twist: Sings,
+            effect: "Raises a Glass Wall stretch to a humming crystal wall: 4 times a Light Curtain's toughness. Needs tier 2. Your troops walk through it; it drops without power. Its song slows those who strike it: half as many blows, a slower walk.",
         ),
     ],
     units: [
