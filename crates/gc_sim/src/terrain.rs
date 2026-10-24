@@ -458,6 +458,16 @@ impl Terrain {
             .map_or(Growth::Open, |i| Growth::from_u8(self.growth[i]))
     }
 
+    /// Tiles per side of the ground that has soft footing, whether the map
+    /// made it or rain soaked it (0 if none can be soft).
+    pub fn footing_side(&self) -> u32 {
+        if self.soak.is_empty() {
+            self.footing_tiles as u32
+        } else {
+            self.tiles as u32
+        }
+    }
+
     /// Tiles per side of the growth layer (0 with no cover).
     pub fn growth_side(&self) -> u32 {
         self.cover_tiles as u32

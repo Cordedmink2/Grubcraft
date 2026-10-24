@@ -16,5 +16,8 @@ glam.workspace = true
 ron.workspace = true
 serde.workspace = true
 
+[dev-dependencies]
+gc_map.workspace = true
+
 [lints]
 workspace = true
