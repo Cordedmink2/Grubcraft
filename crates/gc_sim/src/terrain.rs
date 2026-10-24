@@ -98,6 +98,9 @@ pub const SOAK_REACH: u8 = 5;
 const SOAK_FROM: u32 = 150;
 const SOAK_PER_TILE: u32 = 150;
 const SOAK_HIGH: u32 = 300;
+/// How long the rubble of a fallen building stays soft underfoot, in ticks:
+/// three minutes.
+pub const RUBBLE_TICKS: u16 = 180 * crate::TICKS_PER_SECOND as u16;
 /// A soaked tile firms up again once the ground is this much drier than
 /// it took to soak it, so tiles don't flicker as the rain eases.
 pub const SOAK_DRY_MARGIN: u16 = 100;
@@ -254,6 +257,15 @@ pub struct Terrain {
     /// does (empty when none does): where a tile is in `soak`.
     soak_need: Arc<[u16]>,
     soaked: u32,
+    /// The rubble of buildings brought down: tile index and ticks left,
+    /// sorted by index. Soft ground until it settles.
+    rubble: Vec<(u32, u16)>,
+    /// How many times a tile has come to be rubble or stopped being, so
+    /// readers of the soft ground know when to look again.
+    rubble_moves: u32,
+    /// Map edge in tiles, which the rubble is indexed by (`tiles` is 0 on
+    /// flat ground).
+    side: i32,
     /// Height units a flood has raised the water above `water_level`
     /// (see [`crate::flood`]).
     rise: u16,
@@ -316,6 +328,9 @@ impl Terrain {
             soak: Arc::from([]),
             soak_need: Arc::from([]),
             soaked: 0,
+            rubble: Vec::with_capacity(64),
+            rubble_moves: 0,
+            side: map_tiles as i32,
             rise: 0,
             changes: 0,
         };
@@ -445,6 +460,63 @@ impl Terrain {
         (self.soak.iter()).map(move |&(i, _)| (i as i32 % n, i as i32 / n))
     }
 
+    /// A building stood on `[x, y, w, d]` and is brought down: its ground is
+    /// rubble for [`RUBBLE_TICKS`] (again, from now, where it still lay).
+    pub(crate) fn spread_rubble(&mut self, [x0, y0, w, d]: [i32; 4]) {
+        for y in y0..y0 + d {
+            for x in x0..x0 + w {
+                let Some(i) = index_in(self.side, x, y) else {
+                    continue;
+                };
+                let i = i as u32;
+                match self.rubble.binary_search_by_key(&i, |&(t, _)| t) {
+                    Ok(at) => self.rubble[at].1 = RUBBLE_TICKS,
+                    Err(at) => {
+                        self.rubble.insert(at, (i, RUBBLE_TICKS));
+                        self.rubble_moves = self.rubble_moves.wrapping_add(1);
+                    }
+                }
+            }
+        }
+    }
+
+    /// One tick on: rubble settles, and firm ground it was.
+    pub(crate) fn settle_rubble(&mut self) {
+        let before = self.rubble.len();
+        self.rubble.retain_mut(|(_, left)| {
+            *left -= 1;
+            *left > 0
+        });
+        if self.rubble.len() != before {
+            self.rubble_moves = self.rubble_moves.wrapping_add(1);
+        }
+    }
+
+    /// The rubble lying now: tile index and ticks left, by index. Empty
+    /// until a building falls.
+    pub fn rubble(&self) -> &[(u32, u16)] {
+        &self.rubble
+    }
+
+    /// A count that changes whenever a tile comes to be rubble or stops
+    /// being (with [`Terrain::soaked`], what changes the soft ground).
+    pub fn rubble_moves(&self) -> u32 {
+        self.rubble_moves
+    }
+
+    /// Whether the tile `p` is on is rubble (see [`Terrain::rubble`]).
+    pub fn rubbled(&self, p: FxVec2) -> bool {
+        self.rubbled_at(p.x.floor_int(), p.y.floor_int())
+    }
+
+    fn rubbled_at(&self, x: i32, y: i32) -> bool {
+        index_in(self.side, x, y).is_some_and(|i| {
+            self.rubble
+                .binary_search_by_key(&(i as u32), |&(t, _)| t)
+                .is_ok()
+        })
+    }
+
     /// The tiles rain has soaked soft, as (column, row).
     pub fn soaked_tiles(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
         self.soak_order().take(self.soaked as usize)
@@ -535,7 +607,7 @@ impl Terrain {
         let (x, y) = (p.x.floor_int(), p.y.floor_int());
         let made = index_in(self.footing_tiles, x, y)
             .map_or(Footing::Firm, |i| Footing::from_u8(self.footing[i]));
-        if made == Footing::Firm && self.soaked_at(x, y) {
+        if made == Footing::Firm && (self.soaked_at(x, y) || self.rubbled_at(x, y)) {
             Footing::Soft
         } else {
             made

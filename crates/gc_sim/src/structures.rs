@@ -665,6 +665,8 @@ pub struct Structures {
     siege_stalls: Vec<u8>,
     /// Buildings brought down in the last tick, for the events.
     pub(crate) fallen: Vec<StructureHandle>,
+    /// The ground those left, each as its footprint, for the rubble.
+    pub(crate) rubble: Vec<[i32; 4]>,
     /// Blows struck on buildings in the last tick, and by whom, for the
     /// events (one a regiment at most).
     pub(crate) struck: Vec<(StructureHandle, RegimentHandle)>,
@@ -773,6 +775,7 @@ impl Structures {
             siege_gap: vec![Fx::ZERO; regiments],
             siege_stalls: vec![0; regiments],
             fallen: Vec::with_capacity(n),
+            rubble: Vec::with_capacity(8),
             struck: Vec::with_capacity(regiments),
             consumed: Vec::with_capacity(regiments),
             climbed: Vec::with_capacity(regiments),
@@ -1606,6 +1609,7 @@ impl Structures {
             }
             if self.hp[s] == 0 {
                 self.fallen.push(target);
+                self.rubble.push(self.footprint(s));
                 self.remove(s, nav, regs);
                 self.siege[r] = None;
             }

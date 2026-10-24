@@ -1851,6 +1851,8 @@ fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static st
 fn ground_word(terrain: &gc_sim::Terrain, p: gc_fixed::FxVec2) -> &'static str {
     if terrain.wet(p) {
         "In a ford: slow, no charges"
+    } else if terrain.rubbled(p) {
+        "In rubble: slow, no charges"
     } else if terrain.soft(p) {
         "In mud: slow, no charges"
     } else if terrain.cover(p) == gc_sim::Cover::Wood {

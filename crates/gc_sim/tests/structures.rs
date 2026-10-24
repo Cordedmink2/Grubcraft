@@ -6,6 +6,7 @@ use gc_sim::events::Event;
 use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::structures::{Armour, Breaker, Role};
+use gc_sim::terrain::RUBBLE_TICKS;
 use gc_sim::{
     BuildingStats, Capacities, Command, ConquestSetup, ConquestUnit, MatchSetup, PlayerCommand,
     RegimentHandle, StructureHandle, TICKS_PER_SECOND, World,
@@ -275,6 +276,18 @@ fn a_regiment_knocks_a_farmstead_down() {
     // Gone from the field: its slot and its ground are free again.
     assert!(w.structures().unwrap().is_empty());
     assert!(w.nav().walkable(0, FxVec2::from_ints(31, 21)));
+    // Its footprint is rubble, soft underfoot, and only that, until it
+    // settles three minutes on.
+    let on_it = FxVec2::from_ints(31, 21);
+    assert!(w.terrain().rubbled(on_it) && w.terrain().soft(on_it));
+    assert!(!w.terrain().rubbled(FxVec2::from_ints(31, 40)));
+    for _ in 0..RUBBLE_TICKS - 1 {
+        w.tick(&[]);
+    }
+    assert!(w.terrain().rubbled(on_it), "still there a tick before");
+    w.tick(&[]);
+    assert!(!w.terrain().rubbled(on_it) && !w.terrain().soft(on_it));
+    assert!(w.terrain().rubble().is_empty());
     put_up(&mut w, 1, FARMSTEAD, 30, 20);
 }
 

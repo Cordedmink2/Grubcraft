@@ -43,9 +43,15 @@ pub struct Terrain {
     /// Which tiles are soft underfoot, row by row: bog, and mud the rain
     /// has soaked. Empty when none is.
     soft: Vec<bool>,
-    /// The simulation's soaked count when the minds last read the soft
-    /// tiles (`gc_sim::Terrain::soaked`); `None` before the first look.
-    soaked: Option<u32>,
+    /// The simulation's soaked count and rubble moves when the minds last
+    /// read the soft tiles (`gc_sim::Terrain::soaked`, `rubble_moves`);
+    /// `None` before the first look.
+    soaked: Option<(u32, u32)>,
+}
+
+/// What changes which tiles are soft: the rain's soaking and rubble.
+fn soft_stamp(ground: &gc_sim::Terrain) -> (u32, u32) {
+    (ground.soaked(), ground.rubble_moves())
 }
 
 impl Terrain {
@@ -152,8 +158,8 @@ impl Terrain {
     /// be walked again.
     /// The soft tiles are read again when rain soaks or dries any.
     pub fn follow(&mut self, ground: &gc_sim::Terrain) {
-        if self.soaked != Some(ground.soaked()) {
-            self.soaked = Some(ground.soaked());
+        if self.soaked != Some(soft_stamp(ground)) {
+            self.soaked = Some(soft_stamp(ground));
             self.read_soft(ground);
         }
         if self.seen == ground.changes() {
@@ -183,7 +189,7 @@ impl Terrain {
     /// Whether the minds' ground lags the simulation's.
     pub fn stale(&self, ground: &gc_sim::Terrain) -> bool {
         (!self.growth.is_empty() && self.seen != ground.changes())
-            || self.soaked != Some(ground.soaked())
+            || self.soaked != Some(soft_stamp(ground))
     }
 
     /// Read which tiles are soft from the simulation's ground.

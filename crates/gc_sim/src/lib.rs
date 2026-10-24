@@ -119,7 +119,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 47;
+pub const SIM_VERSION: u32 = 48;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1606,6 +1606,7 @@ impl World {
             self.tick,
             &mut self.combat_rng,
         );
+        self.terrain.settle_rubble();
         if let Some(conquest) = &mut self.conquest {
             conquest.towers(
                 &mut self.combat,
@@ -1623,6 +1624,9 @@ impl World {
                 self.judge.throne().map_or(0, verdict::Throne::out_mask),
                 self.sky.air(),
             );
+            for foot in conquest.structures.rubble.drain(..) {
+                self.terrain.spread_rubble(foot);
+            }
             self.clear_land();
             if let Some(c) = &mut self.conquest {
                 c.tend_plans(&mut self.nav, &mut self.regiments, &self.terrain);
@@ -2892,6 +2896,11 @@ impl World {
                 // hashes as before).
                 if self.terrain.soaked() > 0 {
                     h.u32(self.terrain.soaked());
+                }
+                // Rubble lying where buildings fell (none until one does).
+                for &(i, left) in self.terrain.rubble() {
+                    h.u32(i);
+                    h.u16(left);
                 }
                 // Changed only by clearing (in Conquest) and fire (once one
                 // has been lit), so other matches hash as before.
