@@ -162,7 +162,11 @@ pub struct HudState {
     pub armed: Option<Armed>,
     /// Conquest: the wall as it would be drawn now, worked out once a
     /// frame for both its ghost and its hint.
-    pub wall_preview: Option<crate::wall_tool::Preview>,
+    pub wall_preview: Option<crate::ring_tool::Piece>,
+    /// Conquest: what the wall tool is set to (blueprints, the ring), and
+    /// the ring as it would be ordered now.
+    pub wall_mode: crate::wall_tool::WallMode,
+    pub ring_preview: Option<crate::wall_tool::RingPreview>,
     /// Conquest: the workers' build menu is open on the grid.
     pub build_menu: bool,
     /// Conquest: the selected building's tips are showing (its info button
@@ -1068,6 +1072,7 @@ impl Running {
             .or_else(|| self.place_hint())
             .or_else(|| self.clearing_hint())
             .or_else(|| self.wall_hint())
+            .or_else(|| self.plans_hint())
         {
             draw_hint(&mut self.hud.draw, screen, &text);
         }
@@ -1811,10 +1816,10 @@ fn gate_now(open: bool) -> &'static str {
 }
 
 /// The tooltip of a wall on the build menu (it replaces a building's).
-const WALL_TIP: &str = "Draw this wall: click its start, then click each end or bend, a tile at a time. Right-click ends it; Shift locks 15-degree steps.";
+const WALL_TIP: &str = "Draw this wall: click its start, then click each end or bend, a tile at a time. Right-click ends it; Shift locks 15-degree steps. B plans it as a blueprint, paid as workers build it; O draws a ring.";
 /// The Light Curtain's and the Resin Ridge's tips say what is different.
-const WALL_TIP_PASS: &str = "Draw this wall: click its start, then each end or bend. Your own troops walk through it; it drops when power fails. Right-click ends it; Shift locks 15-degree steps.";
-const WALL_TIP_GROWN: &str = "Draw this wall: click its start, then each end or bend. It grows on its own along your root-veins, with no Gnawer. Right-click ends it; Shift locks 15-degree steps.";
+const WALL_TIP_PASS: &str = "Draw this wall: click its start, then each end or bend. Your own troops walk through it; it drops when power fails. Right-click ends it; Shift locks 15-degree steps. B plans a blueprint; O draws a ring.";
+const WALL_TIP_GROWN: &str = "Draw this wall: click its start, then each end or bend. It grows on its own along your root-veins, with no Gnawer. Right-click ends it; Shift locks 15-degree steps. O draws a ring.";
 
 /// The build-menu tooltip for the wall `flags` describe.
 fn wall_tip(flags: u16) -> &'static str {
@@ -1835,6 +1840,10 @@ fn card_look(action: Option<Action>) -> (Icon, &'static str) {
         Some(Action::Clear) => (
             Icon::Hammer,
             "Workers clear scrub, woods and thicket, each faction its own way (the worker's guide entry says how). Felled timber can pay a little Grub. Drag over the ground, or click one tile. Cleared ground no longer hides troops or slows them.",
+        ),
+        Some(Action::WorkPlans) => (
+            Icon::Hammer,
+            "Selected workers build the walls you have planned (the faint blue tiles), nearest first, paying for each as they go and waiting while you can't. Right-click a planned tile to do the same. Any other order stops them.",
         ),
         Some(Action::Lay(_)) => (
             Icon::Hammer,

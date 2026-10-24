@@ -18,6 +18,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 pub mod arrange;
+pub mod blueprints;
 pub mod champions;
 pub mod chords;
 pub mod clearing;
@@ -113,7 +114,12 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 37;
+pub const SIM_VERSION: u32 = 38;
+
+/// A tile in a command, widened.
+fn tile(t: (i16, i16)) -> (i32, i32) {
+    (i32::from(t.0), i32::from(t.1))
+}
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -715,6 +721,20 @@ pub enum Command {
         from: (i16, i16),
         to: (i16, i16),
     },
+    /// Conquest: plan a wall of type `building` from tile `from` to tile
+    /// `to` as a blueprint, paid for and laid tile by tile as workers set to
+    /// the plans reach it (see [`blueprints`]).
+    PlanWall {
+        building: BuildingId,
+        from: (i16, i16),
+        to: (i16, i16),
+    },
+    /// Conquest: drop the issuer's planned tiles on the line from tile
+    /// `from` to tile `to`.
+    DropPlan { from: (i16, i16), to: (i16, i16) },
+    /// Conquest: one of the issuer's workers works the issuer's plans (see
+    /// [`blueprints`]) until given another order.
+    WorkPlan { regiment: RegimentHandle },
 }
 
 impl Command {
@@ -744,6 +764,9 @@ impl Command {
             | Command::FocusTower { .. }
             | Command::SetGate { .. }
             | Command::BuildWall { .. }
+            | Command::PlanWall { .. }
+            | Command::DropPlan { .. }
+            | Command::WorkPlan { .. }
             | Command::Rally { .. }
             | Command::HandOver { .. } => true,
             Command::SpawnRegiment { .. }
@@ -1108,6 +1131,68 @@ impl World {
             )
     }
 
+    /// [`World::wall_plan`] without the price or the room left in the
+    /// match: the tiles not yet walled, each with whether it could go up
+    /// now, for a wall `player` may lay at all. For previews of orders
+    /// priced as a whole (the ring tool).
+    pub fn wall_fits(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        from: (i32, i32),
+        to: (i32, i32),
+    ) -> Result<Vec<walls::WallTile>, Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        (c.wall_fits(
+            player,
+            building,
+            from,
+            to,
+            &self.nav,
+            &self.regiments,
+            &self.terrain,
+        ))
+        .map(|(_, plan)| plan)
+    }
+
+    /// The tiles of a wall `player` would plan from tile `from` to tile
+    /// `to` as a blueprint, each with whether it could go up now, or why
+    /// the whole line can't be planned: the check [`Command::PlanWall`]
+    /// makes (see [`blueprints`]).
+    pub fn blueprint(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        from: (i32, i32),
+        to: (i32, i32),
+    ) -> Result<Vec<walls::WallTile>, Refusal> {
+        self.conquest
+            .as_ref()
+            .ok_or(Refusal::NoBuildings)?
+            .blueprint(
+                player,
+                building,
+                from,
+                to,
+                &self.nav,
+                &self.regiments,
+                &self.terrain,
+            )
+    }
+
+    /// Every side's planned wall tiles (Conquest only), in the order they
+    /// were planned (see [`blueprints`]).
+    pub fn plans(&self) -> &[blueprints::Plan] {
+        self.conquest.as_ref().map_or(&[], |c| c.blueprints.plans())
+    }
+
+    /// Whether worker `h` is working its side's plans.
+    pub fn works_plans(&self, h: RegimentHandle) -> bool {
+        self.conquest
+            .as_ref()
+            .is_some_and(|c| c.blueprints.workers().contains(&h))
+    }
+
     /// Whether `player` could have a worker lay a building of type
     /// `building` somewhere now: [`World::can_lay`] without the ground.
     pub fn may_lay(&self, player: PlayerId, building: BuildingId) -> Result<(), Refusal> {
@@ -1202,8 +1287,8 @@ impl World {
     }
 
     /// `player`'s workers with nothing to do (Conquest only): standing
-    /// still, unbroken, out of melee, and gathering, building, clearing or
-    /// attacking nothing.
+    /// still, unbroken, out of melee, and gathering, building, clearing,
+    /// working the plans or attacking nothing.
     pub fn idle_workers(&self, player: PlayerId) -> impl Iterator<Item = RegimentHandle> + '_ {
         self.conquest.iter().flat_map(move |c| {
             self.regiments
@@ -1214,11 +1299,9 @@ impl World {
                         && !r.engaged
                         && !r.morale.broken()
                         && c.units.get(usize::from(r.unit)).is_some_and(|u| u.worker)
-                        && self.regiments.resolve(r.handle).is_some_and(|i| {
-                            c.economy.work_of(&self.regiments, i).is_none()
-                                && c.structures.job_of(&self.regiments, i).is_none()
-                                && c.clearing.job_of(&self.regiments, i).is_none()
-                        })
+                        && !c.blueprints.workers().contains(&r.handle)
+                        && (self.regiments.resolve(r.handle))
+                            .is_some_and(|i| !c.has_job(&self.regiments, i))
                 })
                 .map(|r| r.handle)
         })
@@ -1412,6 +1495,9 @@ impl World {
                 self.sky.air(),
             );
             self.clear_land();
+            if let Some(c) = &mut self.conquest {
+                c.tend_plans(&mut self.nav, &mut self.regiments, &self.terrain);
+            }
             self.raise_trained();
         }
         // What powers left on regiments wears off in any world, a copy of
@@ -1620,6 +1706,10 @@ impl World {
             },
             Command::FallBack { regiment } => match self.regiments.resolve(regiment) {
                 Some(i) if self.stances.can_command(pc.player, self.regiments.owner[i]) => {
+                    if let Some(c) = &mut self.conquest {
+                        // Falling back takes a worker off the plans.
+                        c.blueprints.forget(i);
+                    }
                     let to = self.fall_back_point(i);
                     self.regiments.fall_back(regiment, to)
                 }
@@ -1764,7 +1854,6 @@ impl World {
                 from,
                 to,
             } => {
-                let tile = |t: (i16, i16)| (i32::from(t.0), i32::from(t.1));
                 let worker = match regiment {
                     Some(h) => self.worker_of(pc.player, h).map(Some),
                     None => Some(None),
@@ -1780,6 +1869,25 @@ impl World {
                         &mut self.regiments,
                         &self.terrain,
                     ),
+                    _ => false,
+                }
+            }
+            Command::PlanWall { building, from, to } => self.conquest.as_mut().is_some_and(|c| {
+                c.plan_wall(
+                    pc.player,
+                    building,
+                    tile(from),
+                    tile(to),
+                    &self.nav,
+                    &self.regiments,
+                    &self.terrain,
+                )
+            }),
+            Command::DropPlan { from, to } => (self.conquest.as_mut())
+                .is_some_and(|c| c.drop_plan(pc.player, tile(from), tile(to))),
+            Command::WorkPlan { regiment } => {
+                match (self.worker_of(pc.player, regiment), &mut self.conquest) {
+                    (Some(r), Some(c)) => c.work_plans(pc.player, r, &self.regiments),
                     _ => false,
                 }
             }

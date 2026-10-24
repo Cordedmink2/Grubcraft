@@ -167,6 +167,7 @@ mod online;
 mod profile;
 mod puppets;
 mod replays;
+mod ring_tool;
 mod roster;
 mod sandbox;
 mod scars;
@@ -1890,6 +1891,18 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
+                    // The wall tool owns B (blueprints), O (the ring) and Enter
+                    // while it is armed, ahead of the build menu's B and the
+                    // army shape's O.
+                    if down
+                        && !event.repeat
+                        && !r.input.shift
+                        && !r.input.command
+                        && !r.input.alt
+                        && r.wall_key(code)
+                    {
+                        return;
+                    }
                     // A building's card or the build menu owns the grid's keys;
                     // what it leaves goes to the battle grid below.
                     if grid_key
@@ -3051,6 +3064,7 @@ impl Running {
             self.push_placement_ghost();
             self.push_building_ghost();
             self.push_wall_ghost();
+            self.push_plan_ghosts();
             self.push_clearing_marks();
             self.push_power_aim();
             let hm = &self.heightmap;

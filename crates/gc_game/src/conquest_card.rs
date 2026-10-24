@@ -9,7 +9,7 @@ use std::fmt::Write;
 use gc_data::ConquestUnitRecord;
 use gc_data::conquest::UNIT_CONSUMED;
 use gc_sim::gates::GateMode;
-use gc_sim::structures::CANCEL_REFUND_PERCENT;
+use gc_sim::structures::{CANCEL_REFUND_PERCENT, Refusal};
 use gc_sim::{
     BuildingId, Command, PlayerCommand, RegimentHandle, Regiments, StructureHandle, StructureView,
     TradePost, UnitId,
@@ -26,6 +26,8 @@ pub const SLOT_BUILD: usize = 7;
 const SLOT_CLEAR: usize = 5;
 /// A worker's Expand button (D): lay a new main building.
 const SLOT_EXPAND: usize = 6;
+/// A worker's Work plans button (A): build the walls your side has planned.
+const SLOT_WORK_PLANS: usize = 4;
 /// A building's last slot (V): its tier upgrade, or calling it off.
 const SLOT_LAST: usize = GRID_SLOTS - 1;
 /// A right-click this close to a seep or vein (in tiles) sends workers there.
@@ -41,6 +43,8 @@ pub enum Action {
     OpenBuild,
     /// Choose ground for the workers to clear.
     Clear,
+    /// Set the selected workers to build the walls your side has planned.
+    WorkPlans,
     /// Choose where a worker lays this building.
     Lay(BuildingId),
     /// Queue this regiment at the selected building.
@@ -103,6 +107,7 @@ impl Running {
             slots[SLOT_BUILD] = Some(Action::OpenBuild);
             slots[SLOT_CLEAR] = Some(Action::Clear);
             slots[SLOT_EXPAND] = self.buildings.expansion(faction).map(Action::Lay);
+            slots[SLOT_WORK_PLANS] = self.has_plans().then_some(Action::WorkPlans);
             return Some(Card {
                 slots,
                 whole: false,
@@ -129,6 +134,11 @@ impl Running {
         (self.selected.iter().copied()).filter(|&h| is_worker(regiments, units, h))
     }
 
+    /// Whether something is selected and all of it is workers.
+    pub fn selection_all_workers(&self) -> bool {
+        !self.selected.is_empty() && self.selected_workers().count() == self.selected.len()
+    }
+
     /// The selected worker nearest `spot`.
     pub fn nearest_worker(&self, spot: Vec2) -> Option<RegimentHandle> {
         let regiments = &self.world.regiments;
@@ -140,6 +150,35 @@ impl Running {
             };
             d(a).total_cmp(&d(b))
         })
+    }
+
+    /// Whether your side has walls planned (blueprints) to work.
+    pub fn has_plans(&self) -> bool {
+        let side = self.sandbox.side;
+        self.world.plans().iter().any(|p| p.owner == side)
+    }
+
+    /// The selected workers go to work your side's plans: each takes the
+    /// nearest planned tile whenever it has nothing else to do.
+    pub fn work_plans(&mut self) {
+        let workers: Vec<RegimentHandle> = self.selected_workers().collect();
+        if workers.is_empty() {
+            return;
+        }
+        if !self.has_plans() {
+            return self.say("Your side has nothing planned.".into());
+        }
+        let n = workers.len();
+        self.orders(
+            workers
+                .into_iter()
+                .map(|regiment| Command::WorkPlan { regiment }),
+        );
+        self.say(format!(
+            "{n} {} set to your planned walls. Any other order stops {}.",
+            buildings::plural(n, "worker", "workers"),
+            buildings::plural(n, "it", "them"),
+        ));
     }
 
     /// Whether `building` is a wall drawn as a line.
@@ -166,10 +205,18 @@ impl Running {
         let side = self.sandbox.side;
         let structure = self.picked_structure();
         match action {
-            Action::Lay(b) => self.world.may_lay(side, b).err(),
+            // A wall can be armed while broke, to plan blueprints.
+            Action::Lay(b) => match self.world.may_lay(side, b) {
+                Err(Refusal::Price) if self.is_wall(b) => None,
+                r => r.err(),
+            },
             Action::Train(u) => structure.and_then(|h| self.world.can_train(side, h, u).err()),
             Action::Upgrade(_) => structure.and_then(|h| self.world.can_upgrade(side, h).err()),
-            Action::OpenBuild | Action::Clear | Action::CallOff | Action::SetGate(_) => None,
+            Action::OpenBuild
+            | Action::Clear
+            | Action::WorkPlans
+            | Action::CallOff
+            | Action::SetGate(_) => None,
         }
         .map(buildings::why)
     }
@@ -199,6 +246,10 @@ impl Running {
                 Action::Clear => {
                     label.push_str("Clear");
                     detail.push('S');
+                }
+                Action::WorkPlans => {
+                    label.push_str("Plans");
+                    detail.push('A');
                 }
                 Action::Lay(b) => {
                     if let Some(s) = self.buildings.stats.get(usize::from(b)) {
@@ -275,6 +326,10 @@ impl Running {
                     self.hud.armed = Some(Armed::Clear);
                     self.say("Drag over the ground to clear.".into());
                 }
+                return true;
+            }
+            Action::WorkPlans => {
+                self.work_plans();
                 return true;
             }
             Action::Lay(b) if self.is_wall(b) => {
@@ -411,6 +466,9 @@ impl Running {
         if !self.conquest_match() || self.watching.is_some() {
             return false;
         }
+        if self.plan_right_click() {
+            return true;
+        }
         if let Some(structure) = self.picked_structure() {
             let kind = self.world.structures().and_then(|s| s.get(structure));
             if kind.is_some_and(|s| self.trains(s.building).next().is_some()) {
@@ -426,10 +484,7 @@ impl Running {
         }
         // A mixed selection moves together, and an enemy there is attacked.
         let (regiments, units) = (&self.world.regiments, &self.data.conquest_units);
-        if self.selected.is_empty()
-            || !(self.selected.iter()).all(|&h| is_worker(regiments, units, h))
-            || self.enemy_at(at).is_some()
-        {
+        if !self.selection_all_workers() || self.enemy_at(at).is_some() {
             return false;
         }
         let side = self.sandbox.side;
@@ -489,6 +544,30 @@ impl Running {
                 }),
         );
         self.ui_sound(sounds::UiSound::Move);
+        true
+    }
+
+    /// A right-click on a tile your side has planned: with Ctrl (or Cmd)
+    /// it drops the whole planned line that tile is on; otherwise, if the
+    /// selection is all workers, they go to work the plans. Whether it was
+    /// one.
+    fn plan_right_click(&mut self) -> bool {
+        let Some(line) = self.plan_under_cursor() else {
+            return false;
+        };
+        if self.input.command {
+            let [x0, y0, x1, y1] = line;
+            self.order(Command::DropPlan {
+                from: (x0, y0),
+                to: (x1, y1),
+            });
+            self.say("Dropped the planned wall.".into());
+            return true;
+        }
+        if !self.selection_all_workers() {
+            return false;
+        }
+        self.work_plans();
         true
     }
 

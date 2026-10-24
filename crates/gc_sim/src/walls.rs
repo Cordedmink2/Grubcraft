@@ -24,7 +24,7 @@ use crate::conquest::{Conquest, overgrown, overlaps};
 use crate::nav::Nav;
 use crate::regiments::Regiments;
 use crate::structures::{
-    BuildingId, GATE, GROWN, LINE, Refusal, StructureHandle, Structures, Work,
+    BuildingId, BuildingStats, GATE, GROWN, LINE, Refusal, StructureHandle, Structures, Work,
 };
 use crate::terrain::Terrain;
 use crate::{PlayerId, Vec};
@@ -194,41 +194,7 @@ impl Conquest {
         regs: &Regiments,
         terrain: &Terrain,
     ) -> Result<Vec<WallTile>, Refusal> {
-        let b = *self
-            .structures
-            .buildings()
-            .get(usize::from(building))
-            .ok_or(Refusal::Unknown)?;
-        if b.flags & LINE == 0 {
-            return Err(Refusal::Unknown);
-        }
-        let tiles = wall_tiles(from, to).ok_or(Refusal::Unknown)?;
-        self.may_lay(player, building)?;
-        let area = [
-            from.0.min(to.0),
-            from.1.min(to.1),
-            (to.0 - from.0).abs() + 1,
-            (to.1 - from.1).abs() + 1,
-        ];
-        let own = self.structures.own_walls_in(player, area);
-        let plan: Vec<WallTile> = tiles
-            .into_iter()
-            .filter(|&t| !own.iter().any(|&foot| overlaps(foot, [t.0, t.1, 1, 1])))
-            .map(|tile| {
-                let foot = [tile.0, tile.1, 1, 1];
-                let fits = (self.check(&[], building, tile, 0, nav, regs, terrain))
-                    .and_then(|()| self.powered(player, building, tile, 0))
-                    .and_then(|()| self.rooted(player, building, tile, 0))
-                    .and_then(|()| {
-                        if overgrown(terrain, foot) {
-                            Err(Refusal::Overgrown)
-                        } else {
-                            Ok(())
-                        }
-                    });
-                WallTile { tile, fits }
-            })
-            .collect();
+        let (b, plan) = self.wall_fits(player, building, from, to, nav, regs, terrain)?;
         if self.structures.free_slots() < plan.len() {
             return Err(Refusal::NoRoom);
         }
@@ -241,6 +207,111 @@ impl Conquest {
             return Err(Refusal::Price);
         }
         Ok(plan)
+    }
+
+    /// [`Conquest::wall_plan`] as a blueprint (see [`crate::blueprints`]):
+    /// the tiles not yet walled or planned, each with whether it could go up
+    /// now, the price and room left out. Refused as well for a grown wall,
+    /// which needs no worker to plan for.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn blueprint(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        from: (i32, i32),
+        to: (i32, i32),
+        nav: &Nav,
+        regs: &Regiments,
+        terrain: &Terrain,
+    ) -> Result<Vec<WallTile>, Refusal> {
+        let (b, mut plan) = self.wall_fits(player, building, from, to, nav, regs, terrain)?;
+        if b.flags & GROWN != 0 {
+            return Err(Refusal::Unknown);
+        }
+        plan.retain(|t| !self.blueprints.planned(player, t.tile));
+        if self.blueprints.room(player) < plan.len() {
+            return Err(Refusal::NoRoom);
+        }
+        Ok(plan)
+    }
+
+    /// [`Conquest::wall_plan`] without the price or room: the tiles not
+    /// yet walled, each with whether it could go up now, for a wall
+    /// `player` may lay at all.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn wall_fits(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        from: (i32, i32),
+        to: (i32, i32),
+        nav: &Nav,
+        regs: &Regiments,
+        terrain: &Terrain,
+    ) -> Result<(BuildingStats, Vec<WallTile>), Refusal> {
+        self.may_build(player, building)?;
+        self.wall_line(player, building, from, to, nav, regs, terrain)
+    }
+
+    /// The tiles of a wall of type `building` drawn from `from` to `to`
+    /// that `player`'s own walls and gates don't already stand on, each with
+    /// whether it could go up now.
+    #[allow(clippy::too_many_arguments)]
+    fn wall_line(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        from: (i32, i32),
+        to: (i32, i32),
+        nav: &Nav,
+        regs: &Regiments,
+        terrain: &Terrain,
+    ) -> Result<(BuildingStats, Vec<WallTile>), Refusal> {
+        let b = *self
+            .structures
+            .buildings()
+            .get(usize::from(building))
+            .ok_or(Refusal::Unknown)?;
+        if b.flags & LINE == 0 {
+            return Err(Refusal::Unknown);
+        }
+        let tiles = wall_tiles(from, to).ok_or(Refusal::Unknown)?;
+        let area = [
+            from.0.min(to.0),
+            from.1.min(to.1),
+            (to.0 - from.0).abs() + 1,
+            (to.1 - from.1).abs() + 1,
+        ];
+        let own = self.structures.own_walls_in(player, area);
+        let plan: Vec<WallTile> = tiles
+            .into_iter()
+            .filter(|&t| !own.iter().any(|&foot| overlaps(foot, [t.0, t.1, 1, 1])))
+            .map(|tile| WallTile {
+                tile,
+                fits: self.wall_tile_fits(player, building, tile, nav, regs, terrain),
+            })
+            .collect();
+        Ok((b, plan))
+    }
+
+    /// Whether a tile of wall `building` can go up at `tile` for `player`
+    /// now, going by the ground alone.
+    pub(crate) fn wall_tile_fits(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        tile: (i32, i32),
+        nav: &Nav,
+        regs: &Regiments,
+        terrain: &Terrain,
+    ) -> Result<(), Refusal> {
+        self.check(&[], building, tile, 0, nav, regs, terrain)?;
+        self.powered(player, building, tile, 0)?;
+        self.rooted(player, building, tile, 0)?;
+        if overgrown(terrain, [tile.0, tile.1, 1, 1]) {
+            return Err(Refusal::Overgrown);
+        }
+        Ok(())
     }
 
     /// Worker slot `r`, `player`'s, lays a wall of type `building` from tile
@@ -295,6 +366,11 @@ impl Conquest {
             u32::from(stats.cost_grub) * n,
             u32::from(stats.cost_marrow) * n,
         );
+        // Tiles drawn over the player's own blueprint are no longer planned.
+        if !self.blueprints.plans().is_empty() {
+            let tiles: Vec<(i32, i32)> = plan.iter().map(|t| t.tile).collect();
+            self.blueprints.drop_tiles(player, &tiles);
+        }
         let Some(r) = worker else {
             // Grown: every tile grows on its own.
             return true;

@@ -83,6 +83,9 @@ const AUTO_AT: u32 = 60 * TICKS_PER_SECOND;
 /// long.
 const WALL_AT: u32 = 22 * TICKS_PER_SECOND;
 const WALL_TILES: i32 = 4;
+/// Tiles of blueprint a side plans on from its finished wall (the last is
+/// dropped again before it is worked).
+const PLAN_TILES: i32 = 3;
 /// Soldiers and workers each side trains up to.
 const FIGHTERS: usize = 6;
 const WORKERS: usize = 8;
@@ -237,6 +240,10 @@ struct Side {
     focused: bool,
     /// The worker drawing its wall, left to it until the wall is up.
     waller: Option<RegimentHandle>,
+    /// Whether, once its wall was up, it planned a line on from the wall's
+    /// east end as a blueprint (the last tile dropped again) for its waller
+    /// to work.
+    planned: bool,
 }
 
 /// The Clans' Shrine and their three built Edicts, as the first side plays
@@ -446,7 +453,8 @@ impl Match {
                 let building =
                     i < builders && t >= LAY_FROM && !barracks.is_some_and(|b| b.finished())
                         || i == 0 && self.own(p, Some(k.house)).iter().any(|h| !h.finished());
-                if building || self.walling(p, w) || self.world.gathers_at(w).is_some() {
+                let busy = self.walling(p, w) || self.world.works_plans(w);
+                if building || busy || self.world.gathers_at(w).is_some() {
                     continue;
                 }
                 let node = if trading {
@@ -782,7 +790,13 @@ impl Match {
         // After the spare building is called off, so as not to take its
         // worker or its Grub.
         let side = self.sides[usize::from(p)];
-        if self.world.tick_count() < WALL_AT || !side.called_off || side.waller.is_some() {
+        if let Some(w) = side.waller {
+            if !side.planned && !self.walling(p, w) {
+                self.plan(p, b, w, out);
+            }
+            return;
+        }
+        if self.world.tick_count() < WALL_AT || !side.called_off {
             return;
         }
         let (Some(main), Some(&w)) = (self.main_of(p), workers.last()) else {
@@ -815,6 +829,59 @@ impl Match {
             },
         });
         self.sides[usize::from(p)].waller = Some(w);
+    }
+
+    /// Side `p`'s wall is up: it plans [`PLAN_TILES`] more tiles as a
+    /// blueprint (on from the wall's east end, else its west end, else
+    /// alongside it a row or more out), drops the last again, and sets
+    /// waller `w` to work the plans. Not for a grown wall, which has no
+    /// blueprints, or where no such line fits.
+    fn plan(
+        &mut self,
+        p: PlayerId,
+        b: BuildingId,
+        w: RegimentHandle,
+        out: &mut Vec<PlayerCommand>,
+    ) {
+        let own = self.own(p, Some(b));
+        let (Some(&(wx, wy)), Some(&(ex, _))) = (
+            own.iter().map(|s| &s.tile).min(),
+            own.iter().map(|s| &s.tile).max(),
+        ) else {
+            return;
+        };
+        let n = PLAN_TILES;
+        let alongside = (1..=3)
+            .flat_map(|d| [wy - d, wy + d])
+            .map(|y| ((wx, y), (wx + n - 1, y)));
+        let fits = |&(from, to): &((i32, i32), (i32, i32))| {
+            self.world
+                .blueprint(p, b, from, to)
+                .is_ok_and(|plan| plan.len() == n as usize && plan.iter().all(|t| t.fits.is_ok()))
+        };
+        let Some((from, to)) = [((ex + 1, wy), (ex + n, wy)), ((wx - 1, wy), (wx - n, wy))]
+            .into_iter()
+            .chain(alongside)
+            .find(fits)
+        else {
+            return;
+        };
+        let at = |t: (i32, i32)| (t.0 as i16, t.1 as i16);
+        for command in [
+            Command::PlanWall {
+                building: b,
+                from: at(from),
+                to: at(to),
+            },
+            Command::DropPlan {
+                from: at(to),
+                to: at(to),
+            },
+            Command::WorkPlan { regiment: w },
+        ] {
+            out.push(PlayerCommand { player: p, command });
+        }
+        self.sides[usize::from(p)].planned = true;
     }
 
     /// Side `p`'s chord and powers: three Resonators put up, then
@@ -1132,12 +1199,23 @@ mod tests {
             if let Some(wall) = k.wall {
                 let tiles = m.own(p, Some(wall));
                 assert!(side.waller.is_some(), "side {p} drew its wall");
+                let more = if side.planned {
+                    PLAN_TILES as usize - 1
+                } else {
+                    0
+                };
                 assert!(
-                    tiles.len() == WALL_TILES as usize && tiles.iter().all(StructureView::finished),
-                    "side {p} built all its wall: {tiles:?}"
+                    tiles.len() == WALL_TILES as usize + more
+                        && tiles.iter().all(StructureView::finished),
+                    "side {p} built all its wall and what it planned: {tiles:?}"
                 );
             }
         }
+        assert!(
+            m.sides.iter().any(|s| s.planned),
+            "a side worked a blueprint"
+        );
+        assert!(m.world.plans().is_empty(), "every plan was built");
         assert_eq!(m.sides[1].powers, 3, "side 1 used its powers");
         assert_eq!(m.sides[0].edicts, 3, "side 0 used its Edicts");
         assert!(m.own(0, Some(m.kits[0].barracks)).is_empty(), "removed");

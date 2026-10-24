@@ -114,6 +114,7 @@
             tips: [
                 (icon: Move, text: "Your army marches through your own curtains, so wall every way in and keep moving freely."),
                 (icon: Alarm, text: "Guard the Resonators that power it: lose them and the curtain drops for everyone."),
+                (icon: Hammer, text: "B plans it as a blueprint (press A with Tuners selected to build it); O rings your base."),
             ],
         ),
     ],

@@ -414,6 +414,23 @@ pub fn write_command(w: &mut Writer, c: &Command) {
                 w.var(u64::from(v as u16));
             }
         }
+        Command::PlanWall { building, from, to } => {
+            w.u8(29);
+            w.var(u64::from(building));
+            for v in [from.0, from.1, to.0, to.1] {
+                w.var(u64::from(v as u16));
+            }
+        }
+        Command::DropPlan { from, to } => {
+            w.u8(30);
+            for v in [from.0, from.1, to.0, to.1] {
+                w.var(u64::from(v as u16));
+            }
+        }
+        Command::WorkPlan { regiment } => {
+            w.u8(31);
+            w.handle(regiment);
+        }
         Command::SetGate { structure, mode } => {
             w.u8(26);
             w.structure(structure);
@@ -563,6 +580,18 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             building: r.var_as()?,
             from: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
             to: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+        },
+        29 => Command::PlanWall {
+            building: r.var_as()?,
+            from: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+            to: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+        },
+        30 => Command::DropPlan {
+            from: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+            to: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+        },
+        31 => Command::WorkPlan {
+            regiment: r.handle()?,
         },
         26 => Command::SetGate {
             structure: r.structure()?,
@@ -824,6 +853,16 @@ mod tests {
                 from: (7, 7),
                 to: (7, 1),
             },
+            Command::PlanWall {
+                building: 1,
+                from: (5, -3),
+                to: (5, 20),
+            },
+            Command::DropPlan {
+                from: (5, 0),
+                to: (5, 2),
+            },
+            Command::WorkPlan { regiment: h(6, 2) },
             Command::FocusTower {
                 structure: StructureHandle {
                     index: 9,

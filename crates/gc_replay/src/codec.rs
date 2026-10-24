@@ -392,6 +392,23 @@ impl Writer {
                     self.var(u64::from(v as u16));
                 }
             }
+            Command::PlanWall { building, from, to } => {
+                self.u8(31);
+                self.var(u64::from(building));
+                for v in [from.0, from.1, to.0, to.1] {
+                    self.var(u64::from(v as u16));
+                }
+            }
+            Command::DropPlan { from, to } => {
+                self.u8(32);
+                for v in [from.0, from.1, to.0, to.1] {
+                    self.var(u64::from(v as u16));
+                }
+            }
+            Command::WorkPlan { regiment } => {
+                self.u8(33);
+                self.handle(regiment);
+            }
             Command::SetGate { structure, mode } => {
                 self.u8(28);
                 self.structure(structure);
@@ -812,6 +829,18 @@ impl<'a> Reader<'a> {
                 from: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
                 to: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
             },
+            31 => Command::PlanWall {
+                building: self.var_as()?,
+                from: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+                to: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+            },
+            32 => Command::DropPlan {
+                from: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+                to: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+            },
+            33 => Command::WorkPlan {
+                regiment: self.handle()?,
+            },
             28 => Command::SetGate {
                 structure: self.structure()?,
                 mode: gc_sim::gates::GateMode::from_u8(self.u8()?)?,
@@ -1016,6 +1045,21 @@ mod tests {
                 building: 5,
                 from: (3, 9),
                 to: (9, 3),
+            },
+            Command::PlanWall {
+                building: 2,
+                from: (-4, 7),
+                to: (20, 7),
+            },
+            Command::DropPlan {
+                from: (1, 2),
+                to: (3, -4),
+            },
+            Command::WorkPlan {
+                regiment: RegimentHandle {
+                    index: 9,
+                    generation: 3,
+                },
             },
             Command::FocusTower {
                 structure: StructureHandle {

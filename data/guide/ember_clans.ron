@@ -149,12 +149,12 @@
         ),
         (
             name: "Palisade",
-            summary: "A wall you draw: click the start, move, click the end; click again to bend it, right-click to finish. Shift locks 15-degree steps. Priced and built a tile at a time, and a worker walks along it building. Fire Arrows burn it and rams break it.",
+            summary: "A wall you draw: click the start, move, click the end; click again to bend it, right-click to finish. Shift locks 15-degree steps; O draws a closed ring; B plans a blueprint. Priced and built a tile at a time by a worker. Fire Arrows burn it and rams break it.",
             notes: [],
             tips: [
                 (icon: Alarm, text: "Close a choke point end to end, since regiments file through a gap just one tile wide."),
-                (icon: Hammer, text: "Start or end near a wall end, tower or Gate and the line snaps to it, so walls join cleanly."),
-                (icon: Move, text: "Put a Gate in any wall line your own army must pass, since a Palisade blocks movement."),
+                (icon: Hammer, text: "B plans it as a blueprint: workers pay tile by tile when you press A or right-click the blue tiles."),
+                (icon: Move, text: "Press O to ring your base: it leans on cliffs and marks where a Gate would suit."),
             ],
         ),
         (

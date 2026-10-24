@@ -113,6 +113,7 @@
             tips: [
                 (icon: Hammer, text: "Spread veins first: a ridge grows only where your root-veins reach."),
                 (icon: Alarm, text: "Cut the veins under an enemy ridge and it withers away on its own."),
+                (icon: Move, text: "Press O to ring your hive: every tile grows at once and the ring leans on cliffs."),
             ],
         ),
         (

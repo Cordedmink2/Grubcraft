@@ -36,6 +36,11 @@ const TILE_COST: u32 = 10;
 
 /// Open ground, but for a patch of woods on 40..44 × 30..34.
 fn world() -> World {
+    world_with(START_GRUB)
+}
+
+/// [`world`], with each side starting with `grub`.
+fn world_with(grub: u32) -> World {
     let side = (MAP as i32 * CELLS_PER_TILE) as usize;
     let nav = vec![1u8; side * side];
     let n = MAP as usize;
@@ -90,8 +95,8 @@ fn world() -> World {
         links: 0,
     };
     let mut start = [(0, 0); gc_sim::MAX_PARTIES];
-    start[0] = (START_GRUB, 0);
-    start[1] = (START_GRUB, 0);
+    start[0] = (grub, 0);
+    start[1] = (grub, 0);
     assert!(w.conquest(&ConquestSetup {
         buildings: &[
             palisade,
@@ -695,4 +700,132 @@ fn a_gate_on_a_wall_must_wait_for_the_rest_of_its_ground_to_be_cleared() {
     assert_eq!(w.can_lay(0, GATE_3, (40, 28), 0), Err(Refusal::Overgrown));
     // Wholly on the wall, it goes.
     assert_eq!(w.can_lay(0, GATE_3, (40, 26), 0), Ok(()));
+}
+
+fn plan(w: &mut World, player: u8, from: (i16, i16), to: (i16, i16)) -> bool {
+    order(
+        w,
+        player,
+        Command::PlanWall {
+            building: PALISADE,
+            from,
+            to,
+        },
+    )
+}
+
+fn work_plans(w: &mut World, player: u8, r: RegimentHandle) -> bool {
+    order(w, player, Command::WorkPlan { regiment: r })
+}
+
+#[test]
+fn a_blueprint_costs_nothing_until_a_worker_lays_it_tile_by_tile() {
+    let mut w = world();
+    assert!(plan(&mut w, 0, (20, 10), (20, 15)));
+    assert_eq!(w.plans().len(), 6);
+    assert_eq!(grub(&w, 0), START_GRUB);
+    assert!(walls(&w, 0).0.is_empty());
+    // Planning the same tiles again plans nothing new.
+    assert!(!plan(&mut w, 0, (20, 12), (20, 13)));
+    // A worker set to the plans pays for and builds each tile in turn.
+    let worker = spawn(&mut w, 0, 16, 12);
+    assert!(work_plans(&mut w, 0, worker));
+    assert!(w.works_plans(worker));
+    let mut t = 0;
+    while walls(&w, 0).1 < 6 {
+        w.tick(&[]);
+        t += 1;
+        assert!(t < 300 * TICKS_PER_SECOND, "built {} of 6", walls(&w, 0).1);
+        // Never paid ahead of the tiles laid.
+        let laid = walls(&w, 0).0.len() as u32;
+        assert_eq!(grub(&w, 0), START_GRUB - laid * TILE_COST);
+        assert_eq!(w.plans().len() as u32, 6 - laid);
+    }
+    // Nothing left planned: it leaves the plans.
+    w.tick(&[]);
+    assert!(!w.works_plans(worker));
+}
+
+#[test]
+fn a_worker_on_the_plans_waits_while_its_side_cannot_pay() {
+    // Enough for one tile.
+    let mut w = world_with(TILE_COST);
+    assert!(plan(&mut w, 0, (20, 10), (20, 13)));
+    let worker = spawn(&mut w, 0, 16, 12);
+    assert!(work_plans(&mut w, 0, worker));
+    for _ in 0..60 * TICKS_PER_SECOND {
+        w.tick(&[]);
+    }
+    // One tile laid; the rest wait for Grub, and the worker stays on them.
+    assert_eq!(w.plans().len(), 3);
+    assert!(w.works_plans(worker));
+    // Another order takes it off the plans.
+    assert!(order(
+        &mut w,
+        0,
+        Command::MoveTo {
+            regiment: worker,
+            target: FxVec2::from_ints(10, 10),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        }
+    ));
+    assert!(!w.works_plans(worker));
+}
+
+#[test]
+fn plans_are_dropped_by_order_or_when_their_ground_is_taken() {
+    let mut w = world();
+    let drop = |w: &mut World, player, from, to| order(w, player, Command::DropPlan { from, to });
+    assert!(plan(&mut w, 0, (20, 10), (20, 15)));
+    // One tile at a time...
+    assert!(drop(&mut w, 0, (20, 10), (20, 10)));
+    assert_eq!(w.plans().len(), 5);
+    // ...or a whole line as it was planned, either way round, not a stretch
+    // of one.
+    assert!(!drop(&mut w, 0, (20, 11), (20, 12)));
+    // A line planned on from a corner keeps the corner when it is dropped.
+    assert!(plan(&mut w, 0, (20, 15), (23, 15)));
+    assert_eq!(w.plans().len(), 8);
+    assert!(drop(&mut w, 0, (23, 15), (20, 15)));
+    assert_eq!(w.plans().len(), 5);
+    // Only the planner's own.
+    assert!(!drop(&mut w, 1, (20, 10), (20, 15)));
+    // Someone else builds on a planned tile: it is dropped when reached.
+    spawn_structure(&mut w, 1, PALISADE, (20, 12));
+    let worker = spawn(&mut w, 0, 16, 12);
+    assert!(work_plans(&mut w, 0, worker));
+    build_all(&mut w, 0, 300);
+    let mut t = 0;
+    while !w.plans().is_empty() {
+        w.tick(&[]);
+        t += 1;
+        assert!(t < 300 * TICKS_PER_SECOND, "plans left: {:?}", w.plans());
+    }
+    build_all(&mut w, 0, 300);
+    assert_eq!(walls(&w, 0).0, [(20, 11), (20, 13), (20, 14), (20, 15)]);
+    // A wall drawn over planned tiles takes them off the plan.
+    assert!(plan(&mut w, 0, (25, 10), (25, 14)));
+    let builder = spawn(&mut w, 0, 24, 8);
+    assert!(draw(&mut w, 0, builder, (25, 10), (25, 11)));
+    assert_eq!(w.plans().len(), 3);
+}
+
+#[test]
+fn a_planned_tile_someone_stands_by_waits_for_them_to_go() {
+    let mut w = world();
+    assert!(plan(&mut w, 0, (30, 10), (30, 12)));
+    // A regiment of the side's own idles by the middle tile.
+    spawn(&mut w, 0, 30, 11);
+    let worker = spawn(&mut w, 0, 26, 9);
+    assert!(work_plans(&mut w, 0, worker));
+    for _ in 0..60 * TICKS_PER_SECOND {
+        w.tick(&[]);
+    }
+    build_all(&mut w, 0, 300);
+    // The other tiles went up; the crowded one is still planned.
+    assert!(w.plans().iter().any(|p| p.tile == (30, 11)));
+    assert!(!walls(&w, 0).0.contains(&(30, 11)));
+    assert!(!walls(&w, 0).0.is_empty(), "{:?}", w.plans());
 }
