@@ -104,7 +104,7 @@ const HIGHLIGHT: f32 = 1.6;
 // distance to its nearest source in quarter tiles.
 @group(0) @binding(16) var land_map: texture_2d<f32>;
 // How the ground has been marked (Renderer::set_scars), one texel a tile: r
-// felled, g scorched, b worn by marching and fighting.
+// felled, g scorched, b worn by marching and fighting, a soaked to mud by rain.
 @group(0) @binding(17) var scar_map: texture_2d<f32>;
 // How each tile's ground looks (Terrain::look), one texel a tile: rgb multiplies
 // the grass (128 leaves it), a is the `GROUND_*` pattern drawn over it.
@@ -1075,15 +1075,24 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         }
     }
 
-    // Marks on the ground (and none on rock): worn tracks of bare dirt where
-    // armies have marched, turned earth where trees were felled, scorch.
+    // Marks on the ground (and none on rock): mud where rain has soaked it,
+    // worn tracks of bare dirt where armies have marched, turned earth where
+    // trees were felled, scorch.
     let scar_uv = xz / f32(textureDimensions(scar_map).x);
     let scar = textureSampleLevel(scar_map, soft_sampler, scar_uv, 0.0);
-    if scar.r + scar.g + scar.b > 0.03 && rock < 1.0 {
+    if scar.r + scar.g + scar.b + scar.a > 0.03 && rock < 1.0 {
         let keep = 1.0 - rock;
         // Ragged edges: the noise moves where a mark begins, but not into
         // ground that has none of it (r or g of 0).
         let ragged = (nz(xz * 1.3) - 0.5) * 0.5;
+        // Soaked ground is the soft ground's mud (`Footing::Soft`), so it
+        // reads as a place a charge bogs down.
+        let soaked = smoothstep(0.2, 0.55, scar.a + ragged) * smoothstep(0.0, 0.1, scar.a) * keep;
+        if soaked > 0.0 {
+            let mud = habitat_ground(GROUND_MUD, xz, max(length(dpx.xz), length(dpy.xz)));
+            albedo = mix(albedo, mud.albedo, soaked * mud.k);
+            wet = max(wet, soaked * mud.wet);
+        }
         let worn = smoothstep(0.25, 0.75, scar.b + ragged) * keep;
         let felled = smoothstep(0.2, 0.55, scar.r + ragged) * smoothstep(0.0, 0.1, scar.r) * keep;
         let burnt = smoothstep(0.2, 0.55, scar.g + ragged) * smoothstep(0.0, 0.1, scar.g) * keep;

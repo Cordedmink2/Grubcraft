@@ -93,9 +93,17 @@ A lobby match builds its sky from the lobby (`gc_match::battle::sky_of`): the **
 
 Computer players don't yet plan for the shorter range (they still think archers reach as far as by day); that comes with stage 3.
 
+### Rain soaks the ground (stage 2)
+
+**Built (2026-10-24):** `SIM_VERSION` 39 (38 went to blueprints); no new replay data or protocol (the soaking follows from the sky and the map).
+
+- **How wet the ground is.** The sky keeps one number, 0 (dry) to `WET_FULL` (1000). Once a second rain adds its strength / 64 (`RAIN_WETS`: about 3 in heavy rain, so some five minutes to soak it through), and anything else, drizzle under 64 included, takes 2 off (`DRIES`). Every match starts dry. It is hashed with the sky.
+- **Which ground soaks.** When the match starts, `Terrain` lists the tiles rain can soak: firm, not wooded, nothing growing but scrub, at most half a tile above the water line (`SOAK_RISE`), no land neighbour more than half a tile higher or lower (`SOAK_SLOPE`), and at most 5 tiles from water (`SOAK_REACH`). Each gets the wetness it needs: 150, plus 150 a tile from the water, plus up to 300 for its height. Banks right by the water go first (about a minute and a half of heavy rain), ground further off later. Grown land (the lobby's default) has a few hundred to a thousand such tiles on a 192-tile map; the steeper Random and Classic maps have a few dozen or none.
+- **Soaking and drying.** Each tick, when the wetness has passed a tile's need, the tile turns soft (`Terrain::soak`, which only moves a count: `Terrain::footing` reads a tile as soaked when it is no later in line than the last one soaked), the soonest first: slow going and no charges, as any soft ground. When the ground dries 100 (`SOAK_DRY_MARGIN`) below a soaked tile's need, it firms up again, the last soaked first, so tiles don't flicker as rain eases. The soaked tiles are a run of that list, so their count (`Terrain::soaked`, hashed under "ground" when above 0) is the whole state.
+- **Seeing it.** The renderer draws soaked tiles with the soft ground's mud (the scar grid's spare byte, [35](35-ground-marks.md)); the top bar says "Mud by the water" (or adds ", mud" to the weather's words) while any is soaked, and the selection panel says "In mud" as on any soft ground. The Cavalry guide blurb mentions it. Computer players don't read mud yet, soaked or made with the map (their own ground copy knows water, woods and slopes); that comes with stage 3, alongside the shorter range.
+
 ### Later stages
 
-- **Rain soaks the ground (stage 2).** Long, heavy rain turns low, flat, open tiles beside water soft (it writes the footing layer through `World::change_ground`), and a dry spell firms them up again, so a bog spreads in a wet battle. The ground thread draws them muddy.
 - **Night battles, sight tied to light (stage 3, idea 9).** Regiments can carry torches: they see further at night, and are seen from much further. Burning buildings and fires light the ground around them. Ambushes are easier in the dark. The lighting thread draws torches and firelight from the same state. Snow on the Highland's changing weather comes with the lands' own skies.
 - **Lightning (later).** `Event::Lightning { at, tick }` for a flash and thunder; a strike may set woods alight once woods burn (idea 2).
 
@@ -108,7 +116,7 @@ All runtime changes to the ground go through one place in the simulation, `World
 3. folds the change into the ground's running digest, which is part of the state hash,
 4. tells the game (`Event::Cleared`), which takes the trees off those tiles and redraws the ground.
 
-Burning woods will become a second growth change (woods to burnt, then open), floods a change of water, and rubble a fallen building's footprint left as rough ground. Those that change how a cell is walked on (floods) add a ground-cost change beside this one (`Nav::set_ground_all`, planned with the nav doors).
+Burning woods will become a second growth change (woods to burnt, then open), floods a change of water, and rubble a fallen building's footprint left as rough ground. Those that change how a cell is walked on (floods) add a ground-cost change beside this one (`Nav::set_ground_all`, planned with the nav doors). Rain soaking (stage 2 of the weather, above) is the one change outside it: it only turns footing soft and back, never growth, cover or the walkable grid, so it is `Terrain::soak`, kept as a count beside the digest.
 
 ## Rules that stay the same
 

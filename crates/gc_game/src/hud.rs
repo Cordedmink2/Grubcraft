@@ -1763,11 +1763,17 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
 
 /// What the sky does to the fight now, for the top bar: empty in clear
 /// daylight, else what cuts sight and range (and slows the march), e.g.
-/// "Fog: sight 40%" or "Night: sight 45%" (docs/32-changing-land.md).
+/// "Fog: sight 40%" or "Night: sight 45%", and whether rain has turned
+/// ground to mud (docs/32-changing-land.md).
 fn sky_word(world: &gc_sim::World) -> String {
     let air = world.air();
+    let mud = world.terrain().soaked() > 0;
     if air == gc_sim::Air::CLEAR {
-        return String::new();
+        return if mud {
+            "Mud by the water".to_string()
+        } else {
+            String::new()
+        };
     }
     let weather = world.weather();
     let falling = match weather.kind {
@@ -1786,6 +1792,9 @@ fn sky_word(world: &gc_sim::World) -> String {
     let mut word = format!("{name}: sight {}%", air.sight_percent);
     if air.march_percent < 100 {
         word += &format!(", march {}%", air.march_percent);
+    }
+    if mud {
+        word += ", mud";
     }
     word
 }

@@ -14,7 +14,6 @@
 
 extern crate alloc;
 
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 pub mod arrange;
@@ -114,7 +113,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 38;
+pub const SIM_VERSION: u32 = 39;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -802,8 +801,9 @@ pub struct World {
     map_tiles: u32,
     nav: Nav,
     stances: Stances,
-    /// Shared with this world's scratch copies (see [`fork`]).
-    terrain: Arc<Terrain>,
+    /// Its layers are shared with this world's scratch copies (see
+    /// [`fork`]).
+    terrain: Terrain,
     vision: Vision,
     deploy: Deployment,
     /// Only in matches that allow champions.
@@ -850,7 +850,7 @@ impl World {
             map_tiles: setup.map_tiles,
             nav,
             stances,
-            terrain: Arc::new(terrain),
+            terrain,
             vision,
             deploy: Deployment::default(),
             champions: setup.champions.then(|| {
@@ -1432,6 +1432,10 @@ impl World {
         // The sky moves on even while the armies deploy.
         if self.sky.tick(self.tick) {
             self.set_air();
+        }
+        // The ground's wetness moves once a second.
+        if self.tick.is_multiple_of(TICKS_PER_SECOND) {
+            self.terrain.soak(self.sky.wet());
         }
         // Time stands still while the armies deploy.
         if self.deploying() {
@@ -2184,7 +2188,7 @@ impl World {
             if self.terrain.growth(x, y) == Growth::Open {
                 continue;
             }
-            let Some(was) = Arc::make_mut(&mut self.terrain).clear(x, y) else {
+            let Some(was) = self.terrain.clear(x, y) else {
                 continue;
             };
             if was == Growth::Thicket {
@@ -2560,9 +2564,14 @@ impl World {
                     c.production.hash_into(&c.structures, h);
                 }
             }
-            // Ground changed mid-match and land being cleared; nothing in
-            // a Field Battle, whose ground doesn't change.
+            // Ground changed mid-match: soaked by rain, and land being
+            // cleared (only in Conquest).
             "ground" => {
+                // Ground the rain has soaked (none in a dry match, which
+                // hashes as before).
+                if self.terrain.soaked() > 0 {
+                    h.u32(self.terrain.soaked());
+                }
                 if let Some(c) = &self.conquest {
                     h.u64(self.terrain.changes());
                     c.clearing.hash_into(&self.regiments, h);

@@ -16,7 +16,7 @@ clear ([32](32-changing-land.md#faction-twists)) the ground is scorched. Felled 
 | R | felled: turned earth where trees stood (150 for scrub, 255 for woods and thicket) |
 | G | scorched: char and ash where the Concord burnt the tile (255 when `Event::Cleared` says `burnt`) |
 | B | worn: trodden bare, 0 grass to 255 bare dirt |
-| A | spare |
+| A | soaked: mud where rain has soaked the ground soft (255 for each of `Terrain::soaked_tiles`, refreshed when `Terrain::soaked` changes; drawn with the soft ground's mud, [32](32-changing-land.md#rain-soaks-the-ground-stage-2)) |
 
 `Renderer::set_scars` uploads it as an `Rgba8Unorm` texture (binding 17, a
 tile each, like the land grid; `None` clears it). The terrain shader reads it
