@@ -1,0 +1,12 @@
+# Written by `cargo run -p gc_artbake --release` beside models.pak and checked by
+# `cargo run -p gc_artbake -- --check` in CI. Do not edit by hand.
+# Hashes are XXH3-128. Sources marked "not in the repo" live in the project's
+# shared folder; CI cannot check them, so a change to one shows only in a re-bake.
+manifest = 1
+baker = gc_artbake 2
+schema = 4
+config = 726c097dbf9dc4a895aea322ccdd2d4b
+pack = 7785f30bb45bc95ade16d1211970eb09
+pack_bytes = 1126784
+source shared:grubcraft/creatures/deer/deer.glb = ecb14b2fc34d2e9df009c34d16eb2c5f not in the repo
+source shared:grubcraft/creatures/deer/albedo.png = 53c8b9e59215ab8385eaa71c4130b79a not in the repo

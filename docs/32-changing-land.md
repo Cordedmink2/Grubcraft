@@ -95,7 +95,7 @@ Computer players don't yet plan for the shorter range (they still think archers 
 
 ### Rain soaks the ground (stage 2)
 
-**Built (2026-10-24):** `SIM_VERSION` 38; no new replay data or protocol (the soaking follows from the sky and the map).
+**Built (2026-10-24):** `SIM_VERSION` 39 (38 went to blueprints); no new replay data or protocol (the soaking follows from the sky and the map).
 
 - **How wet the ground is.** The sky keeps one number, 0 (dry) to `WET_FULL` (1000). Once a second rain adds its strength / 64 (`RAIN_WETS`: about 3 in heavy rain, so some five minutes to soak it through), and anything else, drizzle under 64 included, takes 2 off (`DRIES`). Every match starts dry. It is hashed with the sky.
 - **Which ground soaks.** When the match starts, `Terrain` lists the tiles rain can soak: firm, not wooded, nothing growing but scrub, at most half a tile above the water line (`SOAK_RISE`), no land neighbour more than half a tile higher or lower (`SOAK_SLOPE`), and at most 5 tiles from water (`SOAK_REACH`). Each gets the wetness it needs: 150, plus 150 a tile from the water, plus up to 300 for its height. Banks right by the water go first (about a minute and a half of heavy rain), ground further off later. Grown land (the lobby's default) has a few hundred to a thousand such tiles on a 192-tile map; the steeper Random and Classic maps have a few dozen or none.

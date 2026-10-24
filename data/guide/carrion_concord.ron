@@ -118,11 +118,12 @@
         ),
         (
             name: "Bone Fence",
-            summary: "A wall you draw: click the start, move, click the end; click again to bend it, right-click to finish. Shift locks 15-degree steps. Priced and built a tile at a time, and a worker walks along it building.",
+            summary: "A wall you draw: click the start, move, click the end; click again to bend it, right-click to finish. Shift locks 15-degree steps; O draws a closed ring; B plans a blueprint. Priced and built a tile at a time by a worker.",
             notes: [],
             tips: [
                 (icon: Alarm, text: "Close a choke point end to end, since regiments file through a gap just one tile wide."),
-                (icon: Hammer, text: "Start or end near a wall end or tower and the line snaps to it, so walls join cleanly."),
+                (icon: Hammer, text: "B plans it as a blueprint: workers pay tile by tile when you press A or right-click the blue tiles."),
+                (icon: Move, text: "Press O to ring your base: it leans on cliffs and marks where an Iron Gate would suit."),
             ],
         ),
         (

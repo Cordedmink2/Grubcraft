@@ -11,6 +11,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::FxVec2;
 
+use crate::blueprints::Blueprints;
 use crate::clearing::{ClearStyle, Clearing, Pledge};
 use crate::economy::{Bank, Economy, NodeSetup, TradePost};
 use crate::honor::Honor;
@@ -193,6 +194,8 @@ pub(crate) struct Conquest {
     pub(crate) honor: Honor,
     /// Workers clearing land (see [`crate::clearing`]).
     pub(crate) clearing: Clearing,
+    /// Walls planned ahead (see [`crate::blueprints`]).
+    pub(crate) blueprints: Blueprints,
 }
 
 /// Whether the footprints `a` and `b` (`[x, y, w, d]`) share a tile.
@@ -222,6 +225,7 @@ impl Conquest {
             meters: setup.meters,
             honor: Honor::default(),
             clearing: Clearing::new(regiments, setup.build_percent),
+            blueprints: Blueprints::default(),
         }
     }
 
@@ -488,9 +492,13 @@ impl Conquest {
         Ok(())
     }
 
-    /// Whether `player` could lay a building of type `building` somewhere
-    /// now: its tier and price, without the ground.
-    pub(crate) fn may_lay(&self, player: PlayerId, building: BuildingId) -> Result<(), Refusal> {
+    /// Whether `player` may lay a building of type `building` at all: a
+    /// building that goes up on its own ground, of a tier the side has.
+    pub(crate) fn may_build(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+    ) -> Result<BuildingStats, Refusal> {
         let b = *self
             .structures
             .buildings()
@@ -503,6 +511,13 @@ impl Conquest {
         if self.structures.tier_of(player) < b.tier.max(1) && b.role != Role::Main {
             return Err(Refusal::Tier);
         }
+        Ok(b)
+    }
+
+    /// Whether `player` could lay a building of type `building` somewhere
+    /// now: its tier and price, without the ground.
+    pub(crate) fn may_lay(&self, player: PlayerId, building: BuildingId) -> Result<(), Refusal> {
+        let b = self.may_build(player, building)?;
         if !self
             .economy
             .can_afford(player, u32::from(b.cost_grub), u32::from(b.cost_marrow))
@@ -799,12 +814,21 @@ impl Conquest {
     /// building, and stops gathering or trading. Every order that sets a regiment to
     /// work calls this first.
     pub(crate) fn stop_work(&mut self, r: usize) {
+        self.blueprints.forget(r);
         self.structures.stop(r);
         self.economy.stop(r);
         // A building paid for but not yet laid is called off in full.
         if let Some(p) = self.clearing.stop(r) {
             self.economy.refund(p.owner, p.grub, p.marrow);
         }
+    }
+
+    /// Whether regiment slot `r` has a job: building, gathering, trading
+    /// or clearing (working the plans counts only while it is on a tile).
+    pub(crate) fn has_job(&self, regs: &Regiments, r: usize) -> bool {
+        self.structures.job_of(regs, r).is_some()
+            || self.economy.work_of(regs, r).is_some()
+            || self.clearing.job_of(regs, r).is_some()
     }
 
     /// The parties in `out` leave the field: their regiments, then their
@@ -822,6 +846,7 @@ impl Conquest {
             .map(|s| s.handle)
             .collect();
         self.structures.despawn_all(&gone, nav, regs);
+        self.blueprints.drop_sides(out);
     }
 
     /// The "structures" part of the state hash: the unit table and the
@@ -837,5 +862,6 @@ impl Conquest {
             m.hash_into(h);
         }
         self.honor.hash_into(h);
+        self.blueprints.hash_into(regs, h);
     }
 }

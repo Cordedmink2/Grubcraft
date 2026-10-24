@@ -394,7 +394,7 @@ impl Act {
             Act::Parry | Act::Block => PARRY_SECONDS,
             Act::Stagger => STAGGER_SECONDS,
             Act::Down => DOWN_SECONDS,
-            Act::Kill => SWING_SECONDS,
+            Act::Kill => SWING_SECONDS + KILL_HOLD,
         }
     }
 
@@ -402,6 +402,30 @@ impl Act {
     fn reels(self) -> bool {
         matches!(self, Act::Stagger | Act::Down)
     }
+}
+
+/// A man killed by a blow is driven back along it as he falls, by up to
+/// this far in tiles for each step of how hard it hit him (see
+/// [`Fallen::owner`]), over this many seconds from the moment it lands.
+const RECOIL: f32 = 0.15;
+const RECOIL_SECONDS: f32 = 0.35;
+/// A killer holds his follow-through this long, in seconds, before he
+/// looks for a new man.
+const KILL_HOLD: f32 = 0.3;
+/// How far through a swing a held follow-through stands: its last frame.
+const HELD: f32 = 0.999;
+
+/// How far through his swing a man is who is `f` of the way through his
+/// killing blow: the swing, then its follow-through, held (a swing at 1.0
+/// would start over).
+fn kill_swing(f: f32) -> f32 {
+    (f * Act::Kill.seconds() / SWING_SECONDS).min(HELD)
+}
+
+/// Whether a killing blow `f` of the way through has landed: he is only
+/// following through, and may be struck, or strike again.
+fn kill_landed(f: f32) -> bool {
+    kill_swing(f) >= BLOW_AT
 }
 
 /// A soldier lying where he fell, as the puppets keep him: 24 bytes, so a
@@ -414,8 +438,35 @@ struct Fallen {
     /// waiting for the killing blow).
     fell: f32,
     unit: u16,
+    /// His player in the low bits, and above [`RECOIL_SHIFT`] how hard the
+    /// blow that killed him drove him back: 0 for none (arrows, and men who
+    /// simply drop), 1 for a blow, 2 and 3 for a heavier man's.
     owner: u8,
     look: u8,
+}
+
+const RECOIL_SHIFT: u32 = 4;
+
+impl Fallen {
+    fn player(&self) -> u8 {
+        self.owner & ((1 << RECOIL_SHIFT) - 1)
+    }
+
+    /// Where he lies `age` seconds after he fell, driven back along the
+    /// blow from where it struck him.
+    fn at(&self, age: f32) -> Vec2 {
+        let steps = f32::from(self.owner >> RECOIL_SHIFT);
+        if steps == 0.0 {
+            return self.pos;
+        }
+        let eased = if age >= RECOIL_SECONDS {
+            1.0
+        } else {
+            let f = (age / RECOIL_SECONDS).max(0.0);
+            1.0 - (1.0 - f) * (1.0 - f)
+        };
+        self.pos - self.facing * (RECOIL * steps * eased)
+    }
 }
 
 /// A soldier lying where he fell.
@@ -585,6 +636,9 @@ pub struct Puppets {
     /// and when; and until when a blow has him reeling, which costs him any
     /// swing begun before then.
     act: Vec<(Act, f32)>,
+    /// Per puppet, where the man he is killing stood (while his act is
+    /// [`Act::Kill`]): he steps in to strike there, whoever fills the gap.
+    kill_spot: Vec<(Vec2, f32)>,
     reeling: Vec<f32>,
     /// Each soldier's look ([`Soldier::look`]), which goes with him when he
     /// steps into a gap.
@@ -659,6 +713,7 @@ impl Puppets {
             facing: vec![Vec2::NEG_Y; regiment_capacity * SLOTS],
             partner: vec![NONE; regiment_capacity * SLOTS],
             act: vec![(Act::None, 0.0); regiment_capacity * SLOTS],
+            kill_spot: vec![(Vec2::ZERO, 0.0); regiment_capacity * SLOTS],
             reeling: vec![f32::NEG_INFINITY; regiment_capacity * SLOTS],
             looks: vec![0; regiment_capacity * SLOTS],
             marked: vec![0; regiment_capacity * SLOTS],
@@ -878,10 +933,10 @@ impl Puppets {
         let along = unit_hash(h, k, 11) - 0.5;
         let aside = unit_hash(h, k, 12) - 0.5;
         let side = Vec2::new(-fallen.facing.y, fallen.facing.x);
+        // In his body where it comes to rest.
+        let at = fallen.at(RECOIL_SECONDS);
         self.lodged.push(Lodged {
-            pos: fallen.pos
-                + fallen.facing * (along * LODGED_ALONG)
-                + side * (aside * LODGED_ASIDE),
+            pos: at + fallen.facing * (along * LODGED_ALONG) + side * (aside * LODGED_ASIDE),
             dir: self.shot_dir[r],
         });
     }
@@ -1227,10 +1282,9 @@ impl Puppets {
     /// in the middle of something stronger or lying down; a stagger or
     /// knockdown shoves him back.
     fn suffer(&mut self, j: usize, from: usize, act: Act) {
-        if self
-            .acting(j)
-            .is_some_and(|(now, _)| now > act || now == Act::Down)
-        {
+        if self.acting(j).is_some_and(|(now, f)| {
+            (now > act || now == Act::Down) && !(now == Act::Kill && kill_landed(f))
+        }) {
             return;
         }
         self.act[j] = (act, self.time);
@@ -1405,18 +1459,21 @@ impl Puppets {
                 .filter(|&(_, _, c)| c == i)
                 .map(|(d, side, _)| (d, side));
             let j = self.partner[i];
-            let foe = match champion {
-                Some((d, side)) => match d.champion[1 - side] {
-                    NONE => Some(d.spot),
-                    other => Some(self.pos[other as usize]),
-                },
-                None => (j != NONE && !block.routing).then(|| self.pos[j as usize]),
-            };
             // A champion's moves come from the rolled duel.
             let duel = champion.map(|(d, side)| d.moves(side, block.fighter.shield));
             let acting = match duel {
                 Some((act, _)) => act,
                 None => self.acting(i).filter(|_| !block.routing),
+            };
+            // Dealing a killing blow, he strikes where his man stood.
+            let killing = matches!(acting, Some((Act::Kill, _)));
+            let foe = match champion {
+                Some((d, side)) => match d.champion[1 - side] {
+                    NONE => Some(d.spot),
+                    other => Some(self.pos[other as usize]),
+                },
+                None if killing => Some(self.kill_spot[i].0),
+                None => (j != NONE && !block.routing).then(|| self.pos[j as usize]),
             };
             let down = matches!(acting, Some((Act::Down, _)));
             let target = match (champion, foe) {
@@ -1424,8 +1481,11 @@ impl Puppets {
                 _ if down => self.pos[i],
                 (None, Some(_)) if k >= files as usize => slot,
                 (None, Some(f)) => {
-                    let them = &self.fighter[j as usize / SLOTS];
-                    let gap = (block.fighter.gap() + them.gap()) / 2.0;
+                    let gap = if killing {
+                        self.kill_spot[i].1
+                    } else {
+                        (block.fighter.gap() + self.fighter[j as usize / SLOTS].gap()) / 2.0
+                    };
                     let spot = f + (self.pos[i] - f).normalize_or(back) * gap;
                     let leash = DUEL_LEASH + LEASH_BOLD * unit_hash(block.handle, k, 13);
                     slot + (spot - slot).clamp_length_max(leash)
@@ -1489,7 +1549,7 @@ impl Puppets {
                 && shout * SHOUT_EVERY < SHOUT_SECONDS)
                 .then_some(shout * SHOUT_EVERY);
             let phase = unit_hash(block.handle, k, 5);
-            let dueling = foe.is_some() && striking;
+            let dueling = foe.is_some() && striking && j != NONE;
             let beat = dueling.then(|| Self::beat(i, j as usize, self.time));
             let swing = match duel {
                 Some((_, swing)) => swing,
@@ -1500,7 +1560,10 @@ impl Puppets {
                 dueling || champion.is_some() && self.pos[i].distance_squared(target) < 0.25;
             let fight = match (acting, swing) {
                 _ if champion.is_some_and(|(d, side)| d.cheering(side)) => Some(Move::Cheer),
-                (Some((Act::Kill, f)), _) => Some(Move::Swing { at: f, alt: false }),
+                (Some((Act::Kill, f)), _) => Some(Move::Swing {
+                    at: kill_swing(f),
+                    alt: false,
+                }),
                 (Some((Act::Down, f)), _) => Some(Move::Down(f)),
                 (Some((Act::Stagger, f)), _) => Some(Move::Stagger(f)),
                 (_, Some((at, beat))) => Some(Move::Swing {
@@ -1615,9 +1678,15 @@ impl Puppets {
                     Some((act, _)) if act.reels() => None,
                     // His man is already swinging a killing blow: he falls to
                     // it too.
-                    Some((Act::Kill, f)) => Some((BLOW_AT - f).max(0.0) * SWING_SECONDS),
+                    Some((Act::Kill, f)) if !kill_landed(f) => {
+                        Some((BLOW_AT - kill_swing(f)) * SWING_SECONDS)
+                    }
                     _ => {
                         self.act[killer] = (Act::Kill, self.time);
+                        // He steps in to strike where his man stands, at
+                        // the distance the two keep.
+                        let gap = (self.fighter[killer / SLOTS].gap() + block.fighter.gap()) / 2.0;
+                        self.kill_spot[killer] = (self.pos[victim], gap);
                         Some(BLOW_AT * SWING_SECONDS)
                     }
                 }
@@ -1629,12 +1698,23 @@ impl Puppets {
                 ),
                 None => (self.time, self.facing[victim]),
             };
+            // A blow drives him back as he falls, a heavier man's further.
+            let recoil = match blow_in {
+                Some(_) => {
+                    let (me, them) = (self.fighter[killer / SLOTS], self.fighter[r]);
+                    1 + me.outweighs(&them, true).min(2.0) as u8
+                }
+                None => 0,
+            };
             let fallen = Fallen {
                 pos: self.pos[victim],
                 facing,
                 fell,
                 unit: block.unit,
-                owner,
+                owner: {
+                    debug_assert!(owner < 1 << RECOIL_SHIFT, "player {owner}");
+                    owner | recoil << RECOIL_SHIFT
+                },
                 look: self.looks[victim],
             };
             self.lay(fallen);
@@ -1649,6 +1729,7 @@ impl Puppets {
             self.facing[victim] = self.facing[last];
             self.act[victim] = self.act[last];
             self.act[last] = (Act::None, 0.0);
+            self.kill_spot[victim] = self.kill_spot[last];
             self.reeling[victim] = self.reeling[last];
             self.reeling[last] = f32::NEG_INFINITY;
             self.looks[victim] = self.looks[last];
@@ -1693,9 +1774,9 @@ impl Puppets {
     /// ones last.
     pub fn corpses(&self) -> impl Iterator<Item = Corpse> + '_ {
         let corpse = move |f: &Fallen, sink: f32| Corpse {
-            pos: f.pos,
+            pos: f.at(self.time - f.fell),
             facing: f.facing,
-            owner: f.owner,
+            owner: f.player(),
             unit: f.unit,
             look: f.look,
             age: self.time - f.fell,
@@ -2564,6 +2645,86 @@ mod tests {
         );
         p.advance(BLOW_AT * SWING_SECONDS);
         assert!(p.corpses().next().unwrap().age >= 0.0);
+    }
+
+    #[test]
+    fn a_kill_lines_up_drives_its_man_back_and_holds_the_follow_through() {
+        // How far back the dead man was driven, and the killer's fights.
+        let kill = |killer: Mass| {
+            let mut p = Puppets::new(2, 4);
+            let (a, mut b) = melee_pair(
+                Fighter {
+                    mass: killer,
+                    ..Fighter::default()
+                },
+                Fighter::default(),
+            );
+            for _ in 0..30 {
+                frame(&mut p, &a, &b);
+            }
+            b.models -= 1;
+            frame(&mut p, &a, &b);
+            let k = (0..4).find(|&k| p.act[k].0 == Act::Kill).expect("a killer");
+            let stood = p.corpses().next().unwrap().pos;
+            assert_eq!(p.kill_spot[k].0, stood);
+            let mut fights = Vec::new();
+            let mut t = 0.0;
+            while t < SWING_SECONDS + KILL_HOLD + RECOIL_SECONDS {
+                p.advance(FRAME);
+                p.pair(|x, y| x != y);
+                p.update(&a, 0, FRAME, |s| fights.push((t, s.fight, s.pos)));
+                p.update(&b, 1, FRAME, |_| {});
+                t += FRAME;
+            }
+            let lies = p.corpses().next().unwrap();
+            let men = fights.iter().filter(|(t, ..)| *t == 0.0).count();
+            let killer_at = fights[fights.len() - men + k].2;
+            // He fell away from his killer, along the blow.
+            assert!(
+                lies.pos.distance(killer_at) > stood.distance(killer_at),
+                "{lies:?} {stood} {killer_at}"
+            );
+            // The killer swung, then held his follow-through.
+            let held = fights
+                .iter()
+                .skip(k)
+                .step_by(men)
+                .filter(|(t, ..)| {
+                    *t > SWING_SECONDS + 0.05 && *t < SWING_SECONDS + KILL_HOLD - 0.05
+                })
+                .all(|(_, f, _)| matches!(f, Some(Move::Swing { at, .. }) if *at == HELD));
+            assert!(held, "{fights:?}");
+            lies.pos.distance(stood)
+        };
+        let (light, heavy) = (kill(Mass::Light), kill(Mass::Heavy));
+        assert!((light - RECOIL).abs() < 0.02, "{light}");
+        assert!(heavy > light + RECOIL / 2.0, "{heavy} vs {light}");
+    }
+
+    #[test]
+    fn a_man_killed_during_the_follow_through_waits_for_a_new_blow() {
+        let mut p = Puppets::new(2, 4);
+        let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
+        for _ in 0..30 {
+            frame(&mut p, &a, &b);
+        }
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        let k = (0..4).find(|&k| p.act[k].0 == Act::Kill).expect("a killer");
+        // The blow lands; he follows through.
+        while !matches!(p.acting(k), Some((Act::Kill, f)) if kill_swing(f) == HELD) {
+            frame(&mut p, &a, &b);
+        }
+        // His next man falls to a fresh swing of his, not on the spot.
+        let partner = p.partner[k];
+        assert_ne!(partner, NONE, "he has a new man");
+        p.slain
+            .push((b.handle, (partner as usize % SLOTS) as u8, k as u32));
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        let newest = p.corpses().last().unwrap();
+        assert!(newest.age < 0.0, "{newest:?}");
+        assert!(matches!(p.acting(k), Some((Act::Kill, f)) if kill_swing(f) < BLOW_AT));
     }
 
     #[test]

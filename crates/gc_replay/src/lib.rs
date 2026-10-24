@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 36: the blueprint commands (tags 31 to 33; nothing to read in older files);
 /// - 35: the sky (read as a fair afternoon whose clock stands still);
 /// - 34: the generals flag (read as generals on);
 /// - 33: the footing layer (read as firm ground everywhere);
@@ -90,7 +91,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 35;
+pub const FORMAT: u16 = 36;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.

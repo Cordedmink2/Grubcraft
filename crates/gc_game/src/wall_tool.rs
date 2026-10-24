@@ -4,15 +4,32 @@
 //! and starts the next piece from that end, so the wall bends. The rules,
 //! prices and the check are the simulation's (`Command::BuildWall`,
 //! `World::wall_plan`); this is the picking of the two ends and the ghost.
+//!
+//! Two modes sit on top of that, switched with keys while the tool is armed.
+//! `B` plans the wall as a blueprint (`Command::PlanWall`, `World::blueprint`):
+//! nothing is paid and no worker is named; workers set to the plans pay for
+//! each tile as they reach it. `O` draws a ring instead: each click adds a
+//! corner, and clicking the first corner again (or Enter) orders every side
+//! of the closed loop (see `ring_tool` for the cutting). Your own planned
+//! tiles are drawn as faint blue slabs, and a right-click on one sends the
+//! selected workers to work the plans; Ctrl+right-click drops its line.
 
+use gc_sim::blueprints::MAX_PLANS;
 use gc_sim::structures::{GATE, Role};
 use gc_sim::walls::{MAX_WALL_TILES, WallTile};
-use gc_sim::{BuildingId, Command, Refusal};
+use gc_sim::{BuildingId, BuildingStats, Command, Refusal};
 use glam::Vec2;
+use winit::keyboard::KeyCode;
 
 use crate::buildings::{self, Fit};
 use crate::hud::Armed;
-use crate::{Running, color_of};
+use crate::ring_tool::{self, GateSpot, Piece, Tile};
+use crate::{Running, color_of, from_fx_vec};
+
+/// A seep or vein this near a main building of yours (in tiles) is one the
+/// ring suggests a gate on the way to; and how many of them it looks at.
+const GATE_ROUTE_REACH: f32 = 45.0;
+const GATE_ROUTES: usize = 4;
 
 /// How near, in tiles, the mouse must be to a wall end, tower or gate for
 /// the wall to start or end on it.
@@ -106,27 +123,57 @@ pub fn clamp_end(from: (i32, i32), to: (i32, i32)) -> (i32, i32) {
     )
 }
 
-/// How a planned tile sits on the ground.
-fn fit_of(tile: &WallTile) -> Fit {
+/// How a planned tile sits on the ground; `open` is how one that fits is
+/// drawn (the side's colour for a wall, pale blue for a blueprint).
+fn fit_of(tile: &WallTile, open: Fit) -> Fit {
     match tile.fits {
-        Ok(()) => Fit::Open,
+        Ok(()) => open,
         Err(Refusal::Overgrown) => Fit::Overgrown,
         Err(_) => Fit::Refused,
     }
 }
 
-/// What the tool shows for the wall as it would be drawn now.
-pub struct Preview {
-    pub line: [i32; 4],
-    pub plan: Result<Vec<WallTile>, Refusal>,
+/// What the wall tool is set to while it is armed (`hud.wall_mode`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WallMode {
+    /// Plan the wall as a blueprint instead of ordering a worker to build it.
+    pub blueprint: bool,
+    /// Drawing a ring, with the corners clicked so far; `None` is the line
+    /// tool.
+    pub ring: Option<Vec<Tile>>,
+}
+
+/// What the ring preview was worked out from; while it stays the same, so
+/// does the preview.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RingKey {
+    corners: Vec<Tile>,
+    closing: bool,
+    blueprint: bool,
+    building: BuildingId,
+    tick: u32,
+}
+
+/// What the tool shows for the ring as it would be ordered now: the corners
+/// clicked and the one under the mouse, closed.
+pub struct RingPreview {
+    pub pieces: Vec<Piece>,
+    /// How many tiles the sendable pieces lay, each once.
+    pub laid: usize,
+    /// Where gates would suit (drawn, not placed).
+    pub gates: Vec<GateSpot>,
+    /// A click now would close the ring.
+    pub closing: bool,
+    key: RingKey,
 }
 
 impl Running {
     /// The tile the wall being drawn goes on from, once its start is
-    /// clicked.
+    /// clicked (in a ring, the last corner).
     fn wall_from(&self) -> Option<(i32, i32)> {
-        match self.hud.armed {
-            Some(Armed::Wall(_, from)) => from,
+        match (&self.hud.wall_mode.ring, self.hud.armed) {
+            (Some(ring), Some(Armed::Wall(..))) => ring.last().copied(),
+            (None, Some(Armed::Wall(_, from))) => from,
             _ => None,
         }
     }
@@ -155,6 +202,16 @@ impl Running {
                 out.push(Anchor { rect, joins: true });
             } else if stats.role == Role::Defence {
                 out.push(Anchor { rect, joins: false });
+            }
+        }
+        // The ends of your planned lines, too.
+        for p in self.world.plans().iter().filter(|p| p.owner == side) {
+            let [x0, y0, x1, y1] = p.line.map(i32::from);
+            if p.tile == (x0, y0) || p.tile == (x1, y1) {
+                out.push(Anchor {
+                    rect: [p.tile.0, p.tile.1, 1, 1],
+                    joins: true,
+                });
             }
         }
         out
@@ -186,61 +243,328 @@ impl Running {
             tile
         };
         let max = self.heightmap.tiles as i32 - 1;
-        let to = clamp_end(from, to);
+        // A ring's sides are cut to fit; a line stops short.
+        let to = if self.hud.wall_mode.ring.is_some() {
+            to
+        } else {
+            clamp_end(from, to)
+        };
         Some((from, (to.0.clamp(0, max), to.1.clamp(0, max))))
     }
 
-    fn wall_preview(&self, building: BuildingId) -> Option<Preview> {
+    /// The simulation's check of a wall from `from` to `to`: as drawn by a
+    /// worker, or as a blueprint.
+    fn wall_check(
+        &self,
+        building: BuildingId,
+        blueprint: bool,
+        from: Tile,
+        to: Tile,
+    ) -> Result<Vec<WallTile>, Refusal> {
+        let side = self.sandbox.side;
+        if blueprint {
+            self.world.blueprint(side, building, from, to)
+        } else {
+            self.world.wall_plan(side, building, from, to)
+        }
+    }
+
+    fn wall_preview(&self, building: BuildingId) -> Option<Piece> {
         let (from, to) = self.wall_ends_now()?;
-        Some(Preview {
+        Some(Piece {
             line: [from.0, from.1, to.0, to.1],
-            plan: self.world.wall_plan(self.sandbox.side, building, from, to),
+            plan: self.wall_check(building, self.hud.wall_mode.blueprint, from, to),
+        })
+    }
+
+    /// The sides of a ring through `corners`, cut into orders: each
+    /// side's own price is left to `order_ring`, which asks for the whole.
+    fn ring_pieces(&self, building: BuildingId, blueprint: bool, corners: &[Tile]) -> Vec<Piece> {
+        let side = self.sandbox.side;
+        // A ring is bought whole, so a drawn side is checked for tier and
+        // ground only; `order_ring` prices the lot and checks the room.
+        let check = |from, to| {
+            if blueprint {
+                self.world.blueprint(side, building, from, to)
+            } else {
+                self.world.wall_fits(side, building, from, to)
+            }
+        };
+        ring_tool::ring_pieces(corners, &check)
+    }
+
+    /// Whether a click now would close the ring: it has three corners and
+    /// the mouse is on the first.
+    fn closes_ring(&self) -> bool {
+        let Some(ring) = self.hud.wall_mode.ring.as_ref().filter(|r| r.len() >= 3) else {
+            return false;
+        };
+        self.ground_under_cursor()
+            .is_some_and(|at| at.distance(buildings::centre_of(ring[0], 1, 1)) <= SNAP_REACH)
+    }
+
+    /// The straight runs from each main building of yours to its nearest
+    /// seeps and veins, which a ring crosses where a gate would help.
+    fn gate_routes(&self) -> Vec<(Vec2, Vec2)> {
+        let (Some(all), Some(economy)) = (self.world.structures(), self.world.economy()) else {
+            return Vec::new();
+        };
+        let side = self.sandbox.side;
+        let mains: Vec<Vec2> = (all.iter())
+            .filter(|s| s.owner == side)
+            .filter(|s| {
+                (self.buildings.stats.get(usize::from(s.building)))
+                    .is_some_and(|b| b.role == Role::Main)
+            })
+            .map(|s| buildings::centre_of(s.tile, s.width, s.depth))
+            .collect();
+        let mut routes: Vec<(f32, Vec2, Vec2)> = economy
+            .nodes()
+            .filter(|n| n.left > 0)
+            .filter_map(|n| {
+                let at = from_fx_vec(n.at);
+                (mains.iter())
+                    .map(|&m| (m.distance(at), m, at))
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+            })
+            .filter(|r| r.0 <= GATE_ROUTE_REACH)
+            .collect();
+        routes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        routes
+            .into_iter()
+            .take(GATE_ROUTES)
+            .map(|(_, from, to)| (from, to))
+            .collect()
+    }
+
+    /// The ring as it would be ordered now. `old` is the last frame's, kept
+    /// as it is while nothing it was worked out from has changed.
+    fn ring_preview(&self, building: BuildingId, old: Option<RingPreview>) -> Option<RingPreview> {
+        let points = self.hud.wall_mode.ring.as_ref()?;
+        let (_, cursor) = self.wall_ends_now()?;
+        let closing = self.closes_ring();
+        let mut corners = points.clone();
+        if !closing && corners.last() != Some(&cursor) {
+            corners.push(cursor);
+        }
+        let blueprint = self.hud.wall_mode.blueprint;
+        let key = RingKey {
+            corners,
+            closing,
+            blueprint,
+            building,
+            // Rebuilt once a second: the ground changes slowly enough.
+            tick: self.world.tick_count() / gc_sim::TICKS_PER_SECOND,
+        };
+        if let Some(old) = old.filter(|o| o.key == key) {
+            return Some(old);
+        }
+        let pieces = self.ring_pieces(building, blueprint, &key.corners);
+        let laid = ring_tool::laid_tiles(&pieces);
+        let gates = match self.buildings.gate_for(building) {
+            Some(gate) if key.corners.len() >= 3 => {
+                let stats = &self.buildings.stats[usize::from(gate)];
+                ring_tool::gate_spots(
+                    &ring_tool::ring_segments(&key.corners),
+                    &self.gate_routes(),
+                    &laid,
+                    stats.width >= stats.depth,
+                )
+            }
+            _ => Vec::new(),
+        };
+        Some(RingPreview {
+            pieces,
+            laid: laid.len(),
+            gates,
+            closing,
+            key,
         })
     }
 
     /// Choose the wall tool for `building`.
     pub fn arm_wall(&mut self, building: BuildingId) {
+        self.hud.wall_mode = WallMode::default();
         self.hud.armed = Some(Armed::Wall(building, None));
     }
 
+    /// A key while the wall tool is armed: `B` switches between building and
+    /// planning blueprints, `O` between lines and the ring, and Enter closes
+    /// a ring. Whether the key was the tool's.
+    pub fn wall_key(&mut self, code: KeyCode) -> bool {
+        let Some(Armed::Wall(building, _)) = self.hud.armed else {
+            return false;
+        };
+        match code {
+            KeyCode::KeyB => {
+                if self.buildings.is_grown(building) {
+                    self.say("A grown wall takes no worker, so it has no blueprints.".into());
+                } else {
+                    let on = !self.hud.wall_mode.blueprint;
+                    self.hud.wall_mode.blueprint = on;
+                    self.say(if on {
+                        "Blueprints: nothing is paid until a worker builds each tile. B goes back."
+                            .into()
+                    } else {
+                        "Building: a worker is sent and the wall is paid for at once.".into()
+                    });
+                }
+            }
+            KeyCode::KeyO => {
+                let on = self.hud.wall_mode.ring.is_none();
+                self.hud.wall_mode.ring = on.then(Vec::new);
+                self.hud.armed = Some(Armed::Wall(building, None));
+                self.say(if on {
+                    "Ring: click each corner, then the first one again (or Enter) to close it."
+                        .into()
+                } else {
+                    "Lines: click where the wall starts.".into()
+                });
+            }
+            KeyCode::Enter | KeyCode::NumpadEnter => {
+                if self.hud.wall_mode.ring.is_none() {
+                    return false;
+                }
+                self.order_ring(building);
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// The ghost of the wall: one tile before it has a start, then every
-    /// tile of the line. This also works out the preview for the frame,
-    /// which the hint reads too.
+    /// tile of the line (or of the ring, with the gates it suggests). This
+    /// also works out the preview for the frame, which the hint reads too.
     pub fn push_wall_ghost(&mut self) {
         let Some(Armed::Wall(id, _)) = self.hud.armed else {
             self.hud.wall_preview = None;
-            return;
-        };
-        self.hud.wall_preview = self.wall_preview(id);
-        let Some(Preview { line, plan }) = &self.hud.wall_preview else {
+            self.hud.ring_preview = None;
+            self.hud.wall_mode = WallMode::default();
             return;
         };
         let colour = color_of(&self.parties, self.sandbox.side);
         let hm = &self.heightmap;
         let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
-        // A line that only crosses your own walls plans no tile: show
-        // where it lies. A line that can't be planned is all red.
-        let tiles: Vec<_> = match plan {
-            Ok(plan) => plan.iter().map(|t| (t.tile, fit_of(t))).collect(),
-            Err(_) => gc_sim::walls::wall_tiles((line[0], line[1]), (line[2], line[3]))
-                .unwrap_or_default()
-                .into_iter()
-                .map(|t| (t, Fit::Refused))
-                .collect(),
+        let blueprint = self.hud.wall_mode.blueprint;
+        let open = if blueprint { Fit::Blueprint } else { Fit::Open };
+        let look = self.buildings.wall_look(id, false);
+        if self.hud.wall_mode.ring.is_some() {
+            self.hud.wall_preview = None;
+            let old = self.hud.ring_preview.take();
+            self.hud.ring_preview = self.ring_preview(id, old);
+            let Some(ring) = &self.hud.ring_preview else {
+                return;
+            };
+            // The corners and joins are shared by two pieces: drawn once.
+            let mut drawn = std::collections::HashSet::new();
+            for piece in &ring.pieces {
+                let tiles = ghost_tiles(piece, open)
+                    .into_iter()
+                    .filter(|&(t, _)| drawn.insert(t));
+                buildings::push_wall_ghost(
+                    piece.line,
+                    look,
+                    tiles,
+                    colour,
+                    ground,
+                    &mut self.instances,
+                );
+            }
+            if let Some(gate) = self.buildings.gate_for(id)
+                && let Some(stats) = self.buildings.stats.get(usize::from(gate))
+            {
+                for spot in &ring.gates {
+                    let (w, d) = stats.size(spot.turn);
+                    let at = buildings::centre_of(spot.tile, 1, 1);
+                    let tile = buildings::tile_for(at, w, d);
+                    buildings::push_ghost(
+                        stats,
+                        tile,
+                        spot.turn,
+                        Fit::Suggested,
+                        colour,
+                        ground,
+                        &mut self.instances,
+                    );
+                }
+            }
+            return;
+        }
+        self.hud.ring_preview = None;
+        self.hud.wall_preview = self.wall_preview(id);
+        let Some(piece) = &self.hud.wall_preview else {
+            return;
         };
         buildings::push_wall_ghost(
-            *line,
-            self.buildings.wall_look(id, false),
-            tiles.into_iter(),
+            piece.line,
+            look,
+            ghost_tiles(piece, open).into_iter(),
             colour,
             ground,
             &mut self.instances,
         );
     }
 
+    /// Your own planned tiles, as faint blue slabs along the lines they were
+    /// planned in. Only yours: another side's plans are never drawn.
+    pub fn push_plan_ghosts(&mut self) {
+        if !self.conquest_match() || self.watching.is_some() {
+            return;
+        }
+        let side = self.sandbox.side;
+        let colour = color_of(&self.parties, side);
+        let hm = &self.heightmap;
+        let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
+        for p in self.world.plans().iter().filter(|p| p.owner == side) {
+            buildings::push_wall_ghost(
+                p.line.map(i32::from),
+                self.buildings.wall_look(p.building, false),
+                std::iter::once((p.tile, Fit::Planned)),
+                colour,
+                ground,
+                &mut self.instances,
+            );
+        }
+    }
+
+    /// The line of the planned tile of yours under the mouse, if there is
+    /// one: the ray through the mouse against each tile's slab (so a click
+    /// on the slab's top finds it, not the ground behind it), then the
+    /// tile of the ground under the mouse.
+    pub fn plan_under_cursor(&self) -> Option<[i16; 4]> {
+        let side = self.sandbox.side;
+        let plans = || self.world.plans().iter().filter(move |p| p.owner == side);
+        if let Some((origin, dir)) = self.cursor_ray() {
+            let hm = &self.heightmap;
+            let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
+            let hit = plans()
+                .filter_map(|p| {
+                    let (x, z) = (p.tile.0 as f32, p.tile.1 as f32);
+                    let low = ground(x + 0.5, z + 0.5) - 0.3;
+                    let high = low + 0.3 + self.buildings.wall_look(p.building, false).height;
+                    let (min, max) = (
+                        glam::Vec3::new(x, low, z),
+                        glam::Vec3::new(x + 1.0, high, z + 1.0),
+                    );
+                    buildings::ray_box(origin, dir, min, max).map(|t| (t, p.line))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            if let Some((_, line)) = hit {
+                return Some(line);
+            }
+        }
+        let at = self.ground_under_cursor()?;
+        let tile = (at.x.floor() as i32, at.y.floor() as i32);
+        plans().find(|p| p.tile == tile).map(|p| p.line)
+    }
+
     /// The click while the wall tool is armed: the first sets the start;
-    /// the next sends the order, and the wall goes on from its end.
+    /// the next sends the order (or plans the wall), and the wall goes on
+    /// from its end. In a ring, each click is a corner.
     pub fn finish_walling(&mut self, building: BuildingId) {
+        if self.hud.wall_mode.ring.is_some() {
+            return self.click_ring(building);
+        }
         let Some((from, to)) = self.wall_ends_now() else {
             return;
         };
@@ -248,7 +572,8 @@ impl Running {
             self.hud.armed = Some(Armed::Wall(building, Some(from)));
             return;
         }
-        let plan = match self.world.wall_plan(self.sandbox.side, building, from, to) {
+        let blueprint = self.hud.wall_mode.blueprint;
+        let plan = match self.wall_check(building, blueprint, from, to) {
             Ok(plan) => plan,
             Err(why) => return self.say(buildings::why(why).into()),
         };
@@ -256,7 +581,23 @@ impl Running {
             return self.say(buildings::why(why).into());
         }
         if plan.is_empty() {
-            self.say("Your walls already stand there.".into());
+            self.say(if blueprint {
+                "Those tiles are already walled or planned.".into()
+            } else {
+                "Your walls already stand there.".into()
+            });
+            return;
+        }
+        // The tool keeps both ends within the map, so these fit.
+        let (from16, to16) = ((from.0 as i16, from.1 as i16), (to.0 as i16, to.1 as i16));
+        if blueprint {
+            // Planning needs no worker, and none is named.
+            self.orders([Command::PlanWall {
+                building,
+                from: from16,
+                to: to16,
+            }]);
+            self.hud.armed = Some(Armed::Wall(building, Some(to)));
             return;
         }
         // A wall grown along veins (the Brood's) takes no worker.
@@ -268,14 +609,101 @@ impl Running {
             };
             Some(w)
         };
-        // The tool keeps both ends within the map, so these fit.
         self.orders([Command::BuildWall {
             regiment,
             building,
-            from: (from.0 as i16, from.1 as i16),
-            to: (to.0 as i16, to.1 as i16),
+            from: from16,
+            to: to16,
         }]);
         self.hud.armed = Some(Armed::Wall(building, Some(to)));
+    }
+
+    /// A click while drawing a ring: the first corner again closes and
+    /// orders it; any other adds a corner.
+    fn click_ring(&mut self, building: BuildingId) {
+        let Some((_, to)) = self.wall_ends_now() else {
+            return;
+        };
+        if self.closes_ring() {
+            return self.order_ring(building);
+        }
+        if let Some(ring) = &mut self.hud.wall_mode.ring
+            && ring.last() != Some(&to)
+        {
+            ring.push(to);
+        }
+    }
+
+    /// Order the closed ring: one command per piece that can go (a worker
+    /// draws every piece, or the pieces are planned as blueprints), leaving
+    /// out what can't. The tool stays on, ready for the next ring.
+    fn order_ring(&mut self, building: BuildingId) {
+        let Some(corners) = self.hud.wall_mode.ring.clone() else {
+            return;
+        };
+        if corners.len() < 3 {
+            return self.say("A ring needs at least three corners.".into());
+        }
+        let blueprint = self.hud.wall_mode.blueprint;
+        let pieces = self.ring_pieces(building, blueprint, &corners);
+        let sendable = pieces.iter().filter(|p| p.sendable()).count();
+        if sendable == 0 {
+            let why = match (pieces.is_empty(), pieces.iter().find_map(Piece::why)) {
+                (true, _) => Refusal::Rough,
+                (false, Some(why)) => why,
+                (false, None) => {
+                    return self.say("Your walls already stand there.".into());
+                }
+            };
+            return self.say(buildings::why(why).into());
+        }
+        let tiles = ring_tool::laid_tiles(&pieces).len();
+        if blueprint {
+            let side = self.sandbox.side;
+            let planned = self
+                .world
+                .plans()
+                .iter()
+                .filter(|p| p.owner == side)
+                .count();
+            if planned + tiles > MAX_PLANS {
+                return self.say(format!(
+                    "A side can plan at most {MAX_PLANS} tiles at once."
+                ));
+            }
+        } else if let Some(stats) = self.buildings.stats.get(usize::from(building)) {
+            let (grub, marrow) = wall_price(stats, tiles as u32);
+            let bank = self.world.bank(self.sandbox.side);
+            if bank.is_some_and(|b| b.grub < grub || b.marrow < marrow) {
+                return self.say(format!(
+                    "You can't afford the whole ring: it costs {}.",
+                    buildings::price_text(grub, marrow)
+                ));
+            }
+        }
+        // Every piece names the same worker, the one nearest where it starts.
+        let worker = if blueprint || self.buildings.is_grown(building) {
+            None
+        } else {
+            let first = pieces
+                .iter()
+                .find(|p| p.sendable())
+                .map_or(corners[0], |p| (p.line[0], p.line[1]));
+            let Some(w) = self.nearest_worker(buildings::centre_of(first, 1, 1)) else {
+                return self.say("Select a worker to build the ring.".into());
+            };
+            Some(w)
+        };
+        let commands = ring_tool::ring_commands(&pieces, building, blueprint, worker);
+        self.orders(commands);
+        self.hud.wall_mode.ring = Some(Vec::new());
+        let left_out = pieces.iter().filter(|p| p.red()).count();
+        let what = if blueprint { "planned" } else { "ordered" };
+        let mut line = format!("Ring {what}: {tiles} tiles in {sendable} pieces");
+        if left_out > 0 {
+            line.push_str(&format!(", {left_out} left out (red)"));
+        }
+        self.say(line);
     }
 
     /// The line shown while drawing a wall: the start to choose, or the
@@ -284,11 +712,30 @@ impl Running {
         let Some(Armed::Wall(id, from)) = self.hud.armed else {
             return None;
         };
+        let blueprint = self.hud.wall_mode.blueprint;
+        if let Some(ring) = &self.hud.wall_mode.ring {
+            let Some(preview) = self.hud.ring_preview.as_ref().filter(|_| !ring.is_empty()) else {
+                return Some(ring_start_hint(blueprint));
+            };
+            let stats = self.buildings.stats.get(usize::from(id))?;
+            let tiles = preview.laid;
+            let (grub, marrow) = wall_price(stats, tiles as u32);
+            let red = preview.pieces.iter().filter(|p| p.red()).count();
+            return Some(ring_hint(
+                tiles,
+                (!blueprint)
+                    .then(|| buildings::price_text(grub, marrow))
+                    .as_deref(),
+                red,
+                ring.len() >= 3,
+                preview.closing,
+            ));
+        }
         if from.is_none() {
-            return Some("Click where the wall starts - right-click or Esc to stop".into());
+            return Some(start_hint(blueprint));
         }
         let stats = self.buildings.stats.get(usize::from(id))?;
-        let Preview { plan, .. } = self.hud.wall_preview.as_ref()?;
+        let Piece { plan, .. } = self.hud.wall_preview.as_ref()?;
         let plan = match plan {
             Ok(plan) => plan,
             Err(why) => return Some(buildings::why(*why).into()),
@@ -298,16 +745,9 @@ impl Running {
         {
             return Some(buildings::why(why).into());
         }
-        let n = plan.len() as u32;
-        let (grub, marrow) = (
-            u32::from(stats.cost_grub) * n,
-            u32::from(stats.cost_marrow) * n,
-        );
-        let tiles = if n == 1 { "tile" } else { "tiles" };
-        let price = match marrow {
-            0 => format!("{grub} Grub"),
-            m => format!("{grub} Grub, {m} Marrow"),
-        };
+        let n = plan.len();
+        let (grub, marrow) = wall_price(stats, n as u32);
+        let price = (!blueprint).then(|| buildings::price_text(grub, marrow));
         let clear = if plan.iter().any(|t| t.fits.is_err()) {
             ", ground to clear"
         } else {
@@ -315,17 +755,110 @@ impl Running {
         };
         Some(hint_line(
             n,
-            tiles,
-            &price,
+            price.as_deref(),
             clear,
             self.buildings.is_grown(id),
         ))
     }
+
+    /// A line for the status bar while some of the selected workers are
+    /// working your planned walls.
+    pub fn plans_hint(&self) -> Option<String> {
+        let n = self
+            .selected_workers()
+            .filter(|&h| self.world.works_plans(h))
+            .count();
+        (n > 0).then(|| {
+            format!(
+                "{n} {} working your planned walls - any other order sends {} elsewhere",
+                buildings::plural(n, "worker is", "workers are"),
+                buildings::plural(n, "it", "them"),
+            )
+        })
+    }
+}
+
+/// What `n` tiles of the wall `stats` cost, as (Grub, Marrow).
+fn wall_price(stats: &BuildingStats, n: u32) -> (u32, u32) {
+    (
+        u32::from(stats.cost_grub) * n,
+        u32::from(stats.cost_marrow) * n,
+    )
+}
+
+/// The tiles of a checked line to draw, each with how it sits. A line that
+/// only crosses your own walls plans no tile: show where it lies. A line
+/// that can't be planned is all red.
+fn ghost_tiles(piece: &Piece, open: Fit) -> Vec<(Tile, Fit)> {
+    match &piece.plan {
+        Ok(plan) => plan.iter().map(|t| (t.tile, fit_of(t, open))).collect(),
+        Err(_) => {
+            let [x0, y0, x1, y1] = piece.line;
+            (gc_sim::walls::wall_tiles((x0, y0), (x1, y1)).unwrap_or_default())
+                .into_iter()
+                .map(|t| (t, Fit::Refused))
+                .collect()
+        }
+    }
+}
+
+/// The hint before a line has a start.
+fn start_hint(blueprint: bool) -> String {
+    if blueprint {
+        "Blueprint: click where the wall starts - B builds instead, O ring - right-click or Esc to stop"
+    } else {
+        "Click where the wall starts - B plans a blueprint, O ring - right-click or Esc to stop"
+    }
+    .into()
+}
+
+/// The hint before a ring has a first corner.
+fn ring_start_hint(blueprint: bool) -> String {
+    let what = if blueprint { "Ring blueprint" } else { "Ring" };
+    format!("{what}: click the first corner - O goes back to lines - right-click or Esc to stop")
+}
+
+/// The hint while a ring is drawn: its size and price (or that blueprints
+/// are paid as workers build), the sides left out, and how to close it.
+///
+/// `price` is `None` for a blueprint.
+fn ring_hint(
+    tiles: usize,
+    price: Option<&str>,
+    red: usize,
+    closable: bool,
+    closing: bool,
+) -> String {
+    let word = buildings::plural(tiles, "tile", "tiles");
+    let mut line = match price {
+        None => format!("Ring blueprint: {tiles} {word}, paid as workers build them"),
+        Some(price) => format!("Ring: {tiles} {word}, {price}"),
+    };
+    if red > 0 {
+        let pieces = buildings::plural(red, "piece", "pieces");
+        line.push_str(&format!(" - {red} red {pieces} won't go"));
+    }
+    line.push_str(if closing {
+        " - click to close the ring"
+    } else if closable {
+        " - click the first corner or press Enter to close it"
+    } else {
+        " - click the next corner"
+    });
+    line
 }
 
 /// The hint while a wall is drawn: a worker builds most walls, a grown one
-/// grows on its own.
-fn hint_line(n: u32, tiles: &str, price: &str, clear: &str, grown: bool) -> String {
+/// grows on its own, and a blueprint is paid for as workers build it.
+///
+/// `price` is `None` for a blueprint.
+fn hint_line(n: usize, price: Option<&str>, clear: &str, grown: bool) -> String {
+    let tiles = buildings::plural(n, "tile", "tiles");
+    let Some(price) = price else {
+        return format!(
+            "Blueprint: {n} {tiles}{clear}, paid as workers build them - click to plan and go on - right-click to finish"
+        );
+    };
     let then = if grown {
         "grows on its own - click to go on"
     } else {
@@ -347,11 +880,46 @@ mod tests {
 
     #[test]
     fn a_grown_wall_hint_names_no_worker() {
-        let grown = hint_line(3, "tiles", "30 Grub", "", true);
+        let grown = hint_line(3, Some("30 Grub"), "", true);
         assert!(grown.contains("grows on its own"), "{grown}");
         assert!(!grown.contains("build"), "{grown}");
-        let built = hint_line(3, "tiles", "30 Grub", "", false);
+        let built = hint_line(3, Some("30 Grub"), "", false);
         assert!(built.contains("click to build and go on"), "{built}");
+    }
+
+    #[test]
+    fn a_blueprint_hint_names_no_price_and_says_workers_pay() {
+        let plan = hint_line(12, None, "", false);
+        assert!(plan.contains("paid as workers build"), "{plan}");
+        assert!(!plan.contains("120 Grub"), "{plan}");
+        let ring = ring_hint(40, None, 0, true, false);
+        assert!(
+            ring.contains("paid as workers build") && !ring.contains("400"),
+            "{ring}"
+        );
+        let built = ring_hint(40, Some("400 Grub"), 2, true, false);
+        assert!(
+            built.contains("400 Grub") && built.contains("2 red pieces"),
+            "{built}"
+        );
+        assert!(ring_hint(3, Some("30 Grub"), 0, false, false).contains("next corner"));
+    }
+
+    #[test]
+    fn hints_fit_on_one_line() {
+        // The bar is about a hundred and fifty characters wide at the
+        // smallest window.
+        for line in [
+            start_hint(false),
+            start_hint(true),
+            ring_start_hint(true),
+            hint_line(32, Some("320 Grub, 100 Marrow"), ", ground to clear", false),
+            hint_line(32, None, ", ground to clear", false),
+            ring_hint(300, Some("3000 Grub, 100 Marrow"), 12, true, false),
+        ] {
+            assert!(line.len() <= 150, "{} chars: {line}", line.len());
+            assert!(line.is_ascii(), "{line}");
+        }
     }
 
     #[test]

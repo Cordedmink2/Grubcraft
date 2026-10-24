@@ -92,6 +92,12 @@ const REFUSED: [u8; 4] = [210, 40, 30, 110];
 const OVERGROWN: [u8; 4] = [235, 170, 40, 120];
 /// The glow on a ghost that fits.
 const GHOST_GLOW: u8 = 110;
+/// A wall being planned as a blueprint (pale blue), and a planned tile
+/// already down (the same, fainter).
+const PLAN_GHOST: [u8; 4] = [130, 185, 245, 120];
+const PLANNED: [u8; 4] = [120, 165, 225, 20];
+/// A gate the ring tool suggests (pale gold).
+const SUGGESTED: [u8; 4] = [240, 214, 110, 150];
 /// The glow of a blueprint waiting on clearing.
 const BLUEPRINT_GLOW: u8 = 70;
 /// How much of its full height a blueprint stands.
@@ -237,6 +243,15 @@ impl Table {
     pub fn is_grown(&self, building: BuildingId) -> bool {
         (self.stats.get(usize::from(building)))
             .is_some_and(|s| s.flags & gc_sim::structures::GROWN != 0)
+    }
+
+    /// The gate that goes with the wall `building`: the first gate of its
+    /// faction, if the faction has one (the Choir has none).
+    pub fn gate_for(&self, building: BuildingId) -> Option<BuildingId> {
+        let faction = self.faction(building)?;
+        (self.stats.iter().zip(&self.factions))
+            .position(|(s, &f)| f == faction && s.flags & gc_sim::structures::GATE != 0)
+            .map(|i| i as BuildingId)
     }
 
     /// How a drawn wall of type `building` looks (`open`: its door is open
@@ -495,6 +510,21 @@ pub fn covers(world: &World, shown: impl Fn(&StructureView) -> bool, p: Vec2) ->
             (x..x + f32::from(b.width)).contains(&p.x) && (y..y + f32::from(b.depth)).contains(&p.y)
         })
     })
+}
+
+/// A price as "30 Grub", "5 Marrow" or "30 Grub, 5 Marrow" ("free" for none).
+pub(crate) fn price_text(grub: u32, marrow: u32) -> String {
+    match (grub, marrow) {
+        (0, 0) => "free".into(),
+        (g, 0) => format!("{g} Grub"),
+        (0, m) => format!("{m} Marrow"),
+        (g, m) => format!("{g} Grub, {m} Marrow"),
+    }
+}
+
+/// `one` when `n` is 1, else `many`.
+pub(crate) fn plural(n: usize, one: &'static str, many: &'static str) -> &'static str {
+    if n == 1 { one } else { many }
 }
 
 /// The middle of a `width` by `depth` footprint whose north-west tile is
@@ -1430,6 +1460,12 @@ pub enum Fit {
     Overgrown,
     /// It won't go here.
     Refused,
+    /// A wall tile being planned as a blueprint (pale blue).
+    Blueprint,
+    /// A tile already planned, waiting for a worker (faint pale blue).
+    Planned,
+    /// A gate the ring tool suggests (pale gold).
+    Suggested,
 }
 
 /// A footprint of `width` × `depth` tiles from `tile`, turned `turn`
@@ -1465,6 +1501,9 @@ fn ghost_colour(fit: Fit, [r, g, b]: [u8; 3]) -> [u8; 4] {
         Fit::Open => [r, g, b, GHOST_GLOW],
         Fit::Overgrown => OVERGROWN,
         Fit::Refused => REFUSED,
+        Fit::Blueprint => PLAN_GHOST,
+        Fit::Planned => PLANNED,
+        Fit::Suggested => SUGGESTED,
     }
 }
 

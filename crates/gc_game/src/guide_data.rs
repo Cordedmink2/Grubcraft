@@ -464,12 +464,7 @@ fn thousands(v: u32) -> String {
 }
 
 fn cost_text(c: Cost) -> String {
-    match (c.grub, c.marrow) {
-        (0, 0) => "free".into(),
-        (g, 0) => format!("{g} Grub"),
-        (0, m) => format!("{m} Marrow"),
-        (g, m) => format!("{g} Grub, {m} Marrow"),
-    }
+    crate::buildings::price_text(u32::from(c.grub), u32::from(c.marrow))
 }
 
 fn tiles(v: f64) -> String {

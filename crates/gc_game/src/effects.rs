@@ -34,6 +34,15 @@ const SNOW_MOST: f32 = 350.0;
 const FALL_RADIUS: (f32, f32) = (14.0, 60.0);
 /// The camera heights between which the fall fades out.
 const FALL_FADE: (f32, f32) = (110.0, 175.0);
+/// Rain striking the ground: splashes a second for each tile it covers, the
+/// most a second, how wide round the focus (a share of the camera's
+/// distance, then the least and most in tiles) and the camera heights
+/// between which they fade out (they are too small to see from afar).
+const SPLASH_PER_TILE: f32 = 0.35;
+const SPLASH_MOST: f32 = 300.0;
+const SPLASH_REACH: f32 = 0.4;
+const SPLASH_RADIUS: (f32, f32) = (6.0, 26.0);
+const SPLASH_FADE: (f32, f32) = (35.0, 90.0);
 /// The colour of clods thrown up from the ground.
 const CLOD: [u8; 3] = [92, 74, 52];
 /// Fresh-cut wood, and leaves and torn scrub.
@@ -306,7 +315,17 @@ impl Field {
         let rate = (per_tile * std::f32::consts::PI * radius * radius).min(most) * amount * near;
         self.fx.set_density(density);
         self.fx
-            .precipitation(weather, focus, radius, rate * dt.min(0.25), ground);
+            .precipitation(weather, focus, radius, rate * dt.min(0.25), &ground);
+        if weather == Weather::Rain {
+            let near = 1.0
+                - ((distance - SPLASH_FADE.0) / (SPLASH_FADE.1 - SPLASH_FADE.0)).clamp(0.0, 1.0);
+            let radius = (distance * SPLASH_REACH).clamp(SPLASH_RADIUS.0, SPLASH_RADIUS.1);
+            let rate = (SPLASH_PER_TILE * std::f32::consts::PI * radius * radius).min(SPLASH_MOST)
+                * amount
+                * near;
+            self.fx
+                .splashes(focus, radius, rate * dt.min(0.25), &ground);
+        }
     }
 
     /// The lamps and fires that shone since this was last called.
@@ -408,10 +427,36 @@ mod tests {
         // the ring holds for its longest life (8 seconds).
         assert!(fall(Weather::Rain, 1.0, 100.0) <= RAIN_MOST as usize + 60);
         assert!(fall(Weather::Snow, 1.0, 100.0) <= SNOW_MOST as usize + 20);
-        assert!(RAIN_MOST + 400.0 < gc_render::MAX_PARTICLES as f32 / 8.0);
+        assert!(RAIN_MOST + SPLASH_MOST + 400.0 < gc_render::MAX_PARTICLES as f32 / 8.0);
         // High up, in Commander View, there is none.
         assert_eq!(fall(Weather::Rain, 1.0, 180.0), 0);
         assert!(fall(Weather::Rain, 1.0, 140.0) < fall(Weather::Rain, 1.0, 100.0));
+    }
+
+    #[test]
+    fn rain_splashes_where_it_lands_only_near_the_camera_and_snow_does_not() {
+        let splashes = |weather, distance| {
+            let mut field = Field::new(None);
+            for _ in 0..60 {
+                field.weather(
+                    1.0 / 60.0,
+                    1.0,
+                    (weather, 1.0),
+                    Vec2::new(50.0, 50.0),
+                    distance,
+                    |_| 3.0,
+                );
+            }
+            field
+                .frame(0.0, 1.0, Vec2::ZERO, 200.0, |_| 0.0)
+                .iter()
+                .filter(|p| p.life < 0.4 && p.pos.y < 3.2)
+                .count()
+        };
+        assert!(splashes(Weather::Rain, 40.0) > 100);
+        assert!(splashes(Weather::Rain, 40.0) as f32 <= SPLASH_MOST + 20.0);
+        assert_eq!(splashes(Weather::Rain, 100.0), 0);
+        assert_eq!(splashes(Weather::Snow, 40.0), 0);
     }
 
     #[test]
@@ -419,7 +464,7 @@ mod tests {
         let mut field = Field::new(None);
         field.weather(10.0, 1.0, (Weather::Rain, 1.0), Vec2::ZERO, 40.0, |_| 0.0);
         let n = field.frame(0.0, 1.0, Vec2::ZERO, 200.0, |_| 0.0).len();
-        assert!(n as f32 <= RAIN_MOST * 0.26 + 5.0, "{n}");
+        assert!(n as f32 <= (RAIN_MOST + SPLASH_MOST) * 0.26 + 5.0, "{n}");
     }
 
     #[test]
