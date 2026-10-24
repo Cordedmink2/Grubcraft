@@ -2175,12 +2175,12 @@ impl Puppets {
                 (Some((Act::Kill, f)), _) => Some(match self.pair_of(i) {
                     Some((pair, _)) => Move::Kill { pair, at: f },
                     // A finisher made for it plays once through.
-                    None if let Some((_, seed)) = self.killing[i].strike => {
-                        Move::Finish { at: f, seed }
-                    }
-                    None => Move::Swing {
-                        at: kill_swing(f),
-                        alt: false,
+                    None => match self.killing[i].strike {
+                        Some((_, seed)) => Move::Finish { at: f, seed },
+                        None => Move::Swing {
+                            at: kill_swing(f),
+                            alt: false,
+                        },
                     },
                 }),
                 (Some((Act::Down, f)), _) => Some(Move::Down(f)),
