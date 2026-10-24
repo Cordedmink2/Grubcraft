@@ -127,6 +127,7 @@
 //! effect at the camera's focus in slow motion, and `--fx-still` freezes them
 //! at several ages, to look at them.
 
+mod aftermath;
 mod ambient;
 mod army_shape;
 mod buildings;
@@ -695,6 +696,8 @@ struct Running {
     arrows: field::Arrows,
     /// Blows on buildings, shots at them, and buildings coming down.
     siege: siege::Siege,
+    /// Fallen standards, crows and grime (see [`aftermath`]).
+    aftermath: aftermath::Aftermath,
     /// How far `--siege` has staged its siege: 0 to place it, 1 to order
     /// the attacks.
     siege_scene: Option<u8>,
@@ -1484,6 +1487,7 @@ impl App {
             ambient: ambient::Ambient::new(opts.fell_demo),
             arrows: field::Arrows::new(field::MAX_STUCK),
             siege: siege::Siege::new(capacities.regiments as usize),
+            aftermath: aftermath::Aftermath::default(),
             siege_scene: None,
             art,
             commander: false,
@@ -2982,10 +2986,20 @@ impl Running {
         // open gate is ground to them; a shut one is wall).
         let nav = self.world.nav();
         let firm = |owner| move |p: Vec2| nav.standable(owner, fx_vec(p));
+        // Footsteps and wear follow the effects clock: none behind the menu
+        // or while it stands still.
+        let fx_dt = if self.menu_open && self.online.is_none() {
+            0.0
+        } else {
+            game_dt.as_secs_f32() * self.effects.time_scale()
+        };
         for r in self.world.regiments.iter().take_while(|_| !viewing) {
             // Enemies hidden in woods and tall grass aren't drawn (their
             // soldiers keep marching out of sight, below).
             let seen = self.reveal_all || self.world.sees(viewer, r.handle);
+            // Fighting dirties soldiers wherever the fight is, drawn or not.
+            self.aftermath
+                .tend(r.handle, r.engaged, self.world.is_worker(r.handle), fx_dt);
             let (pos, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
             let [cr, cg, cb] = color_of(&self.parties, r.owner);
             let selected = self.selected.contains(&r.handle) || self.boxed.contains(&r.handle);
@@ -3170,13 +3184,7 @@ impl Running {
                 let time = self.puppets.time();
                 let highlight = if selected { 70 } else { 0 };
                 let effects = &mut self.effects;
-                // Footsteps follow the effects clock: none behind the menu or
-                // while it stands still.
-                let dt = if self.menu_open && self.online.is_none() {
-                    0.0
-                } else {
-                    game_dt.as_secs_f32() * effects.time_scale()
-                };
+                let dirt = self.aftermath.dirt(r.handle);
                 // Soldiers at a building they attack face it: blades close
                 // up to the wall and swing at it, archers shoot.
                 let siege = &mut self.siege;
@@ -3256,8 +3264,9 @@ impl Running {
                             return;
                         };
                         let toward = if s.backing { -s.facing } else { s.facing };
-                        effects.footstep(dt, at, toward, s.speed);
+                        effects.footstep(fx_dt, at, toward, s.speed);
                         let look = models::look(s.look);
+                        let ([wr, wg, wb], tone) = aftermath::worn([cr, cg, cb], look.tone, dirt);
                         // The rate keeps loops out of step; blows are timed by
                         // their own progress, so it leaves fights alone.
                         let seconds = time * look.rate + s.phase * 4.0;
@@ -3276,7 +3285,7 @@ impl Running {
                             working.map_or(s.facing, |c| (c - s.pos).normalize_or(s.facing));
                         if let Some((_, _, wood)) = chopping {
                             let tool = at + Vec3::new(facing.x * 0.5, 0.9, facing.y * 0.5);
-                            effects.chop(dt, tool, facing, wood);
+                            effects.chop(fx_dt, tool, facing, wood);
                         }
                         let pose = match s.fight {
                             Some(fight) => clips.fight(model, fight, seconds),
@@ -3305,7 +3314,7 @@ impl Running {
                             facing: facing.to_array(),
                             frames: pose.rows,
                             flags: models::pose_flags(pose, highlight, flat),
-                            color: [cr, cg, cb, look.tone],
+                            color: [wr, wg, wb, tone],
                             lift: 0.0,
                             scale: look.scale,
                         });
@@ -3354,6 +3363,15 @@ impl Running {
         if !viewing {
             self.push_arrows(now);
             self.push_siege(&cull);
+            if !self.commander {
+                let hm = &self.heightmap;
+                self.aftermath.crows(
+                    |p| hm.drawn_height(p.x, p.y),
+                    |at, radius| cull.sees(at, radius),
+                    &mut self.instances,
+                    gc_render::MAX_BOX_INSTANCES - BOX_ROOM_AFTER_CORPSES,
+                );
+            }
             self.push_routes();
         } else {
             // Blows told while the unit viewer is open show nothing.
@@ -3422,6 +3440,15 @@ impl Running {
         );
         let fx_speed = pace * self.effects.time_scale();
         self.renderer.set_effects_speed(fx_speed);
+        // Only soldiers the viewer sees scare the crows, so they give no
+        // one away.
+        let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
+        self.aftermath.advance(
+            dt.as_secs_f32() * fx_speed,
+            (world.regiments.iter())
+                .filter(|r| reveal || world.sees(viewer, r.handle))
+                .map(|r| from_fx_vec(r.position)),
+        );
         // Blows behind the menu, in Commander View (where the soldiers are
         // blocks) and under the unit viewer show nothing, and don't pile up.
         if viewing || self.commander || !live {
@@ -4356,6 +4383,7 @@ impl Running {
         self.renderer.clear_particles();
         self.arrows = field::Arrows::new(field::MAX_STUCK);
         self.siege.clear();
+        self.aftermath.clear();
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
@@ -4872,12 +4900,14 @@ impl Running {
                     if lod < LODS && room > 0 {
                         room -= 1;
                         let look = models::look(c.look);
+                        let ([wr, wg, wb], tone) =
+                            aftermath::worn([r, g, b], look.tone, aftermath::DEAD_DIRT);
                         art.buckets[model * LODS + lod].push(SoldierInstance {
                             pos: c.pos.to_array(),
                             facing: c.facing.to_array(),
                             frames: pose.rows,
                             flags: models::pose_flags(pose, 0, flat),
-                            color: [r, g, b, look.tone],
+                            color: [wr, wg, wb, tone],
                             lift: -0.5 * c.sink,
                             scale: look.scale,
                         });
@@ -4967,7 +4997,20 @@ impl Running {
                     }
                 }
                 Event::Losses { regiment, .. } if self.world.regiments.get(regiment).is_none() => {
-                    self.puppets.wiped(regiment);
+                    let owner = self.puppets.wiped(regiment);
+                    // A viewer catching up on a match plays all of its
+                    // fights at once; they are not new.
+                    if let (Some(owner), Some((_, at, facing)), false) = (
+                        owner,
+                        self.prev_positions[regiment.index as usize].filter(|p| p.0 == regiment),
+                        self.online.is_some() && self.menu.net().catching_up(),
+                    ) {
+                        let dead = (self.puppets.corpses())
+                            .filter(|c| c.pos.distance(at) <= aftermath::DEAD_RADIUS)
+                            .count();
+                        let tint = color_of(&self.parties, owner);
+                        self.aftermath.wiped(regiment, at, facing, tint, dead);
+                    }
                 }
                 Event::Contact { regiment, foe } => {
                     let seen = self.reveal_all || self.world.sees(self.sandbox.side, regiment);
@@ -5691,7 +5734,9 @@ impl Running {
                 })
             });
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));
-        self.scenery.set_extras(nodes.chain(banners).chain(falling));
+        let fallen = self.aftermath.standards(|p| ground_of(map, p));
+        self.scenery
+            .set_extras(nodes.chain(banners).chain(falling).chain(fallen));
         let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
         self.renderer.set_scenery_frame(instances, batches);
     }
