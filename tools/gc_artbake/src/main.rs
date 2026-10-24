@@ -159,6 +159,8 @@ struct MoveConfig {
     /// For an attack, the seconds into the animation where its blow lands:
     /// the move is then retimed so its blow lands at
     /// `gc_assets::anim::BLOW_AT` of it, where the game's swing lands one.
+    /// Both halves of a matched kill (`Kill`, `Killed`) must have one, so
+    /// the two meet when played together over the same time.
     #[serde(default)]
     contact: Option<f32>,
 }
@@ -183,8 +185,22 @@ impl MoveConfig {
     fn tags(&self) -> Result<rig::Tags, String> {
         use gc_assets::anim::{ADDITIVE, Act, LOOPS, Mask, Side, Weapon};
         let act = named(&Act::ALL, &self.act, "act")?;
-        if self.contact.is_some() && act != Act::Attack {
-            return Err(format!("move {:?}: contact is only for attacks", self.anim));
+        let kill = matches!(act, Act::Kill | Act::Killed);
+        if self.contact.is_some() && !(kill || act == Act::Attack) {
+            return Err(format!(
+                "move {:?}: contact is only for attacks and kills",
+                self.anim
+            ));
+        }
+        if kill && self.contact.is_none() {
+            // Without one the two halves of a kill would not meet.
+            return Err(format!("move {:?}: a kill needs its contact", self.anim));
+        }
+        if kill && (self.loops == Some(true) || self.additive || self.mask != all_joints()) {
+            return Err(format!(
+                "move {:?}: a kill plays once, on the whole body",
+                self.anim
+            ));
         }
         let loops = self
             .loops
@@ -1750,6 +1766,45 @@ mod tests {
         assert!(near(&moved[0], &plain[0]) && near(&moved[n - 1], &plain[n - 1]));
         let late = sample_clip(&anim, Some, false, Some(100.0), &skel, &joints, get);
         assert!(late.is_err());
+    }
+
+    #[test]
+    fn contacts_go_on_attacks_and_on_both_halves_of_a_kill() {
+        use gc_assets::anim::Act;
+        let tags = |text: &str| {
+            ron::from_str::<MoveConfig>(text)
+                .unwrap()
+                .tags()
+                .map(|t| t.act)
+        };
+        assert_eq!(
+            tags(r#"(anim: "A", act: "Attack", contact: Some(0.3))"#),
+            Ok(Act::Attack)
+        );
+        assert_eq!(tags(r#"(anim: "A", act: "Attack")"#), Ok(Act::Attack));
+        assert_eq!(
+            tags(r#"(anim: "K", act: "Kill", contact: Some(0.5))"#),
+            Ok(Act::Kill)
+        );
+        assert_eq!(
+            tags(r#"(anim: "V", act: "Killed", contact: Some(0.5))"#),
+            Ok(Act::Killed)
+        );
+        assert!(
+            tags(r#"(anim: "V", act: "Killed")"#)
+                .unwrap_err()
+                .contains("needs its contact")
+        );
+        assert!(
+            tags(r#"(anim: "V", act: "Killed", contact: Some(0.5), additive: true)"#)
+                .unwrap_err()
+                .contains("whole body")
+        );
+        assert!(
+            tags(r#"(anim: "P", act: "Parry", contact: Some(0.2))"#)
+                .unwrap_err()
+                .contains("only for")
+        );
     }
 
     #[test]

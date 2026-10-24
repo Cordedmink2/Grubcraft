@@ -144,6 +144,9 @@ fn fallbacks(act: Act) -> &'static [Act] {
         Shoot => &[Shoot, Attack, Idle],
         Step => &[Step, Walk, Idle],
         Flinch => &[Flinch, Hit],
+        // A half of a matched kill means nothing alone: see Clips::kill_pair.
+        Kill => &[Kill],
+        Killed => &[Killed],
     }
 }
 
@@ -314,6 +317,17 @@ mod tests {
         // A layer has no fallbacks, and a base move is no layer.
         assert_eq!(m.pick(0, layer(Act::Stagger)), None);
         assert_eq!(m.pick(0, layer(Act::Death)), None);
+    }
+
+    #[test]
+    fn halves_of_a_kill_are_never_picked_in_place_of_plainer_moves() {
+        let m = moves(vec![
+            clip(Act::Kill, Weapon::Any, Side::Any, 0),
+            clip(Act::Killed, Weapon::Any, Side::Any, 10),
+        ]);
+        for act in [Act::Attack, Act::Hit, Act::Death, Act::Knockdown] {
+            assert_eq!(m.pick(0, Want::new(act)), None, "{act:?}");
+        }
     }
 
     #[test]

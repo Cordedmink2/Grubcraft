@@ -118,6 +118,23 @@ struct ModelClips {
     stagger: Option<MoveClip>,
 }
 
+/// A matched kill: the killer's and the victim's halves of one move, made
+/// together. Start both at once and play them over the same time (a swing):
+/// both land their contact at [`gc_assets::anim::BLOW_AT`] of the move.
+#[allow(
+    dead_code,
+    reason = "puppets.rs will play matched kills with it (docs/28, stage 5)"
+)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KillPair {
+    pub kill: MoveClip,
+    pub killed: MoveClip,
+    /// How far apart the two men stand, origin to origin, in tiles (the
+    /// world's units, which models are baked in), the victim facing the
+    /// killer. Warp both towards this before the contact.
+    pub reach: f32,
+}
+
 /// Per model, the move for each action, picked once by the move picker
 /// (`moves.rs`).
 pub struct Clips {
@@ -141,6 +158,29 @@ impl Clips {
             })
             .collect();
         Clips { by_model }
+    }
+
+    /// The matched kill a man of `killer_model` plays on one of
+    /// `victim_model` (model indices, as for [`Clips::clip`]), if the two
+    /// have one made for them and the killer's weapon; otherwise `None`, and
+    /// the fight plays a plain attack with the victim's own hit and death.
+    /// `seed` picks among the kills that fit. The fight asks for kills only
+    /// through here, so how pairs are stored can change without touching it.
+    ///
+    /// No paired moves are made yet (docs/33, stage 5), so this is always
+    /// `None` for now.
+    #[allow(
+        dead_code,
+        reason = "puppets.rs will play matched kills with it (docs/28, stage 5)"
+    )]
+    pub fn kill_pair(
+        &self,
+        killer_model: usize,
+        victim_model: usize,
+        seed: u32,
+    ) -> Option<KillPair> {
+        let _ = (killer_model, victim_model, seed);
+        None
     }
 
     /// The move `model` plays for `action`.

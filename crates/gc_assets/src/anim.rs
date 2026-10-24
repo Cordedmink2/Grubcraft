@@ -189,10 +189,17 @@ pub enum Act {
     Step = 14,
     /// A flinch played on top of whatever else (an additive layer).
     Flinch = 15,
+    /// The killer's half of a matched kill, played with its victim's
+    /// [`Act::Killed`] half. Both halves carry a contact, so both land it at
+    /// [`BLOW_AT`] of the move; the game pairs them through
+    /// `gc_game::models::Clips::kill_pair`, never by picking these alone.
+    Kill = 16,
+    /// The victim's half of a matched kill.
+    Killed = 17,
 }
 
 impl Act {
-    pub const ALL: [Act; 16] = [
+    pub const ALL: [Act; 18] = [
         Act::Idle,
         Act::Walk,
         Act::Run,
@@ -209,6 +216,8 @@ impl Act {
         Act::Shoot,
         Act::Step,
         Act::Flinch,
+        Act::Kill,
+        Act::Killed,
     ];
 
     pub fn from_u8(v: u8) -> Option<Act> {
