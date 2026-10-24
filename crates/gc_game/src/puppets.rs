@@ -438,6 +438,10 @@ pub enum Move {
     Guard,
     /// Swinging at his man; `alt` picks his second attack.
     Swing { at: f32, alt: bool },
+    /// Striking down at a man on the ground (a finisher), as far through
+    /// as a swing: its blow lands at `BLOW_AT`. `seed` picks which of his
+    /// finishers, the same all through one.
+    Finish { at: f32, seed: u32 },
     /// Turning a blow aside with his weapon.
     Parry(f32),
     /// Catching a blow on his shield.
@@ -477,6 +481,10 @@ pub struct Kills {
     /// Per (killer's unit, victim's unit), where its run of choices starts
     /// and how long it is.
     by_units: HashMap<(u16, u16), (u32, u16)>,
+    /// Per unit type with a move made for striking down at a man on the
+    /// ground, how far from him its men stand to strike (tiles) and how
+    /// long the move is (seconds; its blow lands at `BLOW_AT` of it).
+    finishers: Vec<Option<(f32, f32)>>,
 }
 
 impl Kills {
@@ -499,6 +507,28 @@ impl Kills {
             self.choices.extend_from_slice(ids);
             self.by_units.insert((killer, victim), (first, n));
         }
+    }
+
+    /// Men of unit `unit` finish a man on the ground with a move made for
+    /// it, `seconds` long, standing `reach` tiles from him.
+    pub fn add_finisher(&mut self, unit: u16, reach: f32, seconds: f32) {
+        let u = usize::from(unit);
+        if self.finishers.len() <= u {
+            self.finishers.resize(u + 1, None);
+        }
+        self.finishers[u] = Some((reach, seconds));
+    }
+
+    /// The finisher men of unit `unit` strike down with, if they have one:
+    /// its reach and length.
+    fn finisher(&self, unit: u16) -> Option<(f32, f32)> {
+        self.finishers.get(usize::from(unit)).copied().flatten()
+    }
+
+    /// How far from a man on the ground one of unit `unit` stands to finish
+    /// him: his finisher's reach, else [`FINISH_GAP`] for the bent swing.
+    pub(crate) fn finish_gap(&self, unit: u16) -> f32 {
+        self.finisher(unit).map_or(FINISH_GAP, |(reach, _)| reach)
     }
 
     /// The kill `roll` (0 to 1) picks for a man of `killer` on one of
@@ -529,6 +559,8 @@ struct Killing {
     /// The way from the spot he strikes from, if set (a general coming in
     /// beside his man); else from wherever he is.
     from: Vec2,
+    /// Finishing with a move made for it: its length (seconds).
+    strike: Option<f32>,
 }
 
 impl Killing {
@@ -539,12 +571,13 @@ impl Killing {
         finish: false,
         front: false,
         from: Vec2::ZERO,
+        strike: None,
     };
 }
 
 /// A man finishing one knocked down stands this far from him, in tiles,
 /// over his body.
-const FINISH_GAP: f32 = 0.55;
+pub(crate) const FINISH_GAP: f32 = 0.55;
 /// He bends to it over this share of his killing blow, and straightens
 /// over this last share.
 const STOOP_IN: f32 = 0.3;
@@ -1626,12 +1659,28 @@ impl Puppets {
         self.killing[i].pair
     }
 
+    /// The timing of the move puppet `i`'s killing blow plays, if not his
+    /// swing: a matched kill, or a finisher made for it.
+    fn kill_timing(&self, i: usize) -> Option<KillTiming> {
+        if self.act[i].0 != Act::Kill {
+            return None;
+        }
+        let k = &self.killing[i];
+        k.pair
+            .map(|(_, t)| t)
+            .or(k.strike.map(|seconds| KillTiming {
+                seconds,
+                contact: BLOW_AT,
+                reach: k.gap,
+            }))
+    }
+
     /// Seconds until puppet `i`'s killing blow, `f` of the way through,
     /// lands: none or less once it has, and he is only following through,
     /// and may be struck, or strike again.
     fn kill_lands_in(&self, i: usize, f: f32) -> f32 {
-        match self.pair_of(i) {
-            Some((_, k)) => (k.contact - f) * k.seconds,
+        match self.kill_timing(i) {
+            Some(k) => (k.contact - f) * k.seconds,
             None => (BLOW_AT - kill_swing(f)) * SWING_SECONDS,
         }
     }
@@ -1643,7 +1692,7 @@ impl Puppets {
         if act == Act::None {
             return None;
         }
-        let seconds = self.pair_of(i).map_or(act.seconds(), |(_, k)| k.seconds);
+        let seconds = self.kill_timing(i).map_or(act.seconds(), |k| k.seconds);
         let f = (self.time - at) / seconds;
         (0.0..1.0).contains(&f).then_some((act, f))
     }
@@ -2123,6 +2172,15 @@ impl Puppets {
                 _ if champion.is_some_and(|(d, side)| d.cheering(side)) => Some(Move::Cheer),
                 (Some((Act::Kill, f)), _) => Some(match self.pair_of(i) {
                     Some((pair, _)) => Move::Kill { pair, at: f },
+                    None if self.killing[i].finish => Move::Finish {
+                        // Played once through, or as a bent swing.
+                        at: if self.killing[i].strike.is_some() {
+                            f
+                        } else {
+                            kill_swing(f)
+                        },
+                        seed: self.act[i].1.to_bits() >> 8,
+                    },
                     None => Move::Swing {
                         at: kill_swing(f),
                         alt: false,
@@ -2209,7 +2267,11 @@ impl Puppets {
                 look: self.looks[i],
                 general: general == Some(k),
                 stoop: match acting {
-                    Some((Act::Kill, f)) if self.killing[i].finish => stoop(f),
+                    Some((Act::Kill, f))
+                        if self.killing[i].finish && self.killing[i].strike.is_none() =>
+                    {
+                        stoop(f)
+                    }
                     _ => 0.0,
                 },
                 lift: self.lift[i],
@@ -2292,7 +2354,10 @@ impl Puppets {
                         .flatten();
                     let (gap, lands) = match pair {
                         Some((_, k)) => (k.reach, k.contact * k.seconds),
-                        None if lying => (FINISH_GAP, BLOW_AT * SWING_SECONDS),
+                        None if lying => match self.kills.finisher(self.unit[kr]) {
+                            Some((reach, seconds)) => (reach, BLOW_AT * seconds),
+                            None => (FINISH_GAP, BLOW_AT * SWING_SECONDS),
+                        },
                         None => (
                             (self.fighter[kr].gap() + block.fighter.gap()) / 2.0,
                             BLOW_AT * SWING_SECONDS,
@@ -2341,9 +2406,10 @@ impl Puppets {
                         (self.killing[killer].finish == lying)
                             .then(|| self.kill_lands_in(killer, f))
                     }
-                    // He is playing out a matched kill that has landed:
-                    // this man just drops, rather than cut it short.
-                    Some((Act::Kill, _)) if self.pair_of(killer).is_some() => None,
+                    // He is playing out a matched kill (or a finisher)
+                    // that has landed: this man just drops, rather than cut
+                    // it short.
+                    Some((Act::Kill, _)) if self.kill_timing(killer).is_some() => None,
                     _ => {
                         self.act[killer] = (Act::Kill, self.time);
                         // He steps in to strike where his man stands, at
@@ -2366,7 +2432,7 @@ impl Puppets {
                         };
                         let gap = match pair {
                             Some((_, k)) => k.reach,
-                            None if lying => FINISH_GAP,
+                            None if lying => self.kills.finish_gap(self.unit[kr]),
                             None => (self.fighter[kr].gap() + block.fighter.gap()) / 2.0,
                         };
                         self.killing[killer] = Killing {
@@ -2376,9 +2442,14 @@ impl Puppets {
                             finish: lying,
                             front,
                             from: hero.map_or(Vec2::ZERO, |(.., from)| from),
+                            strike: lying
+                                .then(|| self.kills.finisher(self.unit[kr]))
+                                .flatten()
+                                .map(|(_, seconds)| seconds),
                         };
                         if hero.is_some() {
-                            let length = pair.map_or(Act::Kill.seconds(), |(_, k)| k.seconds);
+                            let length = (self.kill_timing(killer))
+                                .map_or(Act::Kill.seconds(), |k| k.seconds);
                             self.brandish[killer] = self.time + length + HERO_BRANDISH;
                         }
                         paired = pair.map(|(id, _)| id);
@@ -3863,7 +3934,22 @@ mod tests {
 
     #[test]
     fn a_man_killed_on_the_ground_is_finished_where_he_lies() {
+        finished_where_he_lies(Puppets::new(2, 4), FINISH_GAP, false);
+    }
+
+    #[test]
+    fn a_finisher_made_for_it_is_struck_from_its_own_reach() {
         let mut p = Puppets::new(2, 4);
+        let mut kills = Kills::new(Vec::new());
+        kills.add_finisher(0, 1.6, 1.5);
+        p.set_kills(kills);
+        finished_where_he_lies(p, 1.6, true);
+    }
+
+    /// A man knocked down and killed lying is finished by his killer from
+    /// `gap` away, striking down at him: with a move made for it (`strike`),
+    /// else bent over his swing.
+    fn finished_where_he_lies(mut p: Puppets, gap: f32, strike: bool) {
         let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
         for _ in 0..30 {
             frame(&mut p, &a, &b);
@@ -3881,20 +3967,28 @@ mod tests {
         frame(&mut p, &a, &b);
         // His killer stands over him to strike down at him...
         assert_eq!(p.act[k].0, Act::Kill);
-        assert!(p.killing[k].finish && p.killing[k].gap == FINISH_GAP);
+        assert!(p.killing[k].finish && p.killing[k].gap == gap);
         let lies = p.corpses().last().unwrap();
         assert!(lies.lying && lies.age < 0.0, "{lies:?}");
-        let (mut stooped, mut landed) = (0.0_f32, None);
+        let (mut stooped, mut landed, mut struck) = (0.0_f32, None, false);
         while p.corpses().last().unwrap().age < 1.0 {
             p.advance(FRAME);
             p.pair(|x, y| x != y);
-            p.update(&a, 0, FRAME, |s| stooped = stooped.max(s.stoop));
+            p.update(&a, 0, FRAME, |s| {
+                stooped = stooped.max(s.stoop);
+                struck |= matches!(s.fight, Some(Move::Finish { .. }));
+            });
             p.update(&b, 1, FRAME, |_| {});
             if p.corpses().last().unwrap().age >= 0.0 {
                 landed.get_or_insert(p.pos[k].distance(lay));
             }
         }
-        assert!(stooped > 0.99, "{stooped}");
+        assert!(struck);
+        if strike {
+            assert_eq!(stooped, 0.0);
+        } else {
+            assert!(stooped > 0.99, "{stooped}");
+        }
         // ...and he lies as he was, not driven or turned.
         let lies = p.corpses().last().unwrap();
         assert!(lies.lying);
@@ -3902,7 +3996,7 @@ mod tests {
         assert_eq!(lies.facing, facing);
         // He stood over him as the blow landed.
         let landed = landed.unwrap();
-        assert!((landed - FINISH_GAP).abs() < 0.01, "{landed}");
+        assert!((landed - gap).abs() < 0.01, "{landed}");
     }
 
     #[test]

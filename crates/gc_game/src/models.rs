@@ -186,10 +186,6 @@ pub struct Finisher {
     pub strike: MoveClip,
     /// How far in front of the killer's origin the lying man's chest should
     /// be, in tiles at the killer's size.
-    #[allow(
-        dead_code,
-        reason = "puppets.rs will place its finishers by it (docs/28, stage 5)"
-    )]
     pub reach: f32,
 }
 
@@ -345,11 +341,16 @@ impl Clips {
     /// Every matched kill between the unit types whose models are `units`,
     /// for the puppets: each kill named by its index here, as [`Move::Kill`]
     /// and [`crate::puppets::Corpse::kill`] give it back.
+    /// Each unit type's finisher reach goes with them, for its men to
+    /// stand that far from a man on the ground they strike down at.
     pub fn kills_of(&self, units: &[Option<usize>]) -> Kills {
         let mut kills = Kills::new(self.pairs.iter().map(KillPair::timing).collect());
         let mut ids = Vec::new();
         for (k, killer) in units.iter().enumerate() {
             let Some(killer) = *killer else { continue };
+            if let Some(f) = self.finisher(killer, 0) {
+                kills.add_finisher(k as u16, f.reach, f.strike.seconds());
+            }
             if self.kills.get(killer).is_none_or(Vec::is_empty) {
                 continue;
             }
@@ -449,6 +450,11 @@ impl Clips {
                 let attack = if alt { Action::Attack2 } else { Action::Attack };
                 standing(self.at(model, attack, at))
             }
+            // Struck down with a move made for it, else his first attack.
+            Move::Finish { at, seed } => match self.finisher(model, seed) {
+                Some(f) => standing(Some(f.strike.at(at))),
+                None => standing(self.at(model, Action::Attack, at)),
+            },
             Move::Parry(f) => {
                 let parry = own.parry?;
                 if parry.act == Act::Parry {
@@ -835,6 +841,13 @@ mod tests {
         for (k, v) in [(0, 2), (2, 1), (3, 1), (0, 3)] {
             assert_eq!(kills.pick(k, v, 0.5), None, "{k} on {v}");
         }
+        // Katana and spear men finish a man on the ground from their own
+        // finishers' reach; the Oni-Bound has none and bends to strike.
+        let reach = |u: usize| clips.finisher(units[u].unwrap(), 0).unwrap().reach;
+        assert_eq!(kills.finish_gap(0), reach(0));
+        assert_eq!(kills.finish_gap(1), reach(1));
+        assert!(kills.finish_gap(1) > kills.finish_gap(0));
+        assert_eq!(kills.finish_gap(2), crate::puppets::FINISH_GAP);
     }
 
     #[test]
