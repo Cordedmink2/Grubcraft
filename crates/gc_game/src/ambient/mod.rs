@@ -5,10 +5,12 @@
 //! so it may use floats, frame time and its own random numbers.
 
 pub mod felling;
+pub mod touches;
 
 use glam::Vec2;
 
 pub use felling::Felling;
+pub use touches::Touches;
 
 use crate::scenery::{Scenery, Stood};
 
@@ -16,6 +18,7 @@ use crate::scenery::{Scenery, Stood};
 #[derive(Default)]
 pub struct Ambient {
     pub felling: Felling,
+    pub touches: Touches,
     /// Seconds until `--fell-demo` fells the trees round the camera.
     fell_demo: Option<f32>,
 }
@@ -31,6 +34,7 @@ impl Ambient {
     pub fn new(fell_demo: bool) -> Ambient {
         Ambient {
             felling: Felling::default(),
+            touches: Touches::default(),
             fell_demo: fell_demo.then_some(FELL_DEMO_AFTER),
         }
     }

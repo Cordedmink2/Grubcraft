@@ -20,7 +20,7 @@ Mario wants a world that looks lived in: a base where people are doing things, l
 | Stage | What | Needs |
 |---|---|---|
 | 1 | **Clearing land on screen** (idea 22). Workers swing at the tile they clear, throwing chips or leaves. When the tile is cleared its trees tip over away from the cutter, dust and leaves fly where the crown lands, the trunks lie a while and are hauled off, and bushes are torn up. | Particles (done), scenery lean (this stage) |
-| 2 | **Living touches without models.** Fireflies at dusk over fens and wet woods, pollen and drifting seeds in meadows, mist pooling on low ground, dust devils in the waste, leaves in the wind. Particle recipes on a habitat sample of the ground round the camera, as the sound beds do ([09](09-art-and-audio.md)). | Particles, `Map.habitat` (done), lighting looks (done) |
+| 2 | **Living touches without models** (built, except mist). Fireflies at dusk over fens and wet woods, pollen in meadows, dust devils in the waste, leaves falling in old woods. Mist pooling on low ground is left to the weather stage of the lighting thread. Particle recipes on a habitat sample of the ground round the camera, as the sound beds do ([09](09-art-and-audio.md)). | Particles, `Map.habitat` (done), lighting looks (done) |
 | 3 | **Busy bases** (idea 10). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles and stacked supplies beside the halls, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
 | 4 | **Wildlife** (idea 3). Flocks that lift from woods when an army marches by and settle again, carrion birds over a battlefield's dead, moths round Grub seeps, butterflies in flower meadows, grazers that bolt from soldiers, fish rises and dragonflies over water. Each land has its own fauna. Creatures are a picture: soldiers walk through them. | Animal models and clips on the animation engine (T5) |
 | 5 | **Villagers** (idea 3). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
@@ -52,3 +52,25 @@ Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model fo
 - A log pile and a stump where a tree stood (stumps are the ground thread's, T8, [32](32-changing-land.md#what-a-cleared-tile-becomes); log piles come with stage 3). Until then a hauled tree shrinks away.
 - A proper axe clip (the animation engine), and the thud and crack of a tree (the soundscape thread's hit sounds).
 - Faction twists ([32](32-changing-land.md#faction-twists)): burning, shattering and eating are built by the changing-land thread; their pictures (fire on a burning tree, crystal shards, Gnawers chewing) join this stage once they exist.
+
+## Stage 2 as built
+
+*2026-10-23. Game and render only; nothing in the simulation.*
+
+### What a player sees
+
+- **Pollen** drifts up from flower meadows, grassland, glades and heather by day, fading out as the sun sinks.
+- **Fireflies** come out as the light goes (the Dusk look): slow green-gold sparks that rise and fade over wet meadows, sedge, alder carr, bog, fern hollows and glades.
+- **Leaves** fall from old growth, birch fringes (gold), tree lines and fern hollows, at any hour.
+- **A whirlwind** now and then wanders the waste (cracked flats, bone drifts, dying grass) for about 14 seconds, throwing up a spreading column of dust, and dies out when it leaves the waste.
+- Only near the camera (they fade out between 30 and 70 tiles of camera distance, where they would be under a pixel) and only on ground the viewer can see, so fog of war hides them too. All of it thins with the Graphics preset's effects density and stops with the pause.
+
+### How it works
+
+- `gc_game::ambient::Touches` is called once a frame from the effects block. It tries random points on the ground within a reach of the focus (14 tiles plus 0.9 per tile of camera distance, at most 48; the specks fade out with distance), looks the point's habitat up in `Map.habitat`, and spawns only where that habitat has the touch (`touches_of`). Rates are per tile of area, so a tidy screen costs a few dozen probes a second and keeps no per-creature state; only the whirlwind has any (one at a time). On a ride (the soldier's-eye camera) it follows the same ahead point the light motes do.
+- Day and dusk are read from the look's sun elevation (`DUSK_AT` 0.30 over `DUSK_SPAN` 0.12), so a new look preset needs no change here.
+- Recipes in `gc_render::effects::ambient` (`pollen`, `firefly`, `dust_devil`, beside `leaves` and `cut_chips`) and wrappers in `gc_game::effects::Field` (`pollen`, `firefly`, `leaf_fall`, `dust_devil`). Its own xorshift generator; the particle system's seed and the simulation's are untouched.
+
+### Not yet
+
+- Mist (weather stage), butterflies and moths (stage 4 creatures), and a habitat for the Brood's land beyond dust (its own touches come with idea 19's veins).

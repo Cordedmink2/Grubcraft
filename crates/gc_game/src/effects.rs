@@ -116,6 +116,26 @@ impl Field {
         self.fx.debris(pos, CLOD, 2.0, 0.4);
     }
 
+    /// A speck of pollen at `pos`.
+    pub fn pollen(&mut self, pos: Vec3) {
+        self.fx.pollen(pos, 1.0);
+    }
+
+    /// A firefly at `pos`.
+    pub fn firefly(&mut self, pos: Vec3) {
+        self.fx.firefly(pos, 1.0);
+    }
+
+    /// A leaf of `colour` coming off a tree at `pos`.
+    pub fn leaf_fall(&mut self, pos: Vec3, colour: [u8; 3]) {
+        self.fx.leaves(pos, 0.1, colour, 1.0);
+    }
+
+    /// A whirlwind standing at `centre` throws up dust for `dt` seconds.
+    pub fn dust_devil(&mut self, dt: f32, centre: Vec3) {
+        self.fx.dust_devil(centre, dt, DUST);
+    }
+
     /// Dust rolling out to `radius` from `puffs`, and `clods` thrown up with
     /// `power`.
     fn impact(&mut self, pos: Vec3, radius: f32, puffs: f32, clods: f32, power: f32) {
