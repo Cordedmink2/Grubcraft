@@ -3,7 +3,7 @@
 //! the build script and embedded in the executable, and the choice of
 //! which animation frame each soldier shows.
 
-use gc_assets::anim::{Act, Mask, Side, Weapon};
+use gc_assets::anim::{Act, Weapon};
 use gc_assets::detail::Detail;
 use gc_assets::model::Models;
 use gc_assets::{Aligned, Pack};
@@ -110,15 +110,35 @@ const DOWN_RISE: f32 = 0.35;
 struct ModelClips {
     /// In the order of `ACTIONS`, which is the enum's.
     actions: [Option<MoveClip>; ACTIONS.len()],
-    die: Option<MoveClip>,
-    /// The picks for a duel's parry and stagger: moves made for them when
-    /// the model has them, else what the picker falls back to (an attack
-    /// raised partway, a hit).
+    /// The pick for a duel's parry: a move made for it when the model has
+    /// one, else what the picker falls back to (an attack raised partway).
     parry: Option<MoveClip>,
-    stagger: Option<MoveClip>,
-    /// Its finishers made for its weapon, else those made for any.
+    /// Every move the picker chooses among for an attack, a death, a stagger
+    /// (or the hits standing in for one) and a finisher, made for the
+    /// model's weapon before those made for any: [`nth`] takes one by a
+    /// soldier's look and, for his blows, how many he has struck, so his
+    /// blows vary from one to the next and his regiment does not die as one.
+    swings: Vec<MoveClip>,
+    dies: Vec<MoveClip>,
+    staggers: Vec<MoveClip>,
     finishes: Vec<MoveClip>,
 }
+
+/// The `k`th of `all`, round and round.
+fn nth(all: &[MoveClip], k: u32) -> Option<MoveClip> {
+    all.get(k as usize % all.len().max(1)).copied()
+}
+
+/// Where a soldier of look `look` starts in a list of moves, salted per
+/// list, so that the man whose first blow is a thrust does not also always
+/// stagger and fall the same way.
+fn by_look(look: u32, salt: u32) -> u32 {
+    (crate::puppets::mix(look, 0, 0, salt) * 256.0) as u32
+}
+
+const SWING_SALT: u32 = 41;
+const STAGGER_SALT: u32 = 42;
+const DEATH_SALT: u32 = 43;
 
 /// A matched kill: the killer's and the victim's halves of one move, made
 /// together, as long as each other and played as made (not retimed like an
@@ -207,26 +227,6 @@ pub struct Clips {
     pairs: Vec<KillPair>,
 }
 
-/// Of `moves`, those of `act` that fit `weapon` best (made for it before
-/// made for any), unlayered and made for no side, as the move picker scores
-/// them.
-fn best_fits(moves: &[MoveClip], act: Act, weapon: Weapon) -> Vec<MoveClip> {
-    let score = |m: &MoveClip| {
-        let whole = !m.additive && m.mask == Mask::All;
-        (m.act == act && whole && m.side == Side::Any)
-            .then(|| crate::moves::fits(m.weapon, weapon, Weapon::Any))
-            .flatten()
-    };
-    let Some(best) = moves.iter().filter_map(score).max() else {
-        return Vec::new();
-    };
-    moves
-        .iter()
-        .filter(|m| score(m) == Some(best))
-        .copied()
-        .collect()
-}
-
 impl Clips {
     pub fn new(models: &Models<'_>) -> Clips {
         let moves = Moves::new(models);
@@ -235,12 +235,22 @@ impl Clips {
                 // A model that names what it holds plays the moves made for it.
                 let weapon = models.anim.weapon_of(m);
                 let pick = |w: Want| moves.pick(m, Want { weapon, ..w });
+                let choices = |act| {
+                    moves.choices(
+                        m,
+                        Want {
+                            weapon,
+                            ..Want::new(act)
+                        },
+                    )
+                };
                 ModelClips {
                     actions: ACTIONS.map(|a| pick(want(a))),
-                    die: pick(Want::new(Act::Death)),
-                    parry: pick(Want::new(Act::Parry)),
-                    stagger: pick(Want::new(Act::Stagger)),
-                    finishes: best_fits(moves.of(m), Act::Finish, weapon),
+                    parry: choices(Act::Parry).first().copied(),
+                    swings: choices(Act::Attack),
+                    dies: choices(Act::Death),
+                    staggers: choices(Act::Stagger),
+                    finishes: choices(Act::Finish),
                 }
             })
             .collect();
@@ -324,7 +334,8 @@ impl Clips {
     /// `victim_model` (model indices, as for [`Clips::clip`]), if the two
     /// have one made for them and the killer's weapon, and are near enough
     /// one size for it to meet; otherwise `None`, and
-    /// the fight plays a plain attack with the victim's own hit and death.
+    /// the fight plays a plain attack with one of the victim's hits and his
+    /// death.
     /// `seed` picks among the kills that fit best (made for the killer's
     /// weapon before made for any). The battle takes them all at once,
     /// through [`Clips::kills_of`]; the tests ask one at a time.
@@ -379,8 +390,7 @@ impl Clips {
     /// A finisher for `model`, made for its weapon (else for any), `seed`
     /// picking among them; `None` for a model with none.
     pub fn finisher(&self, model: usize, seed: u32) -> Option<Finisher> {
-        let all = &self.by_model.get(model)?.finishes;
-        let strike = *all.get(seed as usize % all.len().max(1))?;
+        let strike = nth(&self.by_model.get(model)?.finishes, seed)?;
         let (_, size) = (*self.body.get(model)?)?;
         Some(Finisher {
             strike,
@@ -408,23 +418,38 @@ impl Clips {
     /// stands, waiting for the blow), and whether to lay the model flat: see
     /// `fall`. A man who fell to matched kill `kill` plays its victim's
     /// half, which began with his killer's, its contact before the blow.
-    pub fn death(&self, model: usize, seconds: f32, kill: Option<u16>) -> Option<(Pose, bool)> {
+    /// `look` is his ([`crate::puppets::Soldier::look`]), as for
+    /// [`Clips::fight`], so a man knocked down and killed lying lies as he
+    /// fell.
+    pub fn death(
+        &self,
+        model: usize,
+        seconds: f32,
+        kill: Option<u16>,
+        look: u8,
+    ) -> Option<(Pose, bool)> {
         match kill.and_then(|k| self.pairs.get(usize::from(k))) {
             Some(p) => Some((p.killed.at(seconds / p.killed.seconds() + p.contact), false)),
-            None => self.fall(model, |die| seconds * die.fps, seconds >= 0.0),
+            None => self.fall(
+                model,
+                u32::from(look),
+                |die| seconds * die.fps,
+                seconds >= 0.0,
+            ),
         }
     }
 
-    /// The death move at the frame `frame` picks, held on its first and
-    /// last frames, or for a model without one its idle pose, laid flat
-    /// when `down`.
+    /// His death move (by `look`) at the frame `frame` picks, held on its
+    /// first and last frames, or for a model without one its idle pose,
+    /// laid flat when `down`.
     fn fall(
         &self,
         model: usize,
+        look: u32,
         frame: impl FnOnce(&MoveClip) -> f32,
         down: bool,
     ) -> Option<(Pose, bool)> {
-        match self.by_model.get(model)?.die {
+        match nth(&self.by_model.get(model)?.dies, by_look(look, DEATH_SALT)) {
             Some(die) => Some((die.at_frame(frame(&die)), false)),
             None => Some((self.pose(model, Action::Idle, 0.0)?, down)),
         }
@@ -432,8 +457,12 @@ impl Clips {
 
     /// The pose for a soldier's move in a duel, and whether to lay the model
     /// flat (a knockdown on a model with no death clip). `seconds` keeps the
-    /// guard's idle loop going.
-    pub fn fight(&self, model: usize, fight: Move, seconds: f32) -> Option<(Pose, bool)> {
+    /// guard's idle loop going, and `look` (his
+    /// [`crate::puppets::Soldier::look`]) picks among the moves the model
+    /// has for a swing, a stagger and a fall, so the men of a regiment play
+    /// different ones.
+    pub fn fight(&self, model: usize, fight: Move, seconds: f32, look: u8) -> Option<(Pose, bool)> {
+        let look = u32::from(look);
         let standing = |pose: Option<Pose>| Some((pose?, false));
         let own = self.by_model.get(model)?;
         match fight {
@@ -445,9 +474,10 @@ impl Clips {
             Move::Killed { pair, at } => {
                 standing(Some(self.pairs.get(usize::from(pair))?.killed.at(at)))
             }
-            Move::Swing { at, alt } => {
-                let attack = if alt { Action::Attack2 } else { Action::Attack };
-                standing(self.at(model, attack, at))
+            // Each blow the next of his attacks; a killing blow his first.
+            Move::Swing { at, blow } => {
+                let k = blow.map_or(0, |b| b.wrapping_add(by_look(look, SWING_SALT)));
+                standing(Some(nth(&own.swings, k)?.at(at)))
             }
             Move::Parry(f) => {
                 let parry = own.parry?;
@@ -461,12 +491,19 @@ impl Clips {
             // Duck behind the shield and come back up.
             Move::Block(f) => standing(self.at(model, Action::Block, BLOCK_DEPTH * peak(f))),
             // A stagger, or the hit standing in for one.
-            Move::Stagger(f) => standing(Some(own.stagger?.at(f))),
+            Move::Stagger(f) => {
+                standing(Some(nth(&own.staggers, by_look(look, STAGGER_SALT))?.at(f)))
+            }
             // Fall, lie still a moment and get up: the death move played
             // forward, then back.
             Move::Down(f) => {
                 let depth = down_depth(f);
-                self.fall(model, |die| depth * (die.frames - 1) as f32, depth > 0.5)
+                self.fall(
+                    model,
+                    look,
+                    |die| depth * (die.frames - 1) as f32,
+                    depth > 0.5,
+                )
             }
         }
     }
@@ -598,11 +635,14 @@ mod tests {
                 }
             }
             let own = &clips.by_model[m];
-            assert_eq!(rows(own.die), old(m, &[ClipKind::Die]));
+            assert_eq!(rows(own.dies.first().copied()), old(m, &[ClipKind::Die]));
             if !made_for(m, own.parry) {
                 assert_eq!(rows(own.parry), old(m, old_candidates(Action::Attack)));
             }
-            assert_eq!(rows(own.stagger), old(m, old_candidates(Action::Hit)));
+            assert_eq!(
+                rows(own.staggers.first().copied()),
+                old(m, old_candidates(Action::Hit))
+            );
         }
     }
 
@@ -849,6 +889,65 @@ mod tests {
     }
 
     #[test]
+    fn a_soldier_varies_his_blows_and_his_regiment_its_staggers() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        let m = by("Katana Samurai");
+        let own = &clips.by_model[m];
+        // Three blows made for the katana, and from one to the next he
+        // plays another, whatever his look; a killing blow is his first.
+        assert_eq!(own.swings.len(), 3);
+        assert!(own.swings.iter().all(|c| c.weapon == Weapon::TwoHanded));
+        let swing = |blow, look| {
+            clips
+                .fight(m, Move::Swing { at: 0.0, blow }, 0.0, look)
+                .unwrap()
+                .0
+                .rows[0]
+        };
+        let first = own.swings[0].first_row as u16;
+        for look in [0, 7, 255] {
+            for blow in 0..6 {
+                assert_ne!(swing(Some(blow), look), swing(Some(blow + 1), look));
+            }
+            assert_eq!(swing(None, look), first);
+        }
+        // His own hit and the library's two: the men of a regiment stagger
+        // their own ways.
+        assert_eq!(own.staggers.len(), 3);
+        let reel = |look| {
+            clips
+                .fight(m, Move::Stagger(0.5), 0.0, look)
+                .unwrap()
+                .0
+                .rows
+        };
+        let reels: std::collections::HashSet<_> = (0..=255).map(reel).collect();
+        assert_eq!(reels.len(), 3);
+        // A man knocked down lies as he would lie dead.
+        for look in 0..=255 {
+            let down = clips.fight(m, Move::Down(0.5), 0.0, look).unwrap().0;
+            let dead = clips.death(m, 100.0, None, look).unwrap().0;
+            assert_eq!(down.rows, dead.rows, "{look}");
+        }
+        // Every man of the rig reels them, the other factions' too, but not
+        // the Lantern Wraiths or the Hollow Bell, who float.
+        for name in [
+            "The Ronin",
+            "Yari Ashigaru",
+            "Bone Pikes",
+            "Tuner",
+            "The Onmyoji",
+        ] {
+            assert_eq!(clips.by_model[by(name)].staggers.len(), 3, "{name}");
+        }
+        for name in ["Lantern Wraiths", "The Hollow Bell"] {
+            assert_eq!(clips.by_model[by(name)].staggers.len(), 1, "{name}");
+        }
+    }
+
+    #[test]
     fn duel_moves_play_their_clips() {
         let models = load().unwrap();
         let clips = Clips::new(&models);
@@ -859,7 +958,7 @@ mod tests {
             clip(ClipKind::Block),
             clip(ClipKind::Hit),
         );
-        let rows = |f: Move| clips.fight(m, f, 0.0).unwrap();
+        let rows = |f: Move| clips.fight(m, f, 0.0, 0).unwrap();
         // A knockdown falls, lies on the death clip's last frame, and gets
         // up again; it never lays the model flat when it has a death clip.
         let (start, flat) = rows(Move::Down(0.0));
@@ -880,9 +979,9 @@ mod tests {
         // model has one now, so take the Skitterlings' away).
         let bug = models.by_name("Skitterlings").unwrap();
         let mut clips = Clips::new(&models);
-        clips.by_model[bug].die = None;
-        assert!(clips.fight(bug, Move::Down(0.5), 0.0).unwrap().1);
-        assert!(!clips.fight(bug, Move::Down(0.05), 0.0).unwrap().1);
+        clips.by_model[bug].dies.clear();
+        assert!(clips.fight(bug, Move::Down(0.5), 0.0, 0).unwrap().1);
+        assert!(!clips.fight(bug, Move::Down(0.05), 0.0, 0).unwrap().1);
     }
 
     #[test]
@@ -910,7 +1009,7 @@ mod tests {
             .find(|&m| models.clip(m, ClipKind::Die).is_some())
             .unwrap();
         let die = models.clip(m, ClipKind::Die).unwrap();
-        let (end, flat) = clips.death(m, 100.0, None).unwrap();
+        let (end, flat) = clips.death(m, 100.0, None, 0).unwrap();
         assert_eq!(end.rows, [(die.first_row + die.frames - 1) as u16; 2]);
         assert!(!flat);
     }

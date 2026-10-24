@@ -436,8 +436,10 @@ pub struct Head {
 pub enum Move {
     /// Weapon up, waiting for an opening.
     Guard,
-    /// Swinging at his man; `alt` picks his second attack.
-    Swing { at: f32, alt: bool },
+    /// Swinging at his man, `at` of the way through: `blow` counts his
+    /// rounds of blows (one more each swing), so each may be another of his
+    /// attacks; `None` for a killing blow, always his weapon's first.
+    Swing { at: f32, blow: Option<u32> },
     /// Turning a blow aside with his weapon.
     Parry(f32),
     /// Catching a blow on his shield.
@@ -2125,14 +2127,14 @@ impl Puppets {
                     Some((pair, _)) => Move::Kill { pair, at: f },
                     None => Move::Swing {
                         at: kill_swing(f),
-                        alt: false,
+                        blow: None,
                     },
                 }),
                 (Some((Act::Down, f)), _) => Some(Move::Down(f)),
                 (Some((Act::Stagger, f)), _) => Some(Move::Stagger(f)),
                 (_, Some((at, beat))) => Some(Move::Swing {
                     at,
-                    alt: beat as i32 % 2 != 0,
+                    blow: Some(beat as u32),
                 }),
                 (Some((Act::Block, f)), _) => Some(Move::Block(f)),
                 (Some((Act::Parry, f)), _) => Some(Move::Parry(f)),
@@ -3611,7 +3613,7 @@ mod tests {
         p.advance(FRAME);
         p.update(&a, 0, FRAME, |s| fights.push(s.fight));
         assert!(
-            matches!(fights[killers[0]], Some(Move::Swing { at, alt: false }) if at < 0.1),
+            matches!(fights[killers[0]], Some(Move::Swing { at, blow: None }) if at < 0.1),
             "{:?}",
             fights[killers[0]]
         );

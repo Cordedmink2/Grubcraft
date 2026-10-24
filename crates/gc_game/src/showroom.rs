@@ -10,6 +10,7 @@ use gc_render::{POSE_LAYERS, PoseLayer};
 
 use crate::models::{Action, Clips, Pose, pose_flags};
 use crate::moves::MoveClip;
+use crate::puppets::Move;
 
 /// Models in a row before the next row starts behind it.
 const ROW_LEN: usize = 8;
@@ -52,6 +53,10 @@ pub enum Clip {
     Look,
     Kill,
     Finish,
+    /// A soldier's blows of a fight in turn, as the fight plays them.
+    Blows,
+    /// The ways the men of a regiment reel from a hit, one after another.
+    Reel,
 }
 
 impl Clip {
@@ -75,6 +80,8 @@ impl Clip {
             "look" => Clip::Look,
             "kill" => Clip::Kill,
             "finish" => Clip::Finish,
+            "blows" => Clip::Blows,
+            "reel" => Clip::Reel,
             _ => return None,
         })
     }
@@ -82,6 +89,9 @@ impl Clip {
 
 /// How long a kill's or finisher's last frame holds before it plays again.
 const HOLD_FRAMES: u32 = 18;
+
+/// How long each blow or reel of `blows` and `reel` takes.
+const BLOW_SECONDS: f32 = 1.5;
 
 /// The clip playing `time` seconds in, and how many seconds into it: the
 /// `hold` clip looping (a fall plays once and holds), or with none held,
@@ -121,7 +131,7 @@ pub(crate) fn pose(clips: &Clips, model: usize, hold: Option<Clip>, time: f32) -
         feet: 0,
     };
     match at(hold, time) {
-        (Clip::Die, t) => clips.death(model, t, None).map(|d| Shown {
+        (Clip::Die, t) => clips.death(model, t, None, 0).map(|d| Shown {
             feet: crate::models::dying_feet(t),
             ..shown(d)
         }),
@@ -149,6 +159,20 @@ pub(crate) fn pose(clips: &Clips, model: usize, hold: Option<Clip>, time: f32) -
                 None => clips.pose(model, Action::Idle, t)?,
             };
             Some(shown((pose, false)))
+        }
+        // A blow every BLOW_SECONDS, each the next of his attacks.
+        (Clip::Blows, t) => {
+            let blow = Some((t / BLOW_SECONDS) as u32);
+            let at = (t / BLOW_SECONDS).fract();
+            clips
+                .fight(model, Move::Swing { at, blow }, t, 0)
+                .map(shown)
+        }
+        // A reel every BLOW_SECONDS, each a man of another look's.
+        (Clip::Reel, t) => {
+            let look = (t / BLOW_SECONDS) as u8;
+            let f = (t / BLOW_SECONDS).fract();
+            clips.fight(model, Move::Stagger(f), t, look).map(shown)
         }
         (Clip::Look, t) => {
             let mut s = shown((clips.pose(model, Action::Idle, t)?, false));

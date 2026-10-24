@@ -171,18 +171,6 @@ pub(crate) fn fits<T: PartialEq>(have: T, want: T, any: T) -> Option<u32> {
     }
 }
 
-/// Of the `items` that `score` takes, one of those scoring best, picked by
-/// `seed` among them.
-pub(crate) fn best_by_seed<T>(
-    items: &[T],
-    score: impl Fn(&T) -> Option<u32>,
-    seed: u32,
-) -> Option<&T> {
-    let best = items.iter().filter_map(&score).max()?;
-    let top = || items.iter().filter(|i| score(i) == Some(best));
-    top().nth(seed as usize % top().count())
-}
-
 /// Every model's moves, looked up once.
 pub struct Moves {
     by_model: Vec<Vec<MoveClip>>,
@@ -220,6 +208,14 @@ impl Moves {
     /// additive flinch, a move on part of the body) are only picked when
     /// `want.layer` asks for one, and then only of its very act.
     pub fn pick(&self, model: usize, want: Want) -> Option<MoveClip> {
+        let all = self.choices(model, want);
+        all.get(want.seed as usize % all.len().max(1)).copied()
+    }
+
+    /// Every move [`Moves::pick`] chooses among for `want`, whatever the
+    /// seed, in a fixed order: the fight takes them all, to vary a
+    /// soldier's moves from one to the next.
+    pub fn choices(&self, model: usize, want: Want) -> Vec<MoveClip> {
         let moves = self.of(model);
         let acts = if want.layer {
             core::slice::from_ref(&want.act)
@@ -236,11 +232,15 @@ impl Moves {
                 let s = fits(m.side, want.side, Side::Any)?;
                 Some(w * 3 + s)
             };
-            if let Some(m) = best_by_seed(moves, score, want.seed) {
-                return Some(*m);
+            if let Some(best) = moves.iter().filter_map(score).max() {
+                return moves
+                    .iter()
+                    .filter(|m| score(m) == Some(best))
+                    .copied()
+                    .collect();
             }
         }
-        None
+        Vec::new()
     }
 }
 
@@ -313,6 +313,9 @@ mod tests {
             })
             .collect();
         assert_eq!(rows, vec![0, 10, 0, 10]);
+        // The fight may take every one it chooses among at once.
+        let all = m.choices(0, Want::new(Act::Stagger));
+        assert_eq!(all.iter().map(|c| c.first_row).collect::<Vec<_>>(), [0, 10]);
         assert_eq!(m.pick(0, Want::new(Act::Knockdown)).unwrap().first_row, 20);
         assert_eq!(m.pick(0, Want::new(Act::GetUp)), None);
     }
