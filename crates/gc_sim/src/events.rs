@@ -121,6 +121,9 @@ pub enum Event {
     /// The tile `(x, y)` caught fire (see [`crate::fire`]): it burns until
     /// it is cleared, burnt.
     Kindled { x: i32, y: i32 },
+    /// The rivers rose over the fords and shut them (`closed`), or went
+    /// down and opened them again (see [`crate::flood`]).
+    Flooded { closed: bool },
 }
 
 /// Each regiment slot as it stood before the tick.
@@ -187,6 +190,11 @@ impl Events {
     /// Tell of the tile `(x, y)` catching fire.
     pub(crate) fn kindled(&mut self, x: i32, y: i32) {
         self.list.push(Event::Kindled { x, y });
+    }
+
+    /// Tell of the fords shutting in a flood, or opening again.
+    pub(crate) fn flooded(&mut self, closed: bool) {
+        self.list.push(Event::Flooded { closed });
     }
 
     /// Tell of the bells tolled, the blows struck on buildings, the walls'

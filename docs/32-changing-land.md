@@ -1,6 +1,6 @@
 # 32 · Changing land
 
-*Design note, 2026-10-24, restart plan thread T9 ([29](29-restart-plan.md)). Covers idea 22 (clearing land to expand bases) first, and the one way the simulation changes the ground mid-match, which burning woods (idea 2), floods (idea 6) and rubble reuse later. Terrain tactics (idea 13) is built below; weather, night and seasons (ideas 1, 9, 7) get their own sections here as they are built.*
+*Design note, 2026-10-24, restart plan thread T9 ([29](29-restart-plan.md)). Covers idea 22 (clearing land to expand bases) first, and the one way the simulation changes the ground mid-match, which burning woods (idea 2) and rubble reuse; floods (idea 6) change the water and the walkable grid beside it. Terrain tactics (idea 13) is built below; weather, night and seasons (ideas 1, 9, 7) get their own sections here as they are built.*
 
 ## Clearing land (idea 22)
 
@@ -163,6 +163,27 @@ Fire is the first change to the ground that happens in a Field Battle as well as
 - **Golden.** `field-fire-1v1` is the woods map in a dry wind: every 20 seconds the Carrion Concord sets fire to the woods beside its regiments, the fire runs downwind, and both computer players march their troops out of it.
 - **Not yet:** pathfinding doesn't steer round fire (regiments march through it and burn); burning buildings, lightning strikes and the computer players setting fires of their own come later.
 
+## Fords that flood (idea 6)
+
+Stage 5 is the rain half of usable rivers: long, heavy rain swells them, so the water climbs the banks and the fords can't be crossed until it goes down. Bridges (built and burned) are the fortifications thread's part of idea 6 ([26](26-fortifications.md)).
+
+### How the rivers rise
+
+- **The flood.** `gc_sim::flood::Flood` keeps how far the water stands above the map's water line (`rise`, in height units) and whether the fords are shut. Once a second, while the ground is at least half soaked (`sky.wet()` at or above `FLOOD_WET`, under three minutes of heavy rain on dry ground) the water rises 3 height units, up to `FLOOD_RISE` (three tenths of a tile, about as deep as a ford was): some 25 seconds to the top. Once the ground has dried below three tenths (`EBB_WET`: a minute and a half of fair weather, more after a long downpour) it goes down 1 a second. In between it holds.
+- **Up the banks.** `Terrain::wet` reads the risen water, so ground less than `rise` above the old line is water: troops there wade (60% pace, 20% more melee damage taken, no charges), as in a ford.
+- **The fords shut.** The fords are the tiles under the map's water line that a regiment can walk on (some half-tile cell of theirs isn't blocked), found when the match starts. When the water reaches the top they are shut on the walkable grid (`Nav::set_flooded_all`, beside the buildings, thicket and gates standing there, which keep their own counts; nothing can be built on a shut ford), and every route near one is searched again; they open once the water is back under half the rise. `Event::Flooded { closed }` tells of either.
+- **Swept away.** Once a second a regiment whose centre is on a shut ford loses 12 hit points (from the back ranks forward) and 4 morale. One that isn't fighting and has no order, or only a chase the shut ford cuts off, is ordered to the nearest bank where its block fits (`Nav::settle`), as a move order would, leaving off any work. Regiments on shut ground may always step off it, and a route out of a shut ford looks for open ground as far as a goal does (`SNAP_GOAL`), so any order out works.
+
+### Seeing it
+
+- The water is drawn at the risen level (`Renderer::set_water_level`, the map's line plus `Terrain::rise`), so it climbs the banks. The top bar's sky chip adds "river high" while the water is up, and "fords flooded" once they shut. A message says when the fords shut and when they open. The selection panel says "Swept by the flood: losing men" for a regiment caught in one. The Cavalry guide blurb tells of it.
+
+### Shared state
+
+- `World::flood()` gives whether the fords are shut and the ford tiles, and `Terrain::rise` how far the water has risen; `World::swept` whether a regiment is caught in one. The flood is hashed with the ground only while the water is up, so a dry match hashes as before. The rise is `Terrain::rise`, so rehearsal worlds raise and lower the water as the match does; they keep the fords shut or open as they found them, since they share the match's walkable grid. No new command: `SIM_VERSION` 46 (45 went to the wall twists), replay format and net protocol unchanged.
+- **Goldens.** `field-flood-1v1` is a big battle in a downpour on the river map: the fords shut at 3:11. `field-night-rain-1v1`'s rain now raises the river too.
+- **Not yet:** the game's own sums of the ground (the cursor's aim, banners and standards, arrows lost in water) still use the old water line, so they sit up to three tenths of a tile under a flood; the computer players don't plan round shut fords (the routes do: a march across one stops at the bank), and snow melt, lakes overflowing and floods that leave mud behind come later.
+
 ## The one ground change
 
 All runtime changes to the ground go through one place in the simulation, `World::change_ground` (crate-private), given tiles and the growth they become. It:
@@ -172,7 +193,7 @@ All runtime changes to the ground go through one place in the simulation, `World
 3. folds the change into the ground's running digest, which is part of the state hash,
 4. tells the game (`Event::Cleared`), which takes the trees off those tiles and redraws the ground.
 
-Burning woods use the same change (`burnt: true`) when a tile burns out (see [Woods that burn](#woods-that-burn-idea-2)); floods a change of water, and rubble a fallen building's footprint left as rough ground. Those that change how a cell is walked on (floods) add a ground-cost change beside this one (`Nav::set_ground_all`, planned with the nav doors). Rain soaking (stage 2 of the weather, above) is the one change outside it: it only turns footing soft and back, never growth, cover or the walkable grid, so it is `Terrain::soak`, kept as a count beside the digest.
+Burning woods use the same change (`burnt: true`) when a tile burns out (see [Woods that burn](#woods-that-burn-idea-2)); rubble a fallen building's footprint left as rough ground. Floods change the water and shut the fords on the walkable grid beside it (see [Fords that flood](#fords-that-flood-idea-6)), beside what stands on it, rather than changing a cell's own cost. Rain soaking (stage 2 of the weather, above) is the one change outside it: it only turns footing soft and back, never growth, cover or the walkable grid, so it is `Terrain::soak`, kept as a count beside the digest.
 
 ## Rules that stay the same
 

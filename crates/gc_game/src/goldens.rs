@@ -451,6 +451,38 @@ const GOLDENS: &[Golden] = &[
             ..gc_sim::Sky::STILL
         },
     },
+    // Fords that flood (docs/32-changing-land.md): bigger armies in a
+    // downpour on the river map. Some three minutes in, the rivers rise
+    // over the fords and shut them, sweeping anyone still in one to the
+    // bank.
+    Golden {
+        name: "field-flood-1v1",
+        seed: 0xd9,
+        map_tiles: 256,
+        sides: &[
+            side(EmberClans, General, 0),
+            side(CarrionConcord, General, 1),
+        ],
+        soldiers: 1200,
+        rows: 2,
+        minutes: 8,
+        minds: true,
+        extra: no_extra,
+        champions: false,
+        deployment: false,
+        sky: gc_sim::Sky {
+            spells: &[gc_sim::Spell {
+                at: 0,
+                weather: gc_sim::Weather {
+                    kind: gc_sim::WeatherKind::Rain,
+                    strength: 255,
+                    cloud: 255,
+                    ..gc_sim::Weather::FAIR
+                },
+            }],
+            ..gc_sim::Sky::STILL
+        },
+    },
     // The `gc_bench` grand battle: about 6,000 soldiers, all four armies
     // charging into one brawl in the middle. Until the army builder brings
     // points, an "8,000 point" army is 1,500 soldiers.
@@ -673,6 +705,9 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     let limit = golden.minutes * 60 * gc_sim::TICKS_PER_SECOND;
     let mut most_engaged = (0, 0);
     let mut ambushes = 0;
+    // When the fords flooded, and for how many regiment-seconds troops
+    // were swept in them.
+    let (mut flooded, mut swept) = (None, 0);
     while m.world.tick_count() < limit {
         out.clear();
         (golden.extra)(&m.world, &mut out);
@@ -695,6 +730,16 @@ fn record(golden: &Golden) -> gc_replay::Replay {
             );
         }
         ambushes += world.ambushes().len();
+        if flooded.is_none() && world.flood().closed() {
+            flooded = Some(tick);
+        }
+        if world.tick_count().is_multiple_of(gc_sim::TICKS_PER_SECOND) {
+            swept += world
+                .regiments
+                .iter()
+                .filter(|r| world.swept(r.handle))
+                .count();
+        }
         if std::env::var_os("AI_TRACE").is_some() && world.tick_count().is_multiple_of(400) {
             println!("t={}s", world.tick_count() / 20);
             for mind in m.minds.iter() {
@@ -763,10 +808,14 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         "{}: champions should come out exactly when allowed",
         golden.name
     );
+    let flood = flooded.map_or(String::new(), |tick| {
+        let at = gc_ai::lens::clock(tick);
+        format!("; fords flooded at {at}, troops swept for {swept} regiment-seconds")
+    });
     let note = format!(
         "{}: Field Battle recorded from gc_game's goldens.rs, seed {:#x}, {}-tile map; {}; \
          {}:{:02}, {ending}; most soldiers in melee at once {} (at {}:{:02}); \
-         ambushes sprung {ambushes}{champions}",
+         ambushes sprung {ambushes}{champions}{flood}",
         golden.name,
         golden.seed,
         golden.map_tiles,

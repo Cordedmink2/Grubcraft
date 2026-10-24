@@ -110,6 +110,11 @@ impl World {
             sky: self.sky.clone(),
             // In the same fires, so it burns as the match does.
             fires: self.fires.clone(),
+            // By the same rivers: the water rises and falls in its terrain,
+            // and the fords stay as they are on the walkable grid it
+            // shares.
+            flood: self.flood.clone(),
+            stranded: Vec::new(),
             regiments: Regiments::with_capacity(n),
         }
         .with_air()

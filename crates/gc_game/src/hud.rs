@@ -1783,11 +1783,20 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
 fn sky_word(world: &gc_sim::World) -> String {
     let air = world.air();
     let mud = world.terrain().soaked() > 0;
+    // (On its own, and after the rest.)
+    let river = if world.flood().closed() {
+        Some(("Fords flooded", "fords flooded"))
+    } else if world.terrain().rise() > 0 {
+        Some(("River high", "river high"))
+    } else {
+        None
+    };
     if air == gc_sim::Air::CLEAR {
-        return if mud {
-            "Mud by the water".to_string()
-        } else {
-            String::new()
+        return match river {
+            Some((alone, _)) if mud => format!("{alone}, mud"),
+            Some((alone, _)) => alone.to_string(),
+            None if mud => "Mud by the water".to_string(),
+            None => String::new(),
         };
     }
     let weather = world.weather();
@@ -1810,6 +1819,10 @@ fn sky_word(world: &gc_sim::World) -> String {
     if air.march_percent < 100 {
         word += &format!(", march {}%", air.march_percent);
     }
+    if let Some((_, after)) = river {
+        word += ", ";
+        word += after;
+    }
     if mud {
         word += ", mud";
     }
@@ -1821,6 +1834,7 @@ fn sky_word(world: &gc_sim::World) -> String {
 fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static str {
     let dark = world.air().dark;
     match ground_word(world.terrain(), r.position) {
+        _ if world.swept(r.handle) => "Swept by the flood: losing men",
         _ if dark && r.torches => "Torches lit: seen from afar",
         "" if dark => "In the dark: unseen from afar",
         word => word,

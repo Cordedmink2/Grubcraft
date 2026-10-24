@@ -62,6 +62,8 @@ enum Change {
     Built(bool),
     /// A door opened (`true`) or shut, on a building already standing.
     Opened(bool),
+    /// Ground shut by a flood (`true`), or open again.
+    Flooded(bool),
 }
 
 impl Nav {
@@ -73,6 +75,15 @@ impl Nav {
     pub(crate) fn set_built_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
         for v in 0..self.grids.len() {
             self.change(v, all, Change::Built(on), regs);
+        }
+    }
+
+    /// Shut (`on`) the ground on each of `all`'s tiles to everyone, as a
+    /// flood shuts the fords (see [`crate::flood`]), or open it again, on
+    /// every side's grid. A tile stays shut while anything stands on it.
+    pub(crate) fn set_flooded_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
+        for v in 0..self.grids.len() {
+            self.change(v, all, Change::Flooded(on), regs);
         }
     }
 
@@ -127,7 +138,7 @@ impl Nav {
         let changed = Arc::make_mut(&mut self.grids[v]).change_all(all, change, &mut self.search);
         self.search.work = work;
         let freed = match change {
-            Change::Built(on) => !on,
+            Change::Built(on) | Change::Flooded(on) => !on,
             Change::Opened(open) => open,
         };
         // Any route passing near a change is found again (walking the old
@@ -237,22 +248,28 @@ impl Grid {
             // Made on the first door, so maps without gates don't carry it.
             self.opened = vec![0; self.built.len()];
         }
+        if matches!(change, Change::Flooded(_)) && self.flooded.is_empty() {
+            self.flooded = vec![false; self.built.len()];
+        }
         for (g, feet) in &groups {
             for &[cx0, cy0, cx1, cy1] in feet {
                 for cy in cy0..cy1 {
                     for cx in cx0..cx1 {
                         let i = self.idx(cx, cy) as usize;
-                        let (count, on) = match change {
-                            Change::Built(on) => (&mut self.built[i], on),
-                            Change::Opened(open) => (&mut self.opened[i], open),
+                        let bump = |count: &mut u8, on: bool| {
+                            *count = if on {
+                                count.saturating_add(1)
+                            } else {
+                                count.saturating_sub(1)
+                            };
                         };
-                        *count = if on {
-                            count.saturating_add(1)
-                        } else {
-                            count.saturating_sub(1)
-                        };
+                        match change {
+                            Change::Built(on) => bump(&mut self.built[i], on),
+                            Change::Opened(open) => bump(&mut self.opened[i], open),
+                            Change::Flooded(on) => self.flooded[i] = on,
+                        }
                         let opened = self.opened.get(i).copied().unwrap_or(0);
-                        self.cost[i] = if self.built[i] > opened {
+                        self.cost[i] = if self.built[i] > opened || self.is_flooded(i) {
                             BLOCKED
                         } else {
                             self.ground[i]

@@ -254,6 +254,9 @@ pub struct Terrain {
     /// does (empty when none does): where a tile is in `soak`.
     soak_need: Arc<[u16]>,
     soaked: u32,
+    /// Height units a flood has raised the water above `water_level`
+    /// (see [`crate::flood`]).
+    rise: u16,
     /// A running digest of every change made to the ground mid-match, for
     /// the state hash (the ground as the match started is the setup's).
     changes: u64,
@@ -313,6 +316,7 @@ impl Terrain {
             soak: Arc::from([]),
             soak_need: Arc::from([]),
             soaked: 0,
+            rise: 0,
             changes: 0,
         };
         let soak = terrain.soakable();
@@ -600,9 +604,31 @@ impl Terrain {
         (u32::from(bonus) * percent / 100).min(255) as u8
     }
 
-    /// Whether `p` is in water.
+    /// Whether `p` is in water: under the water line, raised by any flood.
     pub fn wet(&self, p: FxVec2) -> bool {
-        self.tiles != 0 && self.height(p) < i32::from(self.water_level)
+        self.tiles != 0 && self.height(p) < i32::from(self.water_level) + i32::from(self.rise)
+    }
+
+    /// The map's water line, in height units (0 with no water), before
+    /// any flood.
+    pub fn water_level(&self) -> u16 {
+        self.water_level
+    }
+
+    /// Height units a flood has raised the water (0 with none).
+    pub fn rise(&self) -> u16 {
+        self.rise
+    }
+
+    /// Raise the water to `rise` height units above its line.
+    pub(crate) fn set_rise(&mut self, rise: u16) {
+        self.rise = rise;
+    }
+
+    /// Whether the tile `(x, y)` lies under the map's water line (before
+    /// any flood); never off the map.
+    pub(crate) fn tile_under_water(&self, x: i32, y: i32) -> bool {
+        index_in(self.tiles, x, y).is_some_and(|i| self.height[i] < self.water_level)
     }
 
     /// Whether something at `from` fights downhill against something at `to`.

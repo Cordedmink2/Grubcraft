@@ -1588,6 +1588,15 @@ impl Renderer {
         );
     }
 
+    /// Where the water stands, in tiles: the map's water line, raised by
+    /// a flood (docs/32-changing-land.md, "Fords that flood"). Does
+    /// nothing before `set_terrain`.
+    pub fn set_water_level(&mut self, level: f32) {
+        if let Some(terrain) = &mut self.terrain {
+            terrain.water_level = level;
+        }
+    }
+
     /// Draw the ground as fog of war has it: one byte per map tile, row by
     /// row from the north-west corner, 255 for ground in view, down to 0 for
     /// ground never seen (about 140 is seen before but not now). The edges

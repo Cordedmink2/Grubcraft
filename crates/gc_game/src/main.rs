@@ -3989,6 +3989,10 @@ impl Running {
             look.snow = 0.0;
         }
         self.renderer.set_look(look);
+        // The water rises in a flood (docs/32-changing-land.md).
+        let rise = f32::from(self.world.terrain().rise()) / gc_sim::terrain::HEIGHT_UNITS as f32;
+        self.renderer
+            .set_water_level(self.heightmap.water_level() + rise);
         // A battle that has just begun draws the bars; blows shook the screen
         // as they came in. Still while paused or behind the menu.
         // A rejoining player's catch-up replays old fights in a rush: they
@@ -5876,6 +5880,7 @@ impl Running {
         }
         // Buildings whose blows this tick were shown.
         let mut shown = Vec::new();
+        let mut flooded = None;
         let (focus, distance) = self.view_focus();
         for e in self.world.events() {
             match *e {
@@ -6007,8 +6012,14 @@ impl Running {
                         self.siege.forget(structure);
                     }
                 }
+                Event::Flooded { closed } => flooded = Some(closed),
                 _ => {}
             }
+        }
+        match flooded {
+            Some(true) => self.say("The rivers are in flood: the fords can't be crossed".into()),
+            Some(false) => self.say("The rivers have gone down: the fords are open again".into()),
+            None => {}
         }
         for b in self.world.blows() {
             self.puppets.struck(b);

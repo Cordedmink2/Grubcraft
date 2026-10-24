@@ -154,6 +154,9 @@ struct Grid {
     /// [`Nav::set_door`]): a cell is blocked while more buildings stand on
     /// it than doors are open there. Empty until the first door opens.
     opened: Vec<u8>,
+    /// Cells a flood has shut (see [`Nav::set_flooded_all`]): blocked
+    /// whatever stands there. Empty until the first flood.
+    flooded: Vec<bool>,
     /// Steps (8-way) to the nearest blocked cell or the map edge, capped at
     /// [`CLEAR_CAP`].
     clear: Vec<u8>,
@@ -197,6 +200,11 @@ impl Grid {
 
     fn open(&self, x: i32, y: i32) -> bool {
         self.inside(x, y) && self.clear[self.idx(x, y) as usize] >= CLEARANCE
+    }
+
+    /// Whether a flood has shut cell `c` (an index into the grid).
+    fn is_flooded(&self, c: usize) -> bool {
+        self.flooded.get(c).copied().unwrap_or(false)
     }
 
     fn open_cell(&self, c: u32) -> bool {
@@ -1265,7 +1273,7 @@ impl Nav {
         let [x0, y0, x1, y1] = g.cells(tiles).ok_or(Refusal::OffMap)?;
         let cells = || (y0..y1).flat_map(move |cy| (x0..x1).map(move |cx| (cx, cy)));
         let at = |(cx, cy)| g.idx(cx, cy) as usize;
-        if cells().any(|c| g.ground[at(c)] == BLOCKED) {
+        if cells().any(|c| g.ground[at(c)] == BLOCKED || g.is_flooded(at(c))) {
             return Err(Refusal::Rough);
         }
         let gone = |(cx, cy)| spare(cx / CELLS_PER_TILE, cy / CELLS_PER_TILE);
@@ -1273,6 +1281,19 @@ impl Nav {
             return Err(Refusal::Built);
         }
         Ok(())
+    }
+
+    /// Whether any cell of the tile `(x, y)` is ground a regiment could
+    /// walk on, buildings and floods aside (never off the map, nor with no
+    /// map).
+    pub(crate) fn walkable_ground(&self, x: i32, y: i32) -> bool {
+        let Some(g) = self.base() else {
+            return false;
+        };
+        let Some([x0, y0, x1, y1]) = g.cells([x, y, 1, 1]) else {
+            return false;
+        };
+        (y0..y1).any(|cy| (x0..x1).any(|cx| g.ground[g.idx(cx, cy) as usize] != BLOCKED))
     }
 
     /// Portal nodes in the graph (for the dev overlay and tests).
@@ -1603,7 +1624,14 @@ fn find(
     let mut start = grid.cell_at(from);
     let mut lead = false;
     if !grid.open_cell(start) {
-        start = grid.nearest_open(start, None, SNAP_START, &mut s.work)?;
+        // Out of a flood, as far as a goal is looked for: a wide ford's
+        // middle is further from its banks than ground is from a wall.
+        let snap = if grid.is_flooded(start as usize) {
+            SNAP_GOAL
+        } else {
+            SNAP_START
+        };
+        start = grid.nearest_open(start, None, snap, &mut s.work)?;
         lead = true;
     }
     // A goal on blocked ground or cut off from the start: go as near as we can.
@@ -1921,6 +1949,7 @@ impl Grid {
             ground: costs.to_vec(),
             built: vec![0; n],
             opened: Vec::new(),
+            flooded: Vec::new(),
             clear: vec![0; n],
             area: vec![0; n],
             areas: 0,
