@@ -43,6 +43,11 @@ struct Globals {
     air: vec4<f32>,
     sky_top: vec4<f32>,
     sky_horizon: vec4<f32>,
+    // x: how many point lights (lights.rs)
+    light_meta: vec4<f32>,
+    // For each light: xyz position and w radius, then rgb colour (HDR) and
+    // w its flicker seed. `2 * MAX_LIGHTS` vectors.
+    lights: array<vec4<f32>, 48>,
 };
 
 // Every lit varying a fragment shader reads is `@interpolate(perspective,
@@ -286,9 +291,33 @@ fn sun_ndl(n: vec3<f32>, world: vec3<f32>) -> f32 {
     return 0.0;
 }
 
+// Light from the lamps, torches and fires round a point (the Rust side picks
+// the nearest few; none in daylight). A soft wrapped diffuse so a surface
+// edge-on to a lamp still takes some, a smooth fall to nothing at the
+// light's radius, and a small flicker. Not shadowed.
+fn local_lights(world: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    var sum = vec3<f32>(0.0);
+    let count = u32(g.light_meta.x);
+    for (var i = 0u; i < count; i++) {
+        let at = g.lights[2u * i];
+        let tint = g.lights[2u * i + 1u];
+        let d = at.xyz - world;
+        let dist2 = dot(d, d);
+        if dist2 >= at.w * at.w {
+            continue;
+        }
+        let dist = sqrt(dist2);
+        let reach = 1.0 - dist / at.w;
+        let facing = clamp(dot(n, d / max(dist, 1e-3)) * 0.6 + 0.4, 0.0, 1.0);
+        let flicker = 0.9 + 0.1 * sin(g.misc.y * (7.0 + tint.w * 0.04) + tint.w * 3.1);
+        sum += tint.rgb * (facing * reach * reach * flicker);
+    }
+    return sum;
+}
+
 fn shade(albedo: vec3<f32>, n: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
     let ndl = sun_ndl(n, world);
-    return finish(albedo * (g.sun_color.rgb * ndl + ambient_light(n)), world);
+    return finish(albedo * (g.sun_color.rgb * ndl + ambient_light(n) + local_lights(world, n)), world);
 }
 
 // Textured surfaces: diffuse plus a normalised Blinn-Phong highlight whose
@@ -313,7 +342,7 @@ fn shade_material(
     let spec = fresnel * pow(max(dot(n, h), 0.0), power) * (power + 8.0) / 25.13;
     let ambient = ambient_light(n) * ao;
     let diffuse = albedo * (1.0 - metal);
-    let c = diffuse * (g.sun_color.rgb * ndl + ambient) + spec * g.sun_color.rgb * ndl + f0 * ambient * 0.6;
+    let c = diffuse * (g.sun_color.rgb * ndl + ambient + local_lights(world, n)) + spec * g.sun_color.rgb * ndl + f0 * ambient * 0.6;
     return finish(c + emit, world);
 }
 

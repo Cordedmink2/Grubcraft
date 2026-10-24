@@ -502,6 +502,11 @@ impl Siege {
         self.fx.take()
     }
 
+    /// The fires that burned since this was last called, for the lights.
+    pub fn take_glows(&mut self) -> Vec<gc_render::Glow> {
+        self.fx.take_glows()
+    }
+
     /// Forget everything (a new match, or a seek).
     pub fn clear(&mut self) {
         let regiments = self.struck.len();

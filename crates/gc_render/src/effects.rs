@@ -84,9 +84,33 @@ pub enum HitStyle {
 #[derive(Clone, Debug)]
 pub struct Effects {
     out: Vec<Particle>,
+    /// Places that gave light this frame (lamps, flames), for the game to
+    /// turn into point lights at night.
+    glows: Vec<Glow>,
     rng: Rng,
     density: f32,
 }
+
+/// A place that shines: a lit window, a fire. Recorded by [`Effects::lamp`]
+/// and [`Effects::flames`] whenever they are called (a frame at a time), so
+/// the game can keep a light up for as long as the thing burns.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Glow {
+    pub pos: Vec3,
+    /// sRGB, as the particles' colour.
+    pub color: [u8; 3],
+    /// How far its light reaches, in tiles.
+    pub radius: f32,
+    /// How bright it is, 0 to about 1.5.
+    pub strength: f32,
+    /// Whether it should be scaled by how dark it is: a fire is, a lit
+    /// window already is (it is only reported at dusk).
+    pub needs_dark: bool,
+}
+
+/// The most glows kept between two [`Effects::take_glows`], so a caller that
+/// never takes them does not grow a list for ever.
+const MAX_GLOWS: usize = 256;
 
 impl Default for Effects {
     fn default() -> Effects {
@@ -105,6 +129,7 @@ impl Effects {
     pub fn new(seed: u32) -> Effects {
         Effects {
             out: Vec::new(),
+            glows: Vec::new(),
             rng: Rng::new(seed),
             density: 1.0,
         }
@@ -120,6 +145,29 @@ impl Effects {
     /// Hand over the particles collected, leaving the list empty.
     pub fn take(&mut self) -> Vec<Particle> {
         std::mem::take(&mut self.out)
+    }
+
+    /// Hand over the glows recorded since the last call.
+    pub fn take_glows(&mut self) -> Vec<Glow> {
+        std::mem::take(&mut self.glows)
+    }
+
+    /// Record a glow. One within half a tile of one already recorded this
+    /// frame is the same light (a squad chopping at a tree reports the same
+    /// flame once each): the stronger one stays, so a crowd cannot fill the
+    /// list and crowd out the lamps.
+    fn glow(&mut self, glow: Glow) {
+        if let Some(same) = self
+            .glows
+            .iter_mut()
+            .find(|g| g.pos.distance_squared(glow.pos) < 0.25)
+        {
+            if glow.strength > same.strength {
+                *same = glow;
+            }
+        } else if self.glows.len() < MAX_GLOWS {
+            self.glows.push(glow);
+        }
     }
 
     /// How many particles are collected so far, to pass to
@@ -276,6 +324,13 @@ impl Effects {
     /// Flames licking up from `pos` for `dt` seconds. Pair it with
     /// [`Effects::smoke`] and a few [`Effects::embers`].
     pub fn flames(&mut self, pos: Vec3, size: f32, dt: f32) {
+        self.glow(Glow {
+            pos: pos + Vec3::Y * (0.3 + size * 0.5),
+            color: [255, 150, 60],
+            radius: 2.5 + size * 4.0,
+            strength: (size * 2.0).min(1.5),
+            needs_dark: true,
+        });
         for _ in 0..self.count(40.0 * size * dt) {
             let at = self.rng.disc() * (size * 0.6);
             let shape = if self.rng.unit() < 0.5 {
@@ -771,5 +826,48 @@ mod tests {
         fx.precipitation(Weather::Rain, Vec2::ZERO, 10.0, 400.0, |_| 0.0);
         let n = fx.take().len();
         assert!((60..=140).contains(&n), "{n}");
+    }
+
+    #[test]
+    fn lamps_and_flames_record_a_glow_each_time_and_it_is_handed_over_once() {
+        let mut fx = Effects::default();
+        fx.lamp(Vec3::new(5.0, 1.0, 5.0), [255, 200, 120], 0.13, 0.5, 0.016);
+        fx.flames(Vec3::new(8.0, 1.0, 8.0), 0.5, 0.016);
+        let glows = fx.take_glows();
+        assert_eq!(glows.len(), 2);
+        assert_eq!(glows[0].strength, 0.5);
+        assert!(!glows[0].needs_dark && glows[1].needs_dark);
+        assert!(glows[1].pos.y > 1.0, "a fire's light is above its base");
+        assert!(glows[1].radius > glows[0].radius);
+        assert!(fx.take_glows().is_empty());
+    }
+
+    #[test]
+    fn a_caller_that_never_takes_glows_does_not_grow_the_list() {
+        let mut fx = Effects::default();
+        for i in 0..10_000 {
+            fx.flames(Vec3::new(i as f32, 0.0, 0.0), 0.4, 0.016);
+        }
+        assert!(fx.take_glows().len() <= 256);
+    }
+
+    #[test]
+    fn a_crowd_at_one_flame_is_one_glow_and_cannot_crowd_out_a_lamp() {
+        let mut fx = Effects::default();
+        for _ in 0..300 {
+            fx.flames(Vec3::new(5.0, 0.0, 5.0), 0.2, 0.016);
+        }
+        fx.flames(Vec3::new(5.1, 0.0, 5.0), 0.5, 0.016);
+        fx.lamp(
+            Vec3::new(20.0, 1.0, 20.0),
+            [255, 200, 120],
+            0.13,
+            1.0,
+            0.016,
+        );
+        let glows = fx.take_glows();
+        assert_eq!(glows.len(), 2);
+        assert_eq!(glows[0].strength, 1.0, "the stronger flame stayed");
+        assert!(!glows[1].needs_dark);
     }
 }

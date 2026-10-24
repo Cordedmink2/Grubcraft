@@ -3,6 +3,9 @@
 
 use super::*;
 
+/// How far a lit window's light reaches on the walls and ground, in tiles.
+const LAMP_REACH: f32 = 2.4;
+
 impl Effects {
     /// Leaves shaken loose over `spread` tiles round `pos`: a tree coming
     /// down, a bush torn up. They tumble down on the wind and fade.
@@ -115,6 +118,13 @@ impl Effects {
     /// its radius in tiles. Lamps are not thinned by the density: a lamp
     /// made of a third of its specks would flicker out, and there are few.
     pub fn lamp(&mut self, pos: Vec3, color: [u8; 3], size: f32, level: f32, dt: f32) {
+        self.glow(super::Glow {
+            pos,
+            color,
+            radius: LAMP_REACH,
+            strength: level.clamp(0.0, 1.0),
+            needs_dark: false,
+        });
         let n = 10.0 * dt;
         let n = n.floor() as u32 + u32::from(self.rng.unit() < n.fract());
         for _ in 0..n {

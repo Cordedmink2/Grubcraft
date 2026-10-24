@@ -13,6 +13,7 @@
 mod debug_font;
 mod detail;
 mod effects;
+mod lights;
 mod look;
 mod overlay;
 mod particles;
@@ -62,7 +63,8 @@ const LOD_DISTANCES: [f32; TERRAIN_LEVELS - 1] = [128.0, 256.0, 384.0];
 const CHUNK_INSTANCE_BYTES: u64 = 12;
 /// Fixed capacity of the box instance buffer (soldiers and markers); never reallocated.
 pub const MAX_BOX_INSTANCES: usize = 65_536;
-pub use effects::{DUST, Effects, GHOST, HitStyle, ICHOR};
+pub use effects::{DUST, Effects, GHOST, Glow, HitStyle, ICHOR};
+pub use lights::{MAX_LIGHTS, PointLight};
 use look::rgba;
 pub use look::{KNOBS, Knob, LandAir, Look, LookPreset, Weather};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
@@ -315,6 +317,10 @@ struct Globals {
     air: [f32; 4],
     sky_top: [f32; 4],
     sky_horizon: [f32; 4],
+    /// x: how many point lights there are (see [`lights`]).
+    light_meta: [f32; 4],
+    /// Each light's position and radius, then its colour and seed.
+    lights: [[f32; 4]; 2 * MAX_LIGHTS],
 }
 
 struct TerrainGpu {
@@ -382,6 +388,8 @@ pub struct Renderer {
     post_targets: post::PostTargets,
     /// How the world is lit and the frame graded (see [`Renderer::set_look`]).
     look: Look,
+    /// The frame's point lights (see [`Renderer::set_lights`]).
+    lights: Vec<PointLight>,
     /// The chunk grid's triangles at every level of detail, one after the
     /// other (see [`level_indices`]).
     chunk_indices: wgpu::Buffer,
@@ -1041,6 +1049,7 @@ impl Renderer {
             post,
             post_targets,
             look: Look::default(),
+            lights: Vec::new(),
             chunk_indices,
             chunk_instances,
             chunk_instance_capacity: 1,
@@ -1095,6 +1104,13 @@ impl Renderer {
     /// Light and grade the world as `look` says, from the next frame on.
     pub fn set_look(&mut self, look: Look) {
         self.look = look;
+    }
+
+    /// The point lights of the next frame (the first [`MAX_LIGHTS`] are
+    /// used); an empty list, the daytime case, costs nothing.
+    pub fn set_lights(&mut self, lights: &[PointLight]) {
+        self.lights.clear();
+        self.lights.extend(lights.iter().take(MAX_LIGHTS));
     }
 
     /// Start particles at the next frame (see [`Particle`], and the recipes
@@ -1731,6 +1747,8 @@ impl Renderer {
             ],
             sky_top: rgba(look.hdr(look.sky_top), 0.0),
             sky_horizon: rgba(look.hdr(look.sky_horizon), 0.0),
+            light_meta: [self.lights.len().min(MAX_LIGHTS) as f32, 0.0, 0.0, 0.0],
+            lights: lights::pack(&self.lights),
         };
         self.post
             .write_grade(&self.queue, &look, frame.time_seconds, &self.cinema);
