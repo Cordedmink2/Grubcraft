@@ -256,6 +256,246 @@ impl Look {
     }
 }
 
+impl Look {
+    /// This look in a land's air: its colours shifted and its numbers
+    /// scaled by `air`, whatever the light (golden hour, noon, dusk) the
+    /// look began as.
+    pub fn in_air(&self, air: &LandAir) -> Look {
+        let shift = |c: [f32; 3], d: [f32; 3]| {
+            (Vec3::from(c) + Vec3::from(d))
+                .clamp(Vec3::ZERO, Vec3::ONE)
+                .into()
+        };
+        let scale = |c: [f32; 3], m: [f32; 3]| (Vec3::from(c) * Vec3::from(m)).into();
+        Look {
+            sun_color: scale(self.sun_color, air.sun),
+            fog: shift(self.fog, air.fog),
+            haze: shift(self.haze, air.haze),
+            fog_density: self.fog_density * air.density,
+            fog_falloff: self.fog_falloff * air.falloff,
+            contrast: self.contrast * air.contrast,
+            saturation: self.saturation * air.saturation,
+            shadow_tint: scale(self.shadow_tint, air.shadow_tint),
+            light_tint: scale(self.light_tint, air.light_tint),
+            sky_top: shift(self.sky_top, air.sky_top),
+            sky_horizon: shift(self.sky_horizon, air.sky_horizon),
+            ..*self
+        }
+    }
+
+    /// The same light for competitive play (the Clarity setting): no
+    /// vignette, no film grain and no heavy grading, so colours, team
+    /// banners and fog of war read the same in every look. The light itself
+    /// (sun, shade, air) is left as it is.
+    pub fn clear(&self) -> Look {
+        Look {
+            contrast: self.contrast.min(CLEAR_CONTRAST),
+            saturation: self.saturation.clamp(1.0, CLEAR_SATURATION),
+            vignette: 0.0,
+            grain: 0.0,
+            shadow_tint: [1.0; 3],
+            light_tint: [1.0; 3],
+            ..*self
+        }
+    }
+
+    /// This look with each tuning knob moved by its entry in `deltas`
+    /// ([`KNOBS`] order).
+    pub fn tuned(&self, deltas: &[f32; KNOBS.len()]) -> Look {
+        let mut look = *self;
+        for (knob, &d) in KNOBS.iter().zip(deltas) {
+            if d != 0.0 {
+                (knob.set)(&mut look, (knob.get)(self) + d);
+            }
+        }
+        look
+    }
+}
+
+/// The most contrast and saturation Clarity leaves in.
+const CLEAR_CONTRAST: f32 = 1.05;
+const CLEAR_SATURATION: f32 = 1.1;
+
+/// What a land does to the air and the light, as changes to whatever look
+/// is in use, so every land follows every time of day: colours (sRGB) are
+/// added to, numbers multiplied. Neutral is a meadow's. The game blends the
+/// airs of the lands round the camera ([`LandAir::mixed`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LandAir {
+    /// Added to the air's colour away from, and toward, the sun, and to the
+    /// sky at the horizon and overhead.
+    pub fog: [f32; 3],
+    pub haze: [f32; 3],
+    pub sky_horizon: [f32; 3],
+    pub sky_top: [f32; 3],
+    /// Multiply how thick the air is and how tightly it hugs low ground.
+    pub density: f32,
+    pub falloff: f32,
+    /// Multiply the grade's saturation and contrast.
+    pub saturation: f32,
+    pub contrast: f32,
+    /// Multiply the sun's colour and the split tints.
+    pub sun: [f32; 3],
+    pub shadow_tint: [f32; 3],
+    pub light_tint: [f32; 3],
+}
+
+impl LandAir {
+    /// Changes nothing.
+    pub const NEUTRAL: LandAir = LandAir {
+        fog: [0.0; 3],
+        haze: [0.0; 3],
+        sky_horizon: [0.0; 3],
+        sky_top: [0.0; 3],
+        density: 1.0,
+        falloff: 1.0,
+        saturation: 1.0,
+        contrast: 1.0,
+        sun: [1.0; 3],
+        shadow_tint: [1.0; 3],
+        light_tint: [1.0; 3],
+    };
+
+    /// This air toward `b`, `t` of the way.
+    fn lerp(&self, b: &LandAir, t: f32) -> LandAir {
+        let f = |x: f32, y: f32| x + (y - x) * t;
+        let c = |x: [f32; 3], y: [f32; 3]| Vec3::from(x).lerp(Vec3::from(y), t).into();
+        LandAir {
+            fog: c(self.fog, b.fog),
+            haze: c(self.haze, b.haze),
+            sky_horizon: c(self.sky_horizon, b.sky_horizon),
+            sky_top: c(self.sky_top, b.sky_top),
+            density: f(self.density, b.density),
+            falloff: f(self.falloff, b.falloff),
+            saturation: f(self.saturation, b.saturation),
+            contrast: f(self.contrast, b.contrast),
+            sun: c(self.sun, b.sun),
+            shadow_tint: c(self.shadow_tint, b.shadow_tint),
+            light_tint: c(self.light_tint, b.light_tint),
+        }
+    }
+
+    /// The weighted average of `airs` (`weights` need not add up to 1);
+    /// neutral when every weight is 0.
+    pub fn mixed(airs: &[LandAir], weights: &[f32]) -> LandAir {
+        let mut mix = LandAir::NEUTRAL;
+        let mut total = 0.0;
+        for (air, &w) in airs.iter().zip(weights) {
+            if w <= 0.0 {
+                continue;
+            }
+            total += w;
+            mix = mix.lerp(air, w / total);
+        }
+        mix
+    }
+}
+
+/// One number of a [`Look`] a person can move while tuning by eye (the
+/// tuning panel, F10). Some are derived (the sun's height and heading are
+/// angles of its direction; strengths scale a colour), so a step means
+/// something to a person whatever the colour underneath.
+pub struct Knob {
+    pub name: &'static str,
+    /// How much one key press moves it.
+    pub step: f32,
+    pub get: fn(&Look) -> f32,
+    pub set: fn(&mut Look, f32),
+}
+
+/// The sun's height above the horizon, degrees.
+fn sun_height(l: &Look) -> f32 {
+    l.sun_dir().y.clamp(-1.0, 1.0).asin().to_degrees()
+}
+
+/// Which way the sun lies round the compass, degrees.
+fn sun_heading(l: &Look) -> f32 {
+    let d = l.sun_dir();
+    d.x.atan2(-d.z).to_degrees()
+}
+
+/// Point the sun `height` degrees up and `heading` round.
+fn aim_sun(l: &mut Look, height: f32, heading: f32) {
+    let (h, a) = (height.clamp(2.0, 89.0).to_radians(), heading.to_radians());
+    l.sun = [h.cos() * a.sin(), h.sin(), -h.cos() * a.cos()];
+}
+
+fn strength(c: [f32; 3]) -> f32 {
+    Vec3::from(c).max_element()
+}
+
+fn scaled(c: [f32; 3], to: f32) -> [f32; 3] {
+    let k = to.max(0.0) / strength(c).max(1e-4);
+    c.map(|v| v * k)
+}
+
+/// The most the Warmth knob warms or cools the bright tint.
+const MAX_WARMTH: f32 = 0.5;
+
+/// A knob that is one plain number of the look, never below `min`.
+macro_rules! field_knob {
+    ($name:literal, $step:literal, $field:ident, $min:literal) => {
+        Knob {
+            name: $name,
+            step: $step,
+            get: |l| l.$field,
+            set: |l, v| l.$field = v.max($min),
+        }
+    };
+}
+
+/// Every knob of the tuning panel, in the order it lists them.
+pub const KNOBS: [Knob; 16] = [
+    Knob {
+        name: "Sun height (deg)",
+        step: 2.0,
+        get: sun_height,
+        set: |l, v| aim_sun(l, v, sun_heading(l)),
+    },
+    Knob {
+        name: "Sun heading (deg)",
+        step: 5.0,
+        get: sun_heading,
+        set: |l, v| aim_sun(l, sun_height(l), v),
+    },
+    Knob {
+        name: "Sun strength",
+        step: 0.1,
+        get: |l| strength(l.sun_color),
+        set: |l, v| l.sun_color = scaled(l.sun_color, v),
+    },
+    Knob {
+        name: "Sky light",
+        step: 0.02,
+        get: |l| strength(l.sky_ambient),
+        set: |l, v| l.sky_ambient = scaled(l.sky_ambient, v),
+    },
+    field_knob!("Exposure", 0.02, exposure, 0.1),
+    field_knob!("Contrast", 0.02, contrast, 0.2),
+    field_knob!("Saturation", 0.03, saturation, 0.0),
+    field_knob!("Vignette", 0.03, vignette, 0.0),
+    field_knob!("Film grain", 0.005, grain, 0.0),
+    field_knob!("Air thickness", 0.0002, fog_density, 0.0),
+    field_knob!("Air hugs ground", 0.005, fog_falloff, 0.0),
+    field_knob!("Rim light", 0.05, rim, 0.0),
+    field_knob!("Leaf glow", 0.05, foliage_glow, 0.0),
+    field_knob!("Cloud shadows", 0.05, cloud_shadows, 0.0),
+    field_knob!("Valley shade", 0.05, ground_occlusion, 0.0),
+    Knob {
+        name: "Warmth",
+        step: 0.01,
+        // Red against blue in the bright end's tint.
+        get: |l| l.light_tint[0] - l.light_tint[2],
+        set: |l, v| {
+            // Never so far that a tint goes negative.
+            let v = v.clamp(-MAX_WARMTH, MAX_WARMTH);
+            let mid = (l.light_tint[0] + l.light_tint[2]) / 2.0;
+            l.light_tint[0] = mid + v / 2.0;
+            l.light_tint[2] = mid - v / 2.0;
+        },
+    },
+];
+
 /// A colour and one more number, packed for a shader's `vec4`.
 pub(crate) fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
     [c[0], c[1], c[2], a]
@@ -390,6 +630,67 @@ mod tests {
         for p in LookPreset::ALL {
             assert!(p.look().sun_dir().y > 0.05, "{}", p.name());
         }
+    }
+
+    #[test]
+    fn a_neutral_air_changes_nothing_and_airs_mix_by_weight() {
+        let look = LookPreset::Dusk.look();
+        assert_eq!(look.in_air(&LandAir::NEUTRAL), look);
+        let amber = LandAir {
+            density: 2.0,
+            fog: [0.2, 0.0, -0.2],
+            ..LandAir::NEUTRAL
+        };
+        let half = LandAir::mixed(&[LandAir::NEUTRAL, amber], &[1.0, 1.0]);
+        assert!((half.density - 1.5).abs() < 1e-6);
+        assert!((half.fog[0] - 0.1).abs() < 1e-6);
+        assert_eq!(LandAir::mixed(&[amber], &[0.0]), LandAir::NEUTRAL);
+        // An air never pushes a colour out of range.
+        let out = LookPreset::Noon.look().in_air(&LandAir {
+            fog: [0.9, 0.9, -0.9],
+            ..LandAir::NEUTRAL
+        });
+        assert!(out.fog.iter().all(|c| (0.0..=1.0).contains(c)));
+    }
+
+    #[test]
+    fn clarity_drops_the_vignette_grain_and_heavy_grading_in_every_look() {
+        for p in LookPreset::ALL {
+            let clear = p.look().clear();
+            assert_eq!((clear.vignette, clear.grain), (0.0, 0.0), "{}", p.name());
+            assert!(clear.contrast <= CLEAR_CONTRAST, "{}", p.name());
+            assert!((1.0..=CLEAR_SATURATION).contains(&clear.saturation));
+            assert_eq!(clear.light_tint, [1.0; 3]);
+            // The light itself is kept.
+            assert_eq!(clear.sun, p.look().sun);
+            assert_eq!(clear.fog, p.look().fog);
+        }
+    }
+
+    #[test]
+    fn knobs_move_what_they_name() {
+        let look = LookPreset::GoldenHour.look();
+        let none = [0.0; KNOBS.len()];
+        assert_eq!(look.tuned(&none), look);
+        for (i, knob) in KNOBS.iter().enumerate() {
+            let mut d = none;
+            d[i] = knob.step;
+            let moved = look.tuned(&d);
+            let (was, now) = ((knob.get)(&look), (knob.get)(&moved));
+            assert!(
+                (now - (was + knob.step)).abs() < 1e-3 * (1.0 + was.abs()),
+                "{}: {was} → {now}",
+                knob.name
+            );
+        }
+    }
+
+    #[test]
+    fn the_sun_angles_read_back_what_was_aimed() {
+        let mut look = LookPreset::Noon.look();
+        aim_sun(&mut look, 30.0, 120.0);
+        assert!((sun_height(&look) - 30.0).abs() < 1e-3);
+        assert!((sun_heading(&look) - 120.0).abs() < 1e-3);
     }
 
     #[test]

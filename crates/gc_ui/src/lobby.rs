@@ -157,6 +157,41 @@ impl MapSize {
     }
 }
 
+/// The light a match is played in, chosen by the host. Only how the match
+/// looks: the simulation never reads it, and the same on every screen. Each
+/// land then tints it (the Waste's amber haze, the Fen's green mist, the
+/// Highland's cold clear air).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TimeOfDay {
+    /// A low warm sun, blue shade, long shadows: the game's look.
+    #[default]
+    GoldenHour,
+    /// A high sun in clear air: short shadows, bright colours.
+    Noon,
+    /// The sun just above the hills: violet shade, an orange sky.
+    Dusk,
+    /// Soft grey light and heavy air; few shadows.
+    Overcast,
+}
+
+impl TimeOfDay {
+    pub const ALL: [TimeOfDay; 4] = [
+        TimeOfDay::GoldenHour,
+        TimeOfDay::Noon,
+        TimeOfDay::Dusk,
+        TimeOfDay::Overcast,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            TimeOfDay::GoldenHour => "Golden hour",
+            TimeOfDay::Noon => "Noon",
+            TimeOfDay::Dusk => "Dusk",
+            TimeOfDay::Overcast => "Overcast",
+        }
+    }
+}
+
 /// How many tiles a side a Field Battle map of `size` is for `players`.
 /// Foot marches about 3 tiles a second, so a Standard map is about three
 /// minutes across for two players and over four for six. Small is the
@@ -372,6 +407,8 @@ pub struct LobbySettings {
     /// Whether champions may duel between the lines before a battle with a
     /// computer player (a chance, not every time).
     pub champions: bool,
+    /// The light the match is played in (looks only).
+    pub time_of_day: TimeOfDay,
 }
 
 impl Default for LobbySettings {
@@ -386,6 +423,7 @@ impl Default for LobbySettings {
             budget: Budget::Battle,
             map_size: MapSize::Standard,
             champions: true,
+            time_of_day: TimeOfDay::GoldenHour,
         }
     }
 }

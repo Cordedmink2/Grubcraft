@@ -64,7 +64,7 @@ const CHUNK_INSTANCE_BYTES: u64 = 12;
 pub const MAX_BOX_INSTANCES: usize = 65_536;
 pub use effects::{DUST, Effects, GHOST, HitStyle, ICHOR};
 use look::rgba;
-pub use look::{Look, LookPreset};
+pub use look::{KNOBS, Knob, LandAir, Look, LookPreset};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
 pub use particles::{MAX_PARTICLES, Particle, Shape, flags as particle_flags};
 /// Most quads one frame of menu UI may draw.

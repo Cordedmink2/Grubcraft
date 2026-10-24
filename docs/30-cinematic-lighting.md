@@ -12,7 +12,7 @@ Players judge a scene by how the light behaves long before they count polygons. 
 4. **Camera craft.** Switchable tilt-shift depth of field, sun shafts for the ride camera, charge shake, battle-start letterbox and slow motion, the director camera and replay films.
 5. **Weather and night.** Rain, snow, river fog banks at dawn; night maps lit by torches and Grub.
 
-Stages 4 and 5 are not built (the camera tilt and backlit foliage came with stage 1). Not on the list on purpose: ray tracing, screen-space reflections, volumetric fog volumes, temporal anti-aliasing (it smears hundreds of thin spears) and real-time global illumination; each costs a lot on a Mac for little gain in a top-down game.
+Stages 4 and 5 are not built (the camera tilt and backlit foliage came with stage 1). A look per land, the lobby's time of day, Clarity and a tuning panel followed stage 2: see [Built: a look per land](#built-a-look-per-land). Not on the list on purpose: ray tracing, screen-space reflections, volumetric fog volumes, temporal anti-aliasing (it smears hundreds of thin spears) and real-time global illumination; each costs a lot on a Mac for little gain in a top-down game.
 
 ## Built: stage 1
 
@@ -70,12 +70,32 @@ One particle system for every effect, in `gc_render` (`particles.rs`, `effects.r
 
 **Limits.** No soft depth fade against buildings and scenery, only against the ground (a second pass would be needed). Dust colour is one tan; it will follow the ground tint of the land later.
 
-## Next in stage 1's family
+## Built: a look per land
 
-Not yet built, planned for the pull request after stage 2: the game choosing a look from a map's lands (dusty amber haze over the Waste, humid green mist in the Fen, cold clear air on the Highland, golden hour as the default) and a lobby "Time of day" option, a live tuning panel for tuning on the Mac, and a "Clarity" setting that turns off the vignette, grain and heavy grading for competitive play. Readability comes first: team colours, selection rings and fog of war are checked under every look.
+*Built 2026-10-24, the pull request after stage 2. Render and lobby only: the simulation never reads any of it, so golden replays are unchanged.*
+
+**Each land brings its own air** (`gc_game/src/atmosphere.rs`). A land changes whatever look is in use rather than replacing it, so every land follows every time of day: a `LandAir` (`gc_render/src/look.rs`) adds to the air, haze and sky colours and multiplies the air's thickness, how tightly it hugs low ground, saturation, contrast, the sun's colour and the split tints. Meadow is the look as it is.
+
+| Land | Its air |
+|---|---|
+| Waste | A dusty amber haze: warmer air and sky, thicker air (×1.35), a yellower sun, less colour |
+| Fen | A green mist that hugs the low ground (×1.8 thick, ×1.5 lower), a greener sun, less colour |
+| Highland | Cold clear air: cooler air and sky, thin air (×0.55) so the far hills show, a bluer sun and shade, a little more contrast |
+| Forest | Darker, greener shade under a slightly thicker air |
+| Valley | A river's slight green mist |
+
+The lands blend with the camera, not one look per map, because a grown map is a patchwork: nine by nine samples over the ground round the camera (0.6 of its distance from the ground, 20 to 70 tiles; the middle counts most) give each land a share, the shares ease toward the new ones over a few seconds (`SETTLE`, 2.5 s), and the airs are mixed by share. So scrolling from a meadow into the Waste turns the haze amber over a couple of seconds, and a match starts right in the air of the lands round its first view. In the ride camera the samples follow the rider's view.
+
+**Time of day, in the lobby.** The host picks **Golden hour** (the default), **Noon**, **Dusk** or **Overcast** on a "Time of day" stepper at the right of the lobby's map name; the other players see it as text. It is one of the lobby's settings (`LobbySettings::time_of_day`, sent to every player, net protocol 26), so everyone plays in the same light. Storm is left for the weather of stage 5. `--look NAME` overrides it for every match, and **F9** still steps through the five prepared looks during play. Matches outside a lobby (the sandbox, `--battle`, replays) open in golden hour.
+
+**Clarity** (Settings, Display: "Clarity: plain light, no grain"). For competitive play: no vignette, no film grain, no split toning, contrast at most 1.05 and saturation between 1 and 1.1, in every look and every land. The light itself (the sun, the shade, the air) stays, so the world still has depth; banners, team colours and fog of war read the same everywhere. It applies at once and is saved with the settings.
+
+**The tuning panel** (F10 during play), for tuning the looks by eye on a Mac. It lists sixteen knobs (the sun's height and heading in degrees, the sun's strength, sky light, exposure, contrast, saturation, vignette, film grain, air thickness, how tightly the air hugs the ground, rim light, leaf glow, cloud shadows, valley shade, and warmth) with their values now. Up and Down choose one, Left and Right move it (Shift for ten steps, as in the sandbox's tuner), Backspace puts it back (Shift+Backspace puts all back), **L** forces one land's air everywhere in turn (to see the Waste's look on any ground; the dev flag `--air waste` starts that way), and Enter writes every value to the log, with how far each was moved, ready to be copied into a look. The knobs move the finished look (after the land's air and Clarity), so the values shown are the ones on screen. The panel keeps the arrow keys while it is open.
+
+**Checked:** in the cloud's software renderer, each land's air on the same view (`screenshots/look-per-land/land-airs.png` in the project's shared folder) and Storm with and without Clarity (`clarity.png`). **Not yet:** the factions' own lands (the Brood's veins, the Choir's fields, [33](33-faction-lands.md)) do not change the air. **Not checked yet:** the looks and readability (team colours, selection rings, fog of war) under every look and land on a real screen; Mario's Mac with the tuning panel is where the numbers get settled. Cost: 81 lookups of the land grid and a few dozen multiplications a frame.
 
 ## Overlaps with other plans
 
-- **Living Land** ([27](27-living-land.md)): each land should bring its own light; the occlusion bake should run right after the generator, and grown valleys and erosion are what occlusion and height fog flatter.
+- **Living Land** ([27](27-living-land.md)): each land brings its own air (built, see above); the occlusion bake should run right after the generator, and grown valleys and erosion are what occlusion and height fog flatter.
 - **Fortifications** ([26](26-fortifications.md)) stage 7 and the battle effects need stage 3's particles.
 - **Performance** ([12](12-performance.md)): the whole of stage 1 is below 0.3 ms on an M-series Mac by estimate (not measured here: the cloud container has no real GPU); looks are tuned by eye on Mario's Mac.

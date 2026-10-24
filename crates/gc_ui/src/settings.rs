@@ -56,6 +56,9 @@ pub struct Settings {
     pub ui_scale: u16,
     pub vsync: bool,
     pub frame_cap: u16,
+    /// Plain light for competitive play: no vignette, film grain or heavy
+    /// colour grading, in any look.
+    pub clarity: bool,
     pub volume_master: u8,
     pub volume_music: u8,
     pub volume_effects: u8,
@@ -78,6 +81,7 @@ impl Default for Settings {
             ui_scale: 100,
             vsync: true,
             frame_cap: 60,
+            clarity: false,
             volume_master: 80,
             volume_music: 60,
             volume_effects: 80,

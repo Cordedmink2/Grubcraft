@@ -287,6 +287,7 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("Y", "Ride with banner"),
             ("G", "Show blocked ground"),
             ("F9", "Change the light"),
+            ("F10", "Tune the light"),
             ("L", "AI lens"),
             ("C", "Credits"),
             ("M  N", "Mute  music"),

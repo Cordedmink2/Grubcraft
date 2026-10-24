@@ -8,8 +8,8 @@ use crate::hud::{MinimapTerrain, draw_terrain};
 use crate::lobby::{
     AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAX_ARMY,
     MAX_PLAYERS, MapSize, MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile,
-    RosterUnit, SlotEdit, SlotKind, Tempo, Victory, army_points, field_map_tiles, fresh_map_seed,
-    map_code, maps_for, parse_map_code, thousands,
+    RosterUnit, SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, army_points, field_map_tiles,
+    fresh_map_seed, map_code, maps_for, parse_map_code, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -921,12 +921,35 @@ impl<N: Network> Menu<N> {
             self.draw_map_preview(ui, picture, key);
             (x, w) = (strip.x + preview_side + 16, strip.w - preview_side - 16);
             let name = settings.map_name();
-            ui.label(x, strip.y, 2, theme::INK, &fit(name, (w / 16) as usize));
+            // The time of day has the name row's right end.
+            let name_room = (w - TIME_OF_DAY_W - 16).max(0) / 16;
+            ui.label(x, strip.y, 2, theme::INK, &fit(name, name_room as usize));
             // The orange dots on the picture, said once, if there is room.
             if preview_side >= sp(88) {
                 let hint = "Orange dots are the start positions.";
                 ui.label(x, strip.y + 38, 1, theme::INK_MUTED, hint);
             }
+        }
+        // The light the match is played in: the host picks, everyone sees.
+        let time_r = Rect::new(
+            strip.right() - TIME_OF_DAY_W,
+            strip.y,
+            TIME_OF_DAY_W,
+            sp(36),
+        );
+        if lobby.is_host {
+            let names = TimeOfDay::ALL.map(TimeOfDay::name);
+            let mut at = TimeOfDay::ALL
+                .iter()
+                .position(|&t| t == settings.time_of_day)
+                .unwrap_or(0);
+            if ui.stepper(time_r, "Time of day", &mut at, &names) {
+                settings.time_of_day = TimeOfDay::ALL[at];
+                changed = true;
+            }
+        } else {
+            let text = format!("Time of day: {}", settings.time_of_day.name());
+            ui.label_centered(time_r, 1, theme::INK, &text);
         }
         let code_r = Rect::new(x, strip.bottom() - sp(36), w, sp(36));
         let text_y = code_r.y + (code_r.h - 16) / 2;
@@ -946,7 +969,13 @@ impl<N: Network> Menu<N> {
             }
             if let Some(note) = self.code_note {
                 let note_x = new_r.right() + 12;
-                let room = ((code_r.right() - note_x) / 8).max(0) as usize;
+                // On a short screen the code row is the stepper's row too.
+                let end = if time_r.bottom() > code_r.y {
+                    time_r.x - 12
+                } else {
+                    code_r.right()
+                };
+                let room = ((end - note_x) / 8).max(0) as usize;
                 ui.label(note_x, text_y, 1, theme::BAD_INK, &fit(note, room));
             }
         } else {
@@ -1494,6 +1523,11 @@ impl<N: Network> Menu<N> {
         if ui.stepper(st.next(row), "Frame cap", &mut ci, &crefs) {
             s.frame_cap = FRAME_CAPS[ci];
         }
+        ui.toggle(
+            st.next(row),
+            "Clarity: plain light, no grain",
+            &mut s.clarity,
+        );
 
         // Right column: audio and accessibility.
         let mut st = Stack {
@@ -1532,14 +1566,14 @@ impl<N: Network> Menu<N> {
             note_y,
             1,
             theme::INK_MUTED,
-            "Name, colour, faction, UI scale and the Master and Music volume work now. The",
+            "Name, colour, faction, UI scale, Clarity, and Master and Music volume work now.",
         );
         ui.label(
             panel.x + 24,
             note_y + 18,
             1,
             theme::INK_MUTED,
-            "other audio, graphics and accessibility choices are saved and take effect later.",
+            "The other audio, graphics and accessibility choices are saved for later.",
         );
         let back = Rect::new(panel.x + 24, panel.bottom() - 52, 140, 44);
         let done = ui.button(back, "Back", ButtonStyle::Primary, true);
@@ -1559,6 +1593,9 @@ impl<N: Network> Menu<N> {
         action
     }
 }
+
+/// Width of the lobby's "Time of day" stepper.
+const TIME_OF_DAY_W: i32 = 264;
 
 /// How tall the lobby's player rows are and how big the map picture is
 /// (its side in pixels, 0 for none), on a screen `screen_h` tall at scale
@@ -1942,6 +1979,11 @@ mod tests {
         assert!(h.has("Veteran"));
         h.click("Veteran");
         assert!(h.has("General"));
+        // The host picks the light: golden hour, then on to the next.
+        let light = |h: &Harness| h.menu.net.lobby().unwrap().settings.time_of_day;
+        assert_eq!(light(&h), TimeOfDay::GoldenHour);
+        h.click("Golden hour");
+        assert_eq!(light(&h), TimeOfDay::Noon);
         // Champions are allowed unless the host says otherwise.
         let champions = |h: &Harness| h.menu.net.lobby().unwrap().settings.champions;
         assert!(champions(&h));
@@ -1960,6 +2002,7 @@ mod tests {
                 assert_eq!(m.local_player, 0);
                 assert_eq!(AI_LEVELS[m.players[1].ai_level as usize], "General");
                 assert!(!m.settings.champions);
+                assert_eq!(m.settings.time_of_day, TimeOfDay::Noon);
             }
             other => panic!("expected StartMatch, got {other:?}"),
         }
@@ -2199,10 +2242,14 @@ mod tests {
         assert!(h.menu.settings().ui_scale != 100);
         h.click("Larger text");
         assert!(h.menu.settings().larger_text);
+        // Clarity is off until asked for, and is saved too.
+        assert!(!h.menu.settings().clarity);
+        h.click("Clarity: plain light, no grain");
+        assert!(h.menu.settings().clarity);
         h.click("Back");
         assert_eq!(h.menu.screen(), Screen::Main);
         let saved = Settings::load(&path);
-        assert!(saved.larger_text);
+        assert!(saved.larger_text && saved.clarity);
         assert_eq!(saved.ui_scale, h.menu.settings().ui_scale);
         let _ = std::fs::remove_dir_all(dir);
     }

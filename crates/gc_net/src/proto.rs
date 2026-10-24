@@ -8,14 +8,14 @@
 use gc_sim::PlayerCommand;
 use gc_ui::lobby::{
     Budget, Faction, GameMode, LobbySettings, MAX_ARMY, MAX_PLAYERS, MapSize, OnDrop, Slot,
-    SlotEdit, SlotKind, Tempo, Victory, maps_for,
+    SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, maps_for,
 };
 
 use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 25;
+pub const PROTOCOL: u8 = 26;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -240,6 +240,10 @@ fn write_settings(w: &mut Writer, s: &LobbySettings) {
         .iter()
         .position(|&z| z == s.map_size)
         .unwrap_or(0) as u8);
+    w.u8(TimeOfDay::ALL
+        .iter()
+        .position(|&t| t == s.time_of_day)
+        .unwrap_or(0) as u8);
 }
 
 fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
@@ -253,6 +257,7 @@ fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
         champions: r.bool()?,
         victory: *Victory::ALL.get(r.u8()? as usize)?,
         map_size: *MapSize::ALL.get(r.u8()? as usize)?,
+        time_of_day: *TimeOfDay::ALL.get(r.u8()? as usize)?,
     })
 }
 
@@ -713,12 +718,33 @@ mod tests {
             };
             let mut w = Writer::new();
             write_settings(&mut w, &settings);
-            // The victory is the last byte; a stranger's is refused.
+            // The victory comes before the map size and the light; a
+            // stranger's is refused.
             let mut r = Reader::new(&w.buf);
             assert_eq!(read_settings(&mut r), Some(settings));
             assert!(r.is_empty());
             let mut bad = w.buf.clone();
-            *bad.last_mut().unwrap() = Victory::ALL.len() as u8;
+            let at = bad.len() - 3;
+            bad[at] = Victory::ALL.len() as u8;
+            assert_eq!(read_settings(&mut Reader::new(&bad)), None);
+        }
+    }
+
+    #[test]
+    fn the_settings_carry_the_time_of_day() {
+        for time_of_day in TimeOfDay::ALL {
+            let settings = LobbySettings {
+                time_of_day,
+                ..LobbySettings::default()
+            };
+            let mut w = Writer::new();
+            write_settings(&mut w, &settings);
+            let mut r = Reader::new(&w.buf);
+            assert_eq!(read_settings(&mut r), Some(settings));
+            assert!(r.is_empty());
+            // The light is the last byte; a stranger's is refused.
+            let mut bad = w.buf.clone();
+            *bad.last_mut().unwrap() = TimeOfDay::ALL.len() as u8;
             assert_eq!(read_settings(&mut Reader::new(&bad)), None);
         }
     }

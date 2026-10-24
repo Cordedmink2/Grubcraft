@@ -58,7 +58,7 @@ A wave starts when the work it waits on has merged, not on a date. At most seven
 |---|---|
 | T1 Pathfinding overhaul | Routes that match building footprints and terrain exactly, find clear gaps between buildings and replan fast; the open nav follow-ups (sector heuristic near walls, `Grid::number_areas`, local portal updates). It must also win back route-search headroom under the 2 ms p99 budget, because gates (T6 stage 2) spend it |
 | T2 Living Land maps | Stage 1, grown land, with the old Wilds kept as Classic and a 768 map built in under 3 seconds |
-| T3 Cinematic lighting | Stage 1, Light and Air, plus camera tilt, backlit foliage and film grain, starting from the prototype in `design/cinematic/` (built 2026-10-23, see [30](30-cinematic-lighting.md); the looks per land, lobby Time of day and tuning panel follow) |
+| T3 Cinematic lighting | Stage 1, Light and Air, plus camera tilt, backlit foliage and film grain, starting from the prototype in `design/cinematic/` (built 2026-10-23, see [30](30-cinematic-lighting.md); the looks per land, lobby Time of day, Clarity and tuning panel followed on 2026-10-24) |
 | T4 Every soldier fights | Stage 1, the scrum, plus per-soldier tint and animation phase variation |
 | T6 Fortifications and bases | Stage 1, towers fire |
 | T10 Battle soundscape | Positional sound and ambient beds per land |
