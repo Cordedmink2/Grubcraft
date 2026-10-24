@@ -129,7 +129,7 @@ pub struct Wildlife {
 }
 
 /// A number from 0 to 1 that stays the same for a cell and a `salt`.
-fn hash(cell: (i32, i32), salt: u32) -> f32 {
+pub(super) fn hash(cell: (i32, i32), salt: u32) -> f32 {
     let mut x = (cell.0 as u32)
         .wrapping_mul(0x9e37_79b1)
         .wrapping_add((cell.1 as u32).wrapping_mul(0x85eb_ca6b))
@@ -163,7 +163,7 @@ fn suits(h: Habitat) -> bool {
 
 /// Whether deer live at `p`: by the habitat of a grown map, else by the
 /// land of a painted one (a map with neither is open meadow).
-fn suits_at(map: &Map, p: Vec2) -> bool {
+pub(super) fn suits_at(map: &Map, p: Vec2) -> bool {
     let tiles = map.tiles as i32;
     let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
     if !(0..tiles).contains(&x) || !(0..tiles).contains(&y) {
@@ -178,7 +178,7 @@ fn suits_at(map: &Map, p: Vec2) -> bool {
 }
 
 /// Whether a deer may stand at `p`: on the map, on dry ground.
-fn open(map: &Map, p: Vec2) -> bool {
+pub(super) fn open(map: &Map, p: Vec2) -> bool {
     let edge = 1.0;
     let side = map.tiles as f32 - edge;
     p.x > edge
@@ -194,7 +194,7 @@ fn passable(map: &Map, a: Vec2, b: Vec2) -> bool {
     open(map, b) && (map.height_at(b.x, b.y) - map.height_at(a.x, a.y)).abs() <= STEEPEST
 }
 
-fn turn_toward(from: Vec2, to: Vec2, most: f32) -> Vec2 {
+pub(super) fn turn_toward(from: Vec2, to: Vec2, most: f32) -> Vec2 {
     if to.length_squared() < 1e-6 {
         return from;
     }

@@ -5,6 +5,7 @@
 //! so it may use floats, frame time and its own random numbers.
 
 pub mod bases;
+pub mod birds;
 pub mod felling;
 pub mod piles;
 pub mod touches;
@@ -13,6 +14,7 @@ pub mod wildlife;
 
 use glam::Vec2;
 
+pub use birds::Birds;
 pub use felling::{Felling, Style};
 pub use touches::Touches;
 pub use walkers::Walkers;
@@ -27,6 +29,7 @@ pub struct Ambient {
     pub touches: Touches,
     pub walkers: Walkers,
     pub wildlife: Wildlife,
+    pub birds: Birds,
     /// Seconds until `--fell-demo` fells the trees round the camera.
     fell_demo: Option<f32>,
 }
@@ -45,6 +48,7 @@ impl Ambient {
             touches: Touches::default(),
             walkers: Walkers::default(),
             wildlife: Wildlife::default(),
+            birds: Birds::default(),
             fell_demo: fell_demo.then_some(FELL_DEMO_AFTER),
         }
     }

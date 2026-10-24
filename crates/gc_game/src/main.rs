@@ -947,6 +947,8 @@ struct Art {
     heights: Vec<f32>,
     /// The deer of the ambient wildlife, if the pack has it.
     deer: Option<usize>,
+    /// The dove of the ambient birds, if the pack has it.
+    dove: Option<usize>,
     /// This frame's camera, for choosing levels of detail.
     view: LodView,
     /// Instances per model and level of detail (model * LODS + lod).
@@ -1387,6 +1389,7 @@ impl App {
             looks: buildings::Looks::new(&buildings::Table::new(&game_data), &models),
             heights: models.models.iter().map(|m| m.height).collect(),
             deer: models.by_name("Deer"),
+            dove: models.by_name("Dove"),
             view: LodView {
                 eye: glam::Vec3::ZERO,
                 forward: glam::Vec3::NEG_Z,
@@ -3783,10 +3786,13 @@ impl Running {
             let showing = !self.menu_open
                 && self.viewer.is_none()
                 && !self.commander
-                && self.art.as_ref().is_some_and(|a| a.deer.is_some());
+                && self
+                    .art
+                    .as_ref()
+                    .is_some_and(|a| a.deer.is_some() || a.dove.is_some());
             if showing {
-                // Deer stand on ground no building or tree covers, keep away
-                // from buildings, and bolt from the soldiers the viewer sees
+                // Deer and doves stand on ground no building or tree covers, keep away
+                // from buildings, and bolt or fly from the soldiers the viewer sees
                 // (so unseen armies give nothing away).
                 let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
                 let threats: Vec<Vec2> = world
@@ -3805,28 +3811,41 @@ impl Running {
                     .map(|s| buildings::centre_of(s.tile, s.width, s.depth))
                     .filter(|c| c.distance(view_focus) <= reach)
                     .collect();
+                let step = if live {
+                    dt.as_secs_f32() * fx_speed
+                } else {
+                    0.0
+                };
+                let clear = |p: Vec2| {
+                    let tile = (p.x.floor() as i32, p.y.floor() as i32);
+                    !scenery.occupied_at(tile) && !scenery.standing(tile).any(|s| s.tree)
+                };
+                let tame = |p: Vec2| {
+                    towns
+                        .iter()
+                        .any(|c| c.distance(p) < ambient::wildlife::TAME)
+                };
                 self.ambient.wildlife.advance(
-                    if live {
-                        dt.as_secs_f32() * fx_speed
-                    } else {
-                        0.0
-                    },
+                    step,
                     view_focus,
                     view_distance,
                     heightmap,
-                    |p| {
-                        let tile = (p.x.floor() as i32, p.y.floor() as i32);
-                        !scenery.occupied_at(tile) && !scenery.standing(tile).any(|s| s.tree)
-                    },
-                    |p| {
-                        towns
-                            .iter()
-                            .any(|c| c.distance(p) < ambient::wildlife::TAME)
-                    },
+                    clear,
+                    tame,
+                    &threats,
+                );
+                self.ambient.birds.advance(
+                    step,
+                    view_focus,
+                    view_distance,
+                    heightmap,
+                    clear,
+                    tame,
                     &threats,
                 );
             } else {
                 self.ambient.wildlife.hush();
+                self.ambient.birds.hush();
             }
         }
         // Rain and snow, the one weather clearing and the one coming in;
@@ -4782,6 +4801,7 @@ impl Running {
         self.aftermath.clear();
         self.ambient.walkers.clear();
         self.ambient.wildlife.clear();
+        self.ambient.birds.clear();
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
@@ -6536,6 +6556,38 @@ impl Running {
                     flags: models::pose_flags(pose, 0, false),
                     color: [255, 255, 255, gc_render::TONE_NEUTRAL],
                     lift: 0.0,
+                    scale: d.scale,
+                    ..Default::default()
+                });
+            }
+        }
+        if let Some(dove) = art.dove {
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            for d in self.ambient.birds.seen() {
+                let tile = (d.pos.x.floor() as i32, d.pos.y.floor() as i32);
+                if !(reveal || fog.sees_tile(tile)) {
+                    continue;
+                }
+                let base = ground(d.pos.x, d.pos.y);
+                let foot = Vec3::new(d.pos.x, base + d.alt, d.pos.y);
+                let Some(lod) = art.view.place(art.heights[dove] * d.scale, foot) else {
+                    continue;
+                };
+                let (action, rate) = match d.doing {
+                    ambient::birds::Doing::Stand => (Action::Idle, 1.0),
+                    ambient::birds::Doing::Strut => (Action::Walk, 1.0),
+                    ambient::birds::Doing::Fly => (Action::Cheer, ambient::birds::FLAP_RATE),
+                };
+                let Some(pose) = art.clips.pose(dove, action, (time + d.phase * 4.0) * rate) else {
+                    continue;
+                };
+                art.buckets[dove * LODS + lod].push(SoldierInstance {
+                    pos: d.pos.to_array(),
+                    facing: d.facing.to_array(),
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [255, 255, 255, gc_render::TONE_NEUTRAL],
+                    lift: d.alt,
                     scale: d.scale,
                     ..Default::default()
                 });

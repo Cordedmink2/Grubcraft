@@ -5,7 +5,7 @@
 // name like any model; no unit in data/ uses them, so they are only ever drawn by gc_game::ambient.
 // Each is built from code in Blender (design/creatures/source/: `crit.py` is the kit) with its own small rig,
 // painted in vertex colours that are baked to the albedo map. Clips: Idle, Walk, Run, and Cheer, which
-// plays a grazer's head-down feeding. Faces +z, stands on the ground at the origin, `height` is the head's top.
+// plays a deer's head-down feeding and a dove's flapping flight. Faces +z, stands on the ground at the origin, `height` is the head's top.
 (
     models: [
         (
@@ -16,6 +16,16 @@
             lod_triangles: (3000, 1400, 600, 220),
             textures: Some((
                 albedo: "shared:grubcraft/creatures/deer/albedo.png",
+            )),
+        ),
+        (
+            name: "Dove",
+            source: "shared:grubcraft/creatures/dove/dove.glb",
+            height: 0.4,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Cheer": "Cheer" },
+            lod_triangles: (1100, 600, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/dove/albedo.png",
             )),
         ),
     ],

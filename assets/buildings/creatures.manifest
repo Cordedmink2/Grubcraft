@@ -5,8 +5,10 @@
 manifest = 1
 baker = gc_artbake 2
 schema = 4
-config = 726c097dbf9dc4a895aea322ccdd2d4b
-pack = 7785f30bb45bc95ade16d1211970eb09
-pack_bytes = 1126784
+config = 2304229233afd8edb313f951da4d1d19
+pack = bdaa70b3318af0139e072c21131b2000
+pack_bytes = 2225904
 source shared:grubcraft/creatures/deer/deer.glb = ecb14b2fc34d2e9df009c34d16eb2c5f not in the repo
 source shared:grubcraft/creatures/deer/albedo.png = 53c8b9e59215ab8385eaa71c4130b79a not in the repo
+source shared:grubcraft/creatures/dove/dove.glb = 1c81bebe2b2a84d26b512ed08e811f56 not in the repo
+source shared:grubcraft/creatures/dove/albedo.png = d5da9e814ca36cfc5c38c006511fb5a0 not in the repo

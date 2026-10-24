@@ -22,7 +22,7 @@ Mario wants a world that looks lived in: a base where people are doing things, l
 | 1 | **Clearing land on screen** (idea 22). Workers swing at the tile they clear, throwing chips or leaves. When the tile is cleared its trees tip over away from the cutter, dust and leaves fly where the crown lands, the trunks lie a while and are hauled off, and bushes are torn up. | Particles (done), scenery lean (this stage) |
 | 2 | **Living touches without models** (built, except mist). Fireflies at dusk over fens and wet woods, pollen in meadows, dust devils in the waste, leaves falling in old woods. Mist pooling on low ground is left to the weather stage of the lighting thread. Particle recipes on a habitat sample of the ground round the camera, as the sound beds do ([09](09-art-and-audio.md)). | Particles, `Map.habitat` (done), lighting looks (done) |
 | 3 | **Busy bases** (idea 10; hearth smoke, lit windows and faction glows built as 3a, walkers between buildings as 3b, log piles beside halls as 3d, the rest not yet). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles beside the halls, stacked supplies, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
-| 4 | **Wildlife** (idea 3; deer built as 4a, the rest not yet). Flocks that lift from woods when an army marches by and settle again, carrion birds over a battlefield's dead, moths round Grub seeps, butterflies in flower meadows, grazers that bolt from soldiers, fish rises and dragonflies over water. Each land has its own fauna. Creatures are a picture: soldiers walk through them. | Animal models and clips on the animation engine (T5) |
+| 4 | **Wildlife** (idea 3; deer built as 4a and doves as 4b, the rest not yet). Flocks that lift from woods when an army marches by and settle again, carrion birds over a battlefield's dead, moths round Grub seeps, butterflies in flower meadows, grazers that bolt from soldiers, fish rises and dragonflies over water. Each land has its own fauna. Creatures are a picture: soldiers walk through them. | Animal models and clips on the animation engine (T5) |
 | 5 | **Villagers** (idea 3). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
 
 Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model format, so the animal models are baked once.
@@ -178,4 +178,25 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Birds (flocks lifting when an army marches by, carrion birds over the dead), butterflies and moths, fish rises and dragonflies, the other lands' fauna, hunted deer leaving a carcass, and herds that react to fights rather than to soldiers alone.
+- Carrion birds over the dead (T7's crows are still boxes), butterflies and moths, fish rises and dragonflies, the other lands' fauna, hunted deer leaving a carcass, and herds that react to fights rather than to soldiers alone.
+
+## Stage 4b as built: doves
+
+*2026-10-24. Game and creature pack only; nothing in the simulation. The second creature, made with the same kit as the deer.*
+
+### What a player sees
+
+- Flocks of four to nine doves feed on open ground near the camera (meadow, forest, highland and valley, as the deer do): they stand, turn their heads and strut a few steps. They are bigger than real doves so that a flock reads from the game's camera.
+- When a soldier the viewer sees comes within 13 tiles of a flock it bursts into the air, every bird flapping and climbing away from the soldier on its own heading, with its shadow running over the ground. It keeps flying until every bird is out of the camera's reach (twenty seconds at most) and is then gone.
+- A flock stays gone at least 20 to 35 seconds, and longer while any soldier is within 28 tiles of its feeding ground. Then it flies back in from beyond the camera's reach on a random side, high up, sinks as it nears the ground and lands where it fed. A soldier coming within 13 tiles of it as it comes in puts it into the air again, from where it is. A flock made while soldiers are within 28 tiles of its feeding ground starts out gone.
+- No flock's feeding ground is within 14 tiles of a building's middle (birds stray a few tiles from it), and none feed on tiles with trees or buildings, or on wet ground. Not drawn in the Commander View, behind a menu or in the unit viewer, and a paused game freezes them.
+
+### How it works
+
+- `gc_game::ambient::birds::Birds` keeps flocks by the deer's 20 by 20 tile cell with its own hash salts (three in ten cells where the land suits), made and forgotten by the same reach measure (`wildlife::reach`), so a place keeps its flocks and a zoomed-out camera does not rebuild them. Each flock is in one mood: feeding, fleeing, gone or landing. Floats on the effects clock, own random generator, nothing hashed, saved or sent.
+- The `Dove` model (`design/creatures/source/dove.py`, on the `crit.py` kit: a plump grey dove with a green-grey neck, 11 bones, wings of two bones each as one flat ribbon) joins `Deer` in `assets/buildings/creatures.pak` (now 2.1 MB). Clips: Idle, Walk (the strut), Run (not used yet), and Cheer, which is the flap. It is drawn as a soldier instance whose `lift` is the bird's height above the ground, with the flap played 1.7 times faster than keyed; the shadow pass draws it too.
+- The threat list, the building filter and the clear-ground test are the deer's, computed once a frame in `main.rs` for both.
+
+### Not yet
+
+- Gliding, soaring in circles, perching in trees or on roofs, birds that wheel over a battle, and other lands' birds (a crow and a vulture on the same kit would also replace the aftermath's box crows).
