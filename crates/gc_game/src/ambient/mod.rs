@@ -11,7 +11,7 @@ pub mod walkers;
 
 use glam::Vec2;
 
-pub use felling::Felling;
+pub use felling::{Felling, Style};
 pub use touches::Touches;
 pub use walkers::Walkers;
 
@@ -76,10 +76,19 @@ impl Ambient {
         let tiles =
             (-reach..=reach).flat_map(|dy| (-reach..=reach).map(move |dx| (cx + dx, cy + dy)));
         for tile in tiles {
-            // The demo's cutter stands south of the wood.
-            self.felling.cutting(tile, *focus + Vec2::new(0.0, 9.0));
+            // The demo's cutter stands south of the wood; each corner of the
+            // wood is cleared a faction's way: fell, burn, shatter, gnaw.
+            let style = match (tile.0 >= cx, tile.1 >= cy) {
+                (false, false) => Style::Fell,
+                (true, false) => Style::Burn,
+                (false, true) => Style::Shatter,
+                (true, true) => Style::Gnaw,
+            };
+            self.felling
+                .cutting(tile, *focus + Vec2::new(0.0, 9.0), style);
             let tall = |s: &Stood| scenery.height_of(s.model);
-            self.felling.clear(tile, scenery.standing(tile), tall);
+            self.felling
+                .clear(tile, style == Style::Burn, scenery.standing(tile), tall);
             scenery.fell(std::iter::once(tile));
         }
     }

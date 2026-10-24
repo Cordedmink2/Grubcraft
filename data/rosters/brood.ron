@@ -187,6 +187,18 @@
             flags: [Line, Grown],
             effect: "A ridge of resin the Hive grows along its root-veins, every tile at once, with no Gnawer. Heals on the veins and withers off them.",
         ),
+        (
+            name: "Maw Gate",
+            role: Wall,
+            tier: 1,
+            cost: (grub: 55, marrow: 0),
+            build_time: 20.0,
+            hp: 900,
+            armour: Living,
+            footprint: (1, 3),
+            flags: [Gate],
+            effect: "Chitin jaws that part for your own and allied regiments. Put it on your Resin Ridge and it replaces that stretch.",
+        ),
     ],
     units: [
         (

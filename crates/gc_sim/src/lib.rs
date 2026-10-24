@@ -109,7 +109,7 @@ pub const SYSTEMS: [&str; 14] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 35;
+pub const SIM_VERSION: u32 = 36;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -1134,6 +1134,7 @@ impl World {
         turn: u8,
     ) -> Result<(), Refusal> {
         self.conquest.as_ref().ok_or(Refusal::NoBuildings)?.check(
+            &[],
             building,
             tile,
             turn,
@@ -1627,6 +1628,7 @@ impl World {
                 if usize::from(pc.player) >= MAX_PARTIES
                     || conquest
                         .check(
+                            &[],
                             building,
                             tile,
                             turn,

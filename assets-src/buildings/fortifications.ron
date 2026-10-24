@@ -1,0 +1,134 @@
+// Fortification gates for the Carrion Concord and the Brood (Iron Gate, Maw Gate), baked into
+// assets/buildings/fortifications.pak by tools/gc_artbake
+// (`cargo run -p gc_artbake --release -- --config assets-src/buildings/fortifications.ron --out assets/buildings/fortifications.pak`).
+// Each gate has four models: its construction stages `#1` (foundation), `#2` (frame) and `#3`
+// (nearly done), then the finished gate under its own name, exactly as in data/rosters.
+// All four share one texture set (one material) and keep their authored positions in tiles
+// (`keep_origin`), with the origin at the middle of the 1x3 footprint on the ground and the door
+// facing +z. Sizes and look match the Ember Gate. Sources and scripts: the project's design/buildings/
+// folder (docs/21-buildings.md); the Iron Gate is buildings/concord/iron_gate.py and the Maw Gate is
+// buildings/brood/maw_gate.py. More faction fortifications (walls, towers) join this pack later.
+(
+    models: [
+        (
+            name: "Iron Gate #1",
+            source: "shared:grubcraft/buildings/concord/iron-gate/stage1.glb",
+            height: 2.25,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/iron-gate/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/iron-gate/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/iron-gate/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/iron-gate/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/iron-gate/emissive.png"),
+            )),
+        ),
+        (
+            name: "Iron Gate #2",
+            source: "shared:grubcraft/buildings/concord/iron-gate/stage2.glb",
+            height: 2.25,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/iron-gate/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/iron-gate/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/iron-gate/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/iron-gate/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/iron-gate/emissive.png"),
+            )),
+        ),
+        (
+            name: "Iron Gate #3",
+            source: "shared:grubcraft/buildings/concord/iron-gate/stage3.glb",
+            height: 2.25,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/iron-gate/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/iron-gate/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/iron-gate/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/iron-gate/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/iron-gate/emissive.png"),
+            )),
+        ),
+        (
+            name: "Iron Gate",
+            source: "shared:grubcraft/buildings/concord/iron-gate/final.glb",
+            height: 2.25,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/iron-gate/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/iron-gate/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/iron-gate/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/iron-gate/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/iron-gate/emissive.png"),
+            )),
+        ),
+        (
+            name: "Maw Gate #1",
+            source: "shared:grubcraft/buildings/brood/maw-gate/stage1.glb",
+            height: 2.25,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/maw-gate/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/maw-gate/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/maw-gate/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/maw-gate/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/maw-gate/emissive.png"),
+            )),
+        ),
+        (
+            name: "Maw Gate #2",
+            source: "shared:grubcraft/buildings/brood/maw-gate/stage2.glb",
+            height: 2.25,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/maw-gate/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/maw-gate/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/maw-gate/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/maw-gate/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/maw-gate/emissive.png"),
+            )),
+        ),
+        (
+            name: "Maw Gate #3",
+            source: "shared:grubcraft/buildings/brood/maw-gate/stage3.glb",
+            height: 2.25,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/maw-gate/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/maw-gate/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/maw-gate/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/maw-gate/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/maw-gate/emissive.png"),
+            )),
+        ),
+        (
+            name: "Maw Gate",
+            source: "shared:grubcraft/buildings/brood/maw-gate/final.glb",
+            height: 2.25,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/maw-gate/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/maw-gate/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/maw-gate/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/maw-gate/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/maw-gate/emissive.png"),
+            )),
+        ),
+    ],
+)

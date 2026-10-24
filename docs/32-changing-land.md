@@ -41,7 +41,7 @@ Mario chose all four as proposed (2026-10-24). **Built (2026-10-24):** each Conq
 | **Choir** | shatter it with resonance: thicket as fast as woods, no timber | 100, 100, 53 | 0, 0, 0 |
 | **Brood** | Gnawers eat it: slower, but even scrub feeds them | 150, 150, 150 | 1, 3, 5 |
 
-Burning is a look only, reported on the event so the ground is drawn scorched ([35](35-ground-marks.md): char with ash drifts, and the stumps of burnt trees charred). It lives only in the event, so a scorched look that must survive a replay seek or a rejoin will need it kept on the terrain too. The style is hashed with each Conquest unit and stored in replays from `FORMAT` 30 (older files read the standard style). `SIM_VERSION` 31.
+Burning is a look only, reported on the event so the ground is drawn scorched ([35](35-ground-marks.md): char with ash drifts, and the stumps of burnt trees charred). It lives only in the event, so a scorched look that must survive a replay seek or a rejoin will need it kept on the terrain too. The style is hashed with each Conquest unit and stored in replays from `FORMAT` 30 (older files read the standard style). `SIM_VERSION` 31. The pictures of the four ways of clearing (workers' fire, charring trees, shattering crystal, gnawed trees) are built: [34 · Faction clearing pictures](34-ambient-life.md#faction-clearing-pictures); the tipping, lying and hauling described above is the Ember Clans' (and the standard) way.
 
 ### Computer players
 
@@ -67,7 +67,7 @@ The footing layer is stored in replays from `FORMAT` 33 (older files read firm g
 
 *The simulation owns the sky's state and what it does in play; the cinematic lighting thread (T3, [30](30-cinematic-lighting.md)) owns every picture of it, the sun's direction included.*
 
-**Built (2026-10-24), stage 1:** the sky's state, where it comes from, and its effect on sight, range and the march. `SIM_VERSION` 35, replay `FORMAT` 34 (stores the sky; older files read a fair afternoon whose clock stands still), net `PROTOCOL` 28 (the lobby's weather).
+**Built (2026-10-24), stage 1:** the sky's state, where it comes from, and its effect on sight, range and the march. `SIM_VERSION` 36, replay `FORMAT` 34 (stores the sky; older files read a fair afternoon whose clock stands still), net `PROTOCOL` 28 (the lobby's weather).
 
 ### The shared state
 

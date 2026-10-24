@@ -115,6 +115,16 @@
                 (icon: Alarm, text: "Cut the veins under an enemy ridge and it withers away on its own."),
             ],
         ),
+        (
+            name: "Maw Gate",
+            summary: "A gate in your Resin Ridge: your side walks through and enemies don't. A Gnawer is used up growing it, as for any Brood building. Select it to set Auto (opens as your regiments march up, shuts 2 s after), Locked (shut to everyone) or Open (anyone can pass).",
+            notes: [],
+            tips: [
+                (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it against an attack; open it for a sally."),
+                (icon: Hammer, text: "Place it on your own Resin Ridge and it replaces that stretch: R turns it to run along the wall."),
+                (icon: Alarm, text: "Open lets enemies in too, and on Auto troops in the gateway hold it open: lock it under attack."),
+            ],
+        ),
     ],
     units: [
         (

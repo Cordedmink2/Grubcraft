@@ -275,7 +275,7 @@
             armour: Fortified,
             footprint: (1, 3),
             flags: [Gate],
-            effect: "A wall segment that opens for your own and allied regiments.",
+            effect: "A wall segment that opens for your own and allied regiments. Put it on your Palisade and it replaces that stretch.",
         ),
     ],
     units: [

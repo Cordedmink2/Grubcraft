@@ -163,8 +163,8 @@
             notes: [],
             tips: [
                 (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it against an attack; open it for a sally."),
-                (icon: Move, text: "An open gate lets enemies through too, so a rout back through it can carry the chasers in."),
-                (icon: Alarm, text: "Lock it under attack: on Auto, your troops standing in the gateway hold it open to enemies too."),
+                (icon: Hammer, text: "Place it on your own Palisade and it replaces that stretch: R turns it to run along the wall."),
+                (icon: Alarm, text: "Open lets enemies in too, and on Auto troops in the gateway hold it open: lock it under attack."),
             ],
         ),
     ],

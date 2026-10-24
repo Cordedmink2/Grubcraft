@@ -1090,8 +1090,9 @@ impl Structures {
     /// tile at `tile`, turned `turn` quarter turns: on the map, on ground
     /// regiments can walk, clear of other buildings (see `Nav::footing`),
     /// and with no regiment standing on it or node (`nodes`) within it.
-    /// Tiles `thicket` names may be thicket: it is cleared first
-    /// (docs/32-changing-land.md).
+    /// `spare` counts what stands on a tile that will be gone first:
+    /// thicket, cleared first (docs/32-changing-land.md), and the wall tiles
+    /// a gate replaces.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn check(
         &self,
@@ -1101,7 +1102,7 @@ impl Structures {
         nav: &Nav,
         regs: &Regiments,
         nodes: &[FxVec2],
-        thicket: impl Fn(i32, i32) -> bool,
+        spare: impl Fn(i32, i32) -> u8,
     ) -> Result<(), Refusal> {
         let b = self
             .buildings
@@ -1111,7 +1112,7 @@ impl Structures {
             return Err(Refusal::Unknown);
         }
         let foot @ [_, _, w, d] = b.footprint(tile, turn);
-        nav.footing(foot, thicket)?;
+        nav.footing(foot, spare)?;
         // No regiment's centre on ground it couldn't stand on once the
         // building is up.
         let margin = Fx::from_ratio(i32::from(CLEARANCE), CELLS_PER_TILE);
@@ -1256,14 +1257,35 @@ impl Structures {
     /// match), freeing their ground together: much cheaper than one by one.
     pub(crate) fn despawn_all(&mut self, all: &[StructureHandle], nav: &mut Nav, regs: &Regiments) {
         let slots: Vec<usize> = all.iter().filter_map(|&h| self.resolve(h)).collect();
-        for &i in &slots {
+        self.take_off(&slots, false, nav, regs);
+    }
+
+    /// [`Structures::remove`] for every slot in `slots` at once (the wall
+    /// tiles a gate replaces), freeing their ground together.
+    pub(crate) fn remove_all(&mut self, slots: &[usize], nav: &mut Nav, regs: &Regiments) {
+        self.take_off(slots, true, nav, regs);
+    }
+
+    /// Free every slot in `slots`, their ground together; with `hand_on`,
+    /// builders on their way to an unfinished wall tile among them go on
+    /// to the next (see [`Structures::hand_on_wall`]).
+    fn take_off(&mut self, slots: &[usize], hand_on: bool, nav: &mut Nav, regs: &Regiments) {
+        if slots.is_empty() {
+            return;
+        }
+        for &i in slots {
             self.shut_door(i, nav, regs);
         }
         let feet: Vec<[i32; 4]> = slots.iter().map(|&i| self.footprint(i)).collect();
-        nav.set_built_all(&feet, false, regs);
-        for i in slots {
+        // One by one, so a builder handed on to another of them is handed
+        // on again.
+        for &i in slots {
+            if hand_on {
+                self.hand_on_wall(i, regs);
+            }
             self.free_slot(i);
         }
+        nav.set_built_all(&feet, false, regs);
     }
 
     /// Free building slot `i` (standing, or just brought to nothing).
