@@ -6919,8 +6919,7 @@ fn preset_of(time_of_day: gc_ui::lobby::TimeOfDay) -> gc_render::LookPreset {
         TimeOfDay::Noon => gc_render::LookPreset::Noon,
         TimeOfDay::Dusk => gc_render::LookPreset::Dusk,
         TimeOfDay::Overcast => gc_render::LookPreset::Overcast,
-        // Until the lighting's night look lands.
-        TimeOfDay::Night => gc_render::LookPreset::Dusk,
+        TimeOfDay::Night => gc_render::LookPreset::Night,
     }
 }
 
