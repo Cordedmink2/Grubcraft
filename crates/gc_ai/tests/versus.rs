@@ -81,6 +81,7 @@ fn field(seed: u64) -> (World, Terrain, PlayerId) {
         ground: gc_sim::Ground::FLAT,
         champions: false,
         sky: gc_sim::Sky::STILL,
+        generals: true,
     });
     let terrain = Terrain::open(MAP);
     let apart = 70.0 + rng.below(31) as f32;

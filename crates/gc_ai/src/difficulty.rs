@@ -85,7 +85,7 @@ impl Difficulty {
                 rehearse: false,
             },
             Difficulty::General => Knobs {
-                reaction_ticks: 16,
+                reaction_ticks: 12,
                 orders_per_minute: 90,
                 think_ticks: 4,
                 doctrines: &Doctrine::ALL,

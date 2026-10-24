@@ -67,7 +67,7 @@ The footing layer is stored in replays from `FORMAT` 33 (older files read firm g
 
 *The simulation owns the sky's state and what it does in play; the cinematic lighting thread (T3, [30](30-cinematic-lighting.md)) owns every picture of it, the sun's direction included.*
 
-**Built (2026-10-24), stage 1:** the sky's state, where it comes from, and its effect on sight, range and the march. `SIM_VERSION` 36, replay `FORMAT` 34 (stores the sky; older files read a fair afternoon whose clock stands still), net `PROTOCOL` 28 (the lobby's weather).
+**Built (2026-10-24), stage 1:** the sky's state, where it comes from, and its effect on sight, range and the march. `SIM_VERSION` 37, replay `FORMAT` 35 (stores the sky; older files read a fair afternoon whose clock stands still), net `PROTOCOL` 28 (the lobby's weather).
 
 ### The shared state
 

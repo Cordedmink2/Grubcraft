@@ -114,6 +114,7 @@ impl Soak {
             ground: map.ground(),
             champions: false,
             sky: gc_sim::Sky::STILL,
+            generals: true,
         };
         // Annihilation only, so the fog is on but nobody wins by holding
         // the Heart and the hour plays out.

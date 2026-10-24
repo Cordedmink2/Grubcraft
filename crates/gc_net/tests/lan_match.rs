@@ -105,6 +105,7 @@ const SETUP: MatchSetup = MatchSetup {
     ground: gc_sim::Ground::FLAT,
     champions: false,
     sky: gc_sim::Sky::STILL,
+    generals: true,
 };
 
 /// `n` machines' worlds, each recorded the way the game records a match.

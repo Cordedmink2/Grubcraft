@@ -144,6 +144,8 @@ catalogue! {
     MarrowVein "marrow-vein" Rock 1 true NONE,
     StumpBroad "stump-broad" Rock 1 true BROADLEAF,
     StumpConifer "stump-conifer" Rock 1 true CONIFER,
+    LogPile "log-pile" Rock 1 true NONE,
+    LogHeap "log-heap" Rock 1 true NONE,
     BannerWavering "banner-wavering" Tree 1 true NONE,
     BannerRouting "banner-routing" Tree 1 true NONE,
     BannerShattered "banner-shattered" Tree 1 true NONE,

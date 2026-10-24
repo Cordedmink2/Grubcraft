@@ -72,6 +72,7 @@ fn walled(teams: &[u8]) -> (World, StructureHandle) {
         ground: gc_sim::Ground::FLAT,
         champions: false,
         sky: gc_sim::Sky::STILL,
+        generals: true,
     });
     assert!(w.conquest(&ConquestSetup {
         buildings: &buildings(),

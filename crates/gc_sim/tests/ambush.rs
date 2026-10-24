@@ -53,6 +53,8 @@ fn world_on(map: u32, seed: u64, units: &[UnitStats], cover: &[u8], teams: &[u8]
         },
         champions: false,
         sky: gc_sim::Sky::STILL,
+        // This rule on its own: generals have tests of their own.
+        generals: false,
     })
 }
 

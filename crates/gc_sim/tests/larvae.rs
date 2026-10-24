@@ -145,6 +145,7 @@ fn conquest(build_percent: u32) -> World {
         ground: gc_sim::Ground::FLAT,
         champions: false,
         sky: gc_sim::Sky::STILL,
+        generals: true,
     });
     let mut start = [(0, 0); gc_sim::MAX_PARTIES];
     start[0] = (2000, 500);

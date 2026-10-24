@@ -68,6 +68,7 @@ fn the_minds_see_cleared_ground() {
         },
         champions: false,
         sky: gc_sim::Sky::STILL,
+        generals: true,
     });
     let hall = BuildingStats {
         role: Role::Main,

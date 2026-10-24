@@ -35,6 +35,7 @@ fn world_on(tiles: u32, nav: &[u8], units: &[UnitStats]) -> World {
         ground: gc_sim::Ground::FLAT,
         champions: false,
         sky: gc_sim::Sky::STILL,
+        generals: true,
     })
 }
 

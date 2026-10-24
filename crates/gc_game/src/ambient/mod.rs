@@ -6,6 +6,7 @@
 
 pub mod bases;
 pub mod felling;
+pub mod piles;
 pub mod touches;
 pub mod walkers;
 

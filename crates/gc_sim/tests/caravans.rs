@@ -157,6 +157,9 @@ fn conquest_for(nodes: &[NodeSetup], posts: &[FxVec2], victories: Victories) -> 
         ground: gc_sim::Ground::FLAT,
         champions: false,
         sky: gc_sim::Sky::STILL,
+        // Generals off: their drill units never rout, so any of them could
+        // take a general and change what these rules measure.
+        generals: false,
     });
     assert!(w.conquest(&ConquestSetup {
         buildings: &buildings(),

@@ -45,7 +45,8 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
-/// - 34: the sky (read as a fair afternoon whose clock stands still);
+/// - 35: the sky (read as a fair afternoon whose clock stands still);
+/// - 34: the generals flag (read as generals on);
 /// - 33: the footing layer (read as firm ground everywhere);
 /// - 32: grown walls (a build-wall command with no worker);
 /// - 31: not used;
@@ -89,7 +90,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 34;
+pub const FORMAT: u16 = 35;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -374,6 +375,8 @@ pub struct Replay {
     pub sky: SkyRecord,
     /// Whether champions may duel before battle, as [`MatchSetup::champions`].
     pub champions: bool,
+    /// Whether each side has a general, as [`MatchSetup::generals`].
+    pub generals: bool,
     /// What made it a Conquest match; `None` for a Field Battle.
     pub conquest: Option<ConquestRecord>,
     /// Ticks recorded.
@@ -577,6 +580,7 @@ impl Replay {
             },
             champions: self.champions,
             sky: self.sky.sky(),
+            generals: self.generals,
         }
     }
 
@@ -751,10 +755,20 @@ impl Replay {
     }
 
     /// The growth layer, just after the map (format 27 on), then the
-    /// footing (format 33 on) and the sky (format 34 on).
+    /// footing (format 33 on).
     fn write_layers(&self, w: &mut Writer) {
         w.bytes(&self.growth);
         w.bytes(&self.footing);
+    }
+
+    /// The generals flag, just after the growth and footing layers (format
+    /// 34 on).
+    fn write_generals(&self, w: &mut Writer) {
+        w.bool(self.generals);
+    }
+
+    /// The sky, just after the generals flag (format 35 on).
+    fn write_sky(&self, w: &mut Writer) {
         self.sky.write(w);
     }
 
@@ -820,6 +834,8 @@ impl Replay {
         self.write_units(&mut w);
         self.write_map(&mut w);
         self.write_layers(&mut w);
+        self.write_generals(&mut w);
+        self.write_sky(&mut w);
         self.write_conquest(&mut w);
         self.write_tail(&mut w);
         let packed = lz4_flex::compress_prepend_size(&w.buf);
@@ -999,7 +1015,8 @@ impl Replay {
         let champions = format >= 4 && r.bool()?;
         let growth = layer(r, 27)?;
         let footing = layer(r, 33)?;
-        let sky = if format >= 34 {
+        let generals = format < 34 || r.bool()?;
+        let sky = if format >= 35 {
             SkyRecord::read(r)?
         } else {
             SkyRecord::default()
@@ -1070,6 +1087,7 @@ impl Replay {
             footing,
             sky,
             champions,
+            generals,
             conquest,
             ticks: info.ticks,
             turns,
@@ -1231,6 +1249,7 @@ impl Recorder {
                 footing: gc_sim::Footing::layer(setup.ground.footing, setup.map_tiles).to_vec(),
                 sky: SkyRecord::of(&setup.sky),
                 champions: setup.champions,
+                generals: setup.generals,
                 conquest: None,
                 ticks: 0,
                 turns: Vec::new(),
@@ -1358,6 +1377,7 @@ mod tests {
             },
             champions: false,
             sky: gc_sim::Sky::STILL,
+            generals: true,
         };
         let mut world = World::new(&setup);
         let mut rec = Recorder::new(&setup, &world, "test drill");
@@ -1489,6 +1509,7 @@ mod tests {
             ground: Ground::FLAT,
             champions: false,
             sky: gc_sim::Sky::STILL,
+            generals: true,
         };
         let hall = BuildingStats {
             role: Role::Main,
@@ -1811,6 +1832,8 @@ mod tests {
         replay.write_units(&mut w);
         replay.write_map(&mut w);
         replay.write_layers(&mut w);
+        replay.write_generals(&mut w);
+        replay.write_sky(&mut w);
         // Every byte of the Conquest record.
         let mut c = Writer::default();
         replay.write_conquest(&mut c);
@@ -1831,6 +1854,15 @@ mod tests {
         replay.write_tail(&mut body);
         lying.extend_from_slice(&lz4_flex::compress_prepend_size(&body.buf));
         assert!(Replay::decode(&lying).is_err());
+    }
+
+    #[test]
+    fn a_match_without_generals_plays_back_without_them() {
+        let mut replay = record();
+        assert!(replay.generals);
+        replay.generals = false;
+        let back = Replay::decode(&replay.encode()).unwrap();
+        assert!(!back.generals && !back.setup().generals);
     }
 
     #[test]
@@ -2030,16 +2062,20 @@ mod tests {
         old.extend_from_slice(&14u16.to_le_bytes());
         old.extend_from_slice(&(info.len() as u32).to_le_bytes());
         old.extend_from_slice(&info);
-        // The body as it was then: no growth, footing or sky after the map.
+        // The body as it was then: no growth or footing layer, generals
+        // flag or sky after the map.
         let body = lz4_flex::decompress_size_prepended(&new[10 + len..]).unwrap();
         let mut map = Writer::default();
         replay.write_units(&mut map);
         replay.write_map(&mut map);
         let mut layers = Writer::default();
         replay.write_layers(&mut layers);
+        replay.write_generals(&mut layers);
+        replay.write_sky(&mut layers);
         let (at, layers) = (map.buf.len(), layers.buf.len());
         let mut old_body = body[..at].to_vec();
         assert_eq!(body[at..at + 2], [0, 0], "no growth or footing");
+        assert_eq!(body[at + 2], 1, "generals on");
         old_body.extend_from_slice(&body[at + layers..]);
         old.extend_from_slice(&lz4_flex::compress_prepend_size(&old_body));
         assert_eq!(Replay::decode(&old).unwrap(), replay);
@@ -2133,6 +2169,7 @@ mod tests {
             ground: Ground::FLAT,
             champions: false,
             sky: gc_sim::Sky::STILL,
+            generals: true,
         };
         let mut world = World::new(&setup);
         let mut rec = Recorder::new(&setup, &world, "trail")

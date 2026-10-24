@@ -62,6 +62,7 @@ fn conquest(teams: &[u8], victories: Victories) -> World {
         ground: gc_sim::Ground::FLAT,
         champions: false,
         sky: gc_sim::Sky::STILL,
+        generals: true,
     });
     assert!(w.conquest(&ConquestSetup {
         buildings: &buildings(),

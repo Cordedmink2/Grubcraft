@@ -29,6 +29,7 @@ pub mod events;
 pub mod fork;
 pub mod formation;
 pub mod gates;
+pub mod generals;
 mod hash;
 pub mod honor;
 pub mod larvae;
@@ -56,6 +57,7 @@ pub use conquest::{ConquestSetup, ConquestUnit};
 pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource, TradePost};
 pub use events::Shooter;
 pub use fork::Standing;
+pub use generals::General;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
 use powers::Cast;
@@ -80,6 +82,7 @@ use deploy::{Deployment, Zone};
 use events::Events;
 use formation::MAX_MODELS;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
+use generals::Generals;
 use nav::Nav;
 use sky::SkyState;
 pub use sky::{Air, Daylight, Sky, Spell, Weather, WeatherKind};
@@ -87,7 +90,7 @@ use vision::Vision;
 
 /// The parts of the simulation's state, in the order [`World::state_hash`]
 /// hashes them and [`World::system_hashes`] lists them.
-pub const SYSTEMS: [&str; 14] = [
+pub const SYSTEMS: [&str; 15] = [
     "clock",
     "random streams",
     "unit stats",
@@ -98,6 +101,7 @@ pub const SYSTEMS: [&str; 14] = [
     "deployment",
     "verdict",
     "champions",
+    "generals",
     "structures",
     "economy",
     "production",
@@ -109,7 +113,7 @@ pub const SYSTEMS: [&str; 14] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 36;
+pub const SIM_VERSION: u32 = 37;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -535,6 +539,10 @@ pub struct MatchSetup<'a> {
     /// Where the clock starts and what the weather does (see [`sky`]).
     /// [`Sky::STILL`] is a fair afternoon that never moves on.
     pub sky: Sky<'a>,
+    /// Whether each side's general rides with it (see [`generals`]):
+    /// every Field Battle has them (Conquest takes them off); tests of
+    /// other morale rules leave them out.
+    pub generals: bool,
 }
 
 /// A player's order. The only way anything outside the sim changes the sim.
@@ -777,6 +785,9 @@ pub struct World {
     deploy: Deployment,
     /// Only in matches that allow champions.
     champions: Option<Champions>,
+    /// Field Battles' generals (see [`generals`]); not in Conquest or in a
+    /// rehearsal.
+    generals: Option<Generals>,
     /// Who holds the field, and who won (see [`verdict`]).
     judge: verdict::Judge,
     /// A scratch copy (see [`World::scratch`]), the only kind that may be
@@ -825,6 +836,7 @@ impl World {
                     Pcg32::new(setup.seed, streams::EVENTS),
                 )
             }),
+            generals: setup.generals.then(Generals::new),
             judge: verdict::Judge::default(),
             events: Events::new(setup.capacities.regiments as usize),
             scratch: false,
@@ -871,6 +883,8 @@ impl World {
             return false;
         }
         self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
+        // Conquest's commanders will be its heroes.
+        self.generals = None;
         self.events
             .reserve(setup.structures as usize, self.regiments.capacity());
         // A match played for a victory is won only that way; the sandbox's
@@ -1403,6 +1417,16 @@ impl World {
         // What powers left on regiments wears off in any world, a copy of
         // one for a forecast too.
         self.regiments.wear_powers();
+        if let Some(generals) = &mut self.generals {
+            generals.update(
+                &mut self.regiments,
+                &self.combat,
+                &self.units,
+                &self.stances,
+                &self.vision,
+                self.tick,
+            );
+        }
         morale::update(
             &mut self.regiments,
             &self.combat,
@@ -2399,6 +2423,12 @@ impl World {
             "vision" => self.vision.hash_into(&self.regiments, h),
             "deployment" => self.deploy.hash_into(h),
             "verdict" => self.judge.hash_into(h),
+            // Not in Conquest.
+            "generals" => {
+                if let Some(generals) = &self.generals {
+                    generals.hash_into(h);
+                }
+            }
             // Only in matches that allow champions, so other worlds hash as
             // they did before champions existed.
             "champions" => {
@@ -2438,6 +2468,12 @@ impl World {
     /// the duel is over).
     pub fn challenge(&self) -> Option<&Challenge> {
         self.champions.as_ref()?.challenge()
+    }
+
+    /// Each side's general, once picked (see [`generals`]): none in
+    /// Conquest.
+    pub fn generals(&self) -> impl Iterator<Item = &General> {
+        self.generals.iter().flat_map(Generals::iter)
     }
 }
 

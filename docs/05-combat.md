@@ -134,11 +134,11 @@ Each regiment has a **morale** value. It drops from:
 - Terror units (monsters, some abilities)
 - Being outnumbered locally
 - Being pinned in melee with nowhere to give ground ([Lines that push](#lines-that-push))
-- Their general (any hero) dying nearby
+- Their general (any hero) dying nearby ([35 · The commander on the field](37-commander.md))
 - Their side's champion falling in a duel before battle ([below](#champions-before-battle))
 
 It rises from:
-- Nearby heroes (leadership aura)
+- Nearby heroes (leadership aura), and their general near them and his speech before battle ([37](37-commander.md))
 - Winning the local fight, routing enemies
 - Veterancy
 - Holding a Shrine, faction effects (Honor Edicts, Heartbeat)
@@ -156,7 +156,7 @@ Routing regiments are slower than their pursuers, so a rout is a real loss, but 
 
 **Conquest is gentler than Field Battle.** In Conquest, rallying is faster and morale loss from casualties is lower, because losing a regiment to a rout costs economy. In Field Battle the full Shogun bite applies.
 
-**Exceptions** that make each faction feel different: Concord undead never rout (they crumble instead); Brood regiments lose less morale from casualties but more from losing a nearby hero; Clans regiments in tight formation resist flank shock.
+**Exceptions** that make each faction feel different: Concord undead never rout (they crumble instead), so their general drives them to strike harder rather than steadying them ([37](37-commander.md)); Brood regiments lose less morale from casualties but more from losing a nearby hero; Clans regiments in tight formation resist flank shock.
 
 ## Terrain
 
@@ -244,6 +244,7 @@ The simulation models each regiment as a formation (position, facing, width, dep
 - **Weapons and formations (2026-10-15):** reach, swing room, shields and mass work as in [Weapons and formations](#weapons-and-formations). The formation key is `R`, as in the command grid (the sandbox's unit-data reload moved to `Shift`+`R`; `F` still cycles formation too until the Ultimate slot has an ability). Of today's five Field Battle regiments the Yari Ashigaru and Bone Pikes have reach, the Shardlings have swing room and the Skitterlings are light; none carries shields yet, so the Shield wall needs a roster unit with shields (Chitin Guard, Shellbacks, Gravewardens) or the sandbox's stats panel. Computer players don't change formation yet.
 - **Lines that push (2026-10-15):** as in [Lines that push](#lines-that-push).
 - **Charges that plough in (2026-10-24):** as in [Charges that plough in](#charges-that-plough-in).
+- **The commander on the field (2026-10-24):** in a Field Battle each player's general rides with their best fighting regiment, steadies the regiments near him, speaks before the lines meet, and when he falls his side panics, as in [35 · The commander on the field](37-commander.md). Until heroes reach Field Battles he stands in for them.
 - **Morale:** Steady, Wavering, Routing and Shattered work as described above, driven by casualties, flank and rear hits, being outnumbered nearby, being pinned, and nearby routs. Winning a fight lifts morale. Routers are slower than their pursuers and rally after 10 s with no enemy within 20 tiles. A second rout within 2 minutes shatters a regiment; with no structures yet, a shattered regiment runs, then stands for good. Concord undead (the Bone Pikes) never rout. A battered regiment never recovers its full morale.
 - **Not yet:** heroes, terror and veterancy as morale sources, the other faction exceptions, and Conquest's gentler rules. The Hold, Charge, Skirmish and Run orders, the full Retreat toward a structure (with Conquest), the Column and Wedge formations, terrain beyond high ground and fords (see [Terrain](#terrain)), air, heroes, counters and veterancy also come later.
 

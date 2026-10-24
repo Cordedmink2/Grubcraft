@@ -23,6 +23,7 @@ fn one_regiment() -> (World, RegimentHandle) {
         ground: gc_sim::Ground::FLAT,
         champions: false,
         sky: gc_sim::Sky::STILL,
+        generals: true,
     });
     w.tick(&[PlayerCommand {
         player: 0,

@@ -112,6 +112,7 @@ fn empty_world(rough: impl Fn(i32, i32) -> bool, nodes: &[NodeSetup], grub: u32)
         ground: gc_sim::Ground::FLAT,
         champions: false,
         sky: gc_sim::Sky::STILL,
+        generals: true,
     });
     let mut start = [(0, 0); MAX_PARTIES];
     start[usize::from(ME)] = (grub, 0);
@@ -692,6 +693,7 @@ fn a_world_without_conquest_is_none() {
         ground: gc_sim::Ground::FLAT,
         champions: false,
         sky: gc_sim::Sky::STILL,
+        generals: true,
     });
     assert_eq!(
         spot_for(&w, ME, HOUSE, &house_stats(), Vec2::new(10.0, 10.0), &[]),

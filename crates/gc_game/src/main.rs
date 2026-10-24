@@ -232,6 +232,17 @@ const TEAM_COLORS: [[u8; 3]; 4] = [
 const EDGE_SCROLL_PX: f64 = 6.0;
 /// Height of a placeholder box soldier, for unit types without a model.
 const SOLDIER_HEIGHT: f32 = 0.95;
+/// A side's general (see `gc_sim::generals`) stands this much taller than
+/// his men, in his side's colour lightened by [`GENERAL_LIGHT`].
+const GENERAL_SCALE: f32 = 1.15;
+const GENERAL_LIGHT: f32 = 0.35;
+
+/// The colour a general is drawn in: his side's, lightened, with his own
+/// tone.
+fn general_colour([r, g, b]: [u8; 3], tone: u8) -> [u8; 4] {
+    let light = |c: u8| (f32::from(c) + (255.0 - f32::from(c)) * GENERAL_LIGHT) as u8;
+    [light(r), light(g), light(b), tone]
+}
 /// Soldiers drawn at least this many pixels tall use levels of detail 0, 1
 /// and 2; smaller ones the last.
 const LOD_PIXELS: [f32; LODS - 1] = [100.0, 40.0, 16.0];
@@ -1405,6 +1416,7 @@ impl App {
                 ground: heightmap.ground(),
                 champions: false,
                 sky: gc_sim::Sky::STILL,
+                generals: true,
             });
             // The sandbox is where buildings can be tried so far.
             if opts.sandbox {
@@ -3057,6 +3069,7 @@ impl Running {
         // The simulation's time, in ticks, interpolated as the regiments are.
         let now = world.tick_count() as f32 - 1.0 + alpha;
         self.puppets.champions(world.challenge(), now);
+        self.puppets.generals(world.generals(), now);
         let marked = self
             .attack_mark
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
@@ -3154,6 +3167,7 @@ impl Running {
                 charge: r.charge,
                 ploughed: (f32::from(r.ploughed) / puppets::DENT_EASE_TICKS).min(1.0),
                 ploughed_by: r.ploughed_by,
+                general: r.general,
                 fighter: fighter_of(stats, &r),
             };
             // How workers clear a tile, and where its trees should fall from
@@ -3433,14 +3447,22 @@ impl Running {
                             }
                             _ => 0,
                         };
+                        let (color, scale) = if s.general {
+                            (
+                                general_colour([wr, wg, wb], tone),
+                                look.scale * GENERAL_SCALE,
+                            )
+                        } else {
+                            ([wr, wg, wb, tone], look.scale)
+                        };
                         buckets[model * LODS + lod].push(SoldierInstance {
                             pos: s.pos.to_array(),
                             facing: facing.to_array(),
                             frames: pose.rows,
                             flags: models::pose_flags(pose, highlight, flat),
-                            color: [wr, wg, wb, tone],
+                            color,
                             lift: 0.0,
-                            scale: look.scale,
+                            scale,
                             feet,
                             ..Default::default()
                         });
@@ -4548,6 +4570,7 @@ impl Running {
             ground: self.heightmap.ground(),
             champions,
             sky: sky.sky(),
+            generals: true,
         };
         // A lobby Conquest match: what every machine makes its world with,
         // from the lobby's settings and the game data.
@@ -5011,14 +5034,20 @@ impl Running {
         line
     }
 
-    /// How the battle ended, once it has, and news of the champions.
+    /// How the battle ended, once it has, and news of the champions and
+    /// the generals.
     fn battle_news(&self) -> Option<String> {
         let battle = self.battle.as_ref()?;
-        let lines: Vec<&str> = [&battle.outcome, &battle.champions, &battle.throne]
-            .into_iter()
-            .flatten()
-            .map(String::as_str)
-            .collect();
+        let lines: Vec<&str> = [
+            &battle.outcome,
+            &battle.champions,
+            &battle.generals,
+            &battle.throne,
+        ]
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
         (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
@@ -5039,6 +5068,12 @@ impl Running {
         }
         if battle.herald(&self.world, &self.parties, &self.units.names) {
             if let Some(news) = &battle.champions {
+                logln!("grubcraft: {news}");
+            }
+            self.sandbox.dirty = true;
+        }
+        if battle.muster(&self.world, &self.parties) {
+            if let Some(news) = &battle.generals {
                 logln!("grubcraft: {news}");
             }
             self.sandbox.dirty = true;
@@ -6073,6 +6108,7 @@ impl Running {
             });
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));
         let fallen = self.aftermath.standards(|p| ground_of(map, p));
+        let piled = self.wood_piles(focus, distance);
         let stumps = (!self.commander)
             .then(|| {
                 let reach = scenery::stump_reach(distance);
@@ -6085,10 +6121,52 @@ impl Running {
                 .chain(banners)
                 .chain(falling)
                 .chain(fallen)
-                .chain(stumps),
+                .chain(stumps)
+                .chain(piled),
         );
         let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
         self.renderer.set_scenery_frame(instances, batches);
+    }
+
+    /// The stacks and heaps of logs against the finished halls and
+    /// workshops the viewer can see near `focus` (docs/34 stage 3d).
+    fn wood_piles(&self, focus: Vec2, distance: f32) -> Vec<scenery::Extra> {
+        if self.commander || self.viewer.is_some() {
+            return Vec::new();
+        }
+        let reach = scenery::stump_reach(distance);
+        let (reveal, fog) = (self.reveal_all, &self.fog);
+        let shown = buildings::shown_to(self.sandbox.side, reveal);
+        let mut looks = Vec::new();
+        for s in (self.world.structures().into_iter()).flat_map(gc_sim::Structures::iter) {
+            let Some(look) = self.siege.look(s.handle).filter(|_| shown(&s)) else {
+                continue;
+            };
+            let centre = look.centre();
+            if centre.distance(focus) <= reach + 8.0 {
+                looks.push((look, buildings::facing_of(s.turn)));
+            }
+        }
+        let hm = &self.heightmap;
+        let dry = hm.water_level() + ambient::walkers::SHORE;
+        let free = |p: Vec2| {
+            let tile = (p.x.floor() as i32, p.y.floor() as i32);
+            hm.height_at(p.x, p.y) > dry
+                && (reveal || fog.sees_tile(tile))
+                && !looks.iter().any(|(l, _)| l.gap(p) < ambient::piles::CLEAR)
+        };
+        let mut out = Vec::new();
+        for (look, facing) in &looks {
+            if look.centre().distance(focus) <= reach {
+                out.extend(ambient::piles::extras(
+                    look,
+                    *facing,
+                    |p| ground_of(hm, p),
+                    free,
+                ));
+            }
+        }
+        out
     }
 
     /// `--siege`: Ember Clans troops of every kind attack buildings in

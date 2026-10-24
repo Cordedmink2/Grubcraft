@@ -24,6 +24,7 @@ fn world(cover: &[u8]) -> World {
         },
         champions: false,
         sky: gc_sim::Sky::STILL,
+        generals: true,
     })
 }
 

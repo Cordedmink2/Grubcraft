@@ -68,6 +68,7 @@ impl Field {
             ground: self.map.ground(),
             champions: false,
             sky: gc_sim::Sky::STILL,
+            generals: true,
         })
     }
 

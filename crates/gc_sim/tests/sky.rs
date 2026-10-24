@@ -44,6 +44,8 @@ fn world(units: &[UnitStats], sky: Sky) -> World {
         teams: &[],
         ground: Ground::FLAT,
         champions: false,
+        // Generals off: these tests count wounds and paces.
+        generals: false,
         sky,
     })
 }

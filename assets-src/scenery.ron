@@ -38,6 +38,9 @@
         // What a felled tree leaves behind.
         (name: "stump-broad", source: "shared:grubcraft/scenery/stump-broad/stump-broad.glb", family: "rock", sway: 0.0),
         (name: "stump-conifer", source: "shared:grubcraft/scenery/stump-conifer/stump-conifer.glb", family: "rock", sway: 0.0),
+        // Cut wood stacked beside halls and workshops.
+        (name: "log-pile", source: "shared:grubcraft/scenery/log-pile/log-pile.glb", family: "rock", sway: 0.0),
+        (name: "log-heap", source: "shared:grubcraft/scenery/log-heap/log-heap.glb", family: "rock", sway: 0.0),
         // Morale standards, planted at a shaken regiment's centre.
         (name: "banner-wavering", source: "shared:grubcraft/scenery/banner-wavering/banner-wavering.glb", family: "tree", sway: 0.2),
         (name: "banner-routing", source: "shared:grubcraft/scenery/banner-routing/banner-routing.glb", family: "tree", sway: 0.2),

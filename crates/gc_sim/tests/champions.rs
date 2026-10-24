@@ -37,6 +37,8 @@ fn world_in(seed: u64, champions: bool, cover: &[u8]) -> World {
         },
         champions,
         sky: gc_sim::Sky::STILL,
+        // This rule on its own: generals have tests of their own.
+        generals: false,
     })
 }
 

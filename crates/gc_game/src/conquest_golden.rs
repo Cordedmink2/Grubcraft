@@ -324,6 +324,7 @@ impl Match {
             ground: map.ground(),
             champions: false,
             sky: gc_sim::Sky::STILL,
+            generals: true,
         };
         let mut plan = conquest::plan(
             &table,
