@@ -6,7 +6,7 @@
 // Each is built from code in Blender (design/creatures/source/: `crit.py` is the kit) with its own small rig,
 // painted in vertex colours that are baked to the albedo map. Clips: Idle, Walk, Run, and Cheer, which
 // plays a deer's head-down feeding, a dove's or crow's flapping flight, a farmer's hoeing, a porter's brow-mopping, a child's jump and a
-// dog's sniffing. Faces +z, stands on the ground at the origin, `height` is the head's top.
+// dog's sniffing. The Oxcart has only Idle and Walk (its wheels turn a half turn per Walk cycle). Faces +z, stands on the ground at the origin, `height` is the head's top.
 (
     models: [
         (
@@ -77,6 +77,16 @@
             lod_triangles: (1100, 600, 300, 120),
             textures: Some((
                 albedo: "shared:grubcraft/creatures/crow/albedo.png",
+            )),
+        ),
+        (
+            name: "Oxcart",
+            source: "shared:grubcraft/creatures/oxcart/oxcart.glb",
+            height: 1.88,
+            clips: { "Idle": "Idle", "Walk": "Walk" },
+            lod_triangles: (5600, 2400, 1000, 360),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/oxcart/albedo.png",
             )),
         ),
     ],

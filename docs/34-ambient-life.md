@@ -23,7 +23,7 @@ Mario wants a world that looks lived in: a base where people are doing things, l
 | 2 | **Living touches without models** (built, except mist). Fireflies at dusk over fens and wet woods, pollen in meadows, dust devils in the waste, leaves falling in old woods. Mist pooling on low ground is left to the weather stage of the lighting thread. Particle recipes on a habitat sample of the ground round the camera, as the sound beds do ([09](09-art-and-audio.md)). | Particles, `Map.habitat` (done), lighting looks (done) |
 | 3 | **Busy bases** (idea 10; hearth smoke, lit windows and faction glows built as 3a, walkers between buildings as 3b, log piles beside halls as 3d, the rest not yet). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles beside the halls, stacked supplies, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
 | 4 | **Wildlife** (idea 3; deer built as 4a and doves as 4b, the rest not yet). Flocks that lift from woods when an army marches by and settle again, carrion birds over a battlefield's dead, moths round Grub seeps, butterflies in flower meadows, grazers that bolt from soldiers, fish rises and dragonflies over water. Each land has its own fauna. Creatures are a picture: soldiers walk through them. | Animal models and clips on the animation engine (T5) |
-| 5 | **Villagers** (idea 3; the hamlets themselves built as 5a, the people as 5b: farmers, porters, children and dogs; carts and porters carrying loads between hamlets not yet). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
+| 5 | **Villagers** (idea 3; the hamlets themselves built as 5a, the people as 5b: farmers, porters, children and dogs; carts and porters between hamlets built as stage 6b). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
 
 Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model format, so the animal models are baked once.
 
@@ -241,7 +241,7 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Villagers carrying things (a load going from a haystack to the barn, carts), other fauna, and villagers who react to a particular faction.
+- Villagers carrying things round a hamlet (a load going from a haystack to the barn; the caravans between hamlets are [stage 6b](#stage-6b-as-built-caravans-between-hamlets)), other fauna, and villagers who react to a particular faction.
 
 ## Stage 6 as built: crows over the dead
 
@@ -254,3 +254,26 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 ### Not yet
 
 - Crows perched on standards or corpses, and a crow that takes a bite.
+
+## Stage 6b as built: caravans between hamlets
+
+*2026-10-24. Game and the creature pack only; nothing in the simulation, nothing hashed, saved or sent.*
+
+### What a player sees
+
+- Between neighbouring Grubfolk hamlets, an ox cart with a drover walking at the ox's flank, or one or two porters in file with sacks on their backs, goes along the open ground from one hamlet to the other, waits ten seconds or so to unload (the cart walks slowly round on the spot to face the way back, the drover walking round with it), and comes back. The cart is loaded with sacks and a barrel; its wheels turn as it goes.
+- Routes serving a Town or the Bazaar usually have a cart, routes between villages one in four; the rest have porters. A hamlet has two routes at most. A route never passes through a third hamlet, over water, woods or a slope steeper than about one in six, so a land with few clear ways between its hamlets has few caravans (Four Teeth has four, two of them carts; Ribcage Pass none; the random lands between two and ten).
+- An army the viewer sees within 14 tiles of a caravan stops it for six seconds to look (people and ox stand), and then it goes on, even with the army still there, so a camp beside the road does not hold it for good. A fight within 40 tiles holds it until six seconds after the fight is quiet. A building the player puts up across a route turns the caravan back. Caravans never run.
+- Seen only where the viewer can see (fog), in Conquest only (the structures early return that deer, doves and villagers share), and not in Commander View or the unit viewer.
+
+### How it works
+
+- `gc_game::ambient::Caravans::new` (called with the hamlets at the start of a match) joins each hamlet to its nearest two others within 24 to 180 tiles, stopping each end 3.2 tiles beyond the hamlet's models (`Hamlets::reach`; the cart's middle, so the ox's nose and the turning circle stay outside) and checking the straight line with `hamlets::route_clear` (dry, no woods, at most 0.12 of climb every 0.75 tiles). The load of each route is decided from a hash of its index and length, so every machine, and a replay, draws the same ones.
+- Every caravan is kept going all the time, wherever the camera is (a scalar along its route; a hundred of them cost nothing), so one seen later is where it should be, while the match is showing (they stand still behind the menu, in Commander View and in the unit viewer). Only those within the camera's reach are handed to the renderer. Armies and fights come from the same `Eyes` the villagers use.
+- New model `Oxcart` (`design/creatures/source/oxcart.py`, about 5,600 triangles at full detail, 18 bones; creatures.pak is now about 9 MB): the ox's rig is the dog's gait scaled up, the cart rocks a little on its bone and each wheel is rigid on its own bone. It has only Idle and Walk clips, both two seconds long and exported slid to zero (`crit.py export(slide=True)`) so the baker's 12 frames a second land on whole keys. The Walk clip is two steps of the ox and exactly one turn of the wheels, and a wheel of radius 0.38 tiles rolls 2.39 tiles in a turn, which at `CART_PACE` (1.19 tiles a second, derived from the radius in `caravans.rs`) is two seconds, so the wheels roll without slipping (a test holds the two numbers together). The other creatures' Walk clips are 0.5 s over 6 baked frames (their keys sit a 24th of a second after zero, so the baker drops key 2 and the first step is short); the cart avoids that. The drover and porters are the existing `FolkFarmer` and `FolkPorter` with their Walk clip played at the rate that matches the cart's pace; a porter's Walk is already the laden walk (hands on his straps), so no new carry clip was needed.
+- Drawn as soldier instances in `push_building_models` beside the villagers. A cart does not tilt on slopes (the instance has no pitch), which the climb limit keeps small: the ox's head is at most about half a tile off the ground on the steepest way allowed.
+- `--hamlet-demo` puts the first cart (or the first porters, where there is none) on its route and the camera ahead of it so it comes by.
+
+### Not yet
+
+- Carts and porters on the road from a faction base's seep to its granary (stage 3), a worn road where they go, dust from the wheels, carts that pitch on slopes, a cart's wheels easing to rest when it stops (they snap to the Idle pose, at most 22 degrees), other lands' fauna (butterflies, fish rises), and crows perched on standards or corpses.

@@ -6,6 +6,7 @@
 
 pub mod bases;
 pub mod birds;
+pub mod caravans;
 pub mod felling;
 pub mod hamlets;
 pub mod piles;
@@ -17,6 +18,7 @@ pub mod wildlife;
 use glam::Vec2;
 
 pub use birds::Birds;
+pub use caravans::Caravans;
 pub use felling::{Felling, Style};
 pub use hamlets::Hamlets;
 pub use touches::Touches;
@@ -36,6 +38,7 @@ pub struct Ambient {
     pub birds: Birds,
     pub hamlets: Hamlets,
     pub villagers: Villagers,
+    pub caravans: Caravans,
     /// Seconds until `--fell-demo` fells the trees round the camera.
     fell_demo: Option<f32>,
     /// `--hamlet-demo`: move the camera to the first hamlet, once.
@@ -59,18 +62,19 @@ impl Ambient {
             birds: Birds::default(),
             hamlets: Hamlets::default(),
             villagers: Villagers::default(),
+            caravans: Caravans::default(),
             fell_demo: fell_demo.then_some(FELL_DEMO_AFTER),
             hamlet_demo,
         }
     }
 
-    /// `--hamlet-demo`: put the camera's `focus` at the first hamlet, once
-    /// one is laid out, for a look at it. True on the frame it does.
+    /// `--hamlet-demo`: put the camera's `focus` at the first hamlet, or at a
+    /// caravan just out of one, once they are laid out, for a look at them. True on the frame it does.
     pub fn hamlet_demo(&mut self, focus: &mut Vec2) -> bool {
         if self.hamlet_demo
             && let Some(at) = self.hamlets.first()
         {
-            *focus = at;
+            *focus = self.caravans.demo().unwrap_or(at);
             self.hamlet_demo = false;
             return true;
         }

@@ -71,7 +71,7 @@ impl Kind {
     }
 
     /// Tiles a second, walking and running (these match the clips' strides).
-    fn pace(self) -> (f32, f32) {
+    pub(super) fn pace(self) -> (f32, f32) {
         match self {
             Kind::Farmer | Kind::Porter => (0.9, 2.1),
             Kind::Child => (0.65, 1.5),

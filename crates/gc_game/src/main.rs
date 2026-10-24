@@ -999,6 +999,8 @@ struct Art {
     /// The villagers' models, by `ambient::villagers::Kind`, if the pack
     /// has them all.
     folk: Option<[usize; 4]>,
+    /// The ox cart of the caravans between hamlets, if the pack has it.
+    cart: Option<usize>,
     /// This frame's camera, for choosing levels of detail.
     view: LodView,
     /// Instances per model and level of detail (model * LODS + lod).
@@ -1446,6 +1448,7 @@ impl App {
                 .into_iter()
                 .collect::<Option<Vec<_>>>()
                 .and_then(|v| v.try_into().ok()),
+            cart: models.by_name("Oxcart"),
             view: LodView {
                 eye: glam::Vec3::ZERO,
                 forward: glam::Vec3::NEG_Z,
@@ -3952,10 +3955,9 @@ impl Running {
             let showing = !self.menu_open
                 && self.viewer.is_none()
                 && !self.commander
-                && self
-                    .art
-                    .as_ref()
-                    .is_some_and(|a| a.deer.is_some() || a.dove.is_some() || a.folk.is_some());
+                && self.art.as_ref().is_some_and(|a| {
+                    a.deer.is_some() || a.dove.is_some() || a.folk.is_some() || a.cart.is_some()
+                });
             if showing {
                 // Deer and doves stand on ground no building or tree covers, keep away
                 // from buildings, and bolt or fly from the soldiers the viewer sees
@@ -4015,21 +4017,28 @@ impl Running {
                     tame,
                     &threats,
                 );
+                let eyes = ambient::villagers::Eyes {
+                    armies: &threats,
+                    fights: &fights,
+                };
                 self.ambient.villagers.advance(
                     step,
                     view_focus,
                     view_distance,
                     &self.ambient.hamlets,
-                    ambient::villagers::Eyes {
-                        armies: &threats,
-                        fights: &fights,
-                    },
+                    eyes,
                     |t| scenery.occupied_at(t),
                 );
+                self.ambient
+                    .caravans
+                    .advance(step, view_focus, view_distance, eyes, |t| {
+                        scenery.occupied_at(t)
+                    });
             } else {
                 self.ambient.wildlife.hush();
                 self.ambient.birds.hush();
                 self.ambient.villagers.hush();
+                self.ambient.caravans.hush();
             }
         }
         let struck = self.atmosphere.take_strike();
@@ -5041,6 +5050,7 @@ impl Running {
         self.ambient.birds.clear();
         self.ambient.villagers.clear();
         self.ambient.hamlets = ambient::Hamlets::new(&self.heightmap);
+        self.ambient.caravans = ambient::Caravans::new(&self.heightmap, &self.ambient.hamlets);
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
@@ -6923,6 +6933,54 @@ impl Running {
                 art.buckets[model * LODS + lod].push(SoldierInstance {
                     pos: v.pos.to_array(),
                     facing: v.facing.to_array(),
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [255, 255, 255, gc_render::TONE_NEUTRAL],
+                    lift: 0.0,
+                    scale: 1.0,
+                    ..Default::default()
+                });
+            }
+        }
+        {
+            use ambient::caravans::Piece;
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            for c in self.ambient.caravans.seen() {
+                let tile = (c.pos.x.floor() as i32, c.pos.y.floor() as i32);
+                if !(reveal || fog.sees_tile(tile)) {
+                    continue;
+                }
+                let model = match c.piece {
+                    Piece::Cart => art.cart,
+                    Piece::Drover => art
+                        .folk
+                        .map(|f| f[ambient::villagers::Kind::Farmer.index()]),
+                    Piece::Porter => art
+                        .folk
+                        .map(|f| f[ambient::villagers::Kind::Porter.index()]),
+                };
+                let Some(model) = model else {
+                    continue;
+                };
+                // A drover with no cart to lead is not drawn.
+                if c.piece == Piece::Drover && art.cart.is_none() {
+                    continue;
+                }
+                let foot = Vec3::new(c.pos.x, ground(c.pos.x, c.pos.y), c.pos.y);
+                let Some(lod) = art.view.place(art.heights[model], foot) else {
+                    continue;
+                };
+                let (action, rate) = if c.moving {
+                    (Action::Walk, c.rate)
+                } else {
+                    (Action::Idle, 1.0)
+                };
+                let Some(pose) = art.clips.pose(model, action, (time + c.phase) * rate) else {
+                    continue;
+                };
+                art.buckets[model * LODS + lod].push(SoldierInstance {
+                    pos: c.pos.to_array(),
+                    facing: c.facing.to_array(),
                     frames: pose.rows,
                     flags: models::pose_flags(pose, 0, false),
                     color: [255, 255, 255, gc_render::TONE_NEUTRAL],

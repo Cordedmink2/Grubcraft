@@ -129,6 +129,35 @@ impl Ground<'_> {
     }
 }
 
+/// How steep a track may be: the most the ground may climb between two
+/// points `ROUTE_STEP` tiles apart.
+const ROUTE_STEP: f32 = 0.75;
+const ROUTE_CLIMB: f32 = 0.12;
+
+/// Whether a cart can go from `a` to `b` in a straight line over dry,
+/// gently sloping ground that is not woods.
+pub(super) fn route_clear(map: &Map, a: Vec2, b: Vec2) -> bool {
+    let ground = Ground { map };
+    let side = map.tiles as i32;
+    let steps = (a.distance(b) / ROUTE_STEP).ceil().max(1.0) as usize;
+    let mut last = map.height_at(a.x, a.y);
+    for i in 0..=steps {
+        let p = a.lerp(b, i as f32 / steps as f32);
+        let h = map.height_at(p.x, p.y);
+        let (tx, ty) = (p.x.floor() as i32, p.y.floor() as i32);
+        if h <= map.water_level() + DRY
+            || (h - last).abs() > ROUTE_CLIMB
+            || !(0..side).contains(&tx)
+            || !(0..side).contains(&ty)
+            || ground.wooded((ty * side + tx) as usize)
+        {
+            return false;
+        }
+        last = h;
+    }
+    true
+}
+
 /// What has been put down so far in one hamlet.
 struct Hamlet<'a> {
     ground: Ground<'a>,
@@ -434,6 +463,16 @@ impl Hamlets {
     /// The middle of site `i`.
     pub fn centre(&self, i: usize) -> Vec2 {
         self.sites[i].0
+    }
+
+    /// How far from its middle site `i`'s models reach, in tiles; nothing
+    /// if the site was left bare.
+    pub(super) fn reach(&self, i: usize) -> f32 {
+        let (centre, extras) = &self.sites[i];
+        extras
+            .iter()
+            .map(|e| Vec2::new(e.at.x, e.at.z).distance(*centre) + radius(e.model) * e.scale)
+            .fold(0.0, f32::max)
     }
 
     /// How big site `i` is.
