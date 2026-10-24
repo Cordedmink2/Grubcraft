@@ -61,7 +61,21 @@ pub struct Building {
     /// (three mutually linked form a chord); 0 for none.
     #[serde(default)]
     pub links: u8,
+    /// A faction's top wall level: what it does besides stand there.
+    #[serde(default)]
+    pub twist: Twist,
     pub effect: String,
+}
+
+/// A drawn wall's faction twist (docs/26, stage 4c).
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Twist {
+    #[default]
+    None,
+    Stones,
+    Mends,
+    Sings,
+    Thorns,
 }
 
 /// The nodes a building tunes, and how far from its edge, in tiles.

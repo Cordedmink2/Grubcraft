@@ -263,7 +263,8 @@
             armour: Fortified,
             footprint: (1, 1),
             flags: [Line],
-            effect: "Raises an Ossuary Wall stretch to a lantern-lit wall of niches: 4 times a Bone Fence's toughness. Needs tier 2.",
+            twist: Mends,
+            effect: "Raises an Ossuary Wall stretch to a lantern-lit wall of niches: 4 times a Bone Fence's toughness. Needs tier 2. The dead at its foot, of either side, mend it.",
         ),
         (
             name: "Iron Gate",

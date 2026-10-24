@@ -289,7 +289,8 @@
             armour: Fortified,
             footprint: (1, 1),
             flags: [Line],
-            effect: "Raises a Stone Wall stretch to a castle wall with loopholes and corner turrets: 4 times a Palisade's toughness. Needs a Castle Keep.",
+            twist: Stones,
+            effect: "Raises a Stone Wall stretch to a castle wall with loopholes and corner turrets: 4 times a Palisade's toughness. Needs a Castle Keep. Stones fall on those who strike it, and archers on it shoot through loopholes, a quarter faster.",
         ),
         (
             name: "Gate",

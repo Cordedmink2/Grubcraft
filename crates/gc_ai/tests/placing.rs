@@ -48,6 +48,7 @@ fn hall_stats() -> BuildingStats {
         field: 0,
         tunes: None,
         links: 0,
+        twist: gc_sim::structures::WallTwist::None,
     }
 }
 

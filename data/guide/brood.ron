@@ -132,7 +132,7 @@
         ),
         (
             name: "Thorn Bulwark",
-            summary: "Level 3, the top: a spined bulwark, 4 times as tough as a Resin Ridge. Needs tier 2. Select a Chitin Wall and press U; it grows on its own while the veins reach it.",
+            summary: "Level 3, the top: a spined bulwark, 4 times as tough as a Resin Ridge. Needs tier 2. Select a Chitin Wall and press U; it grows on its own while the veins reach it. Its twist: each melee blow on it costs the striker 3 hit points; archers are spared.",
             notes: [],
             tips: [
                 (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),

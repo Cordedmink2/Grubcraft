@@ -211,7 +211,8 @@
             armour: Living,
             footprint: (1, 1),
             flags: [Line, Grown],
-            effect: "Grows a Chitin Wall stretch into a spined bulwark: 4 times a Resin Ridge's toughness. Needs tier 2. Grows on its own while the veins reach it.",
+            twist: Thorns,
+            effect: "Grows a Chitin Wall stretch into a spined bulwark: 4 times a Resin Ridge's toughness. Needs tier 2. Grows on its own while the veins reach it. Its spines hurt every soldier who strikes it in melee.",
         ),
         (
             name: "Maw Gate",

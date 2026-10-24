@@ -224,6 +224,8 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
             _ => None,
         },
         links: b.link_tiles,
+        // Validated when the table is loaded.
+        twist: gc_sim::structures::WallTwist::from_u8(b.twist).unwrap_or_default(),
     }
 }
 
@@ -1376,6 +1378,8 @@ pub enum Aura {
     Steadfast,
     /// A summoned regiment: spectral violet, furthest out.
     Spectral,
+    /// Slowed by a Singing Wall: pale violet, outermost, faint.
+    Sung,
 }
 
 impl Aura {
@@ -1386,6 +1390,7 @@ impl Aura {
             Aura::March => (MARCH_COLOR, AURA_REACH + AURA_STEP),
             Aura::Steadfast => (STEADFAST_COLOR, AURA_REACH + 2.0 * AURA_STEP),
             Aura::Spectral => (SPECTRAL_COLOR, AURA_REACH + 3.0 * AURA_STEP),
+            Aura::Sung => (SUNG_COLOR, AURA_REACH + 4.0 * AURA_STEP),
         }
     }
 
@@ -1393,7 +1398,7 @@ impl Aura {
     /// aura is the faintest, since it shows the whole time.
     fn glow(self, base: u8) -> u8 {
         match self {
-            Aura::Spectral => base / 2,
+            Aura::Spectral | Aura::Sung => base / 2,
             _ => base,
         }
     }
@@ -1404,6 +1409,7 @@ impl Aura {
 const MARCH_COLOR: [u8; 3] = [255, 165, 50];
 const STEADFAST_COLOR: [u8; 3] = [255, 225, 130];
 const SPECTRAL_COLOR: [u8; 3] = [170, 140, 255];
+const SUNG_COLOR: [u8; 3] = [215, 200, 255];
 const AURA_STEP: f32 = 0.35;
 
 /// Outline a regiment's block (`width` across its `facing`, `depth` along
@@ -1855,6 +1861,21 @@ pub fn why(refusal: Refusal) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_baked_twist_numbers_are_the_sims() {
+        use gc_sim::structures::WallTwist;
+        for (byte, twist) in [
+            (record::TWIST_NONE, WallTwist::None),
+            (record::TWIST_STONES, WallTwist::Stones),
+            (record::TWIST_MENDS, WallTwist::Mends),
+            (record::TWIST_SINGS, WallTwist::Sings),
+            (record::TWIST_THORNS, WallTwist::Thorns),
+        ] {
+            assert_eq!(WallTwist::from_u8(byte), Some(twist));
+        }
+        assert_eq!(WallTwist::from_u8(record::TWIST_THORNS + 1), None);
+    }
 
     #[test]
     fn men_stand_on_the_coping_of_a_raised_wall() {

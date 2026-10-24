@@ -75,6 +75,7 @@ fn building(role: Role, armour: Armour, side: u8, hp: u16, flags: u16) -> Buildi
         field: 0,
         tunes: None,
         links: 0,
+        twist: gc_sim::structures::WallTwist::None,
     }
 }
 

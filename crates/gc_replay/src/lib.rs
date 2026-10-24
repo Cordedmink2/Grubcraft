@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 42: the drawn walls' faction twists (read as none);
 /// - 41: the burn command (tag 39; nothing to read in older files);
 /// - 40: ladders (the climb command, tag 38);
 /// - 39: manning the walls (tag 37), and whether a Conquest unit mans
@@ -97,7 +98,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 41;
+pub const FORMAT: u16 = 42;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -1535,6 +1536,7 @@ mod tests {
             field: 0,
             tunes: None,
             links: 0,
+            twist: gc_sim::structures::WallTwist::None,
         };
         let buildings = [
             hall,
@@ -1555,6 +1557,15 @@ mod tests {
                 cost_grub: 100,
                 cost_marrow: 0,
                 build_ticks: 900,
+                ..hall
+            },
+            // A drawn wall with a faction twist.
+            BuildingStats {
+                role: Role::Wall,
+                width: 1,
+                depth: 1,
+                flags: gc_sim::structures::LINE,
+                twist: gc_sim::structures::WallTwist::Mends,
                 ..hall
             },
         ];

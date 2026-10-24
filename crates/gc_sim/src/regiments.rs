@@ -306,6 +306,18 @@ regiment_fields! {
     /// On a wall, fighting at the head of a ladder it climbed (see
     /// [`crate::manning`]): head on, a few wide, at a disadvantage.
     climber: bool = false,
+    /// On a wall with loopholes (an Ember Castle Wall, see
+    /// [`crate::twists`]): its shooters reload faster.
+    loophole: bool = false,
+    /// Ticks until the next stone may fall on it from an Ember Castle
+    /// Wall it strikes (see [`crate::twists`]).
+    stoned_left: u16 = 0,
+    /// Ticks left of a Choir Singing Wall's slowing (see
+    /// [`crate::twists`]): half as many blows on buildings, a slower walk.
+    sung_left: u16 = 0,
+    /// Soldiers it lost since the Concord's Mausoleum Walls last counted
+    /// the dead (see [`crate::twists`]); cleared every tick.
+    deaths: u16 = 0,
 }
 
 impl Regiments {
@@ -973,6 +985,7 @@ impl Regiments {
         self.files[i] = self.files[i].min(self.models[i]).max(1);
         self.bled[i] = self.bled[i].saturating_add(bled);
         self.losses[i] = self.losses[i].saturating_add(lost);
+        self.deaths[i] = self.deaths[i].saturating_add(lost);
     }
 
     fn view(&self, i: usize) -> RegimentView {
@@ -1009,6 +1022,7 @@ impl Regiments {
             falling_back: self.falling_back[i] > 0,
             on_wall: self.on_wall[i],
             climber: self.climber[i],
+            sung: self.sung_left[i] > 0,
         }
     }
 
@@ -1269,6 +1283,8 @@ pub struct RegimentView {
     pub on_wall: bool,
     /// On a wall at the head of a ladder, fighting its way onto it.
     pub climber: bool,
+    /// Slowed by a Choir Singing Wall it struck (see [`crate::twists`]).
+    pub sung: bool,
 }
 
 impl RegimentView {

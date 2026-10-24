@@ -90,6 +90,38 @@ impl Role {
     }
 }
 
+/// What a faction's top wall level does besides stand there (docs/26,
+/// stage 4c; see [`crate::twists`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum WallTwist {
+    #[default]
+    None = 0,
+    /// The Ember Castle Wall: stones on those who strike it, loopholes
+    /// for the archers on it.
+    Stones = 1,
+    /// The Concord Mausoleum Wall: mended by the dead at its foot.
+    Mends = 2,
+    /// The Choir Singing Wall: those who strike it are slowed.
+    Sings = 3,
+    /// The Brood Thorn Bulwark: each melee blow on it hurts the striker.
+    Thorns = 4,
+}
+
+impl WallTwist {
+    pub const ALL: [WallTwist; 5] = [
+        WallTwist::None,
+        WallTwist::Stones,
+        WallTwist::Mends,
+        WallTwist::Sings,
+        WallTwist::Thorns,
+    ];
+
+    pub fn from_u8(v: u8) -> Option<WallTwist> {
+        WallTwist::ALL.get(usize::from(v)).copied()
+    }
+}
+
 /// A building's armour type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -272,6 +304,9 @@ pub struct BuildingStats {
     /// form a chord (the Choir's Resonators and Siphons, see
     /// [`crate::chords`]). 0 for one that doesn't link.
     pub links: u8,
+    /// A drawn wall's faction twist ([`WallTwist::None`] for any other
+    /// building).
+    pub twist: WallTwist,
 }
 
 /// Largest footprint side, in tiles.
@@ -310,12 +345,13 @@ impl BuildingStats {
         // A wall drawn as a line is a tile a building; what only such a
         // wall can be goes with it.
         let line = self.width == 1 && self.depth == 1;
+        let flags = if line {
+            self.flags
+        } else {
+            self.flags & !(LINE | PASS | GROWN)
+        };
         BuildingStats {
-            flags: if line {
-                self.flags
-            } else {
-                self.flags & !(LINE | PASS | GROWN)
-            },
+            flags,
             hp: self.hp.max(1),
             width: self.width.clamp(1, MAX_FOOTPRINT),
             depth: self.depth.clamp(1, MAX_FOOTPRINT),
@@ -323,6 +359,11 @@ impl BuildingStats {
             field: self.field.min(MAX_REACH),
             tunes: self.tunes.map(|(r, tiles)| (r, tiles.min(MAX_REACH))),
             links: self.links.min(MAX_REACH),
+            twist: if flags & LINE != 0 {
+                self.twist
+            } else {
+                WallTwist::None
+            },
             attack: self.attack.map(|a| TowerAttack {
                 range: a.range.max(Fx::ZERO),
                 reload_ticks: a.reload_ticks.max(1),
@@ -360,6 +401,7 @@ impl BuildingStats {
             None => h.u8(0),
         }
         h.u8(self.links);
+        h.u8(self.twist as u8);
     }
 }
 
@@ -631,6 +673,12 @@ pub struct Structures {
     /// Regiments that reached the foot of a wall to climb in the last tick
     /// (see [`Work::Man`]).
     pub(crate) climbed: Vec<RegimentHandle>,
+    /// Wall twists that answered in the last tick, for the events (see
+    /// [`crate::twists`]).
+    pub(crate) twisted: Vec<crate::twists::Twisted>,
+    /// Scratch for [`Structures::mend_by_the_dead`], kept so a tick never
+    /// allocates.
+    pub(crate) mending: Vec<u32>,
     /// The parties that have seen each building, its owner first: in fog of
     /// war a building stays known once seen (see [`crate::vision`]).
     seen: Vec<u8>,
@@ -728,6 +776,9 @@ impl Structures {
             struck: Vec::with_capacity(regiments),
             consumed: Vec::with_capacity(regiments),
             climbed: Vec::with_capacity(regiments),
+            // A blow's answer from each regiment, and a mended tile for each.
+            twisted: Vec::with_capacity(2 * regiments),
+            mending: Vec::with_capacity(n),
             seen: vec![0; n],
             fog: false,
             reload: vec![0; n],
@@ -1065,8 +1116,19 @@ impl Structures {
     /// Building slot `i` regrows `per_second` hit points a second, up to
     /// its full.
     pub(crate) fn heal(&mut self, i: usize, per_second: u32) {
+        self.add_hp(i, per_second * HP_SCALE / TICKS_PER_SECOND);
+    }
+
+    /// Building slot `i` gains `scaled` hundredths of a hit point, up to its
+    /// full.
+    fn add_hp(&mut self, i: usize, scaled: u32) {
         let max = u32::from(self.stats_of(i).hp) * HP_SCALE;
-        self.hp[i] = (self.hp[i] + per_second * HP_SCALE / TICKS_PER_SECOND).min(max);
+        self.hp[i] = (self.hp[i] + scaled).min(max);
+    }
+
+    /// Building slot `i` is mended by `hp` hit points, up to its full.
+    pub(crate) fn mend(&mut self, i: usize, hp: u32) {
+        self.add_hp(i, hp * HP_SCALE);
     }
 
     /// Building slot `i` loses `per_second` hit points a second; whether
@@ -1438,6 +1500,7 @@ impl Structures {
         self.struck.clear();
         self.consumed.clear();
         self.climbed.clear();
+        self.twisted.clear();
         self.upgrades();
         self.crew.fill(0);
         // A building that used up its worker grows as one builder would
@@ -1461,8 +1524,11 @@ impl Structures {
             if regs.engaged[r].is_some() {
                 continue;
             }
-            // A hasted regiment strikes buildings faster too.
-            self.siege_clock[r] = self.siege_clock[r].saturating_sub(regs.steps(r));
+            // A hasted regiment strikes buildings faster too; one a Singing
+            // Wall slows, half as fast.
+            if !crate::twists::sung_rest(regs.sung_left[r]) {
+                self.siege_clock[r] = self.siege_clock[r].saturating_sub(regs.steps(r));
+            }
             // Standing (in reach or not) until its next blow or try.
             if self.siege_clock[r] > 0 && regs.target[r].is_none() {
                 continue;
@@ -1534,6 +1600,10 @@ impl Structures {
                 .map_or(Breaker::Regiment, |k| k.breaker);
             self.blow(regs, unit, breaker, r, s);
             self.struck.push((target, regs.handle(r)));
+            if self.hp[s] > 0 {
+                // A wall still standing answers the blow.
+                self.twist_blow(regs, r, s, unit.range > Fx::ZERO);
+            }
             if self.hp[s] == 0 {
                 self.fallen.push(target);
                 self.remove(s, nav, regs);

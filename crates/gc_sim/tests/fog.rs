@@ -34,6 +34,7 @@ fn buildings() -> [BuildingStats; 2] {
         field: 0,
         tunes: None,
         links: 0,
+        twist: gc_sim::structures::WallTwist::None,
     };
     let house = BuildingStats {
         role: Role::Housing,

@@ -986,6 +986,11 @@ impl Sounds {
             Sound::Launch => (SoundId::SiegeLaunch, 0.8, 1.3, PRI_ARROWS),
             Sound::Impact => (SoundId::SiegeImpact, 1.0, 1.5, PRI_MORALE),
             Sound::Collapse => (SoundId::Collapse, 1.0, 2.2, PRI_MORALE),
+            // No sounds of their own: the nearest recorded ones, softer.
+            Sound::Stone => (SoundId::SiegeImpact, 0.7, 1.0, PRI_BLOWS),
+            Sound::Thorn => (SoundId::WallHit, 0.4, 0.8, PRI_BLOWS),
+            Sound::Hum => (SoundId::Waver, 0.25, 0.8, PRI_MORALE),
+            Sound::Chime => (SoundId::Rally, 0.25, 0.8, PRI_MORALE),
         };
         self.play_at(sound, noise.at, gain, reach, priority);
     }

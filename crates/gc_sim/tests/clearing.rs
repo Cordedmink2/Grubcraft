@@ -91,6 +91,7 @@ fn world_with(style: ClearStyle) -> World {
         field: 0,
         tunes: None,
         links: 0,
+        twist: gc_sim::structures::WallTwist::None,
     };
     let mut start = [(0, 0); gc_sim::MAX_PARTIES];
     start[0] = (START_GRUB, 0);

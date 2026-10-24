@@ -173,7 +173,7 @@
         ),
         (
             name: "Castle Wall",
-            summary: "Level 3, the top: a castle wall with loopholes and corner turrets, 4 times as tough as a Palisade. Needs a Castle Keep. Select a Stone Wall and press U to raise its stretch.",
+            summary: "Level 3, the top: a castle wall with loopholes and corner turrets, 4 times as tough as a Palisade. Needs a Castle Keep. Select a Stone Wall and press U to raise its stretch. Its twist: a stone falls every 3 s on each regiment hacking at it, and your archers on it shoot through loopholes, a quarter faster.",
             notes: [],
             tips: [
                 (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),

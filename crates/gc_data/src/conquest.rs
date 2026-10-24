@@ -18,7 +18,7 @@ pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Pack path of the faction powers table (the faction meters' abilities).
 pub const POWERS_PATH: &str = "data/powers";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 8;
+pub const BUILDING_SCHEMA: u32 = 9;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
 pub const CONQUEST_UNIT_SCHEMA: u32 = 5;
@@ -126,6 +126,17 @@ const BUILDING_FLAGS: u16 = (BUILDING_GROWN << 1) - 1;
 pub const TUNES_NOTHING: u8 = 0;
 pub const TUNES_SEEPS: u8 = 1;
 pub const TUNES_VEINS: u8 = 2;
+/// [`BuildingRecord::twist`]: what a faction's top wall level does
+/// besides stand there (schema 9, docs/26 stage 4c).
+pub const TWIST_NONE: u8 = 0;
+/// Stones on those who strike it, loopholes for the archers on it.
+pub const TWIST_STONES: u8 = 1;
+/// Mended by the dead at its foot.
+pub const TWIST_MENDS: u8 = 2;
+/// Those who strike it are slowed.
+pub const TWIST_SINGS: u8 = 3;
+/// Each melee blow on it hurts the striker.
+pub const TWIST_THORNS: u8 = 4;
 /// The furthest a field, tuning or link reaches, in tiles.
 pub const MAX_REACH_TILES: u8 = 30;
 
@@ -183,8 +194,10 @@ pub struct BuildingRecord {
     /// one owner link (and three mutually linked form a chord); 0 for a
     /// building that doesn't link (schema 5).
     pub link_tiles: u8,
+    /// A `TWIST_*`: a drawn wall's faction twist (schema 9).
+    pub twist: u8,
     /// Always 0 (the record is padded to a multiple of 4 bytes).
-    pub pad: [u8; 3],
+    pub pad: [u8; 2],
 }
 
 impl BuildingRecord {
@@ -491,8 +504,14 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     if b.width == 0 || b.depth == 0 || b.width > MAX_FOOTPRINT || b.depth > MAX_FOOTPRINT {
         return Err("footprint sides are 1 to 5 tiles");
     }
-    if b.flags & !BUILDING_FLAGS != 0 || b.pad != [0; 3] {
+    if b.flags & !BUILDING_FLAGS != 0 || b.pad != [0; 2] {
         return Err("unknown building flags");
+    }
+    if b.twist > TWIST_THORNS {
+        return Err("unknown wall twist");
+    }
+    if b.twist != TWIST_NONE && b.flags & BUILDING_LINE == 0 {
+        return Err("only a wall drawn as a line has a twist");
     }
     if b.flags & BUILDING_LINE != 0 && (b.width, b.depth) != (1, 1) {
         return Err("a wall drawn as a line has a one-tile footprint");
@@ -749,6 +768,33 @@ mod tests {
         assert_eq!(
             validate_upgrade(&round, 0),
             Err("a wall's levels go round in a loop")
+        );
+    }
+
+    #[test]
+    fn only_a_drawn_wall_has_a_twist_and_only_a_known_one() {
+        let mut wall = wall_levels()[2];
+        wall.name[..4].copy_from_slice(b"Wall");
+        wall.role = Role::Wall as u8;
+        wall.hp = 1000;
+        wall.build_ticks = 60;
+        wall.tier = 2;
+        wall.twist = TWIST_STONES;
+        assert_eq!(validate_building(&wall, 3), Ok(()));
+        let unknown = BuildingRecord {
+            twist: TWIST_THORNS + 1,
+            ..wall
+        };
+        assert_eq!(validate_building(&unknown, 3), Err("unknown wall twist"));
+        let tower = BuildingRecord {
+            flags: 0,
+            width: 2,
+            depth: 2,
+            ..wall
+        };
+        assert_eq!(
+            validate_building(&tower, 3),
+            Err("only a wall drawn as a line has a twist")
         );
     }
 }

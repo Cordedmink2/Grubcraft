@@ -275,6 +275,39 @@ impl Effects {
         }
     }
 
+    /// A ring that widens from `pos` to `reach` tiles across and fades,
+    /// glowing: a song, a shock.
+    pub fn ring(&mut self, pos: Vec3, color: [u8; 3], reach: f32) {
+        if self.density > 0.0 {
+            self.out.push(Particle {
+                pos,
+                life: 0.9,
+                size: [reach * 0.2, reach],
+                shape: Shape::Ring,
+                flags: flags::ADDITIVE,
+                seed: self.rng.byte(),
+                ..fading(color, 150)
+            });
+        }
+    }
+
+    /// A soft glow that rises from `pos` and fades: a mended wall.
+    pub fn glow_puff(&mut self, pos: Vec3, color: [u8; 3]) {
+        for _ in 0..self.count(1.0) {
+            self.out.push(Particle {
+                pos,
+                vel: Vec3::new(0.0, 0.7, 0.0),
+                life: 1.1,
+                size: [0.3, 0.12],
+                drag: 1.2,
+                shape: Shape::Glow,
+                flags: flags::ADDITIVE,
+                seed: self.rng.byte(),
+                ..fading(color, 170)
+            });
+        }
+    }
+
     /// Puffs of dust rolling outward from `pos` like [`Effects::dust_burst`],
     /// without its ring on the ground: for dust off a wall, in the air.
     pub fn dust_cloud(&mut self, pos: Vec3, radius: f32, amount: f32, color: [u8; 3]) {

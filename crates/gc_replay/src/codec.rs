@@ -7,7 +7,7 @@
 //! bumping [`crate::FORMAT`].
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::structures::{Armour, Breaker, Role, TowerAttack, VEINS};
+use gc_sim::structures::{Armour, Breaker, Role, TowerAttack, VEINS, WallTwist};
 use gc_sim::{
     BuildingStats, Command, ConquestUnit, Formation, Mass, Meter, NodeSetup, PlayerCommand,
     PowerEffect, PowerStats, PowerTarget, RegimentHandle, Resource, StructureHandle, TradePost,
@@ -124,6 +124,7 @@ impl Writer {
             None => self.u8(0),
         }
         self.u8(b.links);
+        self.u8(b.twist as u8);
     }
 
     pub fn power(&mut self, p: &PowerStats) {
@@ -650,6 +651,7 @@ impl<'a> Reader<'a> {
             field: 0,
             tunes: None,
             links: 0,
+            twist: gc_sim::structures::WallTwist::None,
         };
         if format >= 19 {
             b.field = self.u8()?;
@@ -659,6 +661,9 @@ impl<'a> Reader<'a> {
             };
             if format >= 20 {
                 b.links = self.u8()?;
+            }
+            if format >= 42 {
+                b.twist = WallTwist::from_u8(self.u8()?)?;
             }
         } else if b.flags & VEINS != 0 {
             // Before fields were data, root-veins reached 15 tiles from a
@@ -969,6 +974,7 @@ mod tests {
             field: 0,
             tunes: None,
             links: 0,
+            twist: gc_sim::structures::WallTwist::None,
         };
         let drop_off_marrow = 2;
         let trade_post = gc_sim::structures::TRADE_POST;
@@ -982,7 +988,8 @@ mod tests {
                 let mut r = Reader::new(&w.buf);
                 let read = r.building(format).expect("it reads");
                 assert_eq!(read.flags, flags, "format {format}");
-                assert_eq!(r.remaining(), 0, "format {format}");
+                // All but the twist byte, which came in format 42.
+                assert_eq!(r.remaining(), 1, "format {format}");
             }
         }
         // A flag past a byte takes two.
