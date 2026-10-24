@@ -260,6 +260,9 @@ fn general_colour([r, g, b]: [u8; 3], tone: u8) -> [u8; 4] {
 /// Soldiers drawn at least this many pixels tall use levels of detail 0, 1
 /// and 2; smaller ones the last.
 const LOD_PIXELS: [f32; LODS - 1] = [100.0, 40.0, 16.0];
+/// Screen pixels over which head turns and flinches fade in above the
+/// nearest level of detail.
+const HEAD_FADE_PIXELS: f32 = 30.0;
 /// Commander View: past this camera distance soldiers give way to one
 /// banner block per regiment, and come back below the second distance.
 const COMMANDER_IN: f32 = 175.0;
@@ -1019,6 +1022,19 @@ fn lod_for(height: f32, depth: f32, pixel_scale: f32) -> usize {
     LOD_PIXELS.iter().take_while(|&&p| pixels < p).count()
 }
 
+/// `angle` radians as a look's i8, where 127 is `full`.
+fn look_angle(angle: f32, full: f32) -> i8 {
+    (angle / full * 127.0).round().clamp(-127.0, 127.0) as i8
+}
+
+/// How much of the detail kept for soldiers near the camera (head turns and
+/// flinches) shows on one `height` tiles tall at `depth`: none below the
+/// nearest level of detail, fading in over [`HEAD_FADE_PIXELS`] above it.
+fn head_detail(height: f32, depth: f32, pixel_scale: f32) -> f32 {
+    let pixels = height * pixel_scale / depth.max(1.0);
+    ((pixels - LOD_PIXELS[0]) / HEAD_FADE_PIXELS).clamp(0.0, 1.0)
+}
+
 /// What choosing a level of detail needs from a frame's camera.
 #[derive(Clone, Copy)]
 struct LodView {
@@ -1038,6 +1054,16 @@ impl LodView {
         self.force.unwrap_or_else(|| {
             lod_for(height, (pos - self.eye).dot(self.forward), self.pixel_scale)
         })
+    }
+
+    /// How much near-camera detail shows on a model `height` tiles tall at
+    /// `pos` (see [`head_detail`]); all of it at a forced level (the
+    /// caller draws it at the nearest only).
+    fn detail(&self, height: f32, pos: glam::Vec3) -> f32 {
+        match self.force {
+            Some(_) => 1.0,
+            None => head_detail(height, (pos - self.eye).dot(self.forward), self.pixel_scale),
+        }
     }
 
     /// The level for a model `height` tiles tall standing at `pos`, or none
@@ -3623,6 +3649,8 @@ impl Running {
                     firm(r.owner),
                     |s| {
                         let mut s = s;
+                        // His head turns are from the way the puppets face him.
+                        let puppet_facing = s.facing;
                         // At the wall: the ranks step up to it, and the front
                         // one swings.
                         let mut battering = None;
@@ -3705,6 +3733,22 @@ impl Running {
                             }
                             _ => 0,
                         };
+                        // Finishing a man on the ground, he bends over him
+                        // to strike down; else, near the camera, he flinches
+                        // or turns his head (not when turned here to a wall,
+                        // a tool or a stand on a wall top).
+                        let (turn, turn_weight) = match s.head {
+                            _ if s.stoop > 0.0 => ([0, FINISH_PITCH], s.stoop),
+                            Some(h) if lod == 0 && facing.dot(puppet_facing) > 0.99 => (
+                                [
+                                    look_angle(h.yaw, std::f32::consts::FRAC_PI_2),
+                                    look_angle(h.pitch, std::f32::consts::FRAC_PI_4),
+                                ],
+                                view.detail(height, at),
+                            ),
+                            _ => ([0, 0], 0.0),
+                        };
+                        let turn_weight = (turn_weight * 255.0) as u8;
                         let (color, scale) = if s.general {
                             (
                                 general_colour([wr, wg, wb], tone),
@@ -3722,10 +3766,8 @@ impl Running {
                             lift: s.lift,
                             scale,
                             feet,
-                            // Finishing a man on the ground, he bends over
-                            // him to strike down.
-                            look: [0, FINISH_PITCH],
-                            look_weight: (s.stoop * 255.0) as u8,
+                            look: turn,
+                            look_weight: turn_weight,
                             ..Default::default()
                         });
                     },
@@ -7984,6 +8026,24 @@ mod lod_tests {
         assert_eq!(lod_for(50.0, 0.0, 1.0), lod_for(50.0, 1.0, 1.0));
         assert_eq!(lod_for(100.0, 0.25, 1.0), 0);
         assert_eq!(lod_for(39.0, 0.001, 1.0), lod_for(39.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn head_turns_fade_in_above_the_nearest_level() {
+        assert_eq!(head_detail(LOD_PIXELS[0], 1.0, 1.0), 0.0);
+        assert_eq!(head_detail(LOD_PIXELS[0] - 1.0, 1.0, 1.0), 0.0);
+        let half = head_detail(LOD_PIXELS[0] + HEAD_FADE_PIXELS / 2.0, 1.0, 1.0);
+        assert!((half - 0.5).abs() < 1e-4);
+        assert_eq!(head_detail(LOD_PIXELS[0] + HEAD_FADE_PIXELS, 1.0, 1.0), 1.0);
+    }
+
+    #[test]
+    fn look_angles_fill_the_byte_and_stop_at_its_ends() {
+        assert_eq!(
+            look_angle(std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2),
+            127
+        );
+        assert_eq!(look_angle(-9.0, 1.0), -127);
     }
 
     #[test]

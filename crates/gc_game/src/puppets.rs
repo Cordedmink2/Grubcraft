@@ -24,6 +24,7 @@ use gc_sim::formation::MAX_MODELS;
 use gc_sim::{Challenge, General, Mass, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 use std::collections::HashMap;
+use std::f32::consts::FRAC_PI_2;
 
 use crate::models::down_depth;
 
@@ -60,6 +61,28 @@ const LEAD: f32 = 0.6;
 /// in radians.
 const SWAY: f32 = 0.025;
 const GLANCE: f32 = 0.22;
+/// How long, and from how far, men turn their heads to a comrade falling
+/// beside them (seconds, tiles; fading out over the last half tile), how
+/// long the turn takes to come and to go, the most a man is slow to react,
+/// and how far down they look at him (radians).
+const FALL_GLANCE_SECONDS: f32 = 1.2;
+const FALL_GLANCE_REACH: f32 = 2.5;
+const FALL_GLANCE_IN: f32 = 0.15;
+const FALL_GLANCE_OUT: f32 = 0.5;
+const FALL_GLANCE_LATE: f32 = 0.25;
+const FALL_GLANCE_DOWN: f32 = 0.2;
+/// How fast a man's look follows where he means to look (per second), so
+/// it never snaps.
+const GLANCE_EASE: f32 = 10.0;
+/// How far a blow taken snaps a man's head back (radians, by what it did
+/// to him), how much of that it turns aside, and when through the move it
+/// is furthest.
+const HEAD_FLINCH_STAGGER: f32 = 0.45;
+const HEAD_FLINCH_BLOCK: f32 = 0.22;
+const HEAD_FLINCH_PARRY: f32 = 0.14;
+const HEAD_FLINCH_ASIDE: f32 = 0.5;
+const HEAD_FLINCH_PEAK: f32 = 0.15;
+const HEAD_FLINCH_ENDS: f32 = 0.6;
 /// Duel pairs: a front-rank soldier looks for an enemy within this reach, in
 /// tiles, and keeps him until he is this far away.
 const DUEL_REACH: f32 = 2.6;
@@ -391,6 +414,19 @@ pub struct Soldier {
     pub stoop: f32,
     /// How high above the ground he stands: on a wall top, else 0.
     pub lift: f32,
+    /// Where he turns his head (and chest) on top of his move, for the
+    /// detail near the camera: a flinch from a blow, or a look at a comrade
+    /// falling beside him.
+    pub head: Option<Head>,
+}
+
+/// A turn of a soldier's upper body on top of his move.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Head {
+    /// Radians toward his left.
+    pub yaw: f32,
+    /// Radians down (negative: back).
+    pub pitch: f32,
 }
 
 /// A dueling soldier's move, with how far through it he is (0 to 1).
@@ -512,6 +548,57 @@ const STOOP_OUT: f32 = 0.25;
 /// through his killing blow.
 fn stoop(f: f32) -> f32 {
     (f / STOOP_IN).min((1.0 - f) / STOOP_OUT).clamp(0.0, 1.0)
+}
+
+/// How a man flinches from a blow he is taking (`act`, `f` through it): his
+/// head snaps back and aside, furthest early on, and comes back as he
+/// recovers. `aside` (-1 to 1) picks which way.
+fn flinch(act: Act, f: f32, aside: f32) -> Head {
+    let back = match act {
+        Act::Stagger => HEAD_FLINCH_STAGGER,
+        Act::Block => HEAD_FLINCH_BLOCK,
+        Act::Parry => HEAD_FLINCH_PARRY,
+        _ => return Head::default(),
+    };
+    let weight = (f / HEAD_FLINCH_PEAK)
+        .min((HEAD_FLINCH_ENDS - f) / (HEAD_FLINCH_ENDS - HEAD_FLINCH_PEAK))
+        .clamp(0.0, 1.0);
+    Head {
+        yaw: back * HEAD_FLINCH_ASIDE * aside * weight,
+        pitch: -back * weight,
+    }
+}
+
+/// Where a man at `pos` facing `facing` means to look `since` seconds after
+/// a comrade fell at `at`, `late` seconds slow to react: turned his way
+/// and a little down, eased in and out, and not at all once he is out of
+/// reach, behind him or at his very feet.
+fn fall_glance(pos: Vec2, facing: Vec2, at: Vec2, since: f32, late: f32) -> Head {
+    let since = since - late;
+    let ease = (since / FALL_GLANCE_IN).min((FALL_GLANCE_SECONDS - since) / FALL_GLANCE_OUT);
+    if ease <= 0.0 {
+        return Head::default();
+    }
+    let to = at - pos;
+    let d = to.length();
+    let ahead = to.dot(facing) / d.max(1e-3);
+    let weight = ease
+        .min((FALL_GLANCE_REACH - d) * 2.0)
+        .min((d - 0.3) / 0.3)
+        .min((ahead + 0.2) / 0.4)
+        .min(1.0);
+    if weight <= 0.0 {
+        return Head::default();
+    }
+    let left = Vec2::new(facing.y, -facing.x);
+    Head {
+        yaw: to
+            .dot(left)
+            .atan2(to.dot(facing))
+            .clamp(-FRAC_PI_2, FRAC_PI_2)
+            * weight,
+        pitch: FALL_GLANCE_DOWN * weight,
+    }
 }
 
 /// What a blow did to a soldier, or the killing blow he is dealing, which
@@ -948,6 +1035,11 @@ pub struct Puppets {
     /// Per regiment, how high its soldiers stand in their block at the
     /// head of a ladder (0: not on one), set by [`Puppets::stand_on_ladder`].
     ladder: Vec<f32>,
+    /// Per regiment, where and when its last man fell (or will, as the blow
+    /// lands), for the men beside him to look.
+    last_fall: Vec<(Vec2, f32)>,
+    /// Per puppet, where he looks (see [`Soldier::head`]), eased.
+    glance: Vec<Head>,
     duel: Option<Duel>,
     /// The tick the duel the puppets are done with was called.
     duel_over: Option<u32>,
@@ -1003,6 +1095,8 @@ impl Puppets {
             wall: vec![Vec::new(); regiment_capacity],
             ladder: vec![0.0; regiment_capacity],
             lift: vec![0.0; regiment_capacity * SLOTS],
+            last_fall: vec![(Vec2::ZERO, f32::NEG_INFINITY); regiment_capacity],
+            glance: vec![Head::default(); regiment_capacity * SLOTS],
             duel: None,
             duel_over: None,
             generals: Vec::with_capacity(gc_sim::MAX_PARTIES),
@@ -1734,6 +1828,8 @@ impl Puppets {
             self.told[r * SLOTS..(r + 1) * SLOTS].fill(None);
             self.filled[r * SLOTS..(r + 1) * SLOTS].fill(self.time);
             self.lift[r * SLOTS..(r + 1) * SLOTS].fill(0.0);
+            self.last_fall[r] = (Vec2::ZERO, f32::NEG_INFINITY);
+            self.glance[r * SLOTS..(r + 1) * SLOTS].fill(Head::default());
             for k in 0..SLOTS {
                 self.looks[r * SLOTS + k] = look_of(block.handle, k);
             }
@@ -2020,6 +2116,35 @@ impl Puppets {
                 let glance = (self.time * 0.31 + p).sin() * (self.time * 0.13 + p * 0.6).sin();
                 facing = Vec2::from_angle(GLANCE * glance).rotate(facing);
             }
+            // Not fighting, he looks at a comrade falling beside him, easing
+            // toward it; and on top he flinches from a blow he takes.
+            let (at, fell) = self.last_fall[r];
+            let goal = if fight.is_none() && !fresh {
+                let late = FALL_GLANCE_LATE * unit_hash(block.handle, k, 16);
+                fall_glance(pos, facing, at, self.time - fell, late)
+            } else {
+                Head::default()
+            };
+            let ease = if fresh {
+                1.0
+            } else {
+                (GLANCE_EASE * dt).min(1.0)
+            };
+            let g = &mut self.glance[i];
+            g.yaw += (goal.yaw - g.yaw) * ease;
+            g.pitch += (goal.pitch - g.pitch) * ease;
+            if goal == Head::default() && g.yaw.abs() + g.pitch.abs() < 1e-3 {
+                *g = Head::default();
+            }
+            let jolt = match acting {
+                Some((act, f)) => flinch(act, f, 2.0 * phase - 1.0),
+                None => Head::default(),
+            };
+            let head =
+                (g.yaw != 0.0 || g.pitch != 0.0 || jolt != Head::default()).then_some(Head {
+                    yaw: g.yaw + jolt.yaw,
+                    pitch: g.pitch + jolt.pitch,
+                });
             out(Soldier {
                 pos,
                 facing,
@@ -2038,6 +2163,7 @@ impl Puppets {
                     _ => 0.0,
                 },
                 lift: self.lift[i],
+                head,
             });
         }
     }
@@ -2206,6 +2332,11 @@ impl Puppets {
                 pair: paired,
             };
             self.lay(fallen);
+            // Men already looking at one man keep to him.
+            let since = self.time - self.last_fall[r].1;
+            if !(0.0..FALL_GLANCE_SECONDS + FALL_GLANCE_LATE).contains(&since) {
+                self.last_fall[r] = (fallen.pos, fell);
+            }
             if blow_in.is_some() {
                 self.impact(fell, killer, victim, Hit::Killed);
             }
@@ -2221,6 +2352,7 @@ impl Puppets {
             self.reeling[victim] = self.reeling[last];
             self.reeling[last] = f32::NEG_INFINITY;
             self.looks[victim] = self.looks[last];
+            self.glance[victim] = self.glance[last];
             // Whoever steps into the gap finds a new man, so the blows he
             // struck from the last slot are done with.
             // Blows told on whoever stood in either slot are not his.
@@ -3147,6 +3279,95 @@ mod tests {
         assert!((killed.dir.length() - 1.0).abs() < 1e-3);
         // `melee_pair` stands the man struck south of his killer.
         assert!(killed.dir.y < 0.0, "{:?}", killed.dir);
+    }
+
+    #[test]
+    fn a_blow_taken_snaps_the_head_back_and_it_comes_back() {
+        let at = |f| flinch(Act::Stagger, f, 1.0);
+        let peak = at(HEAD_FLINCH_PEAK);
+        assert!(peak.pitch < 0.0 && peak.yaw > 0.0, "{peak:?}");
+        assert_eq!(peak.pitch, -HEAD_FLINCH_STAGGER);
+        assert!(at(0.05).pitch > peak.pitch);
+        assert_eq!(at(HEAD_FLINCH_ENDS), Head::default());
+        // A blow caught jolts less than one taken, and turns him aside less.
+        let block = flinch(Act::Block, HEAD_FLINCH_PEAK, 1.0);
+        assert!(block.pitch > peak.pitch && block.yaw < peak.yaw);
+        assert_eq!(flinch(Act::Kill, 0.2, 1.0), Head::default());
+    }
+
+    #[test]
+    fn a_man_looks_at_a_comrade_falling_beside_him_but_not_behind() {
+        let (me, north) = (Vec2::ZERO, Vec2::Y);
+        let left = Vec2::new(north.y, -north.x);
+        // Ahead and to his left: turned left and looking down, eased in.
+        let g = fall_glance(me, north, Vec2::new(0.0, 1.0) + left, 0.5, 0.0);
+        assert!(g.yaw > 0.7 && g.pitch == FALL_GLANCE_DOWN, "{g:?}");
+        assert!(fall_glance(me, north, left * 1.5, 0.05, 0.0).yaw < g.yaw);
+        // Not before he fell, nor once a slow man has yet to react, nor after.
+        assert_eq!(fall_glance(me, north, left, -0.1, 0.0), Head::default());
+        assert_eq!(fall_glance(me, north, left, 0.1, 0.2), Head::default());
+        assert_eq!(
+            fall_glance(me, north, left, FALL_GLANCE_SECONDS, 0.0),
+            Head::default()
+        );
+        // Not behind him, at his feet or out of reach; fading toward each.
+        assert_eq!(
+            fall_glance(me, north, -north * 1.5, 0.5, 0.0),
+            Head::default()
+        );
+        assert_eq!(
+            fall_glance(me, north, north * 0.2, 0.5, 0.0),
+            Head::default()
+        );
+        assert_eq!(
+            fall_glance(me, north, north * 3.0, 0.5, 0.0),
+            Head::default()
+        );
+        let edge = fall_glance(me, north, north * (FALL_GLANCE_REACH - 0.25), 0.5, 0.0);
+        assert!(
+            (edge.pitch - FALL_GLANCE_DOWN / 2.0).abs() < 1e-4,
+            "{edge:?}"
+        );
+    }
+
+    #[test]
+    fn men_turn_their_heads_to_a_comrade_falling_beside_them() {
+        let mut p = Puppets::new(2, 4);
+        let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
+        for _ in 0..120 {
+            frame(&mut p, &a, &b);
+        }
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        let (at, fell) = p.last_fall[1];
+        assert!(fell.is_finite());
+        // Once he is down, the men not fighting turn his way, easing round.
+        p.time = fell + FALL_GLANCE_LATE + 0.2;
+        let mut looked = 0;
+        for _ in 0..20 {
+            looked = 0;
+            p.update(&b, 1, FRAME, |s| {
+                if let Some(h) = s.head.filter(|_| s.fight.is_none()) {
+                    let left = Vec2::new(s.facing.y, -s.facing.x);
+                    // Clearly to one side, he looks that way.
+                    let side = (at - s.pos).dot(left);
+                    assert!(side.abs() < 0.5 || h.yaw * side > 0.0, "{h:?} {side}");
+                    assert!(h.pitch > 0.0);
+                    looked += 1;
+                }
+            });
+            p.advance(FRAME);
+        }
+        assert!(looked > 0);
+        // And look away again, easing back.
+        p.advance(FALL_GLANCE_SECONDS);
+        for _ in 0..60 {
+            p.update(&b, 1, FRAME, |_| {});
+            p.advance(FRAME);
+        }
+        p.update(&b, 1, FRAME, |s| {
+            assert!(s.fight.is_some() || s.head.is_none(), "{:?}", s.head);
+        });
     }
 
     #[test]
