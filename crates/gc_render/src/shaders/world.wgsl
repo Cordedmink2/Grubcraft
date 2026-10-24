@@ -1056,7 +1056,12 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let grit = 0.7 + 0.6 * nz(xz * 2.1);
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.37, 0.29, 0.18)) * grit, worn * 0.85);
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.27, 0.17, 0.1)) * grit, felled);
-        albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.05, 0.045, 0.04)) * grit, burnt);
+        if burnt > 0.0 {
+            // Char, with drifts of grey ash over it.
+            let ash = smoothstep(0.5, 0.75, fbm(xz * 0.55 + vec2<f32>(21.0, 8.0)));
+            let char_colour = mix(srgb_to_linear(vec3<f32>(0.11, 0.1, 0.09)), srgb_to_linear(vec3<f32>(0.33, 0.31, 0.28)), ash);
+            albedo = mix(albedo, char_colour * (0.6 + 0.8 * nz(xz * 3.1)), burnt);
+        }
         wet = wet * (1.0 - max(worn, max(felled, burnt)));
         // Turned earth lies in clods.
         let clod = vec2<f32>(vnoise(xz * 3.3) - 0.5, vnoise(xz * 3.3 + vec2<f32>(6.0, 2.0)) - 0.5);

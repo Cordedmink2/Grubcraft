@@ -30,6 +30,8 @@ const HEAL_EVERY: Duration = Duration::from_secs(5);
 /// How strongly felled ground is marked, by what stood on it.
 const SCRUB: u8 = 150;
 const WOODS: u8 = 255;
+/// How strongly ground the Concord burnt is scorched.
+const SCORCH: u8 = 255;
 /// Stumps are kept for this many felled trees (the oldest go first) and at
 /// most `MAX_SHOWN` are drawn a frame, so a wide view of a big clearing
 /// cannot crowd out the rest of the scenery.
@@ -70,14 +72,15 @@ impl ScarView {
         };
     }
 
-    /// Leave a stump for each of `trees`, the ones about to come down.
-    pub fn stumps_left(&mut self, trees: impl Iterator<Item = Stood>) {
+    /// Leave a stump for each of `trees`, the ones about to come down,
+    /// charred if the tile was `burnt`.
+    pub fn stumps_left(&mut self, trees: impl Iterator<Item = Stood>, burnt: bool) {
         for t in trees.filter(|t| t.tree) {
             if let Some(model) = scenery::stump_of(t.model) {
                 if self.stumps.len() >= MAX_STUMPS {
                     self.stumps.drain(..MAX_STUMPS / 10);
                 }
-                let [r, g, b, _] = t.tint;
+                let [r, g, b, _] = t.tint.map(|c| if burnt { c / 5 } else { c });
                 self.stumps.push(Stump {
                     model,
                     at: t.at,
@@ -116,17 +119,21 @@ impl ScarView {
     /// Mark the tiles the simulation cleared in the last tick as felled.
     pub fn felled(&mut self, events: &[Event], tiles: u32) {
         let cleared = events.iter().filter_map(|e| match *e {
-            Event::Cleared { x, y, was, .. } => Some((x, y, was)),
+            Event::Cleared { x, y, was, burnt } => Some((x, y, was, burnt)),
             _ => None,
         });
         self.size(tiles as usize);
-        for (x, y, was) in cleared {
+        for (x, y, was, burnt) in cleared {
             let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
                 continue;
             };
             if x < self.tiles && y < self.tiles {
                 let strength = if was == Growth::Scrub { SCRUB } else { WOODS };
-                self.grid[(y * self.tiles + x) * 4] = strength;
+                let at = (y * self.tiles + x) * 4;
+                self.grid[at] = strength;
+                if burnt {
+                    self.grid[at + 1] = SCORCH;
+                }
                 self.dirty = true;
             }
         }
@@ -267,17 +274,28 @@ mod tests {
             was,
             burnt: false,
         };
+        let burnt = |x, y, was| Event::Cleared {
+            x,
+            y,
+            was,
+            burnt: true,
+        };
         v.felled(
             &[
                 cleared(3, 4, Growth::Woods),
                 cleared(5, 6, Growth::Scrub),
                 cleared(-1, 0, Growth::Woods),
                 cleared(99, 0, Growth::Woods),
+                burnt(8, 9, Growth::Woods),
             ],
             32,
         );
         assert_eq!(v.grid[(4 * 32 + 3) * 4], WOODS);
         assert_eq!(v.grid[(6 * 32 + 5) * 4], SCRUB);
+        // Only what the Concord burnt is scorched.
+        assert_eq!(v.grid[(4 * 32 + 3) * 4 + 1], 0);
+        assert_eq!(v.grid[(9 * 32 + 8) * 4 + 1], SCORCH);
+        assert_eq!(v.grid[(9 * 32 + 8) * 4], WOODS);
         assert!(v.dirty);
         v.reset();
         assert!(v.grid.is_empty());
@@ -304,6 +322,7 @@ mod tests {
                 stood(Model::OakB, false, Vec2::new(7.0, 5.0)),
             ]
             .into_iter(),
+            false,
         );
         let near: Vec<Extra> = v.stumps(Vec2::new(5.0, 5.0), 70.0, |_| 2.0).collect();
         assert_eq!(near.len(), 2);
@@ -323,11 +342,27 @@ mod tests {
     }
 
     #[test]
+    fn burnt_trees_leave_charred_stumps() {
+        let mut v = ScarView::default();
+        v.stumps_left(
+            std::iter::once(stood(Model::OakA, true, Vec2::new(5.0, 5.0))),
+            true,
+        );
+        let [stump] = v
+            .stumps(Vec2::new(5.0, 5.0), 70.0, |_| 0.0)
+            .collect::<Vec<_>>()[..]
+        else {
+            panic!("one stump")
+        };
+        assert_eq!(stump.tint, [2, 4, 6]);
+    }
+
+    #[test]
     fn the_oldest_stumps_go_when_too_many_are_kept() {
         let mut v = ScarView::default();
         let at = |i: usize| Vec2::new(i as f32 * 0.001, 0.0);
         let trees = (0..MAX_STUMPS + 10).map(|i| stood(Model::Birch, true, at(i)));
-        v.stumps_left(trees);
+        v.stumps_left(trees, false);
         assert!(v.stumps.len() <= MAX_STUMPS && v.stumps.len() > MAX_STUMPS / 2);
         // The newest is still there; the first is not.
         assert_eq!(v.stumps.last().map(|s| s.at), Some(at(MAX_STUMPS + 9)));

@@ -81,12 +81,12 @@ pub fn push_area(
     }
 }
 
-/// The tiles the simulation cleared in the last tick, so the trees on them
-/// can come down. Replays and network games tick a world too, so they hear
-/// of it the same way.
-pub fn cleared(events: &[Event]) -> impl Iterator<Item = (i32, i32)> + '_ {
+/// The tiles the simulation cleared in the last tick, and whether each was
+/// burnt, so the trees on them can come down. Replays and network games tick
+/// a world too, so they hear of it the same way.
+pub fn cleared(events: &[Event]) -> impl Iterator<Item = ((i32, i32), bool)> + '_ {
     events.iter().filter_map(|e| match *e {
-        Event::Cleared { x, y, .. } => Some((x, y)),
+        Event::Cleared { x, y, burnt, .. } => Some(((x, y), burnt)),
         _ => None,
     })
 }
@@ -207,7 +207,7 @@ impl Running {
         // for a rejoining player catching up on ticks long past.
         let catching_up = self.online.is_some() && self.menu.net().catching_up();
         let watch = !catching_up;
-        for tile in cleared(self.world.events()) {
+        for (tile, burnt) in cleared(self.world.events()) {
             let scenery = &self.scenery;
             if watch && (self.reveal_all || self.fog.sees_tile(tile)) {
                 let tall = |s: &Stood| scenery.height_of(s.model);
@@ -215,7 +215,7 @@ impl Running {
                     .felling
                     .clear(tile, scenery.standing(tile), tall);
             }
-            self.scars.stumps_left(self.scenery.standing(tile));
+            self.scars.stumps_left(self.scenery.standing(tile), burnt);
             self.scenery.fell(std::iter::once(tile));
         }
         self.scars.felled(self.world.events(), self.heightmap.tiles);
@@ -271,7 +271,10 @@ mod tests {
                 burnt: true,
             },
         ];
-        assert_eq!(cleared(&events).collect::<Vec<_>>(), [(3, 4), (5, 6)]);
+        assert_eq!(
+            cleared(&events).collect::<Vec<_>>(),
+            [((3, 4), false), ((5, 6), true)]
+        );
         assert_eq!(cleared(&[]).count(), 0);
     }
 }

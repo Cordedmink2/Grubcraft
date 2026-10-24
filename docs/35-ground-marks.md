@@ -4,9 +4,8 @@ The ground remembers what was done on it. Where workers have felled trees the
 earth is turned and dark, and where regiments have marched or fought the grass
 is trodden into bare tracks that heal over a few minutes. This is idea 2 (the
 world that remembers, render side) and the ground half of idea 22 (clearing
-land, [32](32-changing-land.md)). Scorch (the Concord's burning, a planned
-hook from the clearing twists) has a channel waiting and nothing writing it
-yet. Felled trees also leave stumps ([25](25-scenery-models.md#stumps)).
+land, [32](32-changing-land.md)). Where the Concord burns a tile
+clear ([32](32-changing-land.md#faction-twists)) the ground is scorched. Felled trees also leave stumps ([25](25-scenery-models.md#stumps)).
 
 ## What is drawn
 
@@ -15,7 +14,7 @@ yet. Felled trees also leave stumps ([25](25-scenery-models.md#stumps)).
 | Byte | What it holds |
 |---|---|
 | R | felled: turned earth where trees stood (150 for scrub, 255 for woods and thicket) |
-| G | scorched (reserved; nothing writes it yet) |
+| G | scorched: char and ash where the Concord burnt the tile (255 when `Event::Cleared` says `burnt`) |
 | B | worn: trodden bare, 0 grass to 255 bare dirt |
 | A | spare |
 
@@ -24,7 +23,7 @@ tile each, like the land grid; `None` clears it). The terrain shader reads it
 with one fetch a pixel and does nothing where the three channels are under
 0.03. Where there is a mark, noise moves its edge so it is ragged rather than
 tile-shaped, and the albedo goes toward bare dirt (worn), dark loam (felled) or
-char (scorched), with grit; turned and trodden earth also lie in small clods
+char with drifts of grey ash (scorched), with grit; turned and trodden earth also lie in small clods
 (the normal is tilted). None of it shows on rock. Land (the Brood's flesh,
 tilled Clans fields and so on) draws over marks: a faction's own ground is not
 trodden bare.
@@ -33,7 +32,8 @@ trodden bare.
 
 **Felled ground.** `Running::fell_scenery` already hears `Event::Cleared` each
 tick to take the trees off; it now hands the same events to
-`ScarView::felled`, which sets the tile's R by what stood there (`was`).
+`ScarView::felled`, which sets the tile's R by what stood there (`was`), and its G to 255 if the event
+says the tile was `burnt`.
 Replays and network games tick a world the same way, so they show it too.
 
 **Worn ground.** A few times a second (every 250 ms) each regiment that is
@@ -65,7 +65,9 @@ adapter's own limit (every desktop GPU we target allows 128 or more).
 
 ## Not yet
 
-- Scorch for Concord-cleared tiles, when the clearing twists land (the G
-  channel is ready).
+- Scorch that outlives a replay seek or a rejoin: like the other marks it is
+  built from the clearing events a machine sees, and the event is the only
+  place the burning is kept ([32](32-changing-land.md)).
+- Burnt grass tufts: the tufts on a scorched tile still stand green.
 - Moving scenery onto the shared detail textures.
 - Churn and blood for fights beyond bare wear.
