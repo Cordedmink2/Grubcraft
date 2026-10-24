@@ -23,7 +23,7 @@ Mario wants a world that looks lived in: a base where people are doing things, l
 | 2 | **Living touches without models** (built, except mist). Fireflies at dusk over fens and wet woods, pollen in meadows, dust devils in the waste, leaves falling in old woods. Mist pooling on low ground is left to the weather stage of the lighting thread. Particle recipes on a habitat sample of the ground round the camera, as the sound beds do ([09](09-art-and-audio.md)). | Particles, `Map.habitat` (done), lighting looks (done) |
 | 3 | **Busy bases** (idea 10; hearth smoke, lit windows and faction glows built as 3a, walkers between buildings as 3b, log piles beside halls as 3d, the rest not yet). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles beside the halls, stacked supplies, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
 | 4 | **Wildlife** (idea 3; deer built as 4a and doves as 4b, the rest not yet). Flocks that lift from woods when an army marches by and settle again, carrion birds over a battlefield's dead, moths round Grub seeps, butterflies in flower meadows, grazers that bolt from soldiers, fish rises and dragonflies over water. Each land has its own fauna. Creatures are a picture: soldiers walk through them. | Animal models and clips on the animation engine (T5) |
-| 5 | **Villagers** (idea 3). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
+| 5 | **Villagers** (idea 3; the hamlets themselves built as 5a, the people not yet). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
 
 Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model format, so the animal models are baked once.
 
@@ -200,3 +200,22 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 ### Not yet
 
 - Gliding, soaring in circles, perching in trees or on roofs, birds that wheel over a battle, and other lands' birds (a crow and a vulture on the same kit would also replace the aftermath's box crows).
+
+## Stage 5a as built: Grubfolk hamlets
+
+*2026-10-24. Game and scenery pack only; nothing in the simulation. Before this, a Village, Town or Bazaar was only a clearing in the scenery with a marker on the minimap: there was nothing to see, so villagers (5b) had nowhere to live.*
+
+### What a player sees
+
+- Every Village, Town and Bazaar on a map has its houses: a well in the middle, and round it huts and cottages with their doors toward the well, two haystacks and runs of wattle fence at the edge. A Village has four cottages (two huts and two houses) and a barn; a Town five cottages (two huts and three houses), a barn and three market stalls round its well; a Bazaar a ring of seven market stalls with five cottages outside it and no barn. Where the ground allows: any piece that does not fit is left out. Each place looks the same every time you see it (a hash of the site's tile).
+- Things are left out where the ground is wet, is wood or thicket, or slopes by more than 0.45 of a tile under them, and no two of them overlap (trees and bushes at the edges of the clearing may still stand among the fences). A hamlet's models are hidden where a player has built on the ground under them. They are scenery: soldiers walk through them, and they are not in the Commander View.
+- The Grubfolk's look is small, round and hard-working: daub and wattle walls, deep straw thatch, a lime-green stitch or lantern at the door ([25 · Grubfolk hamlets](25-scenery-models.md#grubfolk-hamlets)).
+
+### How it works
+
+- `gc_game::ambient::hamlets::Hamlets::new(map)` lays every site out once at the start of a match from `Map.objects` (kind Village, Town or Bazaar) and keeps the lists; `near(focus, reach, occupied)` hands the scenery pass the models of the hamlets near the camera each frame, chained onto the other extras, leaving out any whose footprint touches a tile `occupied` says has a building. The big pieces (the barn) are placed first in each ring so a neighbour cannot squeeze them out. The models are `Model::GrubfolkHut`, `GrubfolkHouse`, `GrubfolkBarn`, `GrubfolkWell`, `Haystack`, `WattleFence` and `MarketStall` in `assets/scenery.pak`.
+- `--hamlet-demo` moves the camera to the first hamlet.
+
+### Not yet
+
+- The people (stage 5b), ruins when a hamlet is raided (the simulation has no raiding yet), a palisade round a Town, chimney smoke and lamp light in the evening, and hamlets that grow with trading.

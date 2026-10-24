@@ -85,6 +85,10 @@ When workers fell a tile of woods or thicket ([32](32-changing-land.md#what-a-cl
 
 Some finished timber or stone halls, outposts, houses and workshops have cut wood against one of their walls ([34 · Ambient life](34-ambient-life.md#stage-3d-as-built-log-piles-beside-halls)). `log-pile` is a pyramid of ten logs in four courses, each log with a pale ring-marked end and a dark bark rim, held at its ends by four stakes; `log-heap` is eight logs tumbled across each other. Both lie along the wall (the model's front faces the wall, its length runs along x). Their Blender script is `logpile.py`; the stack's 740 triangles are under the rock budget of 1,000.
 
+### Grubfolk hamlets
+
+The Grubfolk's villages, towns and bazaar are dressed with seven models ([34 · Ambient life](34-ambient-life.md#stage-5a-as-built-grubfolk-hamlets)), in the Grubfolk's look (docs/07: small, round, hard-working; daub and wattle, deep straw thatch, grub-lime stitching and grub-lanterns): `grubfolk-hut` (a round daub cottage under a conical thatch of five courses, with a stone chimney, a planked arched door, a shutter and lime stitching, 775 triangles), `grubfolk-house` (a long cottage with a hipped thatch roof, timber corner posts, two shuttered windows, a woodshed and a chimney, 309), `grubfolk-barn` (a plank barn with a big gabled thatch roof and a hay-loft hatch, 152), `grubfolk-well` (a stone ring under a little thatched roof, 220), `haystack` (159), `wattle-fence` (a 2 m run of stakes and woven withies, 511) and `market-stall` (a table of crates and sacks under a striped awning, 212). Doors and fronts face -y; the long ones run along x. Their Blender script is `hamlet.py`; all fit the rock budget (LOD1 to 3 are decimated or hulls).
+
 ## Morale standards
 
 A shaken regiment plants a standard at its centre, so its nerve reads from the field without the old blinking square:

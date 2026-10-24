@@ -41,6 +41,14 @@
         // Cut wood stacked beside halls and workshops.
         (name: "log-pile", source: "shared:grubcraft/scenery/log-pile/log-pile.glb", family: "rock", sway: 0.0),
         (name: "log-heap", source: "shared:grubcraft/scenery/log-heap/log-heap.glb", family: "rock", sway: 0.0),
+        // The Grubfolk's villages, towns and bazaar (docs/34 stage 5a).
+        (name: "grubfolk-hut", source: "shared:grubcraft/scenery/grubfolk-hut/grubfolk-hut.glb", family: "rock", sway: 0.0),
+        (name: "grubfolk-house", source: "shared:grubcraft/scenery/grubfolk-house/grubfolk-house.glb", family: "rock", sway: 0.0),
+        (name: "grubfolk-barn", source: "shared:grubcraft/scenery/grubfolk-barn/grubfolk-barn.glb", family: "rock", sway: 0.0),
+        (name: "grubfolk-well", source: "shared:grubcraft/scenery/grubfolk-well/grubfolk-well.glb", family: "rock", sway: 0.0),
+        (name: "haystack", source: "shared:grubcraft/scenery/haystack/haystack.glb", family: "rock", sway: 0.0),
+        (name: "wattle-fence", source: "shared:grubcraft/scenery/wattle-fence/wattle-fence.glb", family: "rock", sway: 0.0),
+        (name: "market-stall", source: "shared:grubcraft/scenery/market-stall/market-stall.glb", family: "rock", sway: 0.0),
         // Morale standards, planted at a shaken regiment's centre.
         (name: "banner-wavering", source: "shared:grubcraft/scenery/banner-wavering/banner-wavering.glb", family: "tree", sway: 0.2),
         (name: "banner-routing", source: "shared:grubcraft/scenery/banner-routing/banner-routing.glb", family: "tree", sway: 0.2),

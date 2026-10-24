@@ -46,7 +46,7 @@ Field Battle maps (smaller, 64 × 64 to 96 × 96, terrain-focused): **Ashen Ford
 
 ## Grubfolk hamlets
 
-Grubfolk are small, round, hard-working neutral farmers who live by seeps and have survived every war on the corpse by trading with all sides.
+Grubfolk are small, round, hard-working neutral farmers who live by seeps and have survived every war on the corpse by trading with all sides. On the field each hamlet is dressed with cottages, a well, a barn (in a Village or Town), haystacks and fence round its green, three market stalls in a Town and a ring of seven in the Bazaar ([34](34-ambient-life.md#stage-5a-as-built-grubfolk-hamlets)).
 
 ### Hamlet sizes
 | Size | Market | Mercenaries | Garrison |
