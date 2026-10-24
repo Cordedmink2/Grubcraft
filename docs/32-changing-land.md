@@ -63,6 +63,35 @@ The footing layer is stored in replays from `FORMAT` 33 (older files read firm g
 - Computer players don't yet weigh mud or slopes. Their routes and charges ignore both, so they will sometimes charge into a bog.
 - Roads (+15%) and loose scree come with more footing kinds.
 
+## Weather and the time of day (ideas 1 and 9)
+
+*Plan, 2026-10-24. The simulation owns the sky's state and what it does in play; the cinematic lighting thread (T3, [30](30-cinematic-lighting.md)) owns every picture of it, the sun's direction included.*
+
+### The shared state
+
+The sim keeps one small state, deterministic and part of the state hash, and the game reads it each frame:
+
+- `world.weather()` returns `Weather { kind, strength, cloud, wind }`. `kind` is `WeatherKind::{Clear, Rain, Snow, Fog}`, in the same order as `gc_render::Weather`. `strength` (0 to 255) is how hard it rains, snows or how thick the fog is; the renderer's amount is `strength / 255`. `cloud` (0 to 255) is cloud cover, so an overcast day is clear weather with heavy cloud. `wind` (two `i8`s, tiles per second times 16) is for particles, smoke and banners.
+- `world.daylight()` returns `Daylight { tick_of_day, day_ticks }`. `light()` (0 to 1000, smooth from tick to tick) is 0 through the night, rises through dawn, is 1000 through the day and falls through dusk. `rising()` says which half of the day it is (dawn or dusk), so the look can blend Night, Dusk, Golden hour and Noon. `day_ticks` 0 means the clock stands still.
+
+Both change smoothly: a new spell of weather fades the old one's strength to nothing, then grows its own, one step every two ticks (about 25 seconds end to end), and cloud eases the same way.
+
+### Where the sky comes from
+
+`MatchSetup::sky` is a `Sky { start, day_ticks, spells }`: the time of day at the first tick, the day's length, and a list of spells (`Spell { at, kind, strength, cloud, wind }`, each starting at a tick). The game builds it from the lobby's **Time of day** (where the clock starts; the day then passes slowly, one game day in 40 minutes) and a new **Weather** option (Fair, Changing, Rain, Snow, Fog). Changing draws a spell every three to six minutes from the match seed. Every peer builds the same sky from the lobby settings, replays store it, and a Conquest match uses fair, changing weather.
+
+### What it does in play (stage 1)
+
+- **How far troops see.** A visibility percent comes from the light (100 by day, down to 45 in the dark of night) times the weather (fog takes up to 60%, snow 30%, rain 20%, each scaled by strength). In fog of war, regiments' and buildings' sight is cut by it, and archers' range is cut by it everywhere: rain and fog let a line close in under fewer volleys.
+- **Snow** slows marching by up to 15%, like light mud on all ground.
+- The selection panel and the top bar say what the sky is doing ("Fog: archers half range").
+
+### Later stages
+
+- **Rain soaks the ground (stage 2).** Long, heavy rain turns low, flat, open tiles beside water soft (it writes the footing layer through `World::change_ground`), and a dry spell firms them up again, so a bog spreads in a wet battle. The ground thread draws them muddy.
+- **Night battles, sight tied to light (stage 3, idea 9).** Regiments can carry torches: they see further at night, and are seen from much further. Burning buildings and fires light the ground around them. Ambushes are easier in the dark. The lighting thread draws torches and firelight from the same state.
+- **Lightning (later).** `Event::Lightning { at, tick }` for a flash and thunder; a strike may set woods alight once woods burn (idea 2).
+
 ## The one ground change
 
 All runtime changes to the ground go through one place in the simulation, `World::change_ground` (crate-private), given tiles and the growth they become. It:
