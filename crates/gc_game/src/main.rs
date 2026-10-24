@@ -3140,6 +3140,16 @@ impl Running {
                 ploughed_by: r.ploughed_by,
                 fighter: fighter_of(stats, &r),
             };
+            // How workers clear a tile, and where its trees should fall from
+            // (the regiment's centre, when the viewer sees it; else straight
+            // as they stood), whether or not they are on screen.
+            let clearing_style = (self.units.factions.get(usize::from(r.unit)))
+                .map_or(ambient::Style::Fell, |&f| ambient::Style::of(f));
+            if let Some(tile) = (self.world.clearing_tile_of(r.handle)).filter(|_| !block.routing) {
+                let tile_centre = Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5);
+                let from = if seen { pos } else { tile_centre };
+                self.ambient.felling.cutting(tile, from, clearing_style);
+            }
             if !seen {
                 self.puppets.update_on(
                     &block,
@@ -3326,11 +3336,6 @@ impl Running {
                             wood,
                         )
                     });
-                // Where the trees should fall from: the regiment's centre,
-                // whether or not its soldiers are on screen.
-                if let Some((tile, _, _)) = cutting {
-                    self.ambient.felling.cutting(tile, pos);
-                }
                 self.puppets.update_on(
                     &block,
                     r.owner,
@@ -3378,9 +3383,10 @@ impl Running {
                         let working = working.or(chopping.map(|(_, c, _)| c));
                         let facing =
                             working.map_or(s.facing, |c| (c - s.pos).normalize_or(s.facing));
-                        if let Some((_, _, wood)) = chopping {
+                        if let Some((_, c, wood)) = chopping {
                             let tool = at + Vec3::new(facing.x * 0.5, 0.9, facing.y * 0.5);
-                            effects.chop(fx_dt, tool, facing, wood);
+                            let target = Vec3::new(c.x, heightmap.height_at(c.x, c.y), c.y);
+                            effects.chop(fx_dt, tool, facing, wood, clearing_style, target);
                         }
                         let pose = match s.fight {
                             Some(fight) => clips.fight(model, fight, seconds),

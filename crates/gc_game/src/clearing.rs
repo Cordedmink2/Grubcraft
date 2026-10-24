@@ -213,7 +213,7 @@ impl Running {
                 let tall = |s: &Stood| scenery.height_of(s.model);
                 self.ambient
                     .felling
-                    .clear(tile, scenery.standing(tile), tall);
+                    .clear(tile, burnt, scenery.standing(tile), tall);
             }
             self.scars.stumps_left(self.scenery.standing(tile), burnt);
             self.scenery.fell(std::iter::once(tile));

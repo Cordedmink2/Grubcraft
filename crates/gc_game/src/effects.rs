@@ -7,6 +7,7 @@
 use gc_render::{DUST, Effects, HitStyle, Particle};
 use glam::{Vec2, Vec3};
 
+use crate::ambient::Style;
 use crate::fx_demo::{Demo, Mode};
 use crate::puppets::Hit;
 
@@ -30,6 +31,10 @@ const CHIP: [u8; 3] = [208, 170, 112];
 const LEAF: [u8; 3] = [74, 112, 52];
 /// How often a worker at his tool throws chips, a second.
 const CHOP_RATE: f32 = 1.6;
+/// Charred ash, crystal glints and the Brood's spores.
+const ASH: [u8; 3] = [70, 66, 62];
+const ICE: [u8; 3] = [120, 220, 255];
+const SPORE: [u8; 3] = [196, 214, 150];
 
 pub struct Field {
     fx: Effects,
@@ -109,16 +114,80 @@ impl Field {
     }
 
     /// A worker at `pos` bites into what he is clearing with his tool,
-    /// toward `dir`, for `dt` seconds of game time: chips of wood from a
-    /// tree, leaves and turf from scrub.
-    pub fn chop(&mut self, dt: f32, pos: Vec3, dir: Vec2, wood: bool) {
-        if self.fx.chance(dt * CHOP_RATE) {
-            if wood {
-                self.fx.cut_chips(pos, dir, CHIP, 2.0);
-            } else {
-                self.fx.cut_chips(pos, dir, LEAF, 1.5);
-                self.fx.leaves(pos, 0.3, LEAF, 1.0);
+    /// toward `dir`, for `dt` seconds of game time, the way his faction
+    /// clears: chips of wood from a tree, leaves and turf from scrub; the
+    /// Concord sets `target` (the tile's ground) alight, the Choir cracks
+    /// it into glints, the Brood's Gnawers chew it into spores and crumbs.
+    pub fn chop(&mut self, dt: f32, pos: Vec3, dir: Vec2, wood: bool, style: Style, target: Vec3) {
+        match style {
+            Style::Fell => {
+                if self.fx.chance(dt * CHOP_RATE) {
+                    if wood {
+                        self.fx.cut_chips(pos, dir, CHIP, 2.0);
+                    } else {
+                        self.fx.cut_chips(pos, dir, LEAF, 1.5);
+                        self.fx.leaves(pos, 0.3, LEAF, 1.0);
+                    }
+                }
             }
+            Style::Burn => {
+                self.fx.flames(target, 0.4, dt);
+                self.fx.smoke(target + Vec3::Y * 0.3, 0.45, 0.6, dt);
+                if self.fx.chance(dt * 3.0) {
+                    self.fx.embers(target, 0.4, 2.0);
+                }
+            }
+            Style::Shatter => {
+                if self.fx.chance(dt * CHOP_RATE * 1.5) {
+                    self.fx.shards(
+                        pos,
+                        Vec3::new(dir.x, 0.3, dir.y),
+                        if wood { 4.0 } else { 2.5 },
+                    );
+                    self.fx.motes(pos, 0.3, ICE, 1.0);
+                }
+            }
+            Style::Gnaw => {
+                if self.fx.chance(dt * CHOP_RATE * 1.5) {
+                    self.fx.cut_chips(pos, dir, SPORE, 1.5);
+                    self.fx.motes(pos, 0.3, SPORE, 1.0);
+                }
+            }
+        }
+    }
+
+    /// A tree or bush that stands where `pos` is burns for `dt` seconds:
+    /// `tall` tiles tall, as a trunk of flame and smoke.
+    pub fn blaze(&mut self, pos: Vec3, tall: f32, dt: f32) {
+        self.fx
+            .flames(pos + Vec3::Y * tall * 0.35, 0.3 + 0.1 * tall, dt);
+        self.fx
+            .smoke(pos + Vec3::Y * tall * 0.7, 0.35 + 0.1 * tall, 0.8, dt);
+        if self.fx.chance(dt * 2.0) {
+            self.fx.embers(pos + Vec3::Y * tall * 0.4, 0.3, 2.0);
+        }
+    }
+
+    /// What a burnt tree leaves as it crumbles at `pos`: a puff of ash.
+    pub fn ash_down(&mut self, pos: Vec3, tall: f32) {
+        self.fx.dust_burst(pos, 0.5 + 0.1 * tall, 3.0 + tall, ASH);
+        self.fx.embers(pos, 0.4, 4.0);
+    }
+
+    /// A tree or bush `tall` tiles tall bursts into crystal at `pos`.
+    pub fn shatter(&mut self, pos: Vec3, tall: f32) {
+        let at = pos + Vec3::Y * tall * 0.5;
+        self.fx.shards(at, Vec3::Y, 10.0 + 4.0 * tall);
+        self.fx.motes(at, 0.5, ICE, 4.0 + tall);
+        self.fx.dust_burst(pos, 0.4 + 0.1 * tall, 2.0, ICE);
+    }
+
+    /// A tree or bush being eaten at `pos`, `tall` tiles tall, for `dt`
+    /// seconds: crumbs and spores drifting off it.
+    pub fn gnawed(&mut self, pos: Vec3, tall: f32, dt: f32) {
+        if self.fx.chance(dt * 6.0) {
+            self.fx.leaves(pos + Vec3::Y * tall * 0.3, 0.35, SPORE, 2.0);
+            self.fx.motes(pos + Vec3::Y * tall * 0.3, 0.3, SPORE, 1.0);
         }
     }
 

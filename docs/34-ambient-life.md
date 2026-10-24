@@ -114,3 +114,28 @@ Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model fo
 ### Not yet
 
 - Porters with loads (they need the animation engine's carry), walkers that stop to talk or take a different route round a building, and wildlife and villagers (stages 4 and 5, which need models).
+
+## Faction clearing pictures
+
+*2026-10-24. Game and render only; the sim's twists are [32](32-changing-land.md).*
+
+### What a player sees
+
+Clearing looks like the faction that does it (`ambient::felling::Style`, from the worker regiment's faction; a tile the sim reports `burnt` always burns):
+
+| Faction | At the tile while working | When the tile is cleared |
+|---|---|---|
+| Ember Clans (and standard) | chips and leaves, as before | trees tip over away from the cutters, lie, are hauled off |
+| Carrion Concord | a low fire with smoke and embers on the tile | trees stay upright, char black in 1.2 s with flames, smoke and embers, then crumble to ash (3.6 s in all); bushes flare out in 1.2 s |
+| Choir | glints of crystal and cold light motes | trees go pale and glassy for 0.9 s, then burst into shards and light (bushes in half that) |
+| Brood | pale crumbs and spores thrown from the tool | trees shiver and sink as they are eaten, shedding spores, in 4.5 s (bushes 1.6 s); no trunk is left to haul |
+
+### How it works
+
+- `Felling::cutting(tile, from, style)` records the style of the regiment seen at a tile; `Felling::clear(tile, burnt, ...)` picks it up (a burnt tile is `Burn` whoever cleared it; with no cutter registered it is `Fell`). Every clearing regiment is registered each frame, in Commander View and out of the viewer's sight too, so the style is never lost; a regiment the viewer cannot see gives no direction, so trees fall as they stood and the picture gives nothing away. A cutter is kept 1.5 s after it was last registered. Each `Down` keeps its style; `pose` and `tint` give the lean, scale and colour by age, and `advance` makes the effects: `Field::blaze`, `ash_down`, `shatter`, `gnawed`, and the old `tree_down` and `bush_up` for the felled. `Field::chop` takes the style for what workers do at the tile.
+- At most 48 burning trees get flames in a frame; the rest only char, so a burnt wood cannot flood the particles. Nothing is added to the sim, the replay or the network.
+- `--fell-demo` now clears the four corners of the wood each faction's way (fell, burn, shatter, gnaw) so they can be looked at side by side.
+
+### Not yet
+
+- Burnt trunks lying instead of crumbling, and the Ember Clans' hauling carts. (The scorched ground and charred stumps a burnt tile leaves are the ground thread's, [35](35-ground-marks.md).)
