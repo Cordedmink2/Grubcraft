@@ -25,15 +25,21 @@ pub enum LookPreset {
     Storm,
     /// The sun just above the hills: violet shade, an orange sky.
     Dusk,
+    /// Moonlight: deep blue shade and a dark sky, the moon low enough that
+    /// the game's own "it is dark" test (the sun below 0.3 high) lights
+    /// the lamps and sends out fireflies. Lit places stand out; the rest is
+    /// dim but readable.
+    Night,
 }
 
 impl LookPreset {
-    pub const ALL: [LookPreset; 5] = [
+    pub const ALL: [LookPreset; 6] = [
         LookPreset::Noon,
         LookPreset::GoldenHour,
         LookPreset::Overcast,
         LookPreset::Storm,
         LookPreset::Dusk,
+        LookPreset::Night,
     ];
 
     pub fn name(self) -> &'static str {
@@ -43,6 +49,7 @@ impl LookPreset {
             LookPreset::Overcast => "Overcast",
             LookPreset::Storm => "Storm",
             LookPreset::Dusk => "Dusk",
+            LookPreset::Night => "Night",
         }
     }
 
@@ -156,7 +163,71 @@ impl LookPreset {
                 sky_horizon: [0.95, 0.62, 0.46],
                 ..GOLDEN_HOUR
             },
+            LookPreset::Night => Look {
+                sun: [-0.80, 0.18, -0.50],
+                sun_color: [0.34, 0.44, 0.74],
+                sky_ambient: [0.05, 0.065, 0.14],
+                ground_ambient: [0.022, 0.026, 0.05],
+                fog: [0.05, 0.07, 0.13],
+                haze: [0.10, 0.14, 0.24],
+                fog_density: 0.0018,
+                fog_falloff: 0.05,
+                rim: 0.5,
+                foliage_glow: 0.05,
+                cloud_shadows: 0.2,
+                exposure: 1.2,
+                contrast: 1.12,
+                saturation: 0.75,
+                vignette: 0.45,
+                grain: 0.05,
+                shadow_tint: [0.9, 0.97, 1.16],
+                light_tint: [0.95, 1.0, 1.1],
+                sky_top: [0.015, 0.03, 0.08],
+                sky_horizon: [0.07, 0.11, 0.2],
+                ..GOLDEN_HOUR
+            },
         }
+    }
+}
+
+/// What falls from the sky, and how the air looks while it does. Render
+/// only: it changes the light and the particles, never the simulation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Weather {
+    #[default]
+    Clear,
+    /// Grey light, thick air, drops streaking down.
+    Rain,
+    /// Pale light, soft thick air, flakes drifting down.
+    Snow,
+    /// No fall; the air lies thick on low ground and hides the far field.
+    Fog,
+}
+
+impl Weather {
+    pub const ALL: [Weather; 4] = [Weather::Clear, Weather::Rain, Weather::Snow, Weather::Fog];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Weather::Clear => "Clear",
+            Weather::Rain => "Rain",
+            Weather::Snow => "Snow",
+            Weather::Fog => "Fog",
+        }
+    }
+
+    /// The weather a name (as typed on a command line) stands for, ignoring
+    /// case.
+    pub fn from_name(name: &str) -> Option<Weather> {
+        Weather::ALL
+            .into_iter()
+            .find(|w| w.name().eq_ignore_ascii_case(name.trim()))
+    }
+
+    /// The next weather in [`Weather::ALL`], wrapping round.
+    pub fn next(self) -> Weather {
+        let at = Weather::ALL.iter().position(|&w| w == self).unwrap_or(0);
+        Weather::ALL[(at + 1) % Weather::ALL.len()]
     }
 }
 
@@ -279,6 +350,50 @@ impl Look {
             light_tint: scale(self.light_tint, air.light_tint),
             sky_top: shift(self.sky_top, air.sky_top),
             sky_horizon: shift(self.sky_horizon, air.sky_horizon),
+            ..*self
+        }
+    }
+
+    /// This look under `weather` at `amount` (0 clear, 1 full): the sun
+    /// dims behind cloud, the air thickens and greys, colours drain and the
+    /// sky closes. It works on any look, so rain at dusk is dusk's rain.
+    pub fn in_weather(&self, weather: Weather, amount: f32) -> Look {
+        let amount = amount.clamp(0.0, 1.0);
+        if weather == Weather::Clear || amount <= 0.0 {
+            return *self;
+        }
+        // How the weather changes the look at full strength: the light's
+        // brightness, the air's thickness and how it hugs the ground, the
+        // colour left in the picture, and the grey the air and sky turn to
+        // (as a share of the look's own luminance).
+        let (sun, ambient, density, falloff, saturation, grey, shadows) = match weather {
+            Weather::Rain => (0.35, 0.9, 2.2, 1.0, 0.7, 0.55, 2.0),
+            Weather::Snow => (0.45, 1.15, 2.6, 1.0, 0.6, 0.7, 1.6),
+            Weather::Fog => (0.55, 0.95, 6.0, 1.6, 0.8, 0.5, 1.0),
+            Weather::Clear => unreachable!(),
+        };
+        let mix = |a: f32, b: f32| a + (b - a) * amount;
+        let scale = |c: [f32; 3], k: f32| c.map(|v| v * mix(1.0, k));
+        // A colour toward a grey of its own brightness (sRGB colours).
+        let drain = |c: [f32; 3], lift: f32| {
+            let l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+            let g = (l * mix(1.0, lift)).clamp(0.0, 1.0);
+            c.map(|v| v + (g - v) * amount * grey)
+        };
+        let lift = if weather == Weather::Snow { 1.15 } else { 0.9 };
+        Look {
+            sun_color: scale(self.sun_color, sun),
+            sky_ambient: scale(self.sky_ambient, ambient),
+            fog: drain(self.fog, lift),
+            haze: drain(self.haze, lift),
+            fog_density: mix(self.fog_density, self.fog_density * density),
+            fog_falloff: mix(self.fog_falloff, self.fog_falloff * falloff),
+            rim: mix(self.rim, self.rim * 0.4),
+            foliage_glow: mix(self.foliage_glow, self.foliage_glow * 0.4),
+            cloud_shadows: mix(self.cloud_shadows, (self.cloud_shadows * shadows).min(0.9)),
+            saturation: mix(self.saturation, self.saturation * saturation),
+            sky_top: drain(self.sky_top, lift),
+            sky_horizon: drain(self.sky_horizon, lift),
             ..*self
         }
     }
@@ -617,7 +732,8 @@ mod tests {
             Some(LookPreset::GoldenHour)
         );
         assert_eq!(LookPreset::from_name("STORM"), Some(LookPreset::Storm));
-        assert_eq!(LookPreset::from_name("night"), None);
+        assert_eq!(LookPreset::from_name("night"), Some(LookPreset::Night));
+        assert_eq!(LookPreset::from_name("midnight"), None);
         let mut p = LookPreset::Noon;
         for _ in 0..LookPreset::ALL.len() {
             p = p.next();
@@ -630,6 +746,91 @@ mod tests {
         for p in LookPreset::ALL {
             assert!(p.look().sun_dir().y > 0.05, "{}", p.name());
         }
+    }
+
+    #[test]
+    fn the_moon_is_low_so_the_game_knows_it_is_dark() {
+        // The ambient touches and lit windows read the sun's height; the
+        // threshold is `ambient::touches::DUSK_AT`.
+        assert!(LookPreset::Night.look().sun_dir().y < 0.25);
+        assert!(LookPreset::Noon.look().sun_dir().y > 0.5);
+    }
+
+    #[test]
+    fn night_is_dim_but_not_black() {
+        let night = LookPreset::Night.look();
+        let noon = LookPreset::Noon.look();
+        let level = |l: &Look| l.sun_color.iter().sum::<f32>() * l.exposure;
+        assert!(level(&night) < level(&noon) * 0.5);
+        // The shade is not left black: the unlit side still reads.
+        assert!(night.sky_ambient.iter().sum::<f32>() * night.exposure > 0.25);
+    }
+
+    #[test]
+    fn weather_names_are_found_and_cycle() {
+        assert_eq!(Weather::from_name("RAIN"), Some(Weather::Rain));
+        assert_eq!(Weather::from_name("hail"), None);
+        let mut w = Weather::Clear;
+        for _ in 0..Weather::ALL.len() {
+            w = w.next();
+        }
+        assert_eq!(w, Weather::Clear);
+    }
+
+    #[test]
+    fn clear_skies_and_no_amount_change_nothing() {
+        let look = LookPreset::Dusk.look();
+        assert_eq!(look.in_weather(Weather::Clear, 1.0), look);
+        for w in Weather::ALL {
+            assert_eq!(look.in_weather(w, 0.0), look, "{}", w.name());
+        }
+    }
+
+    #[test]
+    fn weather_dims_the_sun_and_thickens_the_air_more_the_more_there_is() {
+        for preset in LookPreset::ALL {
+            let look = preset.look();
+            for w in [Weather::Rain, Weather::Snow, Weather::Fog] {
+                let half = look.in_weather(w, 0.5);
+                let full = look.in_weather(w, 1.0);
+                assert!(
+                    half.sun_color[0] < look.sun_color[0],
+                    "{} {}",
+                    preset.name(),
+                    w.name()
+                );
+                assert!(full.sun_color[0] < half.sun_color[0]);
+                assert!(half.fog_density > look.fog_density);
+                assert!(full.fog_density > half.fog_density);
+                assert!(full.saturation < look.saturation);
+                assert!(full.cloud_shadows <= 0.9 + 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn rain_greys_the_air_and_snow_whitens_it() {
+        let look = LookPreset::GoldenHour.look();
+        let spread = |c: [f32; 3]| c[0].max(c[1]).max(c[2]) - c[0].min(c[1]).min(c[2]);
+        let rain = look.in_weather(Weather::Rain, 1.0);
+        assert!(spread(rain.haze) < spread(look.haze) * 0.6);
+        let luma = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        let snow = look.in_weather(Weather::Snow, 1.0);
+        assert!(luma(snow.sky_horizon) > luma(rain.sky_horizon));
+        // Colours stay in range.
+        for c in [rain.fog, snow.haze, snow.sky_top, rain.sky_horizon] {
+            assert!(c.iter().all(|v| (0.0..=1.0).contains(v)), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn fog_lies_low_and_rain_does_not_change_how_the_air_thins() {
+        let look = LookPreset::Noon.look();
+        assert!(look.in_weather(Weather::Fog, 1.0).fog_falloff > look.fog_falloff);
+        assert_eq!(
+            look.in_weather(Weather::Rain, 1.0).fog_falloff,
+            look.fog_falloff
+        );
     }
 
     #[test]

@@ -24,7 +24,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
 /// Slots in the ring buffer: the most particles alive at once.
-pub const MAX_PARTICLES: usize = 16_384;
+pub const MAX_PARTICLES: usize = 32_768;
 
 /// Behaviour flags of a [`Particle`]; the shader reads the same bits.
 pub mod flags {

@@ -15,6 +15,7 @@ use glam::{Vec2, Vec3};
 
 mod ambient;
 
+use crate::look::Weather;
 use crate::particles::{Particle, Shape, flags};
 
 /// A small, fast pseudo-random generator for effects (xorshift32).
@@ -547,6 +548,64 @@ impl Effects {
         }
     }
 
+    /// Rain or snow falling over a disc of `radius` round `centre` (a place
+    /// on the map, `ground` giving the land's height), `amount` of drops or
+    /// flakes. Each begins up to `FALL_HEIGHT` tiles over the ground and is
+    /// gone before it reaches it (a drop is a streak along its fall, a flake
+    /// a soft speck that sways on the wind). Clear weather and fog drop
+    /// nothing.
+    pub fn precipitation(
+        &mut self,
+        weather: Weather,
+        centre: Vec2,
+        radius: f32,
+        amount: f32,
+        ground: impl Fn(Vec2) -> f32,
+    ) {
+        for _ in 0..self.count(amount) {
+            let at = centre + self.rng.disc() * radius;
+            let low = ground(at);
+            match weather {
+                Weather::Rain => {
+                    // Slanted a little by the wind, and falling fast.
+                    let fall = self.rng.between(10.0, 13.0);
+                    let top = self.rng.between(0.6, 1.0) * FALL_HEIGHT;
+                    self.out.push(Particle {
+                        pos: Vec3::new(at.x, low + top, at.y),
+                        vel: Vec3::new(1.6, -fall, 0.8),
+                        life: (top - 0.1) / fall,
+                        size: [0.03, 0.03],
+                        shape: Shape::Streak,
+                        flags: flags::STRETCH,
+                        seed: self.rng.byte(),
+                        ..fading([196, 212, 232], 150)
+                    });
+                }
+                Weather::Snow => {
+                    let fall = self.rng.between(1.1, 1.9);
+                    // Gone before the ring's longest life (8 s) cuts it short.
+                    let top = (self.rng.between(0.4, 1.0) * FALL_HEIGHT).min(fall * 7.4);
+                    self.out.push(Particle {
+                        pos: Vec3::new(at.x, low + top, at.y),
+                        vel: Vec3::new(
+                            self.rng.between(-0.3, 0.3),
+                            -fall,
+                            self.rng.between(-0.3, 0.3),
+                        ),
+                        life: (top - 0.1) / fall,
+                        size: [0.075, 0.06],
+                        spin: self.rng.byte() as i8,
+                        shape: Shape::Glow,
+                        flags: flags::WIND,
+                        seed: self.rng.byte(),
+                        ..fading([240, 244, 250], 215)
+                    });
+                }
+                Weather::Clear | Weather::Fog => return,
+            }
+        }
+    }
+
     /// What a blow throws up at `pos`, flying along `dir`: sparks when it
     /// rang on armour (`armoured`), then the faction's wound. `power` is 1
     /// for an ordinary blow, more for a crushing one.
@@ -579,6 +638,9 @@ fn fading(rgb: [u8; 3], alpha: u8) -> Particle {
         ..Particle::default()
     }
 }
+
+/// How high above the ground rain and snow begin to fall, in tiles.
+pub const FALL_HEIGHT: f32 = 14.0;
 
 fn mix(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -671,5 +733,43 @@ mod tests {
         assert!((0.45..0.55).contains(&mean), "mean {mean}");
         assert!((rng.direction().length() - 1.0).abs() < 1e-4);
         assert!(rng.disc().length() <= 1.0);
+    }
+
+    fn fall(weather: Weather, amount: f32) -> Vec<Particle> {
+        let mut fx = Effects::default();
+        fx.precipitation(weather, Vec2::new(50.0, 50.0), 10.0, amount, |_| 3.0);
+        fx.take()
+    }
+
+    #[test]
+    fn rain_and_snow_fall_and_clear_air_and_fog_do_not() {
+        assert!(fall(Weather::Rain, 200.0).len() >= 190);
+        assert!(fall(Weather::Snow, 200.0).len() >= 190);
+        assert!(fall(Weather::Clear, 200.0).is_empty());
+        assert!(fall(Weather::Fog, 200.0).is_empty());
+    }
+
+    #[test]
+    fn drops_and_flakes_are_gone_before_they_reach_the_ground() {
+        for weather in [Weather::Rain, Weather::Snow] {
+            for p in fall(weather, 300.0) {
+                assert!(p.vel.y < 0.0);
+                let end = p.pos.y + p.vel.y * p.life;
+                assert!(end >= 3.0, "{weather:?}: ends at {end}");
+                assert!(p.pos.y <= 3.0 + FALL_HEIGHT);
+                assert!(p.life > 0.0 && p.life <= 8.0, "{weather:?}: {}", p.life);
+                // Inside the disc it was asked for.
+                assert!(Vec2::new(p.pos.x, p.pos.z).distance(Vec2::new(50.0, 50.0)) <= 10.01);
+            }
+        }
+    }
+
+    #[test]
+    fn a_thin_graphics_density_thins_the_fall() {
+        let mut fx = Effects::default();
+        fx.set_density(0.25);
+        fx.precipitation(Weather::Rain, Vec2::ZERO, 10.0, 400.0, |_| 0.0);
+        let n = fx.take().len();
+        assert!((60..=140).contains(&n), "{n}");
     }
 }

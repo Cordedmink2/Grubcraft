@@ -412,6 +412,9 @@ struct Options {
     /// The light and grade every match opens with (`--look golden-hour`), in
     /// place of the lobby's time of day; F9 cycles it.
     look: Option<gc_render::LookPreset>,
+    /// The weather every match opens in (`--weather rain|snow|fog`); F12
+    /// steps through them.
+    weather: Option<gc_render::Weather>,
     /// A land whose air lights the whole map (`--air waste`).
     air: Option<gc_map::def::Land>,
     /// How far the camera starts from the ground (`--distance 14..260`).
@@ -448,6 +451,7 @@ fn parse_args() -> Options {
         showroom_clip: None,
         viewer: None,
         look: None,
+        weather: None,
         air: None,
         distance: None,
         fx: None,
@@ -577,6 +581,9 @@ fn parse_args() -> Options {
             "--look" => gc_render::LookPreset::from_name(&value)
                 .map(|p| opts.look = Some(p))
                 .is_some(),
+            "--weather" => gc_render::Weather::from_name(&value)
+                .map(|w| opts.weather = Some(w))
+                .is_some(),
             "--air" => gc_map::def::Land::ALL
                 .into_iter()
                 .find(|l| format!("{l:?}").eq_ignore_ascii_case(value.trim()))
@@ -667,7 +674,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -1497,7 +1504,7 @@ impl App {
         self.running = Some(Running {
             window,
             renderer,
-            atmosphere: atmosphere::Atmosphere::new(opts.look, opts.air),
+            atmosphere: atmosphere::Atmosphere::new(opts.look, opts.air).with_weather(opts.weather),
             cinema: cinema::Cinema::default(),
             was_deploying: false,
             director: director::Director::default(),
@@ -1960,6 +1967,10 @@ impl ApplicationHandler for App {
                         KeyCode::F1 if down && !event.repeat => r.f1_key(),
                         KeyCode::F9 if down && !event.repeat => {
                             r.atmosphere.next_preset();
+                            r.sandbox.dirty = true;
+                        }
+                        KeyCode::F12 if down && !event.repeat => {
+                            r.atmosphere.next_weather();
                             r.sandbox.dirty = true;
                         }
                         KeyCode::F10 if down && !event.repeat => {
@@ -3699,6 +3710,27 @@ impl Running {
                 },
                 |a, b| (hm.height_at(b.x, b.y) - hm.height_at(a.x, a.y)).abs(),
             );
+        }
+        // Rain and snow, the one weather clearing and the one coming in;
+        // nobody is looking at the field behind the menu or in the unit
+        // viewer.
+        if self.viewer.is_none() && !(self.menu_open && self.online.is_none()) {
+            let thin = if self.menu.settings().clarity {
+                0.4
+            } else {
+                1.0
+            };
+            let water = heightmap.water_level();
+            for sky in [self.atmosphere.leaving(), self.atmosphere.weather()] {
+                self.effects.weather(
+                    dt.as_secs_f32() * fx_speed,
+                    density * thin,
+                    sky,
+                    view_focus,
+                    view_distance,
+                    |p| heightmap.height_at(p.x, p.y).max(water),
+                );
+            }
         }
         let particles = self.effects.frame(
             dt.as_secs_f32() * fx_speed,

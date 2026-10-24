@@ -292,6 +292,7 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("F8", "Director camera"),
             ("G", "Show blocked ground"),
             ("F9", "Change the light"),
+            ("F12", "Change the weather"),
             ("F10", "Tune the light"),
             ("L", "AI lens"),
             ("C", "Credits"),
