@@ -72,8 +72,8 @@ pub use post::Cinema;
 pub const MAX_UI_QUADS: usize = 8192;
 pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
 pub use soldiers::{
-    LAYER_ADDITIVE, MAX_SOLDIER_INSTANCES, POSE_LAYERS, PoseLayer, SoldierBatch, SoldierInstance,
-    TONE_NEUTRAL,
+    FEET_AS_POSED, LAYER_ADDITIVE, MAX_SOLDIER_INSTANCES, POSE_LAYERS, PoseLayer, SoldierBatch,
+    SoldierInstance, TONE_NEUTRAL,
 };
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 use shadows::{SHADOW_BIAS, SHADOW_FORMAT, SHADOW_SIZE};

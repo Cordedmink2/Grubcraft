@@ -208,11 +208,32 @@ impl Clips {
             // Fall, lie still a moment and get up: the death move played
             // forward, then back.
             Move::Down(f) => {
-                let depth = (f / DOWN_FALL).min((1.0 - f) / DOWN_RISE).min(1.0);
+                let depth = down_depth(f);
                 self.fall(model, |die| depth * (die.frames - 1) as f32, depth > 0.5)
             }
         }
     }
+}
+
+/// How far down a knockdown `f` (0 to 1) through has him: falling, lying
+/// still a moment, then getting up.
+pub fn down_depth(f: f32) -> f32 {
+    (f / DOWN_FALL).min((1.0 - f) / DOWN_RISE).clamp(0.0, 1.0)
+}
+
+/// Seconds over which a dying soldier's feet leave the ground's hold.
+const FEET_FADE: f32 = 0.3;
+
+/// [`gc_render::SoldierInstance::feet`] for a soldier `share` (0 to 1) of the
+/// way to keeping his feet as the move puts them.
+pub fn feet_as_posed(share: f32) -> u8 {
+    (share.clamp(0.0, 1.0) * f32::from(gc_render::FEET_AS_POSED)).round() as u8
+}
+
+/// [`gc_render::SoldierInstance::feet`] for a soldier `seconds` into his
+/// death (negative while he still stands, waiting for the blow).
+pub fn dying_feet(seconds: f32) -> u8 {
+    feet_as_posed(seconds / FEET_FADE)
 }
 
 /// Small differences between soldiers of one model, so a regiment does not

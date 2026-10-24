@@ -37,14 +37,17 @@ pub(crate) const FACING: Vec2 = Vec2::Y;
 const _: () = assert!(FURTHEST < crate::COMMANDER_OUT);
 const _: () = assert!(NEAREST < MIN_DISTANCE);
 
-/// What a model shows: one of the clips soldiers play, a fall, or a march:
-/// walking legs under an attacking upper body, to show the pose pass's
-/// masked layers (docs/33; a model still on bone rows only walks).
+/// What a model shows: one of the clips soldiers play, a fall, a march
+/// (walking legs under an attacking upper body, to show the pose pass's
+/// masked layers; a model still on bone rows only walks) or a look (idle,
+/// looking round and up and down; a model on bone rows only idles). See
+/// docs/33.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Clip {
     Play(Action),
     Die,
     March,
+    Look,
 }
 
 impl Clip {
@@ -65,6 +68,7 @@ impl Clip {
             "cheer" => Clip::Play(Action::Cheer),
             "die" => Clip::Die,
             "march" => Clip::March,
+            "look" => Clip::Look,
             _ => return None,
         })
     }
@@ -90,6 +94,11 @@ pub(crate) struct Shown {
     /// Lay it flat (a fall on a model with no death clip).
     pub flat: bool,
     pub layers: [PoseLayer; POSE_LAYERS],
+    /// Where it looks, and how much ([`gc_render::SoldierInstance::look`]).
+    pub look: [i8; 2],
+    pub look_weight: u8,
+    /// How much the feet keep to the move ([`gc_render::SoldierInstance::feet`]).
+    pub feet: u8,
 }
 
 /// What `model` shows `time` seconds into the show.
@@ -98,9 +107,15 @@ pub(crate) fn pose(clips: &Clips, model: usize, hold: Option<Clip>, time: f32) -
         pose,
         flat,
         layers: Default::default(),
+        look: [0; 2],
+        look_weight: 0,
+        feet: 0,
     };
     match at(hold, time) {
-        (Clip::Die, t) => clips.death(model, t).map(shown),
+        (Clip::Die, t) => clips.death(model, t).map(|d| Shown {
+            feet: crate::models::dying_feet(t),
+            ..shown(d)
+        }),
         (Clip::Play(action), t) => clips.pose(model, action, t).map(|p| shown((p, false))),
         (Clip::March, t) => {
             let mut s = shown((clips.pose(model, Action::Walk, t)?, false));
@@ -111,6 +126,14 @@ pub(crate) fn pose(clips: &Clips, model: usize, hold: Option<Clip>, time: f32) -
                 };
                 s.layers[0] = upper.layer(attack.looping(t), 1.0);
             }
+            Some(s)
+        }
+        (Clip::Look, t) => {
+            let mut s = shown((clips.pose(model, Action::Idle, t)?, false));
+            // Round to either side and back, nodding more quickly.
+            let turn = |rate: f32, reach: f32| ((t * rate).sin() * reach).round() as i8;
+            s.look = [turn(0.9, 127.0), turn(1.7, 90.0)];
+            s.look_weight = 255;
             Some(s)
         }
     }
@@ -292,7 +315,14 @@ pub(crate) fn stand(
     shown: &Shown,
     color: [u8; 3],
 ) {
-    let Shown { pose, flat, layers } = *shown;
+    let Shown {
+        pose,
+        flat,
+        layers,
+        look,
+        look_weight,
+        feet,
+    } = *shown;
     let at = Vec3::new(pos.x, ground + lift, pos.y);
     let lod = art.view.lod(art.heights[model], at);
     art.buckets[model * gc_assets::model::LODS + lod].push(gc_render::SoldierInstance {
@@ -304,7 +334,9 @@ pub(crate) fn stand(
         lift,
         scale: 1.0,
         layers,
-        ..Default::default()
+        look,
+        look_weight,
+        feet,
     });
 }
 
@@ -469,12 +501,21 @@ mod tests {
         let end = pose(&clips, m, die, 50.0).unwrap().pose;
         assert_ne!(start.rows, end.rows);
         assert_eq!(end, pose(&clips, m, die, 500.0).unwrap().pose);
+        // A falling model's feet leave the ground's hold as he goes down.
+        assert_eq!(pose(&clips, m, die, 0.0).unwrap().feet, 0);
+        assert_eq!(
+            pose(&clips, m, die, 50.0).unwrap().feet,
+            gc_render::FEET_AS_POSED
+        );
+        assert_eq!(pose(&clips, m, None, 1.0).unwrap().feet, 0);
         // The cycle's fall starts where the clip does and ends held, too.
         assert_eq!(pose(&clips, m, None, 12.0).unwrap().pose, start);
         assert_eq!(pose(&clips, m, None, 15.9).unwrap().pose.rows, end.rows);
         // Every model has a pose in every clip.
         for m in 0..models.models.len() {
-            for clip in ["idle", "walk", "attack", "shoot", "cheer", "die", "march"] {
+            for clip in [
+                "idle", "walk", "attack", "shoot", "cheer", "die", "march", "look",
+            ] {
                 assert!(pose(&clips, m, Clip::parse(clip), 1.3).is_some());
             }
         }
@@ -483,5 +524,13 @@ mod tests {
         assert_eq!(march.pose, clips.pose(m, Action::Walk, 1.3).unwrap());
         assert_eq!(march.layers[0].mask, Mask::Upper as u8);
         assert_eq!(march.layers[0].weight, 255);
+        // A look idles, turning round.
+        let look = pose(&clips, m, Some(Clip::Look), 1.3).unwrap();
+        assert_eq!(look.pose, clips.pose(m, Action::Idle, 1.3).unwrap());
+        assert_eq!(look.look_weight, 255);
+        assert_ne!(
+            look.look,
+            pose(&clips, m, Some(Clip::Look), 2.6).unwrap().look
+        );
     }
 }

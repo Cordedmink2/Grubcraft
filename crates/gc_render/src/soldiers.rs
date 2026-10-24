@@ -11,6 +11,7 @@ use std::mem::offset_of;
 
 use crate::detail::{DetailGpu, upload_bc7_layers};
 use bytemuck::{Pod, Zeroable};
+use gc_assets::anim::{JointRecord, Role};
 use gc_assets::model::{
     BONE_TEXELS_PER_ROW, LAYERS_PER_MATERIAL, LODS, ModelVertex, Models, TEXTURE_MIPS, TEXTURE_SIZE,
 };
@@ -179,9 +180,20 @@ pub struct SoldierInstance {
     pub scale: f32,
     /// Moves played on top of the base one, in order.
     pub layers: [PoseLayer; POSE_LAYERS],
-    /// Kept for look-at and foot IK (all zero).
-    pub _reserved: [u8; 4],
+    /// Where the soldier looks, turning chest, neck and head: yaw (127 is a
+    /// quarter turn towards his left, the model's +x) and pitch (127 is an
+    /// eighth of a turn down), for models fitted to a skeleton.
+    pub look: [i8; 2],
+    /// How much of `look` shows, 0 (none) to 255.
+    pub look_weight: u8,
+    /// How much the feet stay where the move puts them, 0 to
+    /// [`FEET_AS_POSED`]: at 0 a fitted model's legs bend to stand on
+    /// uneven ground; the game fades it up as a soldier falls.
+    pub feet: u8,
 }
+
+/// [`SoldierInstance::feet`]: no foot IK at all (the fallen and the dead).
+pub const FEET_AS_POSED: u8 = 255;
 
 const _: () = assert!(size_of::<SoldierInstance>() == 64);
 
@@ -1277,27 +1289,32 @@ pub(crate) fn upload(
 /// them, with per model where its fit starts (0 for none):
 ///
 /// - Per skeleton, a vector per joint: its parent (255 for a root), depth,
-///   the masks it is in (one bit each) and role (low byte) and mirror.
+///   the masks it is in (one bit each), and its role (low byte), mirror
+///   (next byte) and fix (the third byte, see [`rig_of`]).
 /// - Per fitted model: its skeleton's first joint, joint count, deepest
-///   depth and first pose, then its skeleton-to-model matrix and per bone
-///   its fix, three rows of floats each.
+///   depth and first pose, then its skeleton's rig ([`rig_of`]), then its
+///   skeleton-to-model matrix and per bone its fix, three rows of floats
+///   each.
 fn anim_gpu(m: &Models<'_>) -> (Vec<[u32; 4]>, Vec<u32>) {
     let start = 1 + m.anim.frames.len() as u32;
     let mut out = Vec::new();
     let mut joints_at = Vec::with_capacity(m.anim.skeletons.len());
     let mut deepest = Vec::with_capacity(m.anim.skeletons.len());
+    let mut rigs = Vec::with_capacity(m.anim.skeletons.len());
     for s in 0..m.anim.skeletons.len() {
         joints_at.push(start + out.len() as u32);
         let joints = m.anim.joints_of(s);
         // The loader has checked that the parents do not loop.
         let depths = gc_assets::anim::depths(joints).unwrap_or_default();
         deepest.push(depths.iter().copied().max().map_or(0, u32::from));
-        for (j, depth) in joints.iter().zip(depths) {
+        let (head, fixes) = rig_of(joints);
+        rigs.push(head);
+        for ((j, depth), fix) in joints.iter().zip(depths).zip(fixes) {
             out.push([
                 u32::from(j.parent),
                 u32::from(depth),
                 u32::from(j.masks),
-                u32::from(j.role) | u32::from(j.mirror) << 8,
+                u32::from(j.role) | u32::from(j.mirror) << 8 | u32::from(fix) << 16,
             ]);
         }
     }
@@ -1315,6 +1332,7 @@ fn anim_gpu(m: &Models<'_>) -> (Vec<[u32; 4]>, Vec<u32>) {
                 deepest[s],
                 1 + skeleton.first_pose,
             ]);
+            out.push(rigs[s]);
             let fixes =
                 &m.anim.fixes[fit.first_fix as usize..][..1 + m.models[model].bones as usize];
             out.extend_from_slice(bytemuck::cast_slice::<_, [u32; 4]>(fixes));
@@ -1322,6 +1340,62 @@ fn anim_gpu(m: &Models<'_>) -> (Vec<[u32; 4]>, Vec<u32>) {
         })
         .collect();
     (out, fits)
+}
+
+/// A joint missing from a skeleton's rig.
+const NO_JOINT: u32 = 255;
+
+/// The joints `cs_pose` bends for foot IK and turns for look-at, and which
+/// of its fixes each joint takes. The rig is one vector: the left leg's
+/// upper, lower and foot joints (a byte each; `NO_JOINT` for both legs
+/// unless each is a chain it can bend), the right leg's, then chest, neck
+/// and head. A joint takes the fix
+/// of the nearest of those at or above it: 1 to 3 the left leg's upper, lower
+/// and foot, 4 to 6 the right's, 7 to 9 chest, neck and head, 0 none (only
+/// the drop of the whole body).
+fn rig_of(joints: &[JointRecord]) -> ([u32; 4], Vec<u8>) {
+    let find = |r: Role| joints.iter().position(|j| j.role == r as u8);
+    let leg = |upper, lower, foot| {
+        let (u, l, f) = (find(upper)?, find(lower)?, find(foot)?);
+        // Only a chain the two-bone solve can bend.
+        (usize::from(joints[f].parent) == l && usize::from(joints[l].parent) == u)
+            .then_some([u, l, f])
+    };
+    let mut fixed = [None; 9];
+    // Both legs or neither: the body drops to the lower foot, so a leg that
+    // cannot bend would sink into the ground.
+    if let (Some(l), Some(r)) = (
+        leg(Role::UpperLegL, Role::LowerLegL, Role::FootL),
+        leg(Role::UpperLegR, Role::LowerLegR, Role::FootR),
+    ) {
+        fixed[..3].copy_from_slice(&l.map(Some));
+        fixed[3..6].copy_from_slice(&r.map(Some));
+    }
+    for (k, r) in [Role::Chest, Role::Neck, Role::Head]
+        .into_iter()
+        .enumerate()
+    {
+        fixed[6 + k] = find(r);
+    }
+    let byte = |j: Option<usize>| j.map_or(NO_JOINT, |j| j as u32);
+    let word = |k: usize| byte(fixed[k]) | byte(fixed[k + 1]) << 8 | byte(fixed[k + 2]) << 16;
+    let fixes = (0..joints.len())
+        .map(|j| {
+            let mut at = j;
+            // The loader has checked that the parents do not loop.
+            for _ in 0..joints.len() {
+                if let Some(k) = fixed.iter().position(|&f| f == Some(at)) {
+                    return k as u8 + 1;
+                }
+                match joints[at].parent {
+                    p if usize::from(p) < joints.len() => at = usize::from(p),
+                    _ => break,
+                }
+            }
+            0
+        })
+        .collect();
+    ([word(0), word(3), word(6), 0], fixes)
 }
 
 /// The material texture array, every layer with its mips (BC7); a single
@@ -1363,6 +1437,43 @@ fn upload_materials(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_rig_names_the_legs_it_can_bend_and_each_joint_takes_its_fix() {
+        let j = |parent: u8, role: Role| JointRecord {
+            parent,
+            masks: 1,
+            mirror: 0,
+            role: role as u8,
+        };
+        // hips, chest, head, left leg (upper, lower, foot, toe), a right leg
+        // whose foot hangs off the upper leg, and a hand on the chest.
+        let mut joints = vec![
+            j(gc_assets::anim::ROOT, Role::Hips),
+            j(0, Role::Chest),
+            j(1, Role::Head),
+            j(0, Role::UpperLegL),
+            j(3, Role::LowerLegL),
+            j(4, Role::FootL),
+            j(5, Role::None),
+            j(0, Role::UpperLegR),
+            j(7, Role::LowerLegR),
+            j(7, Role::FootR),
+            j(1, Role::None),
+        ];
+        let none = NO_JOINT | NO_JOINT << 8 | NO_JOINT << 16;
+        // One leg that cannot bend leaves both alone.
+        let (head, fixes) = rig_of(&joints);
+        assert_eq!(head[..2], [none, none]);
+        assert_eq!(head[2], 1 | NO_JOINT << 8 | 2 << 16);
+        assert_eq!(fixes, vec![0, 7, 9, 0, 0, 0, 0, 0, 0, 0, 7]);
+        // With the right foot on its lower leg, both legs bend.
+        joints[9].parent = 8;
+        let (head, fixes) = rig_of(&joints);
+        assert_eq!(head[0], 3 | 4 << 8 | 5 << 16);
+        assert_eq!(head[1], 7 | 8 << 8 | 9 << 16);
+        assert_eq!(fixes, vec![0, 7, 9, 1, 2, 3, 3, 4, 5, 6, 7]);
+    }
     use gc_assets::model::ModelRecord;
 
     /// One model of six vertices (a strip), with a different mesh at each
