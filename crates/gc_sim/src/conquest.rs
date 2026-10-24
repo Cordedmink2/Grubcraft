@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::FxVec2;
 
-use crate::clearing::{Clearing, Pledge};
+use crate::clearing::{ClearStyle, Clearing, Pledge};
 use crate::economy::{Bank, Economy, NodeSetup, TradePost};
 use crate::honor::Honor;
 use crate::nav::Nav;
@@ -80,6 +80,8 @@ pub struct ConquestUnit {
     /// refused a node whose yield it could never bring home. 0 where
     /// every drop-off exists.
     pub cannot_bank: u16,
+    /// How it clears land, if it is a worker (see [`crate::clearing`]).
+    pub clearing: ClearStyle,
 }
 
 impl ConquestUnit {
@@ -104,6 +106,12 @@ impl ConquestUnit {
         h.u16(self.trade_base);
         h.u16(self.trade_tenths);
         h.u16(self.cannot_bank);
+        let c = self.clearing;
+        for i in 0..3 {
+            h.u16(c.pace[i]);
+            h.u8(c.pays[i]);
+        }
+        h.u8(u8::from(c.burns));
     }
 }
 

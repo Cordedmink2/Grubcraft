@@ -84,9 +84,10 @@ impl Cover {
 pub enum Growth {
     /// Nothing to clear: buildings can go up here.
     Open = 0,
-    /// Brush and young growth: quick to clear, no timber.
+    /// Brush and young growth: quick to clear (what clearing it pays is the
+    /// worker's `ClearStyle`).
     Scrub = 1,
-    /// Trees: slower, and the timber pays a little Grub.
+    /// Trees: slower, and most workers get a little timber from them.
     Woods = 2,
     /// Woods no one marches through: slowest, and once cleared, open to
     /// walking (it stands on the walkable grid like a building).

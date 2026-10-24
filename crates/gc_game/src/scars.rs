@@ -200,7 +200,12 @@ mod tests {
     #[test]
     fn cleared_tiles_are_felled_by_what_stood_on_them() {
         let mut v = ScarView::default();
-        let cleared = |x, y, was| Event::Cleared { x, y, was };
+        let cleared = |x, y, was| Event::Cleared {
+            x,
+            y,
+            was,
+            burnt: false,
+        };
         v.felled(
             &[
                 cleared(3, 4, Growth::Woods),

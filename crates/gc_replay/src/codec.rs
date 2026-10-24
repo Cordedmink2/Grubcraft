@@ -182,6 +182,12 @@ impl Writer {
         self.var(u64::from(u.trade_base));
         self.var(u64::from(u.trade_tenths));
         self.var(u64::from(u.cannot_bank));
+        let c = u.clearing;
+        for i in 0..3 {
+            self.var(u64::from(c.pace[i]));
+            self.u8(c.pays[i]);
+        }
+        self.bool(c.burns);
     }
 
     /// A caravan's trade post (format 24 on).
@@ -664,6 +670,13 @@ impl<'a> Reader<'a> {
             u.trade_base = self.var_as()?;
             u.trade_tenths = self.var_as()?;
             u.cannot_bank = self.var_as()?;
+        }
+        if format >= 30 {
+            for i in 0..3 {
+                u.clearing.pace[i] = self.var_as()?;
+                u.clearing.pays[i] = self.u8()?;
+            }
+            u.clearing.burns = self.bool()?;
         }
         Some(u)
     }

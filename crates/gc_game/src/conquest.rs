@@ -12,6 +12,8 @@ use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_map::{Kind, Map};
 use gc_replay::ConquestRecord;
+use gc_sim::Growth::{Thicket, Woods};
+use gc_sim::clearing::{ClearStyle, clear_ticks};
 use gc_sim::economy::{SEEP_GRUB, VEIN_MARROW};
 use gc_sim::structures::Breaker;
 use gc_sim::{
@@ -144,6 +146,41 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
         trade_base: u.trade_base,
         trade_tenths: u.trade_tenths,
         cannot_bank: 0,
+        clearing: clear_style(u.faction()),
+    }
+}
+
+/// How faction `f`'s workers clear land (docs/32-changing-land.md): the
+/// Ember Clans fell and haul (timber pays half again as much, rounded up),
+/// the Concord burns it (twice as fast, nothing to haul, scorched ground),
+/// the Choir shatters it (thicket as fast as woods, nothing to haul), and
+/// the Brood's Gnawers eat it (slower, and scrub feeds them too).
+pub fn clear_style(f: Faction) -> ClearStyle {
+    match f {
+        Faction::EmberClans => ClearStyle {
+            pays: [0, 5, 8],
+            ..ClearStyle::STANDARD
+        },
+        Faction::CarrionConcord => ClearStyle {
+            pace: [50; 3],
+            pays: [0; 3],
+            burns: true,
+        },
+        Faction::Choir => ClearStyle {
+            // Thicket in the time woods take.
+            pace: [
+                100,
+                100,
+                (clear_ticks(Woods) * 100 / clear_ticks(Thicket)) as u16,
+            ],
+            pays: [0; 3],
+            burns: false,
+        },
+        Faction::Brood => ClearStyle {
+            pace: [150; 3],
+            pays: [1, 3, 5],
+            burns: false,
+        },
     }
 }
 
@@ -534,6 +571,33 @@ mod tests {
 
     fn data() -> GameData<'static> {
         crate::data::load()
+    }
+
+    /// The clearing twists are the table in docs/32-changing-land.md, and
+    /// every faction's workers carry their own.
+    #[test]
+    fn clearing_styles_match_the_changing_land_doc() {
+        let table = [
+            (Faction::EmberClans, [100, 100, 100], [0, 5, 8], false),
+            (Faction::CarrionConcord, [50, 50, 50], [0, 0, 0], true),
+            (Faction::Choir, [100, 100, 53], [0, 0, 0], false),
+            (Faction::Brood, [150, 150, 150], [1, 3, 5], false),
+        ];
+        for (f, pace, pays, burns) in table {
+            assert_eq!(clear_style(f), ClearStyle { pace, pays, burns }, "{f:?}");
+        }
+        // The Choir's thicket takes about the time woods do.
+        let choir = clear_style(Faction::Choir);
+        let thicket = clear_ticks(Thicket) * choir.pace_on(Thicket);
+        let woods = clear_ticks(Woods) * 100;
+        assert!(
+            thicket.abs_diff(woods) * 100 < woods,
+            "{thicket} vs {woods}"
+        );
+        let data = data();
+        for (record, unit) in data.conquest_units.iter().zip(units_of(&data)) {
+            assert_eq!(unit.clearing, clear_style(record.faction()));
+        }
     }
 
     /// A fresh Conquest world on `map` for `factions`, and its plan.

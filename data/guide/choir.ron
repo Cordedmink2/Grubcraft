@@ -112,7 +112,7 @@
         (
             name: "Tuner",
             tagline: "Builder: raises and mends structures, does not gather.",
-            summary: "The Choir's worker. It builds Choir structures inside a Resonator's field and repairs them, but does not gather: Resonators and Siphons make your income. Train a few to build and mend, not a swarm. They can also clear woods and scrub (S), which pays a little Grub.",
+            summary: "The Choir's worker. It builds Choir structures inside a Resonator's field and repairs them, but does not gather: Resonators and Siphons make your income. Train a few to build and mend, not a swarm. They can also clear woods, scrub and thicket (S). Tuners shatter it: thicket goes as fast as woods, but it pays no timber.",
         ),
         (
             name: "Shardlings",

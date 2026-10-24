@@ -8,7 +8,7 @@
 //! same tile share its work. A worker ordered to build on overgrown ground
 //! clears the footprint first, having paid; then it steps off the footprint
 //! and lays the foundation. Felled woods and thicket pay a little Grub
-//! ([`timber`]).
+//! ([`ClearStyle::pays_on`]).
 //!
 //! This module only decides which tiles are cleared in a tick
 //! ([`Clearing::cleared`]); the world changes the ground
@@ -16,6 +16,7 @@
 
 use gc_fixed::{Fx, FxVec2};
 
+use crate::conquest::ConquestUnit;
 use crate::regiments::{Order, Regiments};
 use crate::structures::{Approach, BuildingId, RETRY_TICKS, STALLS, footprint_centre};
 use crate::terrain::{Growth, Terrain};
@@ -35,19 +36,59 @@ pub const fn clear_ticks(growth: Growth) -> u32 {
     }
 }
 
-/// Grub the timber from a cleared tile of `growth` pays.
-pub const fn timber(growth: Growth) -> u32 {
-    match growth {
-        Growth::Open | Growth::Scrub => 0,
-        Growth::Woods => 3,
-        Growth::Thicket => 5,
+/// How a worker clears land: the factions' twists (docs/32-changing-land.md)
+/// as numbers, set from the rosters. Each array is by what grows: scrub,
+/// woods, thicket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClearStyle {
+    /// Its time to clear a tile, in percent of [`clear_ticks`].
+    pub pace: [u16; 3],
+    /// Grub a tile it clears pays (timber, or what it eats).
+    pub pays: [u8; 3],
+    /// It burns the land: what it clears is left scorched (a look only:
+    /// scorched ground is open like any other cleared ground).
+    pub burns: bool,
+}
+
+impl ClearStyle {
+    /// Felling and grubbing out: thicket and woods pay a little timber.
+    pub const STANDARD: ClearStyle = ClearStyle {
+        pace: [100; 3],
+        pays: [0, 3, 5],
+        burns: false,
+    };
+
+    /// What the worker pays for clearing a tile of `growth`.
+    pub fn pays_on(&self, growth: Growth) -> u32 {
+        Self::index(growth).map_or(0, |i| u32::from(self.pays[i]))
+    }
+
+    /// Its pace on `growth`, in percent of the Standard time.
+    pub fn pace_on(&self, growth: Growth) -> u32 {
+        Self::index(growth).map_or(100, |i| u32::from(self.pace[i]).max(1))
+    }
+
+    fn index(growth: Growth) -> Option<usize> {
+        match growth {
+            Growth::Open => None,
+            Growth::Scrub => Some(0),
+            Growth::Woods => Some(1),
+            Growth::Thicket => Some(2),
+        }
+    }
+}
+
+impl Default for ClearStyle {
+    fn default() -> ClearStyle {
+        ClearStyle::STANDARD
     }
 }
 
 /// Tiles a worker may give up on in one order before it stops.
 const SKIPS: usize = 4;
-/// Work a worker does a tick, in hundredths of a tick of clearing time.
-const HAND: u32 = 100;
+/// A tick of clearing time, in work: fine enough that a pace that does not
+/// divide it (the Brood's 150%) still comes out within 0.01%.
+const HAND: u32 = 10_000;
 
 /// What a worker is clearing (see `World::clearing_of`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,8 +143,15 @@ impl Job {
 /// What a tick of clearing came to, for the world to act on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Done {
-    /// The tile `(x, y)` is cleared, by a worker of `owner`'s.
-    Tile { x: i32, y: i32, owner: PlayerId },
+    /// The tile `(x, y)` is cleared, by a worker of `owner`'s, which earns
+    /// `pays` Grub for it and, if `burnt`, has burnt it.
+    Tile {
+        x: i32,
+        y: i32,
+        owner: PlayerId,
+        pays: u32,
+        burnt: bool,
+    },
     /// Worker slot `r` cleared and left the footprint of `pledge`: lay it.
     Lay { r: usize, pledge: Pledge },
     /// Worker slot `r` (or the regiment that was in it) gave up on, or was
@@ -200,7 +248,13 @@ impl Clearing {
 
     /// One tick of clearing: workers walk to their tiles and work them.
     /// What it came to is left in [`Clearing::done`].
-    pub(crate) fn update(&mut self, regs: &mut Regiments, units: &[UnitStats], terrain: &Terrain) {
+    pub(crate) fn update(
+        &mut self,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        styles: &[ConquestUnit],
+        terrain: &Terrain,
+    ) {
         self.done.clear();
         for r in 0..self.job.len() {
             let Some(mut job) = self.job[r] else {
@@ -215,7 +269,10 @@ impl Clearing {
                 continue;
             }
             job.clock = job.clock.saturating_sub(regs.steps(r));
-            let kept = self.work(regs, units, terrain, r, &mut job);
+            let style = styles
+                .get(usize::from(regs.unit[r]))
+                .map_or(ClearStyle::STANDARD, |u| u.clearing);
+            let kept = self.work(regs, units, style, terrain, r, &mut job);
             self.job[r] = kept.then_some(job);
         }
         // Work on a tile nobody is at any more is forgotten.
@@ -241,6 +298,7 @@ impl Clearing {
         &mut self,
         regs: &mut Regiments,
         units: &[UnitStats],
+        style: ClearStyle,
         terrain: &Terrain,
         r: usize,
         job: &mut Job,
@@ -301,8 +359,8 @@ impl Clearing {
             return true;
         }
         way.arrive(regs, r);
-        let full =
-            crate::conquest::at_tempo(clear_ticks(terrain.growth(x, y)), self.percent) * HAND;
+        let growth = terrain.growth(x, y);
+        let full = crate::conquest::at_tempo(clear_ticks(growth), self.percent) * HAND;
         let k = match self.worked.binary_search_by_key(&t, |w| w.0) {
             Ok(k) => k,
             Err(k) => {
@@ -310,7 +368,9 @@ impl Clearing {
                 k
             }
         };
-        let work = HAND * u32::from(regs.steps(r));
+        // A worker's own pace: workers of different factions on the one
+        // tile each do their own share.
+        let work = (HAND * 100 / style.pace_on(growth)).max(1) * u32::from(regs.steps(r));
         self.worked[k].1 = self.worked[k].1.saturating_sub(work);
         if self.worked[k].1 == 0 {
             self.worked.remove(k);
@@ -318,6 +378,8 @@ impl Clearing {
                 x,
                 y,
                 owner: regs.owner[r],
+                pays: style.pays_on(growth),
+                burnt: style.burns,
             });
             job.next();
         }

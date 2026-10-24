@@ -1757,7 +1757,7 @@ fn card_look(action: Option<Action>) -> (Icon, &'static str) {
         Some(Action::OpenBuild) => (Icon::Hammer, "Open the build menu for your workers."),
         Some(Action::Clear) => (
             Icon::Hammer,
-            "Workers fell woods and grub out scrub; timber pays a little Grub. Drag over the ground, or click one tile. Cleared ground no longer hides troops or slows them.",
+            "Workers clear scrub, woods and thicket, each faction its own way (the worker's guide entry says how). Felled timber can pay a little Grub. Drag over the ground, or click one tile. Cleared ground no longer hides troops or slows them.",
         ),
         Some(Action::Lay(_)) => (
             Icon::Hammer,

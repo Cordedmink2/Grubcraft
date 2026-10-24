@@ -121,7 +121,7 @@
         (
             name: "Ledger Clerk",
             tagline: "Worker: mines Marrow, builds and repairs.",
-            summary: "The Concord's worker. Carries 5 Marrow per trip to a Counting House (your Grub comes from caravans, Tithe and trade), and builds and repairs Concord structures. Weak fighters, so keep them out of raids. They can also clear woods and scrub (S), which pays a little Grub.",
+            summary: "The Concord's worker. Carries 5 Marrow per trip to a Counting House (your Grub comes from caravans, Tithe and trade), and builds and repairs Concord structures. Weak fighters, so keep them out of raids. They can also clear woods, scrub and thicket (S). Clerks burn it: twice as fast as other workers, but it pays no timber.",
         ),
         (
             name: "Caravan",

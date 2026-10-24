@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 30: the Conquest units' clearing styles (read as the standard one);
 /// - 29: drawn walls (the build-wall command);
 /// - 28: gates (the set-gate command);
 /// - 27: the growth layer and the Clear command (read as growth that
@@ -84,7 +85,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 29;
+pub const FORMAT: u16 = 30;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -1413,8 +1414,13 @@ mod tests {
                 train_ticks: 200,
                 trained_at: Some(0),
                 tier: 1,
-                // A Clerk: no Grub drop-off.
+                // A Clerk: no Grub drop-off, and burns what it clears.
                 cannot_bank: gc_sim::structures::DROP_OFF_GRUB,
+                clearing: gc_sim::clearing::ClearStyle {
+                    pace: [50, 60, 70],
+                    pays: [1, 2, 3],
+                    burns: true,
+                },
                 ..ConquestUnit::default()
             },
             ConquestUnit {

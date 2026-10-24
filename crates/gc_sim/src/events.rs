@@ -102,8 +102,13 @@ pub enum Event {
         structure: StructureHandle,
     },
     /// The tile `(x, y)` was cleared of what grew there (`was`); it is
-    /// open ground now (docs/32-changing-land.md).
-    Cleared { x: i32, y: i32, was: Growth },
+    /// open ground now (docs/32-changing-land.md), scorched if `burnt`.
+    Cleared {
+        x: i32,
+        y: i32,
+        was: Growth,
+        burnt: bool,
+    },
 }
 
 /// Each regiment slot as it stood before the tick.
@@ -159,9 +164,9 @@ impl Events {
         self.list.reserve(room);
     }
 
-    /// Tell of the tile `(x, y)` cleared of `was`.
-    pub(crate) fn cleared(&mut self, x: i32, y: i32, was: Growth) {
-        self.list.push(Event::Cleared { x, y, was });
+    /// Tell of the tile `(x, y)` cleared of `was` (burnt, if `burnt`).
+    pub(crate) fn cleared(&mut self, x: i32, y: i32, was: Growth, burnt: bool) {
+        self.list.push(Event::Cleared { x, y, was, burnt });
     }
 
     /// Tell of the bells tolled, the blows struck on buildings and the

@@ -111,7 +111,7 @@
         (
             name: "Gnawer",
             tagline: "Worker: burrows into seeps, or is spent to grow a building.",
-            summary: "The Brood's worker. Burrow In sends it into a seep (5 at most), hidden and safe, delivering Grub down the vein network. Grow Structure uses it up to start a building, so every building costs a Gnawer as well as Grub. Hatch plenty early. They can also clear woods and scrub (S), which pays a little Grub.",
+            summary: "The Brood's worker. Burrow In sends it into a seep (5 at most), hidden and safe, delivering Grub down the vein network. Grow Structure uses it up to start a building, so every building costs a Gnawer as well as Grub. Hatch plenty early. They also clear land (S) by eating it: slower, but even scrub pays a little Grub.",
         ),
         (
             name: "Skitterlings",
