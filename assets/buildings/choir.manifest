@@ -3,10 +3,10 @@
 # Hashes are XXH3-128. Sources marked "not in the repo" live in the project's
 # shared folder; CI cannot check them, so a change to one shows only in a re-bake.
 manifest = 1
-baker = gc_artbake 1
+baker = gc_artbake 2
 schema = 4
 config = ec64516ad87333c3b1d9214cdef8e069
-pack = 1a449aeb78a7d7b8078f2d78450aadba
+pack = fc0ac64a0bf214c78091d29400d8a975
 pack_bytes = 20500096
 source shared:grubcraft/buildings/choir/spire/stage1.glb = e61c3fce4ae4057c3f781e87bea0fa69 not in the repo
 source shared:grubcraft/buildings/choir/spire/albedo.png = 2283b02e8f49383851f5a6f72d809358 not in the repo

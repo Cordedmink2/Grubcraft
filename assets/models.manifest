@@ -3,11 +3,11 @@
 # Hashes are XXH3-128. Sources marked "not in the repo" live in the project's
 # shared folder; CI cannot check them, so a change to one shows only in a re-bake.
 manifest = 1
-baker = gc_artbake 1
+baker = gc_artbake 2
 schema = 4
 config = d591ce05f54acc3ede5cde90b6715a89
-pack = 81f1c10a8c59e16c9dbb837a8ea9dba5
-pack_bytes = 86317872
+pack = 582038043c09bcc1c0c9649eaf8db599
+pack_bytes = 79732144
 source shared:grubcraft/yari-ashigaru/yari-ashigaru.glb = d8befd1b9beb333573f281c475354bb0 not in the repo
 source shared:grubcraft/yari-ashigaru/albedo.png = 60d242c6e7215dde4b6a7cd7e83e74cf not in the repo
 source shared:grubcraft/yari-ashigaru/team.png = 444ffd60fc0d1f4f4bc6eac2d3b51011 not in the repo
