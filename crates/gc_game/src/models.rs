@@ -271,16 +271,8 @@ pub struct Finisher {
     /// How far in front of the killer's position the lying man's chest
     /// ([`Clips::lying_chest`]) should be, in tiles, allowing for where the
     /// killer's feet are drawn ([`Body::feet`]).
-    #[allow(
-        dead_code,
-        reason = "puppets.rs will place its finishers by it (docs/28, stage 5)"
-    )]
     pub reach: f32,
     /// And how far to the killer's left of his facing ([`Body::side`]).
-    #[allow(
-        dead_code,
-        reason = "puppets.rs will place its finishers by it (docs/28, stage 5)"
-    )]
     pub aside: f32,
 }
 
@@ -439,11 +431,19 @@ impl Clips {
     /// Every matched kill between the unit types whose models are `units`,
     /// for the puppets: each kill named by its index here, as [`Move::Kill`]
     /// and [`crate::puppets::Corpse::kill`] give it back.
+    /// Each unit type's finisher reach goes with them, for its men to
+    /// stand that far from a man on the ground they strike down at, and
+    /// where its men lying dead have their chests, for them to strike at.
     pub fn kills_of(&self, units: &[Option<usize>]) -> Kills {
         let mut kills = Kills::new(self.pairs.iter().map(KillPair::timing).collect());
         let mut ids = Vec::new();
         for (k, killer) in units.iter().enumerate() {
             let Some(killer) = *killer else { continue };
+            if let Some(f) = self.finisher(killer, 0) {
+                kills.add_finisher(k as u16, f.reach, f.strike.seconds());
+            }
+            let chests = (0..=u8::MAX).map(|look| self.lying_chest(killer, look));
+            kills.add_chests(k as u16, chests.collect());
             if self.kills.get(killer).is_none_or(Vec::is_empty) {
                 continue;
             }
@@ -488,10 +488,6 @@ impl Clips {
     /// more for a bigger one), `x` to his left. `look` is his, as for
     /// [`Clips::death`]. A finisher strikes there. `None` for a model with no
     /// death move or not posed from a skeleton.
-    #[allow(
-        dead_code,
-        reason = "puppets.rs will place its finishers by it (docs/28, stage 5)"
-    )]
     pub fn lying_chest(&self, model: usize, look: u8) -> Option<glam::Vec2> {
         let own = self.by_model.get(model)?;
         let k = by_look(u32::from(look), DEATH_SALT) as usize % own.lying.len().max(1);
@@ -579,6 +575,11 @@ impl Clips {
                 let k = blow.map_or(0, |b| b.wrapping_add(by_look(look, SWING_SALT)));
                 standing(Some(nth(&own.swings, k)?.at(at)))
             }
+            // Struck down with a move made for it, else his first attack.
+            Move::Finish { at, seed } => match self.finisher(model, seed) {
+                Some(f) => standing(Some(f.strike.at(at))),
+                None => standing(self.at(model, Action::Attack, at)),
+            },
             Move::Parry(f) => {
                 let parry = own.parry?;
                 if parry.act == Act::Parry {
@@ -830,6 +831,31 @@ mod tests {
             (katana.strike.act, katana.strike.weapon),
             (Act::Finish, Weapon::TwoHanded)
         );
+        // The puppets time and place a man's finishers by his first: they
+        // share a length and a reach, and none is drawn aside, which the
+        // puppets leave out.
+        for m in 0..models.models.len() {
+            let lengths: Vec<(f32, f32)> = (0..4)
+                .filter_map(|seed| clips.finisher(m, seed))
+                .inspect(|f| assert!(f.aside.abs() < 0.05, "model {m}: {f:?}"))
+                .map(|f| (f.strike.seconds(), f.reach))
+                .collect();
+            assert!(
+                lengths.windows(2).all(|w| w[0] == w[1]),
+                "model {m}: {lengths:?}"
+            );
+        }
+        // And the fight draws them.
+        let at = |seed| {
+            clips
+                .fight(by("Katana Samurai"), Move::Finish { at: 0.5, seed }, 0.0, 0)
+                .unwrap()
+                .0
+        };
+        assert_eq!(
+            at(0).rows,
+            fin("Katana Samurai", 0).unwrap().strike.at(0.5).rows
+        );
         let spear = fin("Yari Ashigaru", 0).unwrap();
         assert_eq!(spear.strike.weapon, Weapon::Spear);
         // A man's length or so away for a katana, much further for a yari,
@@ -976,6 +1002,13 @@ mod tests {
         for (k, v) in [(0, 2), (2, 1), (3, 1), (0, 3)] {
             assert_eq!(kills.pick(k, v, 0.5), None, "{k} on {v}");
         }
+        // Katana and spear men finish a man on the ground from their own
+        // finishers' reach; the Oni-Bound has none and bends to strike.
+        let reach = |u: usize| clips.finisher(units[u].unwrap(), 0).unwrap().reach;
+        assert_eq!(kills.finish_gap(0), reach(0));
+        assert_eq!(kills.finish_gap(1), reach(1));
+        assert!(kills.finish_gap(1) > kills.finish_gap(0));
+        assert_eq!(kills.finish_gap(2), crate::puppets::FINISH_GAP);
     }
 
     #[test]
