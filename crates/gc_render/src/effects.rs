@@ -694,6 +694,48 @@ impl Effects {
         }
     }
 
+    /// Mist lying on the water: `amount` of big, slow, pale puffs close
+    /// over the places of the disc of `radius` round `centre` where `wet`
+    /// holds (a river, a fen's pools and their banks), tinted `tint` (the
+    /// look's own air, so it is dark at night and gold at dusk) and
+    /// drifting a little with `wind`. Each try that falls on dry land
+    /// makes nothing, so `amount` is how many places are tried.
+    pub fn mist(
+        &mut self,
+        centre: Vec2,
+        radius: f32,
+        amount: f32,
+        (tint, wind): ([u8; 3], Vec2),
+        ground: impl Fn(Vec2) -> f32,
+        wet: impl Fn(Vec2) -> bool,
+    ) {
+        for _ in 0..self.count(amount) {
+            let at = centre + self.rng.disc() * radius;
+            if !wet(at) {
+                continue;
+            }
+            let c = self.jitter(tint, 0.06);
+            let shape = self.puff();
+            let (seed, spin) = (self.rng.byte(), self.spin(2));
+            let drift = wind.clamp_length_max(MAX_WIND) * 0.08;
+            self.out.push(Particle {
+                pos: Vec3::new(at.x, ground(at) + self.rng.between(0.2, 0.7), at.y),
+                vel: Vec3::new(
+                    drift.x + self.rng.between(-0.05, 0.05),
+                    0.0,
+                    drift.y + self.rng.between(-0.05, 0.05),
+                ),
+                life: self.rng.between(6.0, 7.8),
+                size: [self.rng.between(1.6, 2.4), self.rng.between(3.0, 4.2)],
+                shape,
+                flags: 0,
+                spin,
+                seed,
+                ..fading(c, 120)
+            });
+        }
+    }
+
     /// A bolt of lightning at a random place of the disc of `radius` round
     /// `centre` that `fits` (somewhere worth striking: on the map, in view),
     /// `top` tiles tall (see [`Effects::bolt`]). A dozen tries are made;
@@ -1018,6 +1060,29 @@ mod tests {
         let drops = fx.take();
         assert!(!drops.is_empty());
         assert!(drops.iter().all(|p| (p.vel.x - 1.5625).abs() < 1e-3));
+    }
+
+    #[test]
+    fn mist_lies_low_over_wet_ground_only() {
+        let mut fx = Effects::default();
+        let wet = |p: Vec2| p.x < 50.0;
+        fx.mist(
+            Vec2::new(50.0, 50.0),
+            20.0,
+            400.0,
+            ([200, 210, 220], Vec2::new(2.0, 0.0)),
+            |_| 2.0,
+            wet,
+        );
+        let puffs = fx.take();
+        assert!(puffs.len() > 100 && puffs.len() < 300, "{}", puffs.len());
+        for p in &puffs {
+            assert!(p.pos.x < 50.0);
+            assert!(p.pos.y > 2.0 && p.pos.y < 2.8, "{}", p.pos.y);
+            assert!(p.life <= 8.0);
+            assert!(p.size[1] > p.size[0] && p.size[1] >= 3.0, "it spreads");
+            assert!(p.vel.x > 0.08, "it drifts downwind");
+        }
     }
 
     #[test]

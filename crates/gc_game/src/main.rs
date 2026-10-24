@@ -233,6 +233,13 @@ const TEAM_COLORS: [[u8; 3]; 4] = [
 const EDGE_SCROLL_PX: f64 = 6.0;
 /// Height of a placeholder box soldier, for unit types without a model.
 const SOLDIER_HEIGHT: f32 = 0.95;
+/// How far above the water line the ground still holds mist (a ford's ramps
+/// and a fen's low shores lie within it), how far in from the map's edge it
+/// begins, and its colour before the light: pale, for the sun and the sky to
+/// colour.
+const MIST_BANK: f32 = 0.3;
+const MIST_EDGE: f32 = 3.0;
+const MIST_TINT: [u8; 3] = [214, 222, 232];
 /// A side's general (see `gc_sim::generals`) stands this much taller than
 /// his men, in his side's colour lightened by [`GENERAL_LIGHT`].
 const GENERAL_SCALE: f32 = 1.15;
@@ -3886,6 +3893,27 @@ impl Running {
                     |p| {
                         p.cmpge(Vec2::ZERO).all()
                             && p.cmplt(Vec2::splat(side)).all()
+                            && (reveal || fog.sees_tile((p.x.floor() as i32, p.y.floor() as i32)))
+                    },
+                );
+            }
+            // Mist lies on the rivers and pools: not under Clarity, nor from
+            // the saddle (a puff round the eye would fill the screen), and
+            // only where the viewer sees the water.
+            if !self.menu.settings().clarity && self.ride.is_none() {
+                let (reveal, fog) = (self.reveal_all, &self.fog);
+                let side = heightmap.tiles as f32;
+                let eye = self.camera.eye();
+                self.effects.mist(
+                    dt.as_secs_f32() * fx_speed,
+                    density,
+                    (self.atmosphere.mist(), MIST_TINT, wind),
+                    (view_focus, view_distance, Vec2::new(eye.x, eye.z)),
+                    |p| heightmap.height_at(p.x, p.y).max(water),
+                    |p| {
+                        p.cmpge(Vec2::splat(MIST_EDGE)).all()
+                            && p.cmplt(Vec2::splat(side - MIST_EDGE)).all()
+                            && heightmap.height_at(p.x, p.y) < water + MIST_BANK
                             && (reveal || fog.sees_tile((p.x.floor() as i32, p.y.floor() as i32)))
                     },
                 );

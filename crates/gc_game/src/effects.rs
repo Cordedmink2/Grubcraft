@@ -43,6 +43,18 @@ const SPLASH_MOST: f32 = 300.0;
 const SPLASH_REACH: f32 = 0.4;
 const SPLASH_RADIUS: (f32, f32) = (6.0, 26.0);
 const SPLASH_FADE: (f32, f32) = (35.0, 90.0);
+/// Mist on the water: places tried a second for each tile of the disc round
+/// the focus (those on dry land make nothing), the most a second, how wide
+/// the disc is (a share of the camera's distance, then the least and most
+/// in tiles), and the camera heights between which it fades out.
+const MIST_PER_TILE: f32 = 0.01;
+const MIST_MOST: f32 = 120.0;
+/// No mist closer than this to the camera's eye, in tiles (a puff round it
+/// would fill the screen).
+const MIST_EYE: f32 = 10.0;
+const MIST_REACH: f32 = 0.7;
+const MIST_RADIUS: (f32, f32) = (18.0, 60.0);
+const MIST_FADE: (f32, f32) = (90.0, 190.0);
 /// How far from the camera's focus a bolt may strike (nearest and farthest
 /// radius, in tiles).
 const STRIKE_RADIUS: (f32, f32) = (15.0, 70.0);
@@ -331,6 +343,37 @@ impl Field {
         }
     }
 
+    /// Mist lying on the water round the camera's focus, `amount` of the
+    /// full cover (0 none, 1 the thickest), tinted `tint` and drifting with
+    /// `wind`; `wet` says where there is water to lie on. It thins out as
+    /// the camera rises and is gone from high up.
+    pub fn mist(
+        &mut self,
+        dt: f32,
+        density: f32,
+        (amount, tint, wind): (f32, [u8; 3], Vec2),
+        (focus, distance, eye): (Vec2, f32, Vec2),
+        ground: impl Fn(Vec2) -> f32,
+        wet: impl Fn(Vec2) -> bool,
+    ) {
+        let near = 1.0 - ((distance - MIST_FADE.0) / (MIST_FADE.1 - MIST_FADE.0)).clamp(0.0, 1.0);
+        if amount <= 0.0 || near <= 0.0 {
+            return;
+        }
+        let radius = (distance * MIST_REACH).clamp(MIST_RADIUS.0, MIST_RADIUS.1);
+        let rate =
+            (MIST_PER_TILE * std::f32::consts::PI * radius * radius).min(MIST_MOST) * amount * near;
+        self.fx.set_density(density);
+        self.fx.mist(
+            focus,
+            radius,
+            rate * dt.min(0.25),
+            (tint, wind),
+            ground,
+            |at| at.distance(eye) > MIST_EYE && wet(at),
+        );
+    }
+
     /// A bolt of lightning somewhere in view of the camera at `focus`,
     /// `distance` from the ground and looking along `heading` (a unit
     /// vector over the map): taller and wider the further the camera is,
@@ -502,6 +545,54 @@ mod tests {
         let height =
             |parts: &[gc_render::Particle]| parts.iter().map(|p| p.pos.y).fold(0.0, f32::max);
         assert!(height(&far) > height(&near));
+    }
+
+    #[test]
+    fn mist_comes_only_to_the_low_camera_and_only_over_water() {
+        let puffs = |amount, distance, wet: fn(Vec2) -> bool| {
+            let mut field = Field::new(None);
+            for _ in 0..30 {
+                field.mist(
+                    0.1,
+                    1.0,
+                    (amount, [200, 210, 220], Vec2::ZERO),
+                    (Vec2::new(50.0, 50.0), distance, Vec2::new(500.0, 500.0)),
+                    |_| 1.0,
+                    wet,
+                );
+            }
+            field.frame(0.0, 1.0, Vec2::ZERO, 200.0, |_| 0.0).len()
+        };
+        assert!(puffs(1.0, 40.0, |_| true) > 20);
+        assert!(puffs(1.0, 40.0, |_| true) as f32 <= MIST_MOST * 0.1 * 30.0);
+        assert!(puffs(1.0, 40.0, |_| true) > puffs(0.3, 40.0, |_| true));
+        assert_eq!(puffs(0.0, 40.0, |_| true), 0);
+        assert_eq!(puffs(1.0, 40.0, |_| false), 0);
+        assert_eq!(puffs(1.0, 200.0, |_| true), 0);
+        assert!(
+            RAIN_MOST + SPLASH_MOST + MIST_MOST + 800.0 < gc_render::MAX_PARTICLES as f32 / 8.0
+        );
+    }
+
+    #[test]
+    fn mist_keeps_clear_of_the_cameras_eye() {
+        let mut field = Field::new(None);
+        let eye = Vec2::new(50.0, 40.0);
+        for _ in 0..60 {
+            field.mist(
+                0.1,
+                1.0,
+                (1.0, [200, 210, 220], Vec2::ZERO),
+                (Vec2::new(50.0, 50.0), 40.0, eye),
+                |_| 1.0,
+                |_| true,
+            );
+        }
+        let puffs = field.frame(0.0, 1.0, Vec2::ZERO, 200.0, |_| 0.0);
+        assert!(puffs.len() > 20);
+        for p in puffs {
+            assert!(Vec2::new(p.pos.x, p.pos.z).distance(eye) > MIST_EYE - 0.01);
+        }
     }
 
     #[test]

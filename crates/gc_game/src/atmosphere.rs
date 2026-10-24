@@ -75,6 +75,33 @@ const AIRS: [LandAir; Land::ALL.len()] = [
     },
 ];
 
+/// How much of the wet ground's share adds to the mist, and the hour a
+/// sky with no clock has.
+const MIST_AFTER_RAIN: f32 = 0.5;
+const MIST_STILL_HOUR: f32 = 17.0;
+
+/// The mist on the water at an hour of the day (0 to 24), 0 to 1: thick at
+/// dawn, gone by mid-morning and through the noon, rising again toward
+/// dusk and lying thinly through the night.
+fn mist_at(hour: f32) -> f32 {
+    const CURVE: [(f32, f32); 9] = [
+        (0.0, 0.3),
+        (4.0, 0.7),
+        (6.0, 1.0),
+        (8.5, 0.5),
+        (10.5, 0.0),
+        (14.5, 0.0),
+        (17.5, 0.35),
+        (20.0, 0.3),
+        (24.0, 0.3),
+    ];
+    let hour = hour.rem_euclid(24.0);
+    CURVE.windows(2).find(|w| hour <= w[1].0).map_or(0.5, |w| {
+        let k = (hour - w[0].0) / (w[1].0 - w[0].0);
+        w[0].1 + (w[1].1 - w[0].1) * k
+    })
+}
+
 /// Samples a side of the square laid over the camera's surroundings.
 const SAMPLES: i32 = 9;
 /// How far round the camera the lands count, as a share of its distance
@@ -347,6 +374,44 @@ impl Atmosphere {
         match self.sky {
             Some(sky) if !self.weather_preview => sky.wind,
             _ => PREVIEW_WIND,
+        }
+    }
+
+    /// How thick the mist on the water is, 0 to 1: it follows the clock (see
+    /// `mist_at`) and the ground's wetness, and is none in fog (the whole
+    /// air is thick already). A fair sky with no clock is the usual 17:00.
+    pub fn mist(&self) -> f32 {
+        // The clock's hour while the light follows it, else the hour the
+        // chosen look stands for.
+        let hour = match self.sky {
+            Some(sky) if self.following_day() => sky.hour,
+            Some(_) => match self.preset {
+                LookPreset::Noon | LookPreset::Overcast | LookPreset::Storm => 12.0,
+                LookPreset::GoldenHour => 17.0,
+                LookPreset::Dusk => 18.0,
+                LookPreset::Night => 23.0,
+            },
+            None => MIST_STILL_HOUR,
+        };
+        // A fog, coming in or going out, has air thick enough already.
+        let fog = [
+            self.weather_share(Weather::Fog),
+            self.leaving_share(Weather::Fog),
+        ]
+        .into_iter()
+        .fold(0.0, f32::max);
+        (mist_at(hour) + self.soaked * MIST_AFTER_RAIN).clamp(0.0, 1.0) * (1.0 - fog)
+    }
+
+    fn weather_share(&self, kind: Weather) -> f32 {
+        if self.weather == kind { self.fade } else { 0.0 }
+    }
+
+    fn leaving_share(&self, kind: Weather) -> f32 {
+        if self.leaving.0 == kind {
+            self.leaving.1
+        } else {
+            0.0
         }
     }
 
@@ -884,6 +949,64 @@ mod tests {
         let rain = sun(WeatherKind::Rain, 255, 0);
         assert_eq!(sun(WeatherKind::Rain, 255, 255), rain);
         assert!(rain < overcast);
+    }
+
+    #[test]
+    fn mist_is_thickest_at_dawn_and_gone_at_noon() {
+        assert_eq!(mist_at(0.0), mist_at(24.0));
+        assert!(mist_at(6.0) > mist_at(8.5) && mist_at(8.5) > mist_at(10.5));
+        assert_eq!(mist_at(12.0), 0.0);
+        assert!(mist_at(17.5) > 0.0 && mist_at(22.0) > mist_at(14.5));
+        for tenth in 0..240 {
+            let m = mist_at(tenth as f32 / 10.0);
+            assert!((0.0..=1.0).contains(&m), "{tenth}: {m}");
+        }
+    }
+
+    #[test]
+    fn the_atmosphere_lays_mist_by_the_clock_the_rain_and_the_fog() {
+        use gc_sim::WeatherKind;
+        let mist = |kind, strength, hour| {
+            let mut atmosphere = Atmosphere::new(None, None);
+            atmosphere.follow(sim_sky(kind, strength, 0, hour));
+            for _ in 0..4000 {
+                frame(&mut atmosphere, 0.1);
+            }
+            atmosphere.mist()
+        };
+        assert!(mist(WeatherKind::Clear, 0, 6) > 0.9);
+        assert_eq!(mist(WeatherKind::Clear, 0, 12), 0.0);
+        // A noon after rain is misty again; fog has no mist of its own.
+        assert!(mist(WeatherKind::Rain, 255, 12) > 0.3);
+        assert_eq!(mist(WeatherKind::Fog, 255, 6), 0.0);
+        // A fog going out (F12) still holds the mist back while it clears.
+        let mut atmosphere = Atmosphere::new(None, None);
+        atmosphere.follow(sim_sky(WeatherKind::Clear, 0, 0, 6));
+        for _ in 0..3 {
+            atmosphere.next_weather();
+        }
+        for _ in 0..400 {
+            frame(&mut atmosphere, 0.1);
+        }
+        assert_eq!(atmosphere.weather().0, Weather::Fog);
+        assert!(atmosphere.mist() < 0.05);
+        atmosphere.next_weather();
+        frame(&mut atmosphere, 0.016);
+        assert_eq!(atmosphere.weather().0, Weather::Clear);
+        let clearing = atmosphere.mist();
+        assert!(clearing < 0.3, "{clearing}");
+        for _ in 0..400 {
+            frame(&mut atmosphere, 0.1);
+        }
+        assert!(atmosphere.mist() > clearing);
+        // `--look` and F9 move the mist with the look, not the clock: night
+        // in a noon match is a night's mist.
+        let mut flagged = Atmosphere::new(Some(LookPreset::Night), None);
+        flagged.follow(sim_sky(WeatherKind::Clear, 0, 0, 12));
+        assert!((flagged.mist() - mist_at(23.0)).abs() < 1e-6);
+        // A sky with no clock is the usual 17:00.
+        let sandbox = Atmosphere::new(None, None);
+        assert!((sandbox.mist() - mist_at(17.0)).abs() < 1e-6);
     }
 
     #[test]
