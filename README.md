@@ -51,9 +51,14 @@ To measure memory on your machine: `cargo run --release -p gc_game -- --frames 6
 | `crates/gc_render` | wgpu renderer (Metal, DirectX 12, Vulkan) |
 | `crates/gc_ui` | Menus, lobby and settings screens, and the battle HUD's minimap and army tray (immediate-mode UI, no GPU code) |
 | `crates/gc_net` | LAN play: UDP transport, finding games on the network, the lobby protocol and host-sequenced lockstep turns |
+| `crates/gc_match` | A Grubcraft match without a window: setting out a battle, playing it with computer players and judging it |
+| `crates/gc_replay` | Replays: the replay file, recording, headless playback and golden-replay checks |
 | `crates/gc_ai` | Computer players: battle tactics, difficulty levels and personalities; they read the sim and send ordinary commands |
 | `crates/gc_game` | The game application |
 | `tools/gc_bake` | Baker: compiles `data/*.ron` (and later art and audio) into the asset pack |
+| `tools/gc_artbake` | Art baker: turns glTF characters into the soldier model pack |
+| `tools/gc_scenebake` | Scenery baker: turns glTF trees, bushes, grass and rocks into the scenery pack |
+| `tools/ground_textures` | `bake.py`: bakes the ground and scenery detail textures from ambientCG sets |
 | `tools/gc_sfx` | Sound generator: synthesises the effects and music loops, and layers the battle cries from recorded voices, into `assets/audio/sounds.gcsnd` |
 | `tools/gc_bench` | Headless benchmarks with budget gates |
 | `tools/gc_mapcheck` | Map validator: `cargo run -p gc_mapcheck -- check` checks every map in `data/maps/` for validity and fairness; `png FILE OUT.png` draws one; `gen RECIPE SIZE SEED OUT.ron` writes a Field Battle or Conquest recipe map from a seed; `battle AREA ROUTE FEATURE fort\|open SEED OUT.ron` writes a campaign battle map |
