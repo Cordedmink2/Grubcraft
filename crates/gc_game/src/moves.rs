@@ -43,7 +43,7 @@ impl MoveClip {
         })
     }
 
-    fn of_move(r: &MoveRecord) -> MoveClip {
+    pub(crate) fn of_move(r: &MoveRecord) -> MoveClip {
         MoveClip {
             first_row: r.first_row,
             frames: r.frames,
@@ -154,7 +154,7 @@ fn fallbacks(act: Act) -> &'static [Act] {
 /// anything 1, another `None` (never picked). Wanting `any` takes only moves
 /// made for anything: a soldier whose weapon the fight does not name never
 /// plays a spear's parry from another model on his skeleton.
-fn fits<T: PartialEq>(have: T, want: T, any: T) -> Option<u32> {
+pub(crate) fn fits<T: PartialEq>(have: T, want: T, any: T) -> Option<u32> {
     if have == want {
         Some(2)
     } else if have == any {
@@ -162,6 +162,18 @@ fn fits<T: PartialEq>(have: T, want: T, any: T) -> Option<u32> {
     } else {
         None
     }
+}
+
+/// Of the `items` that `score` takes, one of those scoring best, picked by
+/// `seed` among them.
+pub(crate) fn best_by_seed<T>(
+    items: &[T],
+    score: impl Fn(&T) -> Option<u32>,
+    seed: u32,
+) -> Option<&T> {
+    let best = items.iter().filter_map(&score).max()?;
+    let top = || items.iter().filter(|i| score(i) == Some(best));
+    top().nth(seed as usize % top().count())
 }
 
 /// Every model's moves, looked up once.
@@ -217,12 +229,9 @@ impl Moves {
                 let s = fits(m.side, want.side, Side::Any)?;
                 Some(w * 3 + s)
             };
-            let Some(best) = moves.iter().filter_map(score).max() else {
-                continue;
-            };
-            let top = || moves.iter().filter(move |m| score(m) == Some(best));
-            let n = top().count();
-            return top().nth(want.seed as usize % n).copied();
+            if let Some(m) = best_by_seed(moves, score, want.seed) {
+                return Some(*m);
+            }
         }
         None
     }

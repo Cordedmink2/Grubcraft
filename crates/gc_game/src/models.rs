@@ -3,7 +3,7 @@
 //! the build script and embedded in the executable, and the choice of
 //! which animation frame each soldier shows.
 
-use gc_assets::anim::Act;
+use gc_assets::anim::{Act, Weapon};
 use gc_assets::detail::Detail;
 use gc_assets::model::Models;
 use gc_assets::{Aligned, Pack};
@@ -119,8 +119,10 @@ struct ModelClips {
 }
 
 /// A matched kill: the killer's and the victim's halves of one move, made
-/// together. Start both at once and play them over the same time (a swing):
-/// both land their contact at [`gc_assets::anim::BLOW_AT`] of the move.
+/// together, as long as each other and played as made (not retimed like an
+/// attack): started at once and played at one speed, they meet `contact` of
+/// the way through. A kill is longer than a swing, since the victim falls
+/// and lies still in it; its own length is `frames / fps`.
 #[allow(
     dead_code,
     reason = "puppets.rs will play matched kills with it (docs/28, stage 5)"
@@ -133,12 +135,34 @@ pub struct KillPair {
     /// world's units, which models are baked in), the victim facing the
     /// killer. Warp both towards this before the contact.
     pub reach: f32,
+    /// How far through both halves (0 to 1, as [`MoveClip::at`] counts) the
+    /// blow lands.
+    pub contact: f32,
 }
+
+/// A kill a model can play.
+#[derive(Clone, Copy, Debug)]
+struct KillFor {
+    /// The skeleton the victim's half is made on.
+    victim: u32,
+    /// How well it fits the killer's weapon (as the move picker scores it).
+    fit: u32,
+    pair: KillPair,
+}
+
+/// How far a victim's size may be from the killer's for a kill made for two
+/// men of one size to still meet.
+const KILL_SIZES: core::ops::RangeInclusive<f32> = 0.9..=1.1;
 
 /// Per model, the move for each action, picked once by the move picker
 /// (`moves.rs`).
 pub struct Clips {
     by_model: Vec<ModelClips>,
+    /// Per model posed from a skeleton, the skeleton and how much bigger
+    /// the model is than it.
+    body: Vec<Option<(u32, f32)>>,
+    /// Per model, the kills it can play, their reach in its size.
+    kills: Vec<Vec<KillFor>>,
 }
 
 impl Clips {
@@ -157,18 +181,63 @@ impl Clips {
                 }
             })
             .collect();
-        Clips { by_model }
+        let anim = &models.anim;
+        let body: Vec<Option<(u32, f32)>> = (0..models.models.len())
+            .map(|m| {
+                let fit = anim.fit(m)?;
+                // The model's first fix sizes the skeleton's space into it.
+                let f = anim.fixes.get(fit.first_fix as usize)?;
+                Some((
+                    fit.skeleton,
+                    (f[0] * f[0] + f[4] * f[4] + f[8] * f[8]).sqrt(),
+                ))
+            })
+            .collect();
+        let kills = body
+            .iter()
+            .enumerate()
+            .map(|(m, body)| {
+                let Some((skeleton, scale)) = *body else {
+                    return Vec::new();
+                };
+                let weapon = anim.weapon_of(m);
+                anim.pairs
+                    .iter()
+                    .filter_map(|p| {
+                        let (kill, killed) =
+                            (&anim.moves[p.kill as usize], &anim.moves[p.killed as usize]);
+                        if u32::from(kill.skeleton) != skeleton {
+                            return None;
+                        }
+                        Some(KillFor {
+                            victim: u32::from(killed.skeleton),
+                            fit: crate::moves::fits(kill.weapon(), weapon, Weapon::Any)?,
+                            pair: KillPair {
+                                kill: MoveClip::of_move(kill),
+                                killed: MoveClip::of_move(killed),
+                                reach: p.reach * scale,
+                                contact: p.contact,
+                            },
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+        Clips {
+            by_model,
+            body,
+            kills,
+        }
     }
 
     /// The matched kill a man of `killer_model` plays on one of
     /// `victim_model` (model indices, as for [`Clips::clip`]), if the two
-    /// have one made for them and the killer's weapon; otherwise `None`, and
+    /// have one made for them and the killer's weapon, and are near enough
+    /// one size for it to meet; otherwise `None`, and
     /// the fight plays a plain attack with the victim's own hit and death.
-    /// `seed` picks among the kills that fit. The fight asks for kills only
-    /// through here, so how pairs are stored can change without touching it.
-    ///
-    /// No paired moves are made yet (docs/33, stage 5), so this is always
-    /// `None` for now.
+    /// `seed` picks among the kills that fit best (made for the killer's
+    /// weapon before made for any). The fight asks for kills only through
+    /// here, so how pairs are stored can change without touching it.
     #[allow(
         dead_code,
         reason = "puppets.rs will play matched kills with it (docs/28, stage 5)"
@@ -179,8 +248,17 @@ impl Clips {
         victim_model: usize,
         seed: u32,
     ) -> Option<KillPair> {
-        let _ = (killer_model, victim_model, seed);
-        None
+        let (Some(&Some((_, size))), Some(&Some((victim, theirs)))) =
+            (self.body.get(killer_model), self.body.get(victim_model))
+        else {
+            return None;
+        };
+        if !KILL_SIZES.contains(&(theirs / size)) {
+            return None;
+        }
+        let kills = self.kills.get(killer_model)?;
+        let score = |k: &KillFor| (k.victim == victim).then_some(k.fit);
+        crate::moves::best_by_seed(kills, score, seed).map(|k| k.pair)
     }
 
     /// The move `model` plays for `action`.
@@ -310,7 +388,6 @@ fn peak(f: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gc_assets::anim::Weapon;
     use gc_assets::model::ClipKind;
 
     #[test]
@@ -416,6 +493,83 @@ mod tests {
             weapon("Oni-Bound", Action::Attack),
             Some((Act::Attack, Weapon::Any))
         );
+    }
+
+    #[test]
+    fn a_kill_is_picked_for_the_victims_skeleton_and_the_killers_weapon() {
+        let models = load().unwrap();
+        let mut clips = Clips::new(&models);
+        let any = clips.clip(0, Action::Attack).unwrap();
+        let kill = |victim, fit, row| KillFor {
+            victim,
+            fit,
+            pair: KillPair {
+                kill: MoveClip {
+                    first_row: row,
+                    ..any
+                },
+                killed: any,
+                reach: 1.0,
+                contact: 0.3,
+            },
+        };
+        // Model 0 is posed from skeleton 7, model 1 from 8 and model 3 too
+        // but half as big again; model 2 is not posed from one.
+        clips.body = vec![Some((7, 1.0)), Some((8, 1.05)), None, Some((8, 1.5))];
+        clips.kills = vec![vec![
+            kill(8, 1, 10),
+            kill(8, 2, 20),
+            kill(8, 2, 30),
+            kill(7, 2, 40),
+        ]];
+        let row = |victim, seed| clips.kill_pair(0, victim, seed).map(|p| p.kill.first_row);
+        // The kills made for the weapon beat one made for any; the seed picks.
+        assert_eq!(row(1, 0), Some(20));
+        assert_eq!(row(1, 1), Some(30));
+        assert_eq!(row(0, 5), Some(40));
+        // No kill on a victim posed from no skeleton or of another size, nor
+        // by a model without.
+        assert_eq!(row(2, 0), None);
+        assert_eq!(row(3, 0), None);
+        assert_eq!(clips.kill_pair(1, 0, 0), None);
+        assert_eq!(clips.kill_pair(99, 0, 0), None);
+    }
+
+    #[test]
+    fn katana_and_spear_men_have_matched_kills_on_any_man() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        let kill = |killer, victim| clips.kill_pair(by(killer), by(victim), 0);
+        for (killer, weapon) in [
+            ("Katana Samurai", Weapon::TwoHanded),
+            ("The Ronin", Weapon::TwoHanded),
+            ("Yari Ashigaru", Weapon::Spear),
+        ] {
+            for victim in ["Yari Ashigaru", "Katana Samurai", "The Ronin"] {
+                let p = kill(killer, victim).unwrap_or_else(|| panic!("{killer} on {victim}"));
+                assert_eq!((p.kill.act, p.kill.weapon), (Act::Kill, weapon));
+                assert_eq!(p.killed.act, Act::Killed);
+                assert_eq!(p.kill.frames, p.killed.frames);
+                assert!(
+                    p.contact > 0.1 && p.contact < 0.4,
+                    "{killer}: {}",
+                    p.contact
+                );
+                // A man's length apart for a katana, a spear's for a spear.
+                assert!((0.8..4.5).contains(&p.reach), "{killer}: {}", p.reach);
+            }
+        }
+        // The two katana kills both come up as the seed varies.
+        let rows: std::collections::BTreeSet<u32> = (0..8)
+            .map(|seed| clips.kill_pair(by("Katana Samurai"), by("Yari Ashigaru"), seed))
+            .map(|p| p.unwrap().kill.first_row)
+            .collect();
+        assert_eq!(rows.len(), 2);
+        // A kanabo has none made for it, and the Oni-Bound, on the men's rig
+        // but half as big again, is too big for a kill made for two men.
+        assert_eq!(kill("Oni-Bound", "Yari Ashigaru"), None);
+        assert_eq!(kill("Katana Samurai", "Oni-Bound"), None);
     }
 
     #[test]

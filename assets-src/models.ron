@@ -10,7 +10,10 @@
 // a Block clip guards with its Idle). `weapon` names what a model posed
 // from a shared skeleton holds, so the move picker prefers the skeleton's
 // tagged `moves` made for it; `moves_from` keeps a model's tagged moves in a
-// separate glTF on its rig (a fight library). The bake also writes
+// separate glTF on its rig (a fight library). An attack's `contact` is the
+// second its blow lands; both halves of a matched kill (acts Kill, Killed)
+// have one and name their `pair`, and the killer's half its `reach`, the
+// distance between the two men in the glTF's units. The bake also writes
 // assets/models.manifest, which `gc_artbake --check` compares with this file
 // and the sources in CI: re-bake and commit both after editing here.
 (
@@ -59,7 +62,7 @@
             // Universal Animation Library moves retargeted onto this rig in
             // Blender (design/faction-looks/fight-library/MOVES.md). They are
             // the skeleton's, so every model on it may play them.
-            moves_from: Some("shared:grubcraft/fight-library/ember-men/ember-men-moves.glb"),
+            moves_from: Some("shared:grubcraft/fight-library/ember-men/ember-men-moves-2.glb"),
             moves: [
                 (anim: "F_Katana_Idle", act: "Idle", weapon: "TwoHanded"),
                 (anim: "F_Katana_Attack", act: "Attack", weapon: "TwoHanded", contact: Some(0.467)),
@@ -68,6 +71,17 @@
                 (anim: "F_Spear_Guard", act: "Idle", weapon: "Spear"),
                 (anim: "F_Spear_Thrust", act: "Attack", weapon: "Spear", contact: Some(0.333)),
                 (anim: "F_Spear_Parry", act: "Parry", weapon: "Spear"),
+                // A single cut joined with its recovery, guard to guard: a
+                // katana man's second blow.
+                (anim: "F_Katana_Cut_A", act: "Attack", weapon: "TwoHanded", contact: Some(0.4)),
+                // Matched kills (docs/33, stage 5): each pair made together in
+                // Blender, the victim `reach` metres in front of the killer.
+                (anim: "K_Katana_Thrust_Kill", act: "Kill", weapon: "TwoHanded", contact: Some(0.467), pair: Some("Katana_Thrust"), reach: Some(1.538)),
+                (anim: "K_Katana_Thrust_Killed", act: "Killed", contact: Some(0.467), pair: Some("Katana_Thrust")),
+                (anim: "K_Katana_Cut_Kill", act: "Kill", weapon: "TwoHanded", contact: Some(0.4), pair: Some("Katana_Cut"), reach: Some(1.438)),
+                (anim: "K_Katana_Cut_Killed", act: "Killed", contact: Some(0.4), pair: Some("Katana_Cut")),
+                (anim: "K_Spear_Thrust_Kill", act: "Kill", weapon: "Spear", contact: Some(0.333), pair: Some("Spear_Thrust"), reach: Some(3.754)),
+                (anim: "K_Spear_Thrust_Killed", act: "Killed", contact: Some(0.333), pair: Some("Spear_Thrust")),
             ],
         ),
         (
