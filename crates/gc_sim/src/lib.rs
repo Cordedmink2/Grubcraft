@@ -863,11 +863,6 @@ impl World {
         self.sky.air()
     }
 
-    /// The match's spells of weather, by their starting tick (for replays).
-    pub fn spells(&self) -> &[Spell] {
-        self.sky.spells()
-    }
-
     /// Make this a Conquest match: buildings and the economy. Only
     /// on a match's own world with a map, before its first tick, once;
     /// returns whether it was done.
@@ -1399,6 +1394,7 @@ impl World {
                 &mut self.nav,
                 &self.stances,
                 self.judge.throne().map_or(0, verdict::Throne::out_mask),
+                self.sky.air(),
             );
             self.clear_land();
             self.raise_trained();
@@ -2248,7 +2244,7 @@ impl World {
             ));
         }
         let posts = self.vision.posts().filter(|&(owner, ..)| friend(owner));
-        out.extend(posts.map(|(_, block, sight)| round(block, self.air().sight(sight))));
+        out.extend(posts.map(|(_, block, sight)| round(block, sight)));
     }
 
     /// Whether `party`'s side can see regiment `h` (see [`vision`]). Always

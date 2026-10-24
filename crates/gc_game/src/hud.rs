@@ -1748,7 +1748,6 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
     }
 }
 
-/// What the ground at `p` does to a regiment, in a few words for the selection panel (capitalised, as it stands on its own line): the readable side
 /// What the sky does to the fight now, for the top bar: empty in clear
 /// daylight, else what cuts sight and range (and slows the march), e.g.
 /// "Fog: sight 40%" or "Night: sight 45%" (docs/32-changing-land.md).
@@ -1765,8 +1764,7 @@ fn sky_word(world: &gc_sim::World) -> String {
         gc_sim::WeatherKind::Snow => Some("Snow"),
         gc_sim::WeatherKind::Fog => Some("Fog"),
     };
-    // Dark enough to cut sight: below half the day's light.
-    let dark = world.daylight().light() < 500;
+    let dark = world.daylight().dark();
     let name = match (falling, dark) {
         (Some(w), true) => format!("{w} at night"),
         (Some(w), false) => w.to_string(),
@@ -1779,6 +1777,7 @@ fn sky_word(world: &gc_sim::World) -> String {
     word
 }
 
+/// What the ground at `p` does to a regiment, in a few words for the selection panel (capitalised, as it stands on its own line): the readable side
 /// of docs/32-changing-land.md, "Reading the ground". Empty on plain ground.
 fn ground_word(terrain: &gc_sim::Terrain, p: gc_fixed::FxVec2) -> &'static str {
     if terrain.wet(p) {

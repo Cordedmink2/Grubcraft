@@ -913,6 +913,8 @@ impl<N: Network> Menu<N> {
         // The host can ask for a new map or type in a code; everyone sees
         // the code.
         let strip = Rect::new(panel.x + 24, y + sp(36) + sp(10), panel.w - 48, strip_h);
+        // The weather goes under the time of day when there is room.
+        let stacked = sky_stacked(strip_h, sp(36));
         let (mut x, mut w) = (strip.x, strip.w);
         if preview_side > 0 {
             let occupied = lobby.slots.iter().filter(|s| s.occupied()).count();
@@ -923,7 +925,7 @@ impl<N: Network> Menu<N> {
             let name = settings.map_name();
             // The time of day (and the weather, when they share the row)
             // has the name row's right end.
-            let beside = if sky_stacked(strip_h, sp(36)) { 1 } else { 2 };
+            let beside = if stacked { 1 } else { 2 };
             let name_room = (w - beside * (TIME_OF_DAY_W + 8) - 8).max(0) / 16;
             ui.label(x, strip.y, 2, theme::INK, &fit(name, name_room as usize));
             // The orange dots on the picture, said once, if there is room.
@@ -955,7 +957,7 @@ impl<N: Network> Menu<N> {
         }
         // The weather: under the time of day, or beside it when the strip
         // is one row high.
-        let weather_r = if sky_stacked(strip_h, sp(36)) {
+        let weather_r = if stacked {
             Rect::new(time_r.x, time_r.bottom() + sp(4), TIME_OF_DAY_W, sp(36))
         } else {
             Rect::new(

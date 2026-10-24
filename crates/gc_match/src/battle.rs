@@ -6,6 +6,7 @@ use gc_ai::army::{self, Preset};
 use gc_ai::perception::{fx, to_fx_vec, v2};
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
 use gc_fixed::Fx;
+use gc_replay::SkyRecord;
 use gc_sim::champions::{HEART, Outcome};
 use gc_sim::{
     Challenge, Command, HEART_HOLD_TICKS, PlayerCommand, PlayerId, TICKS_PER_SECOND, UnitStats,
@@ -34,56 +35,42 @@ pub fn champions_allowed(setup: &MatchStart) -> bool {
 
 /// The sky a lobby match is played under, from the lobby's time of day and
 /// weather (docs/32-changing-land.md, "Weather and the time of day"):
-/// every machine makes the same one from the same settings and seed.
-pub struct SkyPlan {
-    start: u32,
-    spells: Vec<gc_sim::Spell>,
+/// every machine makes the same one from the same settings and seed. Its
+/// clock runs from the lobby's time.
+pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
+    use gc_sim::sky::{DAY_TICKS, Season, at_hour, changing};
+    use gc_sim::{Spell, Weather, WeatherKind};
+    let (hour, minute) = settings.time_of_day.hour();
+    let overcast = settings.time_of_day == TimeOfDay::Overcast;
+    let all_match = |kind, strength, cloud: u8, wind| {
+        vec![Spell {
+            at: 0,
+            weather: Weather {
+                kind,
+                strength,
+                cloud: if overcast { cloud.max(220) } else { cloud },
+                wind,
+            },
+        }]
+    };
+    let spells = match settings.weather {
+        WeatherSetting::Fair if overcast => all_match(WeatherKind::Clear, 0, 220, (4, 2)),
+        WeatherSetting::Fair => Vec::new(),
+        WeatherSetting::Changing => changing(seed, Season::Wet, SKY_TICKS),
+        WeatherSetting::Rain => all_match(WeatherKind::Rain, 200, 230, (10, 4)),
+        WeatherSetting::Snow => all_match(WeatherKind::Snow, 180, 220, (6, 2)),
+        WeatherSetting::Fog => all_match(WeatherKind::Fog, 220, 160, (2, 0)),
+    };
+    SkyRecord {
+        start: at_hour(hour, minute),
+        day_ticks: DAY_TICKS,
+        runs: true,
+        spells,
+    }
 }
 
 /// Changing weather is drawn for matches up to this long.
 const SKY_TICKS: u32 = 4 * 60 * 60 * TICKS_PER_SECOND;
-
-impl SkyPlan {
-    pub fn new(settings: &LobbySettings, seed: u64) -> SkyPlan {
-        use gc_sim::sky::{Season, at_hour, changing};
-        use gc_sim::{Spell, Weather, WeatherKind};
-        let (hour, minute) = settings.time_of_day.hour();
-        let overcast = settings.time_of_day == TimeOfDay::Overcast;
-        let all_match = |kind, strength, cloud: u8, wind| {
-            vec![Spell {
-                at: 0,
-                weather: Weather {
-                    kind,
-                    strength,
-                    cloud: if overcast { cloud.max(220) } else { cloud },
-                    wind,
-                },
-            }]
-        };
-        let spells = match settings.weather {
-            WeatherSetting::Fair if overcast => all_match(WeatherKind::Clear, 0, 220, (4, 2)),
-            WeatherSetting::Fair => Vec::new(),
-            WeatherSetting::Changing => changing(seed, Season::Wet, SKY_TICKS),
-            WeatherSetting::Rain => all_match(WeatherKind::Rain, 200, 230, (10, 4)),
-            WeatherSetting::Snow => all_match(WeatherKind::Snow, 180, 220, (6, 2)),
-            WeatherSetting::Fog => all_match(WeatherKind::Fog, 220, 160, (2, 0)),
-        };
-        SkyPlan {
-            start: at_hour(hour, minute),
-            spells,
-        }
-    }
-
-    /// The sky for the match's setup: the clock runs from the lobby's time.
-    pub fn sky(&self) -> gc_sim::Sky<'_> {
-        gc_sim::Sky {
-            start: self.start,
-            day_ticks: gc_sim::sky::DAY_TICKS,
-            runs: true,
-            spells: &self.spells,
-        }
-    }
-}
 
 /// The champions' result stays on screen this long after the duel ends.
 const NEWS_TICKS: u32 = 8 * TICKS_PER_SECOND;

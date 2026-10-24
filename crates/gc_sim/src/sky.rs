@@ -198,6 +198,11 @@ impl Daylight {
         (s / 1000) as u16
     }
 
+    /// Whether it is dark enough to cut sight: under [`HALF_LIGHT`].
+    pub fn dark(self) -> bool {
+        self.light() < HALF_LIGHT
+    }
+
     /// Whether it is the morning half of the day (midnight to noon): the
     /// light is a dawn's, not a dusk's.
     pub fn rising(self) -> bool {
@@ -213,9 +218,11 @@ pub struct Air {
     pub march_percent: u8,
 }
 
-/// Sight in the dark of night, in percent of the day's (full from half
-/// light up).
+/// Sight in the dark of night, in percent of the day's.
 pub const NIGHT_SIGHT_PERCENT: u32 = 45;
+/// The light from which sight is full, so a golden-hour battle sees as far
+/// as a noon one; under it sight falls towards [`NIGHT_SIGHT_PERCENT`].
+pub const HALF_LIGHT: u16 = 500;
 /// What each kind of weather takes from sight at full strength, in percent.
 pub const FOG_SIGHT_LOSS: u32 = 60;
 pub const SNOW_SIGHT_LOSS: u32 = 30;
@@ -234,9 +241,7 @@ impl Air {
     };
 
     fn of(weather: Weather, light: u16) -> Air {
-        // Full sight while there is at least half the day's light, so a
-        // golden-hour battle sees as far as a noon one.
-        let lit = (2 * u32::from(light)).min(1000);
+        let lit = (u32::from(light) * 1000 / u32::from(HALF_LIGHT)).min(1000);
         let night = NIGHT_SIGHT_PERCENT + (100 - NIGHT_SIGHT_PERCENT) * lit / 1000;
         let loss = match weather.kind {
             WeatherKind::Clear => 0,
@@ -263,9 +268,13 @@ impl Air {
         scale(distance, self.sight_percent)
     }
 
-    /// A march `step` at this air's pace.
+    /// A march `step` at this air's pace: never slowed to a standstill.
     pub fn march(self, step: Fx) -> Fx {
-        scale(step, self.march_percent)
+        if step > Fx::ZERO {
+            scale(step, self.march_percent).max(Fx::from_raw(1))
+        } else {
+            step
+        }
     }
 }
 
@@ -296,8 +305,6 @@ pub(crate) struct SkyState {
     spells: Vec<Spell>,
     /// The next spell to begin.
     next: usize,
-    /// The weather it is moving towards.
-    goal: Weather,
     now: Weather,
     air: Air,
 }
@@ -317,7 +324,6 @@ impl SkyState {
             runs: sky.runs,
             spells,
             next: first,
-            goal: now,
             now,
             air: Air::CLEAR,
         };
@@ -347,15 +353,16 @@ impl SkyState {
         self.air
     }
 
-    /// The spells, for replays.
-    pub(crate) fn spells(&self) -> &[Spell] {
-        &self.spells
+    /// The weather it is moving towards: the latest spell's, or fair.
+    fn goal(&self) -> Weather {
+        self.next
+            .checked_sub(1)
+            .map_or(Weather::FAIR, |i| self.spells[i].weather)
     }
 
     /// Move on to `tick`; returns whether the air changed.
     pub(crate) fn tick(&mut self, tick: u32) -> bool {
-        while let Some(s) = self.spells.get(self.next).filter(|s| s.at <= tick) {
-            self.goal = s.weather;
+        while self.spells.get(self.next).is_some_and(|s| s.at <= tick) {
             self.next += 1;
         }
         if tick.is_multiple_of(EASE_EVERY) {
@@ -369,7 +376,8 @@ impl SkyState {
 
     /// One step of the weather towards its goal.
     fn ease(&mut self) {
-        let (now, goal) = (&mut self.now, self.goal);
+        let goal = self.goal();
+        let now = &mut self.now;
         if now.kind != goal.kind {
             if now.strength == 0 {
                 now.kind = goal.kind;
@@ -381,8 +389,8 @@ impl SkyState {
         }
         now.cloud = toward(now.cloud, goal.cloud);
         now.wind = (
-            toward_i(now.wind.0, goal.wind.0),
-            toward_i(now.wind.1, goal.wind.1),
+            toward(now.wind.0, goal.wind.0),
+            toward(now.wind.1, goal.wind.1),
         );
     }
 
@@ -390,31 +398,23 @@ impl SkyState {
         if self.is_still() {
             return;
         }
+        // The goal follows from `next`.
         h.u32(self.next as u32);
-        for w in [self.now, self.goal] {
-            h.u8(w.kind as u8);
-            h.u8(w.strength);
-            h.u8(w.cloud);
-            h.u8(w.wind.0 as u8);
-            h.u8(w.wind.1 as u8);
-        }
+        let w = self.now;
+        h.u8(w.kind as u8);
+        h.u8(w.strength);
+        h.u8(w.cloud);
+        h.u8(w.wind.0 as u8);
+        h.u8(w.wind.1 as u8);
     }
 }
 
-fn toward(v: u8, goal: u8) -> u8 {
-    match v.cmp(&goal) {
-        core::cmp::Ordering::Less => v + 1,
-        core::cmp::Ordering::Greater => v - 1,
-        core::cmp::Ordering::Equal => v,
-    }
-}
-
-fn toward_i(v: i8, goal: i8) -> i8 {
-    match v.cmp(&goal) {
-        core::cmp::Ordering::Less => v + 1,
-        core::cmp::Ordering::Greater => v - 1,
-        core::cmp::Ordering::Equal => v,
-    }
+/// `v` one step nearer `goal`.
+fn toward<T>(v: T, goal: T) -> T
+where
+    T: Copy + Ord + From<bool> + core::ops::Add<Output = T> + core::ops::Sub<Output = T>,
+{
+    v + T::from(v < goal) - T::from(v > goal)
 }
 
 #[cfg(test)]

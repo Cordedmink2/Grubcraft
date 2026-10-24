@@ -4469,14 +4469,10 @@ impl Running {
         };
         // The sky: the lobby's, or the replay's own; the sandbox's stands
         // still.
-        let sky_plan = match &kind {
-            MatchKind::Battle(start) => Some(battle::SkyPlan::new(&start.settings, self.seed)),
-            _ => None,
-        };
-        let sky = match (&kind, &sky_plan) {
-            (_, Some(plan)) => plan.sky(),
-            (MatchKind::Replay(r), None) => r.sky.sky(),
-            _ => gc_sim::Sky::STILL,
+        let sky = match &kind {
+            MatchKind::Battle(start) => battle::sky_of(&start.settings, self.seed),
+            MatchKind::Replay(r) => r.sky.clone(),
+            MatchKind::Sandbox { .. } => gc_replay::SkyRecord::default(),
         };
         let setup = MatchSetup {
             seed: self.seed,
@@ -4487,7 +4483,7 @@ impl Running {
             teams: &teams,
             ground: self.heightmap.ground(),
             champions,
-            sky,
+            sky: sky.sky(),
         };
         // A lobby Conquest match: what every machine makes its world with,
         // from the lobby's settings and the game data.

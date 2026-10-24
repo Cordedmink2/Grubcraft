@@ -1361,6 +1361,7 @@ impl Structures {
         units: &[UnitStats],
         kinds: &[ConquestUnit],
         nav: &mut Nav,
+        air: crate::Air,
     ) {
         self.fallen.clear();
         self.struck.clear();
@@ -1400,7 +1401,8 @@ impl Structures {
             let way = Approach::of(regs, unit, r, self.footprint(s));
             let building = self.work[r] == Work::Build;
             let reach = if unit.range > Fx::ZERO && !building {
-                unit.range
+                // Archers' range, as the sky lets them shoot.
+                air.sight(unit.range)
             } else {
                 way.reach()
             };

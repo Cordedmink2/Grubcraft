@@ -116,6 +116,7 @@ struct Post {
     slot: usize,
     owner: PlayerId,
     block: Block,
+    /// How far it sees, as the sky lets it.
     sight: Fx,
 }
 
@@ -342,7 +343,8 @@ impl Vision {
                 slot,
                 owner: s.owner_of(slot),
                 block: s.block(slot),
-                sight: s.sight(slot),
+                // As far as the sky lets it see.
+                sight: self.air.sight(s.sight(slot)),
             }));
             self.sort_posts();
         }
@@ -717,7 +719,7 @@ impl Vision {
                     continue;
                 }
                 // Far off by the centres: no need for the block test.
-                let gap = distance.min(self.air.sight(post.sight));
+                let gap = distance.min(post.sight);
                 let reach = u64::from(
                     (gap + me.radius() + post.block.radius())
                         .raw()

@@ -243,8 +243,9 @@ impl Conquest {
         nav: &mut Nav,
         stances: &Stances,
         out: u8,
+        air: crate::Air,
     ) {
-        self.structures.update(regs, stats, &self.units, nav);
+        self.structures.update(regs, stats, &self.units, nav, air);
         self.structures.link_veins();
         self.structures.regrow();
         self.structures.wither(nav, regs);
