@@ -18,7 +18,6 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Fx, Pcg32};
 
-use crate::terrain::WET_FULL;
 use crate::{StateHasher, TICKS_PER_SECOND};
 
 /// What is falling or hanging in the air, in the order the renderer's
@@ -294,6 +293,10 @@ fn scale(v: Fx, percent: u8) -> Fx {
 /// takes about 25 seconds.
 pub const EASE_EVERY: u32 = 2;
 
+/// How wet the ground is, from bone dry (0) to soaked through: the sky
+/// keeps it (rain wets it, anything else dries it) and
+/// [`crate::Terrain::soak`] turns tiles soft by it.
+pub const WET_FULL: u16 = 1000;
 /// Rain wets the ground by its strength over this much a second (heavy
 /// rain about 3 of [`WET_FULL`]: some five minutes to soak it through).
 pub const RAIN_WETS: u16 = 64;

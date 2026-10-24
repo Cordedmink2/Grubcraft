@@ -2,7 +2,7 @@
 //! turned earth where trees were felled (`Event::Cleared`) and bare tracks
 //! worn by regiments marching and fighting. A few times a second this fills
 //! a grid for the renderer, four bytes a tile: felled, scorched, worn, and
-//! soaked (ground the rain has turned to mud, `Terrain::soaked_tiles`). The shader draws the marks; this
+//! soaked (ground the rain has turned to mud). The shader draws the marks; this
 //! decides only where. Wear builds where a regiment the viewing side can see moves or fights, and
 //! heals over minutes as the grass comes back. Presentation only: it reads
 //! the world and writes nothing to it, and it is not part of any replay.
@@ -190,19 +190,26 @@ impl ScarView {
         }
     }
 
-    /// Mark the ground the rain has soaked, if that has changed: the same
-    /// count means the same tiles.
+    /// Mark the ground the rain has soaked, if that has changed. Soaked
+    /// tiles are always the first of the terrain's soak order, so only the
+    /// ones between the old count and the new change.
     fn soak(&mut self, terrain: &gc_sim::Terrain) {
-        if terrain.soaked() == self.soaked {
+        let (was, now) = (self.soaked as usize, terrain.soaked() as usize);
+        if was == now {
             return;
         }
-        self.soaked = terrain.soaked();
-        for i in (0..self.grid.len()).step_by(4) {
-            self.grid[i + 3] = 0;
-        }
-        for (x, y) in terrain.soaked_tiles() {
-            if let Some(b) = (self.grid).get_mut((y as usize * self.tiles + x as usize) * 4 + 3) {
-                *b = 255;
+        self.soaked = now as u32;
+        let mark = if now > was { 255 } else { 0 };
+        for (x, y) in terrain
+            .soak_order()
+            .skip(was.min(now))
+            .take(was.abs_diff(now))
+        {
+            if let Some(b) = self
+                .grid
+                .get_mut((y as usize * self.tiles + x as usize) * 4 + 3)
+            {
+                *b = mark;
             }
         }
         self.dirty = true;

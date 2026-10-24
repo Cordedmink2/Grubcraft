@@ -14,7 +14,6 @@
 
 extern crate alloc;
 
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 pub mod arrange;
@@ -779,8 +778,9 @@ pub struct World {
     map_tiles: u32,
     nav: Nav,
     stances: Stances,
-    /// Shared with this world's scratch copies (see [`fork`]).
-    terrain: Arc<Terrain>,
+    /// Its layers are shared with this world's scratch copies (see
+    /// [`fork`]).
+    terrain: Terrain,
     vision: Vision,
     deploy: Deployment,
     /// Only in matches that allow champions.
@@ -827,7 +827,7 @@ impl World {
             map_tiles: setup.map_tiles,
             nav,
             stances,
-            terrain: Arc::new(terrain),
+            terrain,
             vision,
             deploy: Deployment::default(),
             champions: setup.champions.then(|| {
@@ -873,12 +873,6 @@ impl World {
     /// fast they march.
     pub fn air(&self) -> Air {
         self.sky.air()
-    }
-
-    /// How wet the ground is, 0 (dry) to [`terrain::WET_FULL`]: rain wets
-    /// it and soaks low ground near water soft (see [`Terrain::soaked`]).
-    pub fn wetness(&self) -> u16 {
-        self.sky.wet()
     }
 
     /// Make this a Conquest match: buildings and the economy. Only
@@ -1356,10 +1350,7 @@ impl World {
         if self.sky.tick(self.tick) {
             self.set_air();
         }
-        let wet = self.sky.wet();
-        if self.terrain.soak_due(wet) {
-            Arc::make_mut(&mut self.terrain).soak(wet);
-        }
+        self.terrain.soak(self.sky.wet());
         // Time stands still while the armies deploy.
         if self.deploying() {
             self.judge.deploying();
@@ -2086,7 +2077,7 @@ impl World {
             if self.terrain.growth(x, y) == Growth::Open {
                 continue;
             }
-            let Some(was) = Arc::make_mut(&mut self.terrain).clear(x, y) else {
+            let Some(was) = self.terrain.clear(x, y) else {
                 continue;
             };
             if was == Growth::Thicket {

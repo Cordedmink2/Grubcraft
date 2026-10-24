@@ -121,7 +121,7 @@ const NONE: u32 = u32::MAX;
 const GREED: u32 = 5;
 
 /// The eight neighbours; the last four are diagonals.
-const DIRS: [(i32, i32); 8] = [
+pub(crate) const DIRS: [(i32, i32); 8] = [
     (1, 0),
     (-1, 0),
     (0, 1),
