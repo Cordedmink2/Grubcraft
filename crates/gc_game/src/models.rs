@@ -9,7 +9,7 @@ use gc_assets::model::Models;
 use gc_assets::{Aligned, Pack};
 
 use crate::moves::{MoveClip, Moves, Want};
-use crate::puppets::Move;
+use crate::puppets::{KillTiming, Kills, Move};
 
 static PACK: &Aligned<[u8]> = &Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/models.pak")));
 
@@ -123,10 +123,6 @@ struct ModelClips {
 /// attack): started at once and played at one speed, they meet `contact` of
 /// the way through. A kill is longer than a swing, since the victim falls
 /// and lies still in it; its own length is `frames / fps`.
-#[allow(
-    dead_code,
-    reason = "puppets.rs will play matched kills with it (docs/28, stage 5)"
-)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KillPair {
     pub kill: MoveClip,
@@ -140,6 +136,17 @@ pub struct KillPair {
     pub contact: f32,
 }
 
+impl KillPair {
+    /// How the puppets time it.
+    fn timing(&self) -> KillTiming {
+        KillTiming {
+            seconds: self.kill.seconds(),
+            contact: self.contact,
+            reach: self.reach,
+        }
+    }
+}
+
 /// A kill a model can play.
 #[derive(Clone, Copy, Debug)]
 struct KillFor {
@@ -147,7 +154,8 @@ struct KillFor {
     victim: u32,
     /// How well it fits the killer's weapon (as the move picker scores it).
     fit: u32,
-    pair: KillPair,
+    /// Its index in [`Clips::pairs`].
+    id: u16,
 }
 
 /// How far a victim's size may be from the killer's for a kill made for two
@@ -163,6 +171,9 @@ pub struct Clips {
     body: Vec<Option<(u32, f32)>>,
     /// Per model, the kills it can play, their reach in its size.
     kills: Vec<Vec<KillFor>>,
+    /// Every model's kills, by [`KillFor::id`]: the index the puppets name
+    /// one by ([`Move::Kill`], [`crate::puppets::Corpse::kill`]).
+    pairs: Vec<KillPair>,
 }
 
 impl Clips {
@@ -193,41 +204,68 @@ impl Clips {
                 ))
             })
             .collect();
-        let kills = body
-            .iter()
-            .enumerate()
-            .map(|(m, body)| {
-                let Some((skeleton, scale)) = *body else {
-                    return Vec::new();
-                };
+        let (mut kills, mut pairs) = (Vec::with_capacity(body.len()), Vec::new());
+        for (m, body) in body.iter().enumerate() {
+            let mut own = Vec::new();
+            if let Some((skeleton, scale)) = *body {
                 let weapon = anim.weapon_of(m);
-                anim.pairs
-                    .iter()
-                    .filter_map(|p| {
-                        let (kill, killed) =
-                            (&anim.moves[p.kill as usize], &anim.moves[p.killed as usize]);
-                        if u32::from(kill.skeleton) != skeleton {
-                            return None;
-                        }
-                        Some(KillFor {
-                            victim: u32::from(killed.skeleton),
-                            fit: crate::moves::fits(kill.weapon(), weapon, Weapon::Any)?,
-                            pair: KillPair {
-                                kill: MoveClip::of_move(kill),
-                                killed: MoveClip::of_move(killed),
-                                reach: p.reach * scale,
-                                contact: p.contact,
-                            },
-                        })
-                    })
-                    .collect()
-            })
-            .collect();
+                for p in anim.pairs {
+                    let (kill, killed) =
+                        (&anim.moves[p.kill as usize], &anim.moves[p.killed as usize]);
+                    let fit = crate::moves::fits(kill.weapon(), weapon, Weapon::Any);
+                    let (Some(fit), Ok(id)) = (fit, u16::try_from(pairs.len())) else {
+                        continue;
+                    };
+                    if u32::from(kill.skeleton) != skeleton {
+                        continue;
+                    }
+                    own.push(KillFor {
+                        victim: u32::from(killed.skeleton),
+                        fit,
+                        id,
+                    });
+                    pairs.push(KillPair {
+                        kill: MoveClip::of_move(kill),
+                        killed: MoveClip::of_move(killed),
+                        reach: p.reach * scale,
+                        contact: p.contact,
+                    });
+                }
+            }
+            kills.push(own);
+        }
         Clips {
             by_model,
             body,
             kills,
+            pairs,
         }
+    }
+
+    /// The kills a man of `killer_model` may play on one of `victim_model`
+    /// (see [`Clips::kill_pair`]): those that fit best, in a fixed order.
+    fn best_kills(
+        &self,
+        killer_model: usize,
+        victim_model: usize,
+    ) -> impl Iterator<Item = &KillFor> + '_ {
+        let fits = match (self.body.get(killer_model), self.body.get(victim_model)) {
+            (Some(&Some((_, size))), Some(&Some((victim, theirs))))
+                if KILL_SIZES.contains(&(theirs / size)) =>
+            {
+                self.kills.get(killer_model).map(|k| (k.as_slice(), victim))
+            }
+            _ => None,
+        };
+        let (kills, victim) = fits.unwrap_or((&[], 0));
+        let best = kills
+            .iter()
+            .filter(|k| k.victim == victim)
+            .map(|k| k.fit)
+            .max();
+        kills
+            .iter()
+            .filter(move |k| k.victim == victim && Some(k.fit) == best)
     }
 
     /// The matched kill a man of `killer_model` plays on one of
@@ -236,29 +274,41 @@ impl Clips {
     /// one size for it to meet; otherwise `None`, and
     /// the fight plays a plain attack with the victim's own hit and death.
     /// `seed` picks among the kills that fit best (made for the killer's
-    /// weapon before made for any). The fight asks for kills only through
-    /// here, so how pairs are stored can change without touching it.
-    #[allow(
-        dead_code,
-        reason = "puppets.rs will play matched kills with it (docs/28, stage 5)"
-    )]
+    /// weapon before made for any). The battle takes them all at once,
+    /// through [`Clips::kills_of`]; the tests ask one at a time.
+    #[cfg(test)]
     pub fn kill_pair(
         &self,
         killer_model: usize,
         victim_model: usize,
         seed: u32,
     ) -> Option<KillPair> {
-        let (Some(&Some((_, size))), Some(&Some((victim, theirs)))) =
-            (self.body.get(killer_model), self.body.get(victim_model))
-        else {
-            return None;
-        };
-        if !KILL_SIZES.contains(&(theirs / size)) {
-            return None;
+        let n = self.best_kills(killer_model, victim_model).count();
+        let k = self
+            .best_kills(killer_model, victim_model)
+            .nth(seed as usize % n.max(1))?;
+        Some(self.pairs[usize::from(k.id)])
+    }
+
+    /// Every matched kill between the unit types whose models are `units`,
+    /// for the puppets: each kill named by its index here, as [`Move::Kill`]
+    /// and [`crate::puppets::Corpse::kill`] give it back.
+    pub fn kills_of(&self, units: &[Option<usize>]) -> Kills {
+        let mut kills = Kills::new(self.pairs.iter().map(KillPair::timing).collect());
+        let mut ids = Vec::new();
+        for (k, killer) in units.iter().enumerate() {
+            let Some(killer) = *killer else { continue };
+            if self.kills.get(killer).is_none_or(Vec::is_empty) {
+                continue;
+            }
+            for (v, victim) in units.iter().enumerate() {
+                let Some(victim) = *victim else { continue };
+                ids.clear();
+                ids.extend(self.best_kills(killer, victim).map(|k| k.id));
+                kills.add(k as u16, v as u16, &ids);
+            }
         }
-        let kills = self.kills.get(killer_model)?;
-        let score = |k: &KillFor| (k.victim == victim).then_some(k.fit);
-        crate::moves::best_by_seed(kills, score, seed).map(|k| k.pair)
+        kills
     }
 
     /// The move `model` plays for `action`.
@@ -279,9 +329,13 @@ impl Clips {
 
     /// The pose `seconds` after falling dead (negative while he still
     /// stands, waiting for the blow), and whether to lay the model flat: see
-    /// `fall`.
-    pub fn death(&self, model: usize, seconds: f32) -> Option<(Pose, bool)> {
-        self.fall(model, |die| seconds * die.fps, seconds >= 0.0)
+    /// `fall`. A man who fell to matched kill `kill` plays its victim's
+    /// half, which began with his killer's, its contact before the blow.
+    pub fn death(&self, model: usize, seconds: f32, kill: Option<u16>) -> Option<(Pose, bool)> {
+        match kill.and_then(|k| self.pairs.get(usize::from(k))) {
+            Some(p) => Some((p.killed.at(seconds / p.killed.seconds() + p.contact), false)),
+            None => self.fall(model, |die| seconds * die.fps, seconds >= 0.0),
+        }
     }
 
     /// The death move at the frame `frame` picks, held on its first and
@@ -308,6 +362,9 @@ impl Clips {
         match fight {
             Move::Guard => standing(self.pose(model, Action::Idle, seconds)),
             Move::Cheer => standing(self.pose(model, Action::Cheer, seconds)),
+            Move::Kill { pair, at } => {
+                standing(Some(self.pairs.get(usize::from(pair))?.kill.at(at)))
+            }
             Move::Swing { at, alt } => {
                 let attack = if alt { Action::Attack2 } else { Action::Attack };
                 standing(self.at(model, attack, at))
@@ -500,18 +557,22 @@ mod tests {
         let models = load().unwrap();
         let mut clips = Clips::new(&models);
         let any = clips.clip(0, Action::Attack).unwrap();
-        let kill = |victim, fit, row| KillFor {
-            victim,
-            fit,
-            pair: KillPair {
+        // Kill `id` is the one whose killer's half starts at row 10 * (id + 1).
+        clips.pairs = (1..=4)
+            .map(|n| KillPair {
                 kill: MoveClip {
-                    first_row: row,
+                    first_row: 10 * n,
                     ..any
                 },
                 killed: any,
                 reach: 1.0,
                 contact: 0.3,
-            },
+            })
+            .collect();
+        let kill = |victim, fit, row: u32| KillFor {
+            victim,
+            fit,
+            id: (row / 10 - 1) as u16,
         };
         // Model 0 is posed from skeleton 7, model 1 from 8 and model 3 too
         // but half as big again; model 2 is not posed from one.
@@ -570,6 +631,36 @@ mod tests {
         // but half as big again, is too big for a kill made for two men.
         assert_eq!(kill("Oni-Bound", "Yari Ashigaru"), None);
         assert_eq!(kill("Katana Samurai", "Oni-Bound"), None);
+    }
+
+    #[test]
+    fn unit_types_get_their_matched_kills_by_index() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name);
+        // Unit types 0 to 3: a katana man, a spearman, an Oni-Bound, and a
+        // type with no model.
+        let units = [
+            by("Katana Samurai"),
+            by("Yari Ashigaru"),
+            by("Oni-Bound"),
+            None,
+        ];
+        let kills = clips.kills_of(&units);
+        // Both katana kills are there to pick, under their indices.
+        let rows: std::collections::BTreeSet<u32> = (0..10)
+            .filter_map(|n| kills.pick(0, 1, n as f32 / 10.0))
+            .map(|(k, _)| clips.pairs[usize::from(k)].kill.first_row)
+            .collect();
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        let seeded = |seed| clips.kill_pair(units[0].unwrap(), units[1].unwrap(), seed);
+        assert!((0..2).all(|seed| rows.contains(&seeded(seed).unwrap().kill.first_row)));
+        assert!(kills.pick(1, 0, 0.5).is_some());
+        assert!(kills.pick(1, 1, 0.5).is_some());
+        // None on or by the Oni-Bound, or a type without a model.
+        for (k, v) in [(0, 2), (2, 1), (3, 1), (0, 3)] {
+            assert_eq!(kills.pick(k, v, 0.5), None, "{k} on {v}");
+        }
     }
 
     #[test]
@@ -645,7 +736,7 @@ mod tests {
             .find(|&m| models.clip(m, ClipKind::Die).is_some())
             .unwrap();
         let die = models.clip(m, ClipKind::Die).unwrap();
-        let (end, flat) = clips.death(m, 100.0).unwrap();
+        let (end, flat) = clips.death(m, 100.0, None).unwrap();
         assert_eq!(end.rows, [(die.first_row + die.frames - 1) as u16; 2]);
         assert!(!flat);
     }

@@ -112,7 +112,7 @@ pub(crate) fn pose(clips: &Clips, model: usize, hold: Option<Clip>, time: f32) -
         feet: 0,
     };
     match at(hold, time) {
-        (Clip::Die, t) => clips.death(model, t).map(|d| Shown {
+        (Clip::Die, t) => clips.death(model, t, None).map(|d| Shown {
             feet: crate::models::dying_feet(t),
             ..shown(d)
         }),

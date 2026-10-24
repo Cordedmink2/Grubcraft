@@ -1694,6 +1694,7 @@ impl App {
             data: game_data,
         });
         if let Some(r) = self.running.as_mut() {
+            r.fresh_puppets();
             r.menu.set_in_match(r.match_started);
             if let Some(unit) = &opts.viewer {
                 r.open_viewer(unit);
@@ -4939,7 +4940,7 @@ impl Running {
         }
         self.attack_mark = None;
         self.sim_clock = Duration::ZERO;
-        self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
+        self.fresh_puppets();
         self.effects.clear();
         self.lights.clear();
         self.renderer.clear_particles();
@@ -4986,6 +4987,16 @@ impl Running {
             "CONQUEST"
         } else {
             "FIELD BATTLE"
+        }
+    }
+
+    /// New puppets for a new match, with the matched kills of the unit types
+    /// it plays with.
+    fn fresh_puppets(&mut self) {
+        self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
+        if let Some(art) = &self.art {
+            self.puppets
+                .set_kills(art.clips.kills_of(&self.units.models));
         }
     }
 
@@ -5463,9 +5474,10 @@ impl Running {
             // Whether the model path has already found him on screen.
             let mut seen = false;
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
-                // The death clip, held on its last frame; models without
-                // one lie down in their idle pose once the blow lands.
-                if let Some((pose, flat)) = art.clips.death(model, c.age) {
+                // The victim's half of the matched kill he fell to, or the
+                // death clip, held on its last frame; models without one lie
+                // down in their idle pose once the blow lands.
+                if let Some((pose, flat)) = art.clips.death(model, c.age, c.kill) {
                     let at = glam::Vec3::new(c.pos.x, ground, c.pos.y);
                     let Some(lod) = art.view.place(art.heights[model], at) else {
                         continue;

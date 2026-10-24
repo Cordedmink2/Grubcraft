@@ -65,6 +65,11 @@ impl MoveClip {
         self.pose(a, (a + 1) % self.frames, f - a as f32)
     }
 
+    /// How long it plays, in seconds.
+    pub fn seconds(&self) -> f32 {
+        self.frames as f32 / self.fps
+    }
+
     /// The pose `fraction` (0 to 1) of the way through, whatever its length.
     pub fn at(&self, fraction: f32) -> Pose {
         self.at_frame(fraction * (self.frames - 1) as f32)
