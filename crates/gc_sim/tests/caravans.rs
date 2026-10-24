@@ -156,6 +156,7 @@ fn conquest_for(nodes: &[NodeSetup], posts: &[FxVec2], victories: Victories) -> 
         teams: &TEAMS,
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
     });
     assert!(w.conquest(&ConquestSetup {
         buildings: &buildings(),

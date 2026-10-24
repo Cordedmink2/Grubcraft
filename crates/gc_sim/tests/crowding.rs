@@ -48,6 +48,7 @@ fn seeded_world(nav: &[u8], seed: u64) -> World {
         teams: &[],
         ground: Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
     })
 }
 

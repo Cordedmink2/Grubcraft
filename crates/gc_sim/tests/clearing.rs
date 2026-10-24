@@ -71,6 +71,7 @@ fn world_with(style: ClearStyle) -> World {
             footing: &[],
         },
         champions: false,
+        sky: gc_sim::Sky::STILL,
     });
     let house = BuildingStats {
         role: Role::Housing,

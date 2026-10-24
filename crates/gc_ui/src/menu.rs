@@ -8,8 +8,8 @@ use crate::hud::{MinimapTerrain, draw_terrain};
 use crate::lobby::{
     AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAX_ARMY,
     MAX_PLAYERS, MapSize, MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile,
-    RosterUnit, SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, army_points, field_map_tiles,
-    fresh_map_seed, map_code, maps_for, parse_map_code, thousands,
+    RosterUnit, SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, WeatherSetting, army_points,
+    field_map_tiles, fresh_map_seed, map_code, maps_for, parse_map_code, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -921,8 +921,10 @@ impl<N: Network> Menu<N> {
             self.draw_map_preview(ui, picture, key);
             (x, w) = (strip.x + preview_side + 16, strip.w - preview_side - 16);
             let name = settings.map_name();
-            // The time of day has the name row's right end.
-            let name_room = (w - TIME_OF_DAY_W - 16).max(0) / 16;
+            // The time of day (and the weather, when they share the row)
+            // has the name row's right end.
+            let beside = if sky_stacked(strip_h, sp(36)) { 1 } else { 2 };
+            let name_room = (w - beside * (TIME_OF_DAY_W + 8) - 8).max(0) / 16;
             ui.label(x, strip.y, 2, theme::INK, &fit(name, name_room as usize));
             // The orange dots on the picture, said once, if there is room.
             if preview_side >= sp(88) {
@@ -950,6 +952,32 @@ impl<N: Network> Menu<N> {
         } else {
             let text = format!("Time of day: {}", settings.time_of_day.name());
             ui.label_centered(time_r, 1, theme::INK, &text);
+        }
+        // The weather: under the time of day, or beside it when the strip
+        // is one row high.
+        let weather_r = if sky_stacked(strip_h, sp(36)) {
+            Rect::new(time_r.x, time_r.bottom() + sp(4), TIME_OF_DAY_W, sp(36))
+        } else {
+            Rect::new(
+                time_r.x - TIME_OF_DAY_W - 8,
+                time_r.y,
+                TIME_OF_DAY_W,
+                sp(36),
+            )
+        };
+        if lobby.is_host {
+            let names = WeatherSetting::ALL.map(WeatherSetting::name);
+            let mut at = WeatherSetting::ALL
+                .iter()
+                .position(|&t| t == settings.weather)
+                .unwrap_or(0);
+            if ui.stepper(weather_r, "Weather", &mut at, &names) {
+                settings.weather = WeatherSetting::ALL[at];
+                changed = true;
+            }
+        } else {
+            let text = format!("Weather: {}", settings.weather.name());
+            ui.label_centered(weather_r, 1, theme::INK, &text);
         }
         let code_r = Rect::new(x, strip.bottom() - sp(36), w, sp(36));
         let text_y = code_r.y + (code_r.h - 16) / 2;
@@ -1601,6 +1629,12 @@ impl<N: Network> Menu<N> {
 
 /// Width of the lobby's "Time of day" stepper.
 const TIME_OF_DAY_W: i32 = 264;
+
+/// Whether the lobby's map strip (`strip_h` high) has room for the weather
+/// under the time of day, above the map code's row (`row` high).
+fn sky_stacked(strip_h: i32, row: i32) -> bool {
+    strip_h >= 3 * row + 8
+}
 
 /// How tall the lobby's player rows are and how big the map picture is
 /// (its side in pixels, 0 for none), on a screen `screen_h` tall at scale

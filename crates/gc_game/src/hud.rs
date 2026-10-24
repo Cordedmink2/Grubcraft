@@ -708,6 +708,7 @@ impl Running {
         let mode = self.mode_label();
         let side_name = party_name(&self.parties, side);
         let speed = format!("{}x", crate::SPEEDS[self.speed]);
+        let sky = sky_word(&self.world);
         let status = StatusStrip {
             mode,
             side: &side_name,
@@ -715,6 +716,7 @@ impl Running {
             speed: &speed,
             paused: self.paused,
             clock_secs: Some(tick / gc_sim::TICKS_PER_SECOND),
+            sky: &sky,
         };
         let hud = &mut self.hud;
         // A power being aimed needs no selection, unless it shifts one (see
@@ -1747,6 +1749,36 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
 }
 
 /// What the ground at `p` does to a regiment, in a few words for the selection panel (capitalised, as it stands on its own line): the readable side
+/// What the sky does to the fight now, for the top bar: empty in clear
+/// daylight, else what cuts sight and range (and slows the march), e.g.
+/// "Fog: sight 40%" or "Night: sight 45%" (docs/32-changing-land.md).
+fn sky_word(world: &gc_sim::World) -> String {
+    let air = world.air();
+    if air == gc_sim::Air::CLEAR {
+        return String::new();
+    }
+    let weather = world.weather();
+    let falling = match weather.kind {
+        _ if weather.strength == 0 => None,
+        gc_sim::WeatherKind::Clear => None,
+        gc_sim::WeatherKind::Rain => Some("Rain"),
+        gc_sim::WeatherKind::Snow => Some("Snow"),
+        gc_sim::WeatherKind::Fog => Some("Fog"),
+    };
+    // Dark enough to cut sight: below half the day's light.
+    let dark = world.daylight().light() < 500;
+    let name = match (falling, dark) {
+        (Some(w), true) => format!("{w} at night"),
+        (Some(w), false) => w.to_string(),
+        (None, _) => "Night".to_string(),
+    };
+    let mut word = format!("{name}: sight {}%", air.sight_percent);
+    if air.march_percent < 100 {
+        word += &format!(", march {}%", air.march_percent);
+    }
+    word
+}
+
 /// of docs/32-changing-land.md, "Reading the ground". Empty on plain ground.
 fn ground_word(terrain: &gc_sim::Terrain, p: gc_fixed::FxVec2) -> &'static str {
     if terrain.wet(p) {

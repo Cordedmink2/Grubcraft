@@ -159,6 +159,7 @@ mod tests {
             teams: &[],
             ground: map.ground(),
             champions: false,
+            sky: gc_sim::Sky::STILL,
         };
         let mut world = gc_sim::World::new(&setup);
         crate::buildings::Table::new(data).conquer(&mut world);

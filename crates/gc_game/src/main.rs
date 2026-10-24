@@ -1394,6 +1394,7 @@ impl App {
                 teams: &[],
                 ground: heightmap.ground(),
                 champions: false,
+                sky: gc_sim::Sky::STILL,
             });
             // The sandbox is where buildings can be tried so far.
             if opts.sandbox {
@@ -4466,6 +4467,17 @@ impl Running {
             ),
             MatchKind::Sandbox { .. } | MatchKind::Replay(_) => (Vec::new(), false),
         };
+        // The sky: the lobby's, or the replay's own; the sandbox's stands
+        // still.
+        let sky_plan = match &kind {
+            MatchKind::Battle(start) => Some(battle::SkyPlan::new(&start.settings, self.seed)),
+            _ => None,
+        };
+        let sky = match (&kind, &sky_plan) {
+            (_, Some(plan)) => plan.sky(),
+            (MatchKind::Replay(r), None) => r.sky.sky(),
+            _ => gc_sim::Sky::STILL,
+        };
         let setup = MatchSetup {
             seed: self.seed,
             capacities: self.capacities,
@@ -4475,6 +4487,7 @@ impl Running {
             teams: &teams,
             ground: self.heightmap.ground(),
             champions,
+            sky,
         };
         // A lobby Conquest match: what every machine makes its world with,
         // from the lobby's settings and the game data.
@@ -6845,6 +6858,8 @@ fn preset_of(time_of_day: gc_ui::lobby::TimeOfDay) -> gc_render::LookPreset {
         TimeOfDay::Noon => gc_render::LookPreset::Noon,
         TimeOfDay::Dusk => gc_render::LookPreset::Dusk,
         TimeOfDay::Overcast => gc_render::LookPreset::Overcast,
+        // Until the lighting's night look lands.
+        TimeOfDay::Night => gc_render::LookPreset::Dusk,
     }
 }
 

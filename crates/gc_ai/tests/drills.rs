@@ -229,6 +229,7 @@ fn run_seeded(
             footing: &[],
         },
         champions: false,
+        sky: gc_sim::Sky::STILL,
     });
     let mut out: Vec<PlayerCommand> = Vec::new();
     spawn_commands(AI, &drill.ai, &mut out);

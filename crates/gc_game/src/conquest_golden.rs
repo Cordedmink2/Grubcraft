@@ -323,6 +323,7 @@ impl Match {
             teams: &[0, 1],
             ground: map.ground(),
             champions: false,
+            sky: gc_sim::Sky::STILL,
         };
         let mut plan = conquest::plan(
             &table,

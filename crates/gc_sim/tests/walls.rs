@@ -65,6 +65,7 @@ fn world() -> World {
             footing: &[],
         },
         champions: false,
+        sky: gc_sim::Sky::STILL,
     });
     let palisade = BuildingStats {
         role: Role::Wall,

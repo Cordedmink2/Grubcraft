@@ -249,6 +249,9 @@ pub struct StatusStrip<'a> {
     pub paused: bool,
     /// Match time.
     pub clock_secs: Option<u32>,
+    /// What the weather or the dark does to the fight, e.g. "Fog: sight
+    /// 40%"; empty in clear daylight.
+    pub sky: &'a str,
 }
 
 /// One key and what it does, for the Marshal's Scroll.
@@ -923,6 +926,9 @@ impl Hud {
                 &conquest::clock(secs),
                 theme::INK,
             );
+        }
+        if !st.sky.is_empty() {
+            chip(draw, &mut right, Icon::None, st.sky, theme::INK);
         }
         if !st.speed.is_empty() || st.paused {
             let (icon, text) = if st.paused {
