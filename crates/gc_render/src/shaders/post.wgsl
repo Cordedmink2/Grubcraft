@@ -97,6 +97,9 @@ struct Grade {
     light_tint: vec4<f32>,
     // x: film grain, y: time in seconds
     film: vec4<f32>,
+    // xy: the shake (an offset of the picture), z: the zoom that hides its
+    // edges, w: the height of each letterbox bar, as a share of the screen
+    camera: vec4<f32>,
 };
 @group(0) @binding(3) var<uniform> grade: Grade;
 
@@ -116,9 +119,11 @@ fn hash12(p: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_composite(in: Fullscreen) -> @location(0) vec4<f32> {
-    var c = textureSampleLevel(src, src_sampler, in.uv, 0.0).rgb;
+    // The picture, shaken: zoomed in about the middle and moved.
+    let uv = (in.uv - 0.5) / grade.camera.z + 0.5 + grade.camera.xy;
+    var c = textureSampleLevel(src, src_sampler, uv, 0.0).rgb;
     if BLOOM_STRENGTH > 0.0 {
-        c += textureSampleLevel(bloom, src_sampler, in.uv, 0.0).rgb * BLOOM_STRENGTH;
+        c += textureSampleLevel(bloom, src_sampler, uv, 0.0).rgb * BLOOM_STRENGTH;
     }
     // Film curve, then split toning: cool shade, warm light.
     var t = film(c * grade.tone.x);
@@ -138,5 +143,11 @@ fn fs_composite(in: Fullscreen) -> @location(0) vec4<f32> {
     let mid = 4.0 * p.g * (1.0 - p.g);
     let dither = (hash12(seed + 17.1) + hash12(seed + 43.7) - 1.0) * (1.0 / 255.0);
     p = clamp(p + grain * grade.film.x * mid + dither, vec3<f32>(0.0), vec3<f32>(1.0));
+    // Letterbox bars, with a soft edge of a pixel or two.
+    let bar = grade.camera.w;
+    if bar > 0.0 {
+        let edge = fwidth(in.uv.y) * 1.5;
+        p = p * smoothstep(bar - edge, bar + edge, min(in.uv.y, 1.0 - in.uv.y));
+    }
     return vec4<f32>(pow(p, vec3<f32>(2.2)), 1.0);
 }

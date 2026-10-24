@@ -25,6 +25,21 @@ pub(crate) struct PostGpu {
     grade: wgpu::Buffer,
 }
 
+/// The picture's own motion: the screen shake and the letterbox bars
+/// (`Renderer::set_cinema`). Both leave the HUD alone: it draws after the
+/// composite.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Cinema {
+    /// How far the picture is moved, as a share of its width and height.
+    pub shake: [f32; 2],
+    /// The height of each black bar at the top and bottom, as a share of
+    /// the screen's height (0 for none).
+    pub bars: f32,
+}
+
+/// The tallest each letterbox bar may be.
+const MAX_BARS: f32 = 0.2;
+
 /// What the composite grades the frame with (`Grade` in `post.wgsl`).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -37,6 +52,10 @@ struct Grade {
     light_tint: [f32; 4],
     /// Film grain, time in seconds.
     film: [f32; 4],
+    /// The screen's shake as an offset of the picture (a share of its
+    /// size), the zoom that hides its edges, the height of each letterbox
+    /// bar (a share of the screen's height).
+    camera: [f32; 4],
 }
 
 /// Images sized to the frame, remade when the window resizes.
@@ -186,12 +205,26 @@ pub(crate) fn make(
 
 impl PostGpu {
     /// Upload the grade of `look`, and the time for the film grain.
-    pub fn write_grade(&self, queue: &wgpu::Queue, look: &Look, time_seconds: f32) {
+    pub fn write_grade(
+        &self,
+        queue: &wgpu::Queue,
+        look: &Look,
+        time_seconds: f32,
+        cinema: &Cinema,
+    ) {
         let grade = Grade {
             tone: [look.exposure, look.contrast, look.saturation, look.vignette],
             shadow_tint: rgba(look.shadow_tint, 0.0),
             light_tint: rgba(look.light_tint, 0.0),
             film: [look.grain, time_seconds, 0.0, 0.0],
+            camera: [
+                cinema.shake[0],
+                cinema.shake[1],
+                // Zoomed in just enough that the shaken picture still
+                // fills the screen.
+                1.0 + 2.0 * cinema.shake[0].abs().max(cinema.shake[1].abs()),
+                cinema.bars.clamp(0.0, MAX_BARS),
+            ],
         };
         queue.write_buffer(&self.grade, 0, bytemuck::bytes_of(&grade));
     }

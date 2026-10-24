@@ -9,10 +9,10 @@ Players judge a scene by how the light behaves long before they count polygons. 
 1. **Light and Air (built, 2026-10-23).** See [Built: stage 1](#built-stage-1).
 2. **Clean edges (built, 2026-10-24, except two items).** See [Built: stage 2](#built-stage-2). Anti-aliasing, softer sun shadows, contact shadows under soldiers, water that reflects the sky, and light motes. Hit flash belongs to [28 · Every Soldier Fights](28-soldier-combat.md) (it is a soldier's own moment) and trampled ground to [27 · Living Land](27-living-land.md) and the living-ground work (it is ground that remembers), so neither is built here.
 3. **Dust and Smoke (built, 2026-10-23).** See [Built: stage 3](#built-stage-3). One GPU particle system with a shared atlas: dust trails, hit sparks, Brood ichor, Choir crystal shards, Concord ghost-light motes, smoke, fire, embers, debris. [26 · Fortifications](26-fortifications.md) stage 7 and several other threads use it, so it comes first in wave 2.
-4. **Camera craft.** Switchable tilt-shift depth of field, sun shafts for the ride camera, charge shake, battle-start letterbox and slow motion, the director camera and replay films.
+4. **Camera craft (part 1 built, 2026-10-24).** See [Built: stage 4, shake and bars](#built-stage-4-shake-and-bars). Screen shake and the battle-start letterbox are in. Still to come: the director camera and replay films (with slow motion, for watched replays only), switchable tilt-shift depth of field and sun shafts for the ride camera.
 5. **Weather and night.** Rain, snow, river fog banks at dawn; night maps lit by torches and Grub.
 
-Stages 4 and 5 are not built (the camera tilt and backlit foliage came with stage 1). A look per land, the lobby's time of day, Clarity and a tuning panel followed stage 2: see [Built: a look per land](#built-a-look-per-land). Not on the list on purpose: ray tracing, screen-space reflections, volumetric fog volumes, temporal anti-aliasing (it smears hundreds of thin spears) and real-time global illumination; each costs a lot on a Mac for little gain in a top-down game.
+Stage 5 is not built and stage 4 is half built (the camera tilt and backlit foliage came with stage 1). A look per land, the lobby's time of day, Clarity and a tuning panel followed stage 2: see [Built: a look per land](#built-a-look-per-land). Not on the list on purpose: ray tracing, screen-space reflections, volumetric fog volumes, temporal anti-aliasing (it smears hundreds of thin spears) and real-time global illumination; each costs a lot on a Mac for little gain in a top-down game.
 
 ## Built: stage 1
 
@@ -93,6 +93,18 @@ The lands blend with the camera, not one look per map, because a grown map is a 
 **The tuning panel** (F10 during play), for tuning the looks by eye on a Mac. It lists sixteen knobs (the sun's height and heading in degrees, the sun's strength, sky light, exposure, contrast, saturation, vignette, film grain, air thickness, how tightly the air hugs the ground, rim light, leaf glow, cloud shadows, valley shade, and warmth) with their values now. Up and Down choose one, Left and Right move it (Shift for ten steps, as in the sandbox's tuner), Backspace puts it back (Shift+Backspace puts all back), **L** forces one land's air everywhere in turn (to see the Waste's look on any ground; the dev flag `--air waste` starts that way), and Enter writes every value to the log, with how far each was moved, ready to be copied into a look. The knobs move the finished look (after the land's air and Clarity), so the values shown are the ones on screen. The panel keeps the arrow keys while it is open.
 
 **Checked:** in the cloud's software renderer, each land's air on the same view (`screenshots/look-per-land/land-airs.png` in the project's shared folder) and Storm with and without Clarity (`clarity.png`). **Not yet:** the factions' own lands (the Brood's veins, the Choir's fields, [33](33-faction-lands.md)) do not change the air. **Not checked yet:** the looks and readability (team colours, selection rings, fog of war) under every look and land on a real screen; Mario's Mac with the tuning panel is where the numbers get settled. Cost: 81 lookups of the land grid and a few dozen multiplications a frame.
+
+## Built: stage 4, shake and bars
+
+*Built 2026-10-24. Presentation only: the picture is moved after the world is drawn, nothing reaches the simulation, so golden replays and multiplayer sync are unaffected.*
+
+**Screen shake** (`gc_game/src/cinema.rs`). A charge that hits home, an ambush sprung and a building that falls each add to a "how shaken is the screen" number (`trauma`, 0 to 1; 0.35, 0.3 and 0.5 a blow). It dies away at 1.5 a second, and the picture moves by its square, so a small blow is a small tremble and a pile-up of blows is a real shake. A blow is felt less the farther it is from the camera's focus (nothing beyond 30 tiles plus half the camera's distance) and more the closer the camera is (0.4 to 1.6 times). At full shake the picture moves 0.7 % of its size, with a slight zoom so the edge of the screen never shows. It is the composite pass that does it (`Renderer::set_cinema`, `camera` in the grade block of `post.wgsl`), so **the HUD stays still, and clicks land where they were aimed**. **Settings, Accessibility, "Reduced screen shake"** switches it off (this is the first setting of that name that does anything).
+
+**Letterbox bars.** When the deployment ends and the battle begins, a dark bar slides in at the top and bottom of the world view (8.5 % of the screen each, 0.7 s in, 2.2 s held, 0.9 s out), then goes. The HUD is drawn after the bars, so it is never covered. Clarity turns the bars off, as it does the other showmanship. A player rejoining an online match is caught up through the old fights without shake or bars.
+
+**Checked:** in the cloud's software renderer, bars on screen a moment after Ready is pressed. **Not checked:** how the shake feels on a real screen (the sizes above are guesses for Mario's Mac to settle), and the bars on an ultrawide window.
+
+**Next in stage 4:** the director camera and replay films, then tilt-shift depth of field and sun shafts. Slow motion cannot slow a live match (every machine's simulation must run at the same speed), so it belongs to watched replays and films only.
 
 ## Overlaps with other plans
 

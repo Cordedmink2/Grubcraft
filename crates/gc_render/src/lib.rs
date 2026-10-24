@@ -67,6 +67,7 @@ use look::rgba;
 pub use look::{KNOBS, Knob, LandAir, Look, LookPreset};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
 pub use particles::{MAX_PARTICLES, Particle, Shape, flags as particle_flags};
+pub use post::Cinema;
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
 pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
@@ -411,6 +412,8 @@ pub struct Renderer {
     /// effects were paused or slowed for (see [`Renderer::set_effects_speed`]).
     fx_time: f32,
     fx_speed: f32,
+    /// The picture's shake and letterbox bars (see [`Cinema`]).
+    cinema: Cinema,
     last_frame_time: Option<f32>,
     /// Menu and lobby screens, drawn under the dev overlay.
     ui: OverlayGpu,
@@ -1057,6 +1060,7 @@ impl Renderer {
             particles,
             fx_time: 0.0,
             fx_speed: 1.0,
+            cinema: Cinema::default(),
             last_frame_time: None,
             ui,
         })
@@ -1080,6 +1084,12 @@ impl Renderer {
             .lock()
             .map(|mut m| std::mem::take(&mut m.pending))
             .unwrap_or_default()
+    }
+
+    /// Shake the picture and draw letterbox bars, from the next frame on
+    /// (the HUD stays still and clear of the bars).
+    pub fn set_cinema(&mut self, cinema: Cinema) {
+        self.cinema = cinema;
     }
 
     /// Light and grade the world as `look` says, from the next frame on.
@@ -1723,7 +1733,7 @@ impl Renderer {
             sky_horizon: rgba(look.hdr(look.sky_horizon), 0.0),
         };
         self.post
-            .write_grade(&self.queue, &look, frame.time_seconds);
+            .write_grade(&self.queue, &look, frame.time_seconds, &self.cinema);
         // With nothing to draw the frame is a bare clear: no uploads and no
         // depth buffer, to measure the floor cost of presenting.
         let bare = !self.options.draw_terrain && !self.options.draw_blocks;
