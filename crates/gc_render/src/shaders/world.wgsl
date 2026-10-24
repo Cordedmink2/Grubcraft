@@ -644,11 +644,15 @@ fn habitat_ground(pattern: u32, xz: vec2<f32>, px: f32) -> Habitat {
             r.wet = pool;
         }
         case GROUND_MUD: {
-            // Trampled, sodden mud in patches.
-            let m = smoothstep(0.45, 0.65, fbm(xz * 0.45 + vec2<f32>(2.0, 19.0)));
-            r.albedo = srgb_to_linear(vec3<f32>(0.24, 0.19, 0.11)) * (0.8 + 0.4 * nz(xz * 2.0));
-            r.k = m * 0.7;
-            r.wet = m * 0.6;
+            // Sodden mud all over, with standing puddles in the hollows.
+            // It is the ground that bogs a charge down (`Footing::Soft`), so
+            // it has to be plain to see.
+            let pool = smoothstep(0.5, 0.65, fbm(xz * 0.45 + vec2<f32>(2.0, 19.0)));
+            let churn = mix(1.0, 0.7 + 0.6 * nz(xz * 2.0), fine);
+            let mud = srgb_to_linear(vec3<f32>(0.22, 0.17, 0.1)) * churn;
+            r.albedo = mix(mud, srgb_to_linear(vec3<f32>(0.1, 0.1, 0.09)), pool * 0.7);
+            r.k = mix(0.7, 0.9, pool);
+            r.wet = 0.3 + 0.6 * pool;
         }
         case GROUND_DAMP: {
             let m = smoothstep(0.5, 0.7, fbm(xz * 0.4 + vec2<f32>(8.0, 3.0)));

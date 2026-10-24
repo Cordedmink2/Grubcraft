@@ -42,7 +42,7 @@ land still shows on top, and none of it shows on rock.
 | Birch fringe, glade | lighter | none |
 | Fern hollow | deep green | moss |
 | Sedge tussock | olive and dry-looking | none |
-| Alder carr | dark | mud, glossy where wet |
+| Alder carr | dark | sodden mud with dark puddles, glossy |
 | Peat bog | dark | hummocks of peat between pools of black water, glossy |
 | Heather moor | greyed | purple heather over dry grass |
 | Scree, bare rock | plain | grey gravel and pebbles |
@@ -58,12 +58,17 @@ sky a little when the light is low.
 
 ## Reading soft ground
 
-The terrain tactics work ([32](32-changing-land.md), idea 13) will make peat
-bog and alder carr soft footing (troops slowed, charges stopped), while sedge
-tussock stays firm. The two soft habitats are the two with the darkest, wettest
-patterns (bog pools, mud; wet meadow has only a faint damp), and sedge is drawn plain and dry, so players can see
-where cavalry will bog down. When `Map::footing` lands, `ground_look` can take
-its soft tiles for the same pattern on painted fens.
+Soft footing (`Map::footing`, [32](32-changing-land.md), idea 13) slows troops
+and stops charges, so it has to be plain to see. `ground_look` reads it:
+peat bog and alder carr, the soft habitats on a grown map, keep the two
+wettest patterns (bog pools, and mud); should another habitat ever be soft
+its tiles get mud in the habitat's own colour, a fifth darker. A painted map
+has no habitats, so its look is plain everywhere except where the land is fen
+and so soft, which gets the same mud. Mud covers the whole tile (sodden brown, glossy, with dark
+standing puddles in the hollows); wet meadow has only a faint damp and sedge
+tussock is drawn plain and dry, so players can see where cavalry will bog
+down. The look is made when the map is loaded, so a map whose footing
+changes after that would need its look made again.
 
 ## Cost
 
