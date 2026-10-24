@@ -161,6 +161,7 @@ mod puppets;
 mod replays;
 mod roster;
 mod sandbox;
+mod scars;
 mod scenery;
 mod showroom;
 mod siege;
@@ -772,6 +773,8 @@ struct Running {
     /// The fog of war on the ground, when the match has it.
     fog: fog::FogView,
     land: land::LandView,
+    /// Turned earth and worn tracks on the ground.
+    scars: scars::ScarView,
     /// Data hash and size, for the overlay.
     data_label: String,
     seed: u64,
@@ -1538,6 +1541,7 @@ impl App {
             reveal_all: false,
             fog: Default::default(),
             land: Default::default(),
+            scars: Default::default(),
             data_label: format!(
                 "{:016x}   {} unit types",
                 game_data.short_hash(),
@@ -3399,10 +3403,19 @@ impl Running {
             self.heightmap.tiles,
             &self.buildings,
         );
-        // Dust and sparks age with game time: still while paused or behind
-        // the menu, slow in slow motion.
+        // Dust, sparks and worn ground go with game time: still while paused
+        // or behind the menu, slow in slow motion.
         let live = !self.paused && !(self.menu_open && self.online.is_none());
-        let fx_speed = if live { SPEEDS[self.speed] } else { 0.0 } * self.effects.time_scale();
+        let pace = if live { SPEEDS[self.speed] } else { 0.0 };
+        self.scars.update(
+            self.last_frame,
+            &mut self.renderer,
+            &self.world,
+            (self.sandbox.side, self.reveal_all),
+            self.heightmap.tiles,
+            pace,
+        );
+        let fx_speed = pace * self.effects.time_scale();
         self.renderer.set_effects_speed(fx_speed);
         let density = self.menu.settings().graphics.effects_density();
         self.ambient.fell_demo(
@@ -4302,6 +4315,7 @@ impl Running {
         self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
         self.land.reset();
+        self.scars.reset();
         self.parties = sandbox_parties();
         self.battle = None;
         self.speed = NORMAL_SPEED;
@@ -4418,6 +4432,7 @@ impl Running {
         });
         // The renderer's land is bare again.
         self.land.reset();
+        self.scars.reset();
         self.hud.set_terrain(hm);
         self.camera.map_size = hm.tiles as f32;
         let nav = hm.sim_nav_costs();

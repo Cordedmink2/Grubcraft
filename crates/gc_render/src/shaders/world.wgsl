@@ -97,6 +97,9 @@ const HIGHLIGHT: f32 = 1.6;
 // texel a tile: r how much of it is covered, g whose (a `LAND_*` kind), b the
 // distance to its nearest source in quarter tiles.
 @group(0) @binding(16) var land_map: texture_2d<f32>;
+// How the ground has been marked (Renderer::set_scars), one texel a tile: r
+// felled, g scorched, b worn by marching and fighting.
+@group(0) @binding(17) var scar_map: texture_2d<f32>;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -890,6 +893,27 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         // map's plane being the ground's).
         // Steeper ground takes less of it, so it cannot turn the normal over.
         nd = normalize(vec3<f32>(n.x + detail.tilt.x * n.y, n.y, n.z + detail.tilt.y * n.y));
+    }
+
+    // Marks on the ground (and none on rock): worn tracks of bare dirt where
+    // armies have marched, turned earth where trees were felled, scorch.
+    let scar_uv = xz / f32(textureDimensions(scar_map).x);
+    let scar = textureSampleLevel(scar_map, soft_sampler, scar_uv, 0.0);
+    if scar.r + scar.g + scar.b > 0.03 && rock < 1.0 {
+        let keep = 1.0 - rock;
+        // Ragged edges: the noise moves where a mark begins, but not into
+        // ground that has none of it (r or g of 0).
+        let ragged = (nz(xz * 1.3) - 0.5) * 0.5;
+        let worn = smoothstep(0.25, 0.75, scar.b + ragged) * keep;
+        let felled = smoothstep(0.2, 0.55, scar.r + ragged) * smoothstep(0.0, 0.1, scar.r) * keep;
+        let burnt = smoothstep(0.2, 0.55, scar.g + ragged) * smoothstep(0.0, 0.1, scar.g) * keep;
+        let grit = 0.7 + 0.6 * nz(xz * 2.1);
+        albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.37, 0.29, 0.18)) * grit, worn * 0.85);
+        albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.27, 0.17, 0.1)) * grit, felled);
+        albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.05, 0.045, 0.04)) * grit, burnt);
+        // Turned earth lies in clods.
+        let clod = vec2<f32>(vnoise(xz * 3.3) - 0.5, vnoise(xz * 3.3 + vec2<f32>(6.0, 2.0)) - 0.5);
+        nd = normalize(nd + vec3<f32>(clod.x, 0.0, clod.y) * 0.45 * max(felled, worn * 0.5));
     }
 
     // A faction's land over the ground, where it has spread (and the ground

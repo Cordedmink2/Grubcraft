@@ -217,6 +217,7 @@ impl Running {
             }
             self.scenery.fell(std::iter::once(tile));
         }
+        self.scars.felled(self.world.events(), self.heightmap.tiles);
     }
 }
 

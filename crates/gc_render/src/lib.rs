@@ -294,8 +294,13 @@ struct TerrainGpu {
     /// One RGBA texel per tile: where a faction's land has spread over the
     /// ground (see [`Renderer::set_land`]).
     land_map: wgpu::Texture,
-    /// Whether the creep map holds anything but bare ground.
+    /// Whether the land map holds anything but bare ground.
     landed: bool,
+    /// One RGBA texel per tile: how the ground has been marked (see
+    /// [`Renderer::set_scars`]).
+    scar_map: wgpu::Texture,
+    /// Whether the scar map holds any mark.
+    scarred: bool,
 }
 
 pub struct Renderer {
@@ -497,6 +502,13 @@ impl Renderer {
                     max_storage_buffers_per_shader_stage: adapter
                         .limits()
                         .max_storage_buffers_per_shader_stage,
+                    // The soldiers' pipeline (the ground bindings plus its
+                    // materials) has grown past the 16 sampled textures the
+                    // baseline allows; every desktop GPU we target allows
+                    // 128 or more.
+                    max_sampled_textures_per_shader_stage: adapter
+                        .limits()
+                        .max_sampled_textures_per_shader_stage,
                     ..wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits())
                 },
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
@@ -719,6 +731,16 @@ impl Renderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 16,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 17,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -1292,6 +1314,8 @@ impl Renderer {
         // Bare ground (all zero, as a new texture is) until `set_land`.
         let land_map = self.tile_map("faction land", wgpu::TextureFormat::Rgba8Unorm, tiles);
         let land_view = land_map.create_view(&wgpu::TextureViewDescriptor::default());
+        let scar_map = self.tile_map("ground scars", wgpu::TextureFormat::Rgba8Unorm, tiles);
+        let scar_view = scar_map.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = |globals: &wgpu::Buffer, shadow_map| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("world"),
@@ -1365,6 +1389,10 @@ impl Renderer {
                         binding: 16,
                         resource: wgpu::BindingResource::TextureView(&land_view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 17,
+                        resource: wgpu::BindingResource::TextureView(&scar_view),
+                    },
                 ],
             })
         };
@@ -1388,7 +1416,7 @@ impl Renderer {
         self.chunk_levels = vec![0; chunk_count as usize];
         self.terrain_gpu_bytes = t.heights.len() as u64 * 2
             + u64::from(tint_side * tint_side) * 4
-            + u64::from(tiles * tiles) * (1 + 4)
+            + u64::from(tiles * tiles) * (1 + 4 + 4)
             + u64::from(mask_side * mask_side)
             + u64::from(occlusion_side * occlusion_side);
         self.terrain = Some(TerrainGpu {
@@ -1403,6 +1431,8 @@ impl Renderer {
             fogged: false,
             land_map,
             landed: false,
+            scar_map,
+            scarred: false,
         });
     }
 
@@ -1504,6 +1534,32 @@ impl Renderer {
             _ => return,
         }
         terrain.landed = values.is_some();
+    }
+
+    /// Mark the ground: four bytes per map tile (red, green, blue, alpha),
+    /// row by row from the north-west corner. Red is how much of the tile is
+    /// felled ground (turned earth where trees stood, 0 to 255), green how
+    /// much is scorched, blue how worn it is by marching and fighting, alpha
+    /// is spare. Marks blur over about a tile. `None` is unmarked ground, as
+    /// after `set_terrain`; it costs nothing when the ground is already
+    /// unmarked. Does nothing before `set_terrain`, or when `values` is not
+    /// `tiles × tiles × 4` long.
+    pub fn set_scars(&mut self, values: Option<&[u8]>) {
+        let Some(terrain) = &mut self.terrain else {
+            return;
+        };
+        let tiles = terrain.tiles;
+        let n = (tiles * tiles) as usize * 4;
+        match values {
+            Some(v) if v.len() == n => {
+                Self::write_tile_map(&self.queue, &terrain.scar_map, tiles, 4, v);
+            }
+            None if terrain.scarred => {
+                Self::write_tile_map(&self.queue, &terrain.scar_map, tiles, 4, &vec![0; n]);
+            }
+            _ => return,
+        }
+        terrain.scarred = values.is_some();
     }
 
     /// Draw a frame: the terrain, `soldiers` drawn by `batches` (each names
