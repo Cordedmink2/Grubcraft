@@ -179,6 +179,7 @@ impl Writer {
         self.bool(u.consumed);
         self.bool(u.burrows);
         self.bool(u.builds_only);
+        self.bool(u.mans_walls);
         self.var(u64::from(u.trade_base));
         self.var(u64::from(u.trade_tenths));
         self.var(u64::from(u.cannot_bank));
@@ -430,6 +431,14 @@ impl Writer {
             Command::WorkPlan { regiment } => {
                 self.u8(33);
                 self.handle(regiment);
+            }
+            Command::ManWall {
+                regiment,
+                structure,
+            } => {
+                self.u8(37);
+                self.handle(regiment);
+                self.structure(structure);
             }
             Command::SetGate { structure, mode } => {
                 self.u8(28);
@@ -711,6 +720,9 @@ impl<'a> Reader<'a> {
         if format >= 19 {
             u.builds_only = self.bool()?;
         }
+        if format >= 39 {
+            u.mans_walls = self.bool()?;
+        }
         if format >= 24 {
             u.trade_base = self.var_as()?;
             u.trade_tenths = self.var_as()?;
@@ -866,6 +878,10 @@ impl<'a> Reader<'a> {
             },
             33 => Command::WorkPlan {
                 regiment: self.handle()?,
+            },
+            37 => Command::ManWall {
+                regiment: self.handle()?,
+                structure: self.structure()?,
             },
             tag @ (34 | 35) => Command::RaiseWall {
                 structure: self.structure()?,
@@ -1117,6 +1133,16 @@ mod tests {
                 regiment: RegimentHandle {
                     index: 9,
                     generation: 3,
+                },
+            },
+            Command::ManWall {
+                regiment: RegimentHandle {
+                    index: 4,
+                    generation: 2,
+                },
+                structure: StructureHandle {
+                    index: 12,
+                    generation: 5,
                 },
             },
             Command::FocusTower {

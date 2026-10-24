@@ -551,6 +551,64 @@ impl Running {
         true
     }
 
+    /// The wall of yours under the mouse that some of the selection could
+    /// man, with how many of them could and the refusal that tells why none
+    /// can (if a regiment that mans walls was refused). `None` unless
+    /// regiments are selected over a building of yours.
+    fn manning_under_cursor(&self) -> Option<(StructureHandle, usize, Option<Refusal>)> {
+        if !self.conquest_match() || self.watching.is_some() || self.selected.is_empty() {
+            return None;
+        }
+        let side = self.sandbox.side;
+        let wall = self.building_under_cursor(|o| o == side)?;
+        let (crew, why) = man_verdict(&self.selected, |h| self.world.man_check(h, wall));
+        Some((wall, crew, why))
+    }
+
+    /// A right-click on a wall of yours: the selected regiments that can
+    /// man it are sent up, and the rest do what the click means to them.
+    /// Returns whether any regiment was sent.
+    pub fn man_right_click(&mut self, at: Option<Vec2>) -> bool {
+        if !self.conquest_match() || self.watching.is_some() || self.selected.is_empty() {
+            return false;
+        }
+        let side = self.sandbox.side;
+        let Some(wall) = self.building_under_cursor(|o| o == side) else {
+            return false;
+        };
+        let (up, rest): (Vec<_>, Vec<_>) =
+            (self.selected.iter()).partition(|&&h| self.world.man_check(h, wall).is_ok());
+        if up.is_empty() {
+            return false;
+        }
+        self.orders(up.into_iter().map(|regiment| Command::ManWall {
+            regiment,
+            structure: wall,
+        }));
+        // The rest get what the click means to them (workers mend or build
+        // the wall), else a move. Those orders go to the selection, so it
+        // is the rest for them.
+        if let Some(at) = at.filter(|_| !rest.is_empty()) {
+            let selected = std::mem::replace(&mut self.selected, rest);
+            if !self.conquest_right_click(at) {
+                self.issue_group_order(crate::hud::move_order(at));
+            }
+            self.selected = selected;
+        }
+        true
+    }
+
+    /// The line under the cursor over a wall of yours with regiments
+    /// selected: that they can man it, or why they can't.
+    pub fn man_hint(&self) -> Option<String> {
+        let (_, crew, why) = self.manning_under_cursor()?;
+        if crew > 0 {
+            Some("Right-click to man the wall".into())
+        } else {
+            why.map(|r| buildings::why(r).into())
+        }
+    }
+
     /// A right-click in Conquest that means more than a move: the rally
     /// point of a selected building that trains, or workers (and only
     /// workers) sent to a seep, a vein or one of your buildings. Returns
@@ -792,9 +850,47 @@ fn short(name: &str) -> &str {
     name.split(' ').next().unwrap_or(name)
 }
 
+/// Of the `selected` regiments, how many `check` lets man a wall, and
+/// if none can, why: the first refusal given by a regiment that can man
+/// walls at all (`Refusal::Unknown` means it can't, or not that wall).
+fn man_verdict<T: Copy>(
+    selected: &[T],
+    check: impl Fn(T) -> Result<(), Refusal>,
+) -> (usize, Option<Refusal>) {
+    let mut crew = 0;
+    let mut why = None;
+    for &h in selected {
+        match check(h) {
+            Ok(()) => crew += 1,
+            Err(Refusal::Unknown) => {}
+            Err(r) => why = why.or(Some(r)),
+        }
+    }
+    (crew, why)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manning_goes_to_those_who_can_and_names_the_refusal() {
+        // Regiments 0 and 1 can man; 2 can't man walls at all; 3 is told
+        // to raise the wall first.
+        let check = |h: u8| match h {
+            0 | 1 => Ok(()),
+            2 => Err(Refusal::Unknown),
+            _ => Err(Refusal::NoWalkway),
+        };
+        assert_eq!(
+            man_verdict(&[0, 2, 3], check),
+            (1, Some(Refusal::NoWalkway))
+        );
+        assert_eq!(man_verdict(&[0, 1], check), (2, None));
+        assert_eq!(man_verdict(&[2], check), (0, None));
+        assert_eq!(man_verdict(&[2, 3], check), (0, Some(Refusal::NoWalkway)));
+        assert_eq!(man_verdict::<u8>(&[], check), (0, None));
+    }
 
     #[test]
     fn slot_names_are_first_words() {

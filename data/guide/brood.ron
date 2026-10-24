@@ -125,6 +125,7 @@
                 ("Thorn Bulwark", "The Brood's toughest wall: four times a Resin Ridge. Needs tier 2."),
             ],
             tips: [
+                (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),
                 (icon: Hammer, text: "Select the ridge and press U: the joined stretch is paid now and grows up on its own."),
                 (icon: Alarm, text: "Cut off from the veins it stops growing, so guard the relays behind it."),
             ],
@@ -134,6 +135,7 @@
             summary: "Level 3, the top: a spined bulwark, 4 times as tough as a Resin Ridge. Needs tier 2. Select a Chitin Wall and press U; it grows on its own while the veins reach it.",
             notes: [],
             tips: [
+                (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),
                 (icon: Hammer, text: "Select a Chitin Wall and press U once you reach tier 2."),
                 (icon: Grub, text: "Each tile costs 20 Grub and 5 Marrow, paid for the whole stretch up front."),
             ],

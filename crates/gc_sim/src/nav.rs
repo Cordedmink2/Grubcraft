@@ -1318,7 +1318,9 @@ impl Nav {
         let grid_of = |owner: PlayerId| grid_for(grids, view, owner).expect("a map");
         self.search.work = 0;
         for i in 0..regs.alive.len() {
-            let (true, Some(t)) = (regs.alive[i], regs.target[i]) else {
+            // A regiment on a wall walks nowhere until it comes down (see
+            // [`crate::manning`]), and then plans from where it lands.
+            let (true, Some(t), false) = (regs.alive[i], regs.target[i], regs.on_wall[i]) else {
                 self.route[i] = Route::Idle;
                 self.later.remove(i);
                 continue;

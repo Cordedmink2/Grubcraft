@@ -431,6 +431,14 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(31);
             w.handle(regiment);
         }
+        Command::ManWall {
+            regiment,
+            structure,
+        } => {
+            w.u8(35);
+            w.handle(regiment);
+            w.structure(structure);
+        }
         Command::RaiseWall {
             structure,
             regiment,
@@ -608,6 +616,10 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         },
         31 => Command::WorkPlan {
             regiment: r.handle()?,
+        },
+        35 => Command::ManWall {
+            regiment: r.handle()?,
+            structure: r.structure()?,
         },
         tag @ (32 | 33) => Command::RaiseWall {
             structure: r.structure()?,
@@ -887,6 +899,13 @@ mod tests {
                 to: (5, 2),
             },
             Command::WorkPlan { regiment: h(6, 2) },
+            Command::ManWall {
+                regiment: h(8, 3),
+                structure: StructureHandle {
+                    index: 33,
+                    generation: 2,
+                },
+            },
             Command::RaiseWall {
                 structure: StructureHandle {
                     index: 30,

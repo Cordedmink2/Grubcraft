@@ -299,6 +299,10 @@ regiment_fields! {
     /// Led this tick by its side's general, near him (see
     /// [`crate::generals`]).
     led: bool = false,
+    /// Standing on a wall's walkway (see [`crate::manning`]): off the
+    /// walking grid, out of reach of melee from the ground, and moved only
+    /// by the wall.
+    on_wall: bool = false,
 }
 
 impl Regiments {
@@ -542,6 +546,12 @@ impl Regiments {
     pub(crate) fn standing(&self, h: RegimentHandle, player: PlayerId) -> Option<usize> {
         self.owned(h, player)
             .filter(|&i| !self.morale_state[i].broken())
+    }
+
+    /// Whether slots `i` and `j` stand where melee can reach between them:
+    /// both on the ground, or both up on walls (see [`crate::manning`]).
+    pub(crate) fn meet(&self, i: usize, j: usize) -> bool {
+        self.on_wall[i] == self.on_wall[j]
     }
 
     /// The live regiment `i` is locked in melee with, if any.
@@ -868,6 +878,20 @@ impl Regiments {
         self.take_damage_hp(i, amount).0
     }
 
+    /// The last `count` soldiers of slot `i` lose `amount` hit points
+    /// each, none of them below one: hurt, not killed (a fall, say).
+    pub(crate) fn wound_last(&mut self, i: usize, count: usize, amount: u32) {
+        let models = usize::from(self.models[i]);
+        let hp = &mut self.hp[i * MAX_MODELS as usize..][..models];
+        let mut bled = 0u16;
+        for h in hp.iter_mut().rev().take(count) {
+            let lose = (*h - 1).min(amount.min(u32::from(u16::MAX)) as u16);
+            *h -= lose;
+            bled = bled.saturating_add(lose);
+        }
+        self.bleed(i, bled, 0);
+    }
+
     /// [`Regiments::take_damage`], also telling the hit points taken (less
     /// than `amount` when the regiment had fewer left).
     pub(crate) fn take_damage_hp(&mut self, i: usize, mut amount: u32) -> (u16, u32) {
@@ -980,6 +1004,7 @@ impl Regiments {
             braced: self.braced[i],
             torches: self.torches[i],
             falling_back: self.falling_back[i] > 0,
+            on_wall: self.on_wall[i],
         }
     }
 
@@ -999,7 +1024,8 @@ impl Regiments {
         stances: &Stances,
     ) {
         for i in 0..self.alive.len() {
-            if !self.alive[i] {
+            // On a wall, the wall holds it where it stands.
+            if !self.alive[i] || self.on_wall[i] {
                 continue;
             }
             // Falling back ends when time runs out, wherever it got to.
@@ -1234,6 +1260,9 @@ pub struct RegimentView {
     /// The slot its side's general stands in, if he rides with it and
     /// stands (see [`crate::generals`]).
     pub general: Option<u8>,
+    /// Standing on a wall's walkway (see [`crate::manning`]; its soldiers
+    /// stand on the tiles [`crate::World::wall_tiles`] names).
+    pub on_wall: bool,
 }
 
 impl RegimentView {

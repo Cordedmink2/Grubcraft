@@ -105,6 +105,48 @@ impl Structures {
         self.flags_of(i) & LINE != 0
     }
 
+    /// The tiles of wall joined to wall slot `i` into `out`, `i` first: those
+    /// `keep` takes that touch `i` edge or corner, and those touching them,
+    /// at most `max`, nearest first by the order they join. Each tile is
+    /// looked at once, as it leaves `others` (scratch: the candidates).
+    pub(crate) fn stretch(
+        &self,
+        i: usize,
+        keep: impl Fn(usize) -> bool,
+        max: usize,
+        out: &mut Vec<usize>,
+        others: &mut Vec<(i32, i32, usize)>,
+    ) {
+        out.clear();
+        out.push(i);
+        others.clear();
+        others.extend(
+            (self.standing())
+                .filter(|&j| j != i && self.is_line(j) && keep(j))
+                .map(|j| {
+                    let [x, y, _, _] = self.footprint(j);
+                    (x, y, j)
+                }),
+        );
+        let mut k = 0;
+        while k < out.len() && out.len() < max {
+            let [x, y, _, _] = self.footprint(out[k]);
+            k += 1;
+            let mut o = 0;
+            while o < others.len() && out.len() < max {
+                let (ox, oy, j) = others[o];
+                if (ox - x).abs() <= 1 && (oy - y).abs() <= 1 {
+                    // Keeps the order of the rest, so the stretch is the
+                    // same every run.
+                    others.remove(o);
+                    out.push(j);
+                } else {
+                    o += 1;
+                }
+            }
+        }
+    }
+
     /// Whether wall slot `j` has work left for a builder: unfinished, or
     /// going up a level by hand.
     pub(crate) fn wall_work_left(&self, j: usize) -> bool {
@@ -440,35 +482,11 @@ impl Conquest {
         if !s.finished(i) || s.upgrading(i) {
             return Err(Refusal::Busy);
         }
-        // The stretch: tiles of the same wall touching edge or corner. A
-        // tile leaves `others` as it joins, so each is looked at once.
+        // The stretch: tiles of the same wall touching edge or corner.
         let ready = |j: usize| s.owner_of(j) == player && s.kind_of(j) == from;
         let ready = |j: usize| ready(j) && s.finished(j) && !s.upgrading(j);
-        let mut others: Vec<(i32, i32, usize)> = (s.standing())
-            .filter(|&j| j != i && ready(j))
-            .map(|j| {
-                let [x, y, _, _] = s.footprint(j);
-                (x, y, j)
-            })
-            .collect();
-        let mut stretch = Vec::from([i]);
-        let mut k = 0;
-        while k < stretch.len() && stretch.len() < MAX_RAISE_TILES {
-            let [x, y, _, _] = s.footprint(stretch[k]);
-            k += 1;
-            let mut o = 0;
-            while o < others.len() && stretch.len() < MAX_RAISE_TILES {
-                let (ox, oy, j) = others[o];
-                if (ox - x).abs() <= 1 && (oy - y).abs() <= 1 {
-                    // Keeps the order of the rest, so the stretch is the
-                    // same every run.
-                    others.remove(o);
-                    stretch.push(j);
-                } else {
-                    o += 1;
-                }
-            }
-        }
+        let mut stretch = Vec::new();
+        s.stretch(i, ready, MAX_RAISE_TILES, &mut stretch, &mut Vec::new());
         let n = stretch.len() as u32;
         let (grub, marrow) = (u32::from(b.cost_grub) * n, u32::from(b.cost_marrow) * n);
         let raise = WallRaise {

@@ -1076,6 +1076,7 @@ impl Running {
             .or_else(|| self.clearing_hint())
             .or_else(|| self.wall_hint())
             .or_else(|| self.plans_hint())
+            .or_else(|| self.man_hint())
         {
             draw_hint(&mut self.hud.draw, screen, &text);
         }

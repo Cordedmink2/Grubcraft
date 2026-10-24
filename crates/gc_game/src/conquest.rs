@@ -147,6 +147,10 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
         trade_tenths: u.trade_tenths,
         cannot_bank: 0,
         clearing: clear_style(u.faction()),
+        mans_walls: matches!(
+            u.class(),
+            Class::Light | Class::Spear | Class::Heavy | Class::Ranged
+        ),
     }
 }
 

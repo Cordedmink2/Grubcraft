@@ -2324,6 +2324,16 @@ impl Running {
                     self.input.right_down = None;
                     return;
                 }
+                // Your own wall, with regiments that can man it selected
+                // (an enemy at the click is attacked instead).
+                if drag.is_none()
+                    && body.is_none()
+                    && plain.and_then(|p| self.enemy_at(p)).is_none()
+                    && self.man_right_click(plain)
+                {
+                    self.input.right_down = None;
+                    return;
+                }
                 if body.is_none() && plain.is_some_and(|p| self.conquest_right_click(p)) {
                     self.input.right_down = None;
                     return;
@@ -3271,6 +3281,12 @@ impl Running {
             let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
             let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
             let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
+            // Marks of a regiment on a wall sit on the wall top.
+            let up = if r.on_wall {
+                self.puppets.wall_top(r.handle)
+            } else {
+                0.0
+            };
             // No plate under the regiment we ride with: the eye is inside it
             // and the plate would fill the view.
             if seen
@@ -3287,7 +3303,7 @@ impl Running {
                     } else {
                         [255, 40, 20, 255]
                     },
-                    lift: 0.0,
+                    lift: up,
                 });
             }
             let block = Block {
@@ -3309,6 +3325,11 @@ impl Running {
                 general: r.general,
                 fighter: fighter_of(stats, &r),
             };
+            // Manning a wall, the soldiers stand on its tiles.
+            if r.on_wall || self.puppets.on_wall(r.handle) {
+                let slots = buildings::wall_slots(&self.world, &self.buildings, r.handle);
+                self.puppets.stand_on_wall(r.handle, slots);
+            }
             // How workers clear a tile, and where its trees should fall from
             // (the regiment's centre, when the viewer sees it; else straight
             // as they stood), whether or not they are on screen.
@@ -3446,7 +3467,7 @@ impl Running {
                     facing: facing.to_array(),
                     size: BANNER_SIZE,
                     color,
-                    lift: BANNER_LIFT,
+                    lift: BANNER_LIFT + up,
                 });
             }
             let model = self.units.models.get(r.unit as usize).copied().flatten();
@@ -3583,7 +3604,7 @@ impl Running {
                             }
                         }
                         let ground = heightmap.height_at(s.pos.x, s.pos.y);
-                        let at = glam::Vec3::new(s.pos.x, ground, s.pos.y);
+                        let at = glam::Vec3::new(s.pos.x, ground + s.lift, s.pos.y);
                         let Some(lod) = view.place(height, at) else {
                             return;
                         };
@@ -3663,7 +3684,7 @@ impl Running {
                             frames: pose.rows,
                             flags: models::pose_flags(pose, highlight, flat),
                             color,
-                            lift: 0.0,
+                            lift: s.lift,
                             scale,
                             feet,
                             ..Default::default()
@@ -3686,7 +3707,7 @@ impl Running {
                         facing: s.facing.to_array(),
                         size,
                         color,
-                        lift: 0.0,
+                        lift: s.lift,
                     });
                 });
         }

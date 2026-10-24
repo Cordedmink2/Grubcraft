@@ -250,6 +250,35 @@ pub struct Block {
     pub fighter: Fighter,
 }
 
+/// A wall tile a manning regiment stands on: its centre, and how high
+/// above the ground there its top is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WallSlot {
+    pub centre: Vec2,
+    pub lift: f32,
+}
+
+/// Across how much of a tile men sharing it spread, in tiles.
+const WALL_SPREAD: f32 = 0.8;
+
+/// How fast a soldier climbs to or down from the wall top, in tiles per
+/// second.
+const CLIMB_RATE: f32 = 1.5;
+
+/// Where soldier `k` of `models` stands on `slots` (never empty): on slot
+/// `k % n`, men sharing a slot spread along `across` (a unit vector along
+/// the wall, across the way they face), and the height of the top there.
+fn wall_stand(slots: &[WallSlot], k: usize, models: usize, across: Vec2) -> (Vec2, f32) {
+    let n = slots.len();
+    let (tile, nth) = (k % n, k / n);
+    // How many men share this tile.
+    let sharing = (models.saturating_sub(tile)).div_ceil(n).max(1);
+    let slot = slots[tile];
+    let step = WALL_SPREAD / sharing as f32;
+    let off = (nth as f32 - (sharing - 1) as f32 / 2.0) * step;
+    (slot.centre + across * off, slot.lift)
+}
+
 /// How a regiment's soldiers fight, from its unit's stats and state, which
 /// decides what their blows do on screen.
 #[derive(Clone, Copy, Debug)]
@@ -355,6 +384,8 @@ pub struct Soldier {
     pub look: u8,
     /// His side's general (see [`gc_sim::generals`]), drawn to stand out.
     pub general: bool,
+    /// How high above the ground he stands: on a wall top, else 0.
+    pub lift: f32,
 }
 
 /// A dueling soldier's move, with how far through it he is (0 to 1).
@@ -812,6 +843,10 @@ pub struct Puppets {
     time: f32,
     /// The last frame's step, in seconds.
     dt: f32,
+    /// Per regiment, the wall tiles it stands on (empty: in its block), set
+    /// by [`Puppets::stand_on_wall`]; and per puppet how high he stands.
+    wall: Vec<Vec<WallSlot>>,
+    lift: Vec<f32>,
     duel: Option<Duel>,
     /// The tick the duel the puppets are done with was called.
     duel_over: Option<u32>,
@@ -864,6 +899,8 @@ impl Puppets {
             filled: vec![f32::NEG_INFINITY; regiment_capacity * SLOTS],
             time: 0.0,
             dt: 0.0,
+            wall: vec![Vec::new(); regiment_capacity],
+            lift: vec![0.0; regiment_capacity * SLOTS],
             duel: None,
             duel_over: None,
             generals: Vec::with_capacity(gc_sim::MAX_PARTIES),
@@ -874,6 +911,32 @@ impl Puppets {
     /// The matched kills soldiers play, by their unit types (see [`Kills`]).
     pub fn set_kills(&mut self, kills: Kills) {
         self.kills = kills;
+    }
+
+    /// Put regiment `handle`'s soldiers on `slots` from now on (soldier `k`
+    /// on slot `k % slots.len()`), or back in their block if `slots` is
+    /// empty. Call it every frame before the regiment's update; it does not
+    /// allocate once warm.
+    pub fn stand_on_wall(&mut self, handle: RegimentHandle, slots: impl Iterator<Item = WallSlot>) {
+        let Some(held) = self.wall.get_mut(handle.index as usize) else {
+            return;
+        };
+        held.clear();
+        held.extend(slots);
+    }
+
+    /// Whether regiment `handle`'s soldiers are set to stand on a wall.
+    pub fn on_wall(&self, handle: RegimentHandle) -> bool {
+        self.wall
+            .get(handle.index as usize)
+            .is_some_and(|w| !w.is_empty())
+    }
+
+    /// How high the top of the wall regiment `handle` stands on is (the
+    /// highest of its tiles), or 0 if it is not on one.
+    pub fn wall_top(&self, handle: RegimentHandle) -> f32 {
+        (self.wall.get(handle.index as usize))
+            .map_or(0.0, |w| w.iter().map(|s| s.lift).fold(0.0, f32::max))
     }
 
     /// Follow the generals (see [`gc_sim::generals`]) at the simulation's
@@ -1524,6 +1587,7 @@ impl Puppets {
             self.reeling[r * SLOTS..(r + 1) * SLOTS].fill(f32::NEG_INFINITY);
             self.told[r * SLOTS..(r + 1) * SLOTS].fill(None);
             self.filled[r * SLOTS..(r + 1) * SLOTS].fill(self.time);
+            self.lift[r * SLOTS..(r + 1) * SLOTS].fill(0.0);
             for k in 0..SLOTS {
                 self.looks[r * SLOTS + k] = look_of(block.handle, k);
             }
@@ -1580,6 +1644,16 @@ impl Puppets {
         for k in 0..models {
             let i = r * SLOTS + k;
             let rank = f32::from(k as u16 / files);
+            // On a wall each man stands on his tile, and climbs to its top.
+            let held =
+                (!self.wall[r].is_empty()).then(|| wall_stand(&self.wall[r], k, models, right));
+            let up = held.map_or(0.0, |(_, lift)| lift);
+            let climb = CLIMB_RATE * dt.max(0.0);
+            self.lift[i] = if fresh {
+                up
+            } else {
+                self.lift[i] + (up - self.lift[i]).clamp(-climb, climb)
+            };
             let mut local = slot_offset(
                 k as u16,
                 files,
@@ -1607,7 +1681,10 @@ impl Puppets {
                 let wander = Vec2::from_angle(self.time * DISORDER_RATE * tau + p);
                 slot += wander * (DISORDER_DRIFT * mess * (0.5 + unit_hash(block.handle, k, 8)));
             }
-            let slot = onto_ground(slot, block.centre, &firm);
+            let slot = match held {
+                Some((spot, _)) => spot,
+                None => onto_ground(slot, block.centre, &firm),
+            };
             // A champion out between the lines faces the other; a dueling
             // soldier in the front rank closes on his man, on a leash from
             // his slot, and a spearman behind him thrusts from his place;
@@ -1746,7 +1823,7 @@ impl Puppets {
                 let lunge = unit_hash(block.handle, k, 4);
                 let swing = ((self.time * LUNGE_RATE + lunge) * tau).sin();
                 pos += facing * LUNGE * swing.max(0.0);
-            } else if speed < 0.15 && !block.routing && champion.is_none() {
+            } else if speed < 0.15 && !block.routing && champion.is_none() && held.is_none() {
                 // At rest: shift weight and glance about; restlessly, waiting
                 // to fight.
                 let p = unit_hash(block.handle, k, 6) * tau;
@@ -1769,6 +1846,7 @@ impl Puppets {
                 phase,
                 look: self.looks[i],
                 general: general == Some(k),
+                lift: self.lift[i],
             });
         }
     }
@@ -2092,6 +2170,63 @@ fn onto_ground(slot: Vec2, centre: Vec2, firm: &impl Fn(Vec2) -> bool) -> Vec2 {
 mod tests {
     use super::*;
     use gc_fixed::Fx;
+
+    fn slot(x: f32, lift: f32) -> WallSlot {
+        WallSlot {
+            centre: Vec2::new(x, 5.5),
+            lift,
+        }
+    }
+
+    #[test]
+    fn soldiers_stand_one_to_a_wall_tile_when_there_are_tiles_enough() {
+        let slots = [slot(1.5, 2.0), slot(2.5, 2.0), slot(3.5, 2.5)];
+        for k in 0..3 {
+            let (at, lift) = wall_stand(&slots, k, 3, Vec2::X);
+            assert_eq!(at, slots[k].centre);
+            assert_eq!(lift, slots[k].lift);
+        }
+    }
+
+    #[test]
+    fn men_sharing_a_wall_tile_spread_along_it() {
+        // Five men on two tiles: tile 0 holds soldiers 0, 2 and 4, tile 1
+        // holds 1 and 3.
+        let slots = [slot(1.5, 2.0), slot(2.5, 2.0)];
+        let stand = |k| wall_stand(&slots, k, 5, Vec2::X).0;
+        let (a, b, c) = (stand(0), stand(2), stand(4));
+        assert!(a.x < b.x && b.x < c.x);
+        assert!((b.x - 1.5).abs() < 1e-5, "the middle man is on the centre");
+        assert!(c.x - a.x < 1.0, "all within the tile");
+        assert!((stand(1).x + stand(3).x - 5.0).abs() < 1e-5);
+        assert!(stand(1).x < stand(3).x);
+    }
+
+    #[test]
+    fn a_regiment_on_a_wall_climbs_to_its_top_and_comes_down() {
+        let mut p = Puppets::new(4, 16);
+        let b = block(1, Vec2::new(10.0, 10.0), Vec2::NEG_Y, false);
+        let slots = [slot(10.5, 2.0), slot(11.5, 2.0)];
+        let mut last = Vec::new();
+        p.stand_on_wall(b.handle, slots.into_iter());
+        assert!(p.on_wall(b.handle) && p.wall_top(b.handle) == 2.0);
+        for _ in 0..300 {
+            last.clear();
+            p.update(&b, 0, 0.016, |s| last.push(s));
+        }
+        for (k, s) in last.iter().enumerate() {
+            assert!((s.lift - 2.0).abs() < 1e-3, "{}", s.lift);
+            assert!(s.pos.distance(slots[k % 2].centre) < 0.5, "{k}: {}", s.pos);
+        }
+        // Down again: the men leave the wall.
+        p.stand_on_wall(b.handle, std::iter::empty());
+        assert!(!p.on_wall(b.handle) && p.wall_top(b.handle) == 0.0);
+        for _ in 0..600 {
+            last.clear();
+            p.update(&b, 0, 0.016, |s| last.push(s));
+        }
+        assert!(last.iter().all(|s| s.lift.abs() < 1e-3));
+    }
 
     #[test]
     fn slots_match_the_simulation() {

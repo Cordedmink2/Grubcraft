@@ -834,9 +834,13 @@ impl Combat {
         slots: u32,
         mut f: impl FnMut(usize),
     ) {
+        // Up on a wall, a regiment touches and is touched by nobody.
+        if regs.on_wall[i] {
+            return;
+        }
         self.each_filed_once(p, self.radius[i], slots, &regs.alive, |j| {
             let r = (self.radius[i] + self.radius[j]).raw() as u64;
-            if j != i && (regs.position[j] - p).length_sq_raw() <= r * r {
+            if j != i && !regs.on_wall[j] && (regs.position[j] - p).length_sq_raw() <= r * r {
                 f(j);
             }
         });
@@ -905,6 +909,7 @@ impl Combat {
         for i in 0..regs.alive.len() {
             if !regs.alive[i]
                 || regs.morale_state[i].broken()
+                || regs.on_wall[i]
                 || !(regs.engaged[i].is_some()
                     || regs.held[i] > 0
                     || (regs.target[i].is_none() && regs.attack_target[i].is_none())
@@ -993,7 +998,11 @@ impl Combat {
             wide,
             Whose::Friends(owner),
             |j, d| {
-                if j == i || found.is_some_and(|f| f < j) || regs.morale_state[j].broken() {
+                if j == i
+                    || found.is_some_and(|f| f < j)
+                    || regs.morale_state[j].broken()
+                    || regs.on_wall[j]
+                {
                     return;
                 }
                 // Cheap circle test before the rectangles (radii from the
@@ -1098,6 +1107,7 @@ impl Combat {
                 stances.hostile(regs.owner[i], regs.owner[j])
                     && !regs.morale_state[j].broken()
                     && !parted(regs, &self.blocks, i, j)
+                    && regs.meet(i, j)
             });
             let mut best = foe.filter(|&j| me.touches(&self.blocks[j], REACH));
             if best.is_none() {
@@ -1105,7 +1115,11 @@ impl Combat {
                 let blocks = &self.blocks;
                 let radius = &self.radius;
                 self.near_enemies(me.centre, radius[i], regs.owner[i], |j| {
-                    if !stances.hostile(regs.owner[i], regs.owner[j]) || !regs.alive[j] {
+                    // Melee can't reach up a wall, nor down from one.
+                    if !stances.hostile(regs.owner[i], regs.owner[j])
+                        || !regs.alive[j]
+                        || !regs.meet(i, j)
+                    {
                         return;
                     }
                     let them = &blocks[j];
@@ -1257,6 +1271,15 @@ impl Combat {
             // waits there rather than walking into the block.
             let waits =
                 parted(regs, &self.blocks, i, j) && self.blocks[i].touches(&self.blocks[j], REACH);
+            if regs.on_wall[i] {
+                // The wall holds it: it shoots what comes in range.
+                continue;
+            }
+            if regs.on_wall[j] && range.raw() == 0 {
+                // Melee from the ground can't reach a regiment on a wall.
+                regs.attack_target[i] = None;
+                continue;
+            }
             // A target only heard in the dark is closed with until it is
             // seen, however far the bows reach.
             let shootable = range.raw() > 0
@@ -1688,12 +1711,18 @@ impl Combat {
             {
                 continue;
             }
-            let Some(j) = self.pick_target(regs, stances, terrain, vision, i, stats.range) else {
+            // Up on a wall it shoots further, and along the wall's whole
+            // length without turning.
+            let mut range = stats.range;
+            if regs.on_wall[i] {
+                range = range * crate::manning::WALL_RANGE_PERCENT / 100;
+            }
+            let Some(j) = self.pick_target(regs, stances, terrain, vision, i, range) else {
                 continue;
             };
             let to = regs.position[j] - regs.position[i];
             let want = Angle::of_vec(to);
-            if i32::from(regs.facing[i].delta_to(want)).abs() > 0x2000 {
+            if !regs.on_wall[i] && i32::from(regs.facing[i].delta_to(want)).abs() > 0x2000 {
                 regs.target_facing[i] = Some(want);
                 continue;
             }
@@ -1771,6 +1800,12 @@ impl Combat {
                 / (100 * 100)
                 * VOLLEY_PACE_PERCENT
                 / 100;
+            // A wall's parapet covers those on it.
+            let expected = if regs.on_wall[j] {
+                expected * crate::manning::WALL_COVER_PERCENT / 100
+            } else {
+                expected
+            };
             let (lost, hp) = deal(regs, units, nav, j, expected, side, rng);
             if let Some(t) = tower {
                 self.tower_hits.push((t, hp));

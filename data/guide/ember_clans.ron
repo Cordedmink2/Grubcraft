@@ -166,6 +166,7 @@
                 ("Castle Wall", "The toughest wall the Clans build: four times a Palisade. Needs a Castle Keep."),
             ],
             tips: [
+                (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),
                 (icon: Hammer, text: "Select the wall and press U: the joined stretch is paid now, then raised a tile at a time."),
                 (icon: Alarm, text: "Raise the side facing the enemy first; it stays standing while workers raise it."),
             ],
@@ -175,6 +176,7 @@
             summary: "Level 3, the top: a castle wall with loopholes and corner turrets, 4 times as tough as a Palisade. Needs a Castle Keep. Select a Stone Wall and press U to raise its stretch.",
             notes: [],
             tips: [
+                (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),
                 (icon: Hammer, text: "Select a Stone Wall and press U once you have a Castle Keep."),
                 (icon: Grub, text: "Each tile costs 20 Grub and 5 Marrow, paid for the whole stretch up front."),
             ],

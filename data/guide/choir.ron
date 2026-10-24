@@ -128,6 +128,7 @@
             tips: [
                 (icon: Hammer, text: "Select the curtain and press U: the joined stretch is paid now, then raised a tile at a time."),
                 (icon: Alarm, text: "It still drops without power, so guard the pylons behind it."),
+                (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),
             ],
         ),
         (
@@ -137,6 +138,7 @@
             tips: [
                 (icon: Hammer, text: "Select a Glass Wall and press U once you reach tier 2."),
                 (icon: Grub, text: "Each tile costs 20 Grub and 5 Marrow, paid for the whole stretch up front."),
+                (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),
             ],
         ),
     ],

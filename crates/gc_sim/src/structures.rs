@@ -182,6 +182,9 @@ pub enum Refusal {
     NoRoom,
     /// It grows only on its owner's root-veins, and they don't reach there.
     NoVeins,
+    /// A wall of the first level, with no walkway to man (see
+    /// [`crate::manning`]).
+    NoWalkway,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -532,6 +535,8 @@ pub(crate) enum Work {
     Attack = 0,
     /// Build it, or mend it once it is up (its owner's).
     Build = 1,
+    /// Climb up onto the wall by it (its owner's; see [`crate::manning`]).
+    Man = 2,
 }
 
 /// Every building on the field, and which regiments are attacking which.
@@ -621,6 +626,9 @@ pub struct Structures {
     pub(crate) struck: Vec<(StructureHandle, RegimentHandle)>,
     /// Workers used up in the last tick by the buildings they started.
     pub(crate) consumed: Vec<(RegimentHandle, StructureHandle)>,
+    /// Regiments that reached the foot of a wall to climb in the last tick
+    /// (see [`Work::Man`]).
+    pub(crate) climbed: Vec<RegimentHandle>,
     /// The parties that have seen each building, its owner first: in fog of
     /// war a building stays known once seen (see [`crate::vision`]).
     seen: Vec<u8>,
@@ -717,6 +725,7 @@ impl Structures {
             fallen: Vec::with_capacity(n),
             struck: Vec::with_capacity(regiments),
             consumed: Vec::with_capacity(regiments),
+            climbed: Vec::with_capacity(regiments),
             seen: vec![0; n],
             fog: false,
             reload: vec![0; n],
@@ -1426,6 +1435,7 @@ impl Structures {
         self.fallen.clear();
         self.struck.clear();
         self.consumed.clear();
+        self.climbed.clear();
         self.upgrades();
         self.crew.fill(0);
         // A building that used up its worker grows as one builder would
@@ -1459,7 +1469,8 @@ impl Structures {
             let unit = &units[regs.unit[r] as usize];
             let way = Approach::of(regs, unit, r, self.footprint(s));
             let building = self.work[r] == Work::Build;
-            let reach = if unit.range > Fx::ZERO && !building {
+            let attacking = self.work[r] == Work::Attack;
+            let reach = if unit.range > Fx::ZERO && attacking {
                 // Archers' range, as the sky lets them shoot.
                 air.sight(unit.range)
             } else {
@@ -1473,6 +1484,12 @@ impl Structures {
                 continue;
             }
             way.arrive(regs, r);
+            if self.work[r] == Work::Man {
+                // At the foot of the wall: it climbs (see `crate::manning`).
+                self.climbed.push(regs.handle(r));
+                self.siege[r] = None;
+                continue;
+            }
             if building
                 && kinds
                     .get(usize::from(regs.unit[r]))

@@ -83,6 +83,9 @@ pub struct ConquestUnit {
     pub cannot_bank: u16,
     /// How it clears land, if it is a worker (see [`crate::clearing`]).
     pub clearing: ClearStyle,
+    /// It can man a wall (see [`crate::manning`]): foot soldiers and
+    /// archers, not workers, riders, engines or beasts.
+    pub mans_walls: bool,
 }
 
 impl ConquestUnit {
@@ -103,7 +106,8 @@ impl ConquestUnit {
         h.u8(u8::from(self.hatches)
             | u8::from(self.consumed) << 1
             | u8::from(self.burrows) << 2
-            | u8::from(self.builds_only) << 3);
+            | u8::from(self.builds_only) << 3
+            | u8::from(self.mans_walls) << 4);
         h.u16(self.trade_base);
         h.u16(self.trade_tenths);
         h.u16(self.cannot_bank);
@@ -196,6 +200,8 @@ pub(crate) struct Conquest {
     pub(crate) clearing: Clearing,
     /// Walls planned ahead (see [`crate::blueprints`]).
     pub(crate) blueprints: Blueprints,
+    /// Regiments on the walls (see [`crate::manning`]).
+    pub(crate) manning: crate::manning::Manning,
 }
 
 /// Whether the footprints `a` and `b` (`[x, y, w, d]`) share a tile.
@@ -226,6 +232,7 @@ impl Conquest {
             honor: Honor::default(),
             clearing: Clearing::new(regiments, setup.build_percent),
             blueprints: Blueprints::default(),
+            manning: crate::manning::Manning::new(setup.structures as usize),
         }
     }
 
@@ -256,6 +263,8 @@ impl Conquest {
         self.structures.link_power();
         // After the power, which the Choir's walls read.
         self.structures.work_gates(regs, nav, stances);
+        // After every building that fell or lost power this tick.
+        self.man_walls(regs, stats, nav);
         self.structures.charge_resonance();
         self.structures.grow_larvae();
         self.economy
@@ -868,5 +877,6 @@ impl Conquest {
         }
         self.honor.hash_into(h);
         self.blueprints.hash_into(regs, h);
+        self.manning.hash_into(regs, h);
     }
 }
