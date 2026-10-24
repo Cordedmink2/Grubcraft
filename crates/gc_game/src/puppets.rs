@@ -881,6 +881,8 @@ pub struct Impact {
     pub hit: Hit,
     /// The unit type of the man struck.
     pub victim: u16,
+    /// The unit type of the man who struck him.
+    pub striker: u16,
 }
 
 /// Blows told and not yet collected, at most; later ones are dropped.
@@ -1374,6 +1376,7 @@ impl Puppets {
                 dir,
                 hit,
                 victim: self.unit[victim / SLOTS],
+                striker: self.unit[striker / SLOTS],
             },
         );
         match self.impacts.get_mut(slot) {

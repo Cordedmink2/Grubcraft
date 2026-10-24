@@ -13,13 +13,15 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 pub enum Command {
     /// Start a sound. `pan` is -127 (left) to 127 (right); a higher
     /// `priority` survives when all voices are busy. `dull` (0 clear, 255
-    /// muffled) takes the highs off, the way distance does.
+    /// muffled) takes the highs off, the way distance does. `pitch` (128 =
+    /// as recorded) plays it faster or slower, about an octave either way.
     Play {
         sound: SoundId,
         gain: u8,
         pan: i8,
         priority: u8,
         dull: u8,
+        pitch: u8,
     },
     /// Set an ambient bed (an index into [`SoundId::BEDS`]): how loud it is,
     /// where it is, and how muffled. The mixer glides to the new values.
@@ -48,12 +50,14 @@ impl Command {
                 pan,
                 priority,
                 dull,
+                pitch,
             } => {
                 1 | (sound as u64) << 8
                     | u64::from(gain) << 16
                     | u64::from(pan as u8) << 24
                     | u64::from(priority) << 32
                     | u64::from(dull) << 40
+                    | u64::from(pitch) << 48
             }
             Command::Bed {
                 bed,
@@ -82,6 +86,7 @@ impl Command {
                 pan: byte(24) as i8,
                 priority: byte(32),
                 dull: byte(40),
+                pitch: byte(48),
             },
             6 => Command::Bed {
                 bed: byte(8),
@@ -161,6 +166,7 @@ mod tests {
             pan: -5,
             priority: 200,
             dull: 90,
+            pitch: 140,
         }
     }
 
@@ -174,6 +180,7 @@ mod tests {
                 pan: 127,
                 priority: 0,
                 dull: 255,
+                pitch: 0,
             },
             Command::Bed {
                 bed: 3,

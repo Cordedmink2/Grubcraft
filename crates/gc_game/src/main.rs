@@ -4216,6 +4216,13 @@ impl Running {
                 self.ambient.caravans.hush();
             }
         }
+        // Rain, wind and the air's muffling are heard from the weather on
+        // screen.
+        if let Some(sounds) = &mut self.sounds {
+            let (weather, fade) = self.atmosphere.weather();
+            let (rain, muffle) = sounds::air_of(weather, fade);
+            sounds.sky(rain, self.atmosphere.wind().length(), muffle);
+        }
         let struck = self.atmosphere.take_strike();
         // The thunder that arrives is heard even with the flash out of
         // sight, but not while paused, behind the offline menu or in the
@@ -5240,7 +5247,7 @@ impl Running {
         self.formation_pick = None;
         self.shown_formation = None;
         if let Some(sounds) = &mut self.sounds {
-            sounds.new_match();
+            sounds.new_match(self.heightmap.clone());
         }
         self.attack_mark = None;
         self.sim_clock = Duration::ZERO;
@@ -6031,6 +6038,9 @@ impl Running {
     /// hides all particles), at most [`BLOWS_SHOWN`] a frame.
     fn show_blows(&mut self, cull: &gc_render::Cull) {
         let hm = &self.heightmap;
+        // A rejoining player catching up sees the blows but doesn't hear them.
+        let heard = !(self.online.is_some() && self.menu.net().catching_up());
+        let mut sounded = 0;
         let on_screen = self.puppets.drain_impacts().filter_map(|i| {
             let at = glam::Vec3::new(i.pos.x, hm.height_at(i.pos.x, i.pos.y), i.pos.y);
             cull.on_screen(at, 1.0).then_some((i, at))
@@ -6053,6 +6063,15 @@ impl Running {
             let armoured = stats.shield || stats.melee_defence >= ARMOURED_DEFENCE;
             let chest = at + glam::Vec3::Y * (SOLDIER_HEIGHT * 0.6);
             self.effects.blow(chest, i.dir, i.hit, style, armoured);
+            // The kills are heard first, if there are too many to hear.
+            if heard
+                && (sounded < sounds::HITS_PER_FRAME || i.hit == puppets::Hit::Killed)
+                && let (Some(sounds), Some(striker)) =
+                    (&self.sounds, self.units.stats.get(usize::from(i.striker)))
+            {
+                sounded += 1;
+                sounds.blow(i.pos, i.hit, style, armoured, sounds::Weapon::of(striker));
+            }
         }
     }
 

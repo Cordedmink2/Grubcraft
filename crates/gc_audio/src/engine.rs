@@ -121,12 +121,21 @@ impl Audio {
     /// -1 (left) to 1 (right), `priority` decides who is cut off when the 32
     /// voices are all busy. Silent sounds are not sent.
     pub fn play(&self, sound: SoundId, gain: f32, pan: f32, priority: u8) {
-        self.play_muffled(sound, gain, pan, priority, 0.0);
+        self.play_muffled(sound, gain, pan, priority, 0.0, 1.0);
     }
 
     /// Like [`play`](Audio::play), with the highs taken off: `dull` is 0
-    /// (clear) to 1 (muffled), how distance changes a sound.
-    pub fn play_muffled(&self, sound: SoundId, gain: f32, pan: f32, priority: u8, dull: f32) {
+    /// (clear) to 1 (muffled), how distance changes a sound; `speed` plays
+    /// it faster (above 1) or slower, up to an octave either way.
+    pub fn play_muffled(
+        &self,
+        sound: SoundId,
+        gain: f32,
+        pan: f32,
+        priority: u8,
+        dull: f32,
+        speed: f32,
+    ) {
         let gain = to_byte(gain);
         if gain == 0 {
             return;
@@ -137,6 +146,9 @@ impl Audio {
             pan: to_pan(pan),
             priority,
             dull: to_byte(dull),
+            pitch: (128.0 + 128.0 * speed.clamp(0.5, 1.99).log2())
+                .round()
+                .clamp(0.0, 255.0) as u8,
         });
     }
 

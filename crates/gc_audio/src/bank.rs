@@ -92,6 +92,40 @@ pub enum SoundId {
     Collapse = 36,
     /// Thunder: a tearing crack and a long roll, a moment after lightning.
     Thunder = 37,
+    /// Bed (loops): a meadow's insects and soft air.
+    BedMeadow = 38,
+    /// Bed (loops): a forest's deep hush, with the odd creak.
+    BedForest = 39,
+    /// Bed (loops): a fen's low drone and frogs.
+    BedFen = 40,
+    /// Bed (loops): thin high wind over moor and rock.
+    BedHighland = 41,
+    /// Bed (loops): dry, hollow wind over the bone waste.
+    BedWaste = 42,
+    /// Bed (loops): rain on ground and leaves.
+    BedRain = 43,
+    /// Bed (loops): the crackle and roar of burning woods.
+    BedFire = 44,
+    /// A blow turned aside on a weapon: a ring of steel.
+    HitParry = 45,
+    /// A blow taken on a shield: wood and a crack.
+    HitBlock = 46,
+    /// A blow into flesh.
+    HitFlesh = 47,
+    /// A blow into the Brood's chitin and ichor.
+    HitIchor = 48,
+    /// A blow into the Choir's glass.
+    HitCrystal = 49,
+    /// A blow into the Concord's bone.
+    HitBone = 50,
+    /// Under a blow on armour: a clang.
+    HitArmour = 51,
+    /// Under a heavy or crushing blow: a deep thump.
+    HitHeavy = 52,
+    /// A tile of woods catching fire: a whoosh.
+    Kindle = 53,
+    /// The rivers rising over the fords: a rush of water.
+    FloodRush = 54,
 }
 
 impl SoundId {
@@ -124,7 +158,7 @@ impl SoundId {
         ],
     ];
 
-    pub const COUNT: usize = 38;
+    pub const COUNT: usize = 55;
 
     pub const ALL: [SoundId; SoundId::COUNT] = [
         SoundId::ArrowRelease,
@@ -165,14 +199,38 @@ impl SoundId {
         SoundId::SiegeLaunch,
         SoundId::Collapse,
         SoundId::Thunder,
+        SoundId::BedMeadow,
+        SoundId::BedForest,
+        SoundId::BedFen,
+        SoundId::BedHighland,
+        SoundId::BedWaste,
+        SoundId::BedRain,
+        SoundId::BedFire,
+        SoundId::HitParry,
+        SoundId::HitBlock,
+        SoundId::HitFlesh,
+        SoundId::HitIchor,
+        SoundId::HitCrystal,
+        SoundId::HitBone,
+        SoundId::HitArmour,
+        SoundId::HitHeavy,
+        SoundId::Kindle,
+        SoundId::FloodRush,
     ];
 
     /// The ambient beds, in the order [`Bed`](crate::queue::Command::Bed) numbers them.
-    pub const BEDS: [SoundId; 4] = [
+    pub const BEDS: [SoundId; 11] = [
         SoundId::BedWind,
         SoundId::BedWater,
         SoundId::BedWoods,
         SoundId::BedBattle,
+        SoundId::BedMeadow,
+        SoundId::BedForest,
+        SoundId::BedFen,
+        SoundId::BedHighland,
+        SoundId::BedWaste,
+        SoundId::BedRain,
+        SoundId::BedFire,
     ];
 
     pub fn from_u8(v: u8) -> Option<SoundId> {
@@ -186,7 +244,9 @@ impl SoundId {
     /// Whether this is an ambient bed: a loop the mixer plays continuously
     /// at a level it is told, not a one-shot.
     pub fn is_bed(self) -> bool {
-        SoundId::BEDS.contains(&self)
+        let id = self as u8;
+        (SoundId::BedWind as u8..=SoundId::BedBattle as u8).contains(&id)
+            || (SoundId::BedMeadow as u8..=SoundId::BedFire as u8).contains(&id)
     }
 
     /// The battle cry of a faction (0 Ember Clans, 1 Brood, 2 Shard Choir,

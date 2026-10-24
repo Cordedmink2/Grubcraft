@@ -42,13 +42,19 @@ Commit the rewritten `sounds.gcsnd` and its `sounds.manifest` (baker version, ba
 | `SiegeLaunch` | 0.70 s | A siege engine or artillery piece fires at a building (a wooden creak, the heavy whump of the arm, a rushing whoosh) |
 | `Collapse` | 2.60 s | A building is brought down (a cracking groan, a rumbling roar of masonry and timber with heavy thuds, settling into trickling debris) |
 | `Thunder` | 2.45 s | Lightning in a storm (four sharp cracks and a darkening hiss, a deep thump, then a rolling rumble with a mid-range growl, dying away); played 0.3 to 3 s after the flash, centred, softer and duller the further the stroke |
+| `BedMeadow` / `BedForest` / `BedFen` / `BedHighland` / `BedWaste` | 8 s loops | Land beds, mixed by each land's share of the ground round the camera: soft air with insect trills; a deep hush with leaves and the odd creak; a low drone with croaking frogs; thin whistling wind; dry hollow air with a rattle of small bones |
+| `BedRain` / `BedFire` | 8 s loops | Rain on ground and leaves; the roar, sizzle and pops of burning woods |
+| `HitParry` / `HitBlock` | 0.35 / 0.25 s | A blow turned aside (ring of steel); a blow on a shield (wood and a crack) |
+| `HitFlesh` / `HitIchor` / `HitCrystal` / `HitBone` | 0.25-0.4 s | A blow into flesh; into the Brood's chitin and ichor; into the Choir's glass; into the Concord's bone |
+| `HitArmour` / `HitHeavy` | 0.4 s | Under a blow on armour (clang); under a heavy or killing blow (deep thump) |
+| `Kindle` / `FloodRush` | 1.0 / 1.9 s | A tile of woods catching fire; the rivers rising over the fords |
 | `UiSelect` / `UiMove` / `UiAttack` | 0.1-0.24 s | Selecting a regiment; a move order; an attack order |
 | `MusicCalm` | 19.2 s loop | Shakuhachi-style flute over a drone, sparse taiko, plucked string (D hirajoshi, 100 bpm) |
 | `MusicBattle` | 19.2 s loop | Taiko on every beat with fills, plucked ostinato, brass pad. Same length as the calm loop; the two play in step and crossfade with battle intensity |
 
 ## Ambient beds
 
-The four beds are not one-shots: the mixer plays each continuously at a level, pan and muffling the game sets (`Command::Bed`), gliding to new values so nothing clicks. They are synthesised by `tools/gc_sfx/src/synth.rs` from filtered noise shaped by slow random swells, each built longer than the loop and its tail crossfaded into its head so the join cannot be heard; all four are original work with no licence to track. `crates/gc_game/src/sounds.rs` drives them: the battle roar from the regiments in contact that the player can see, and wind, water and woods from the ground (cover, water line and height) round the camera. Distance also takes the highs off every placed one-shot (`Command::Play` has a `dull` byte).
+The four beds are not one-shots: the mixer plays each continuously at a level, pan and muffling the game sets (`Command::Bed`), gliding to new values so nothing clicks. They are synthesised by `tools/gc_sfx/src/synth.rs` from filtered noise shaped by slow random swells, each built longer than the loop and its tail crossfaded into its head so the join cannot be heard; all four are original work with no licence to track. `crates/gc_game/src/sounds.rs` drives them: the battle roar from the regiments in contact that the player can see, and wind, water and woods from the ground (cover, water line and height) round the camera. Distance also takes the highs off every placed one-shot (`Command::Play` has a `dull` byte), and a `pitch` byte plays it faster or slower (blows are pitched by weapon). Beds are indexed by `SoundId::BEDS`: wind, water, woods, battle roar, the five lands, rain and fire.
 
 ## Battle cries
 

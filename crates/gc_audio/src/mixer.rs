@@ -131,6 +131,12 @@ struct Voice {
     lp: f32,
 }
 
+/// Playback speed for a pitch byte: 128 is as recorded, 0 an octave down,
+/// 255 about an octave up.
+fn pitch_ratio(pitch: u8) -> f32 {
+    ((f32::from(pitch) - 128.0) / 128.0).exp2()
+}
+
 /// Left and right gains for a pan of -1 (left) to 1 (right).
 fn pan_gains(pan: f32) -> (f32, f32) {
     ((1.0 - pan).min(1.0), (1.0 + pan).min(1.0))
@@ -246,7 +252,8 @@ impl Mixer {
                 pan,
                 priority,
                 dull,
-            } => self.play(sound, gain, pan, priority, dull),
+                pitch,
+            } => self.play(sound, gain, pan, priority, dull, pitch),
             Command::Bed {
                 bed,
                 level,
@@ -296,7 +303,7 @@ impl Mixer {
         }
     }
 
-    fn play(&mut self, sound: SoundId, gain: u8, pan: i8, priority: u8, dull: u8) {
+    fn play(&mut self, sound: SoundId, gain: u8, pan: i8, priority: u8, dull: u8, pitch: u8) {
         if sound.is_music() || sound.is_bed() {
             return;
         }
@@ -340,7 +347,7 @@ impl Mixer {
         self.voices[i] = Voice {
             sound,
             cursor: Cursor::start(clip),
-            step: clip.rate as f32 / self.rate as f32,
+            step: clip.rate as f32 / self.rate as f32 * pitch_ratio(pitch),
             left: level * left,
             right: level * right,
             score,
@@ -506,6 +513,7 @@ mod tests {
             pan,
             priority,
             dull: 0,
+            pitch: 128,
         }
     }
 
@@ -516,6 +524,7 @@ mod tests {
             pan: 0,
             priority: 100,
             dull,
+            pitch: 128,
         }
     }
 
@@ -701,6 +710,31 @@ mod tests {
         let (clear, far) = (heard(0), heard(255));
         assert!(clear > 0.05);
         assert!(far < clear * 0.5, "far {far} against clear {clear}");
+    }
+
+    #[test]
+    fn pitch_changes_how_long_a_sound_lasts() {
+        assert_eq!(pitch_ratio(128), 1.0);
+        assert!((pitch_ratio(0) - 0.5).abs() < 1e-6);
+        let ended_after = |pitch: u8| {
+            let (mut mixer, tx, meter) = rig(1000);
+            tx.push(Command::Play {
+                sound: SoundId::Clash,
+                gain: 255,
+                pan: 0,
+                priority: 100,
+                dull: 0,
+                pitch,
+            });
+            let mut frames = 0;
+            while frames == 0 || meter.active.load(Ordering::Relaxed) > 0 {
+                render(&mut mixer, 50);
+                frames += 50;
+            }
+            frames
+        };
+        assert!(ended_after(0) > 2 * ended_after(128) - 150);
+        assert!(ended_after(255) < ended_after(128) / 2 + 100);
     }
 
     #[test]

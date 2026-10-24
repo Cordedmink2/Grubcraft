@@ -65,6 +65,25 @@ pub fn all() -> Vec<Rendered> {
     clips.push(sfx(SoundId::SiegeLaunch, 0.85, siege_launch()));
     clips.push(sfx(SoundId::Collapse, 0.9, collapse()));
     clips.push(sfx(SoundId::Thunder, 0.9, thunder()));
+    // The beds of the lands, the rain and the fire.
+    clips.push(bed(SoundId::BedMeadow, bed_meadow()));
+    clips.push(bed(SoundId::BedForest, bed_forest()));
+    clips.push(bed(SoundId::BedFen, bed_fen()));
+    clips.push(bed(SoundId::BedHighland, bed_highland()));
+    clips.push(bed(SoundId::BedWaste, bed_waste()));
+    clips.push(bed(SoundId::BedRain, bed_rain()));
+    clips.push(bed(SoundId::BedFire, bed_fire()));
+    // Blows on soldiers, by what they land on, and the weather's one-shots.
+    clips.push(sfx(SoundId::HitParry, 0.8, hit_parry()));
+    clips.push(sfx(SoundId::HitBlock, 0.8, hit_block()));
+    clips.push(sfx(SoundId::HitFlesh, 0.8, hit_flesh()));
+    clips.push(sfx(SoundId::HitIchor, 0.8, hit_ichor()));
+    clips.push(sfx(SoundId::HitCrystal, 0.75, hit_crystal()));
+    clips.push(sfx(SoundId::HitBone, 0.8, hit_bone()));
+    clips.push(sfx(SoundId::HitArmour, 0.75, hit_armour()));
+    clips.push(sfx(SoundId::HitHeavy, 0.9, hit_heavy()));
+    clips.push(sfx(SoundId::Kindle, 0.8, kindle()));
+    clips.push(sfx(SoundId::FloodRush, 0.85, flood_rush()));
     clips
 }
 
@@ -239,6 +258,363 @@ fn bed_battle() -> Buf {
         );
     }
     buf
+}
+
+/// Short hard ticks scattered through a loop (the buffer wraps): `count` of
+/// them between `lo` and `hi` Hz, amplitude up to `amp`, each ringing for
+/// about `tau` seconds.
+fn scatter_ticks(buf: &mut Buf, count: u32, band: (f32, f32), amp: f32, tau: f32, seed: u32) {
+    let mut rng = Rng(seed);
+    let mut unit = move || rng.noise() * 0.5 + 0.5;
+    for k in 0..count {
+        let at = unit() * BED_SECONDS;
+        let f = band.0 + (band.1 - band.0) * unit();
+        tick(buf, at, f, amp * (0.3 + 0.7 * unit()), tau, seed + 1 + k);
+    }
+}
+
+/// A meadow: soft moving air and the trills of insects in the grass.
+fn bed_meadow() -> Buf {
+    let rate = BED_RATE as f32;
+    let len = (BED_SECONDS * rate) as usize;
+    let breeze = swell(len, rate, 0.3, 61);
+    let mut air = Pole2::default();
+    let samples = looped_noise(len, 62, |n, i| {
+        let g = (breeze[i % len] + 1.0) * 0.5;
+        air.low(n, 750.0, rate) * (0.4 + 0.6 * g) * 1.4
+    });
+    let mut buf = bed_buf(samples);
+    // Trills: a high tone chopped fast, for a moment, now and then.
+    let mut rng = Rng(63);
+    for k in 0..22u32 {
+        let at = (rng.noise() * 0.5 + 0.5) * BED_SECONDS;
+        let f = 3200.0 + 1500.0 * (rng.noise() * 0.5 + 0.5);
+        let chop = 38.0 + 30.0 * (rng.noise() * 0.5 + 0.5);
+        let len = 0.25 + 0.5 * (rng.noise() * 0.5 + 0.5);
+        buf.at(
+            at,
+            |t, _| {
+                let gate = (TAU * chop * t).sin().max(0.0);
+                (TAU * f * t).sin() * gate * adsr(t, 0.03, 0.08, len) * 0.07
+            },
+            len,
+            64 + k,
+        );
+    }
+    buf
+}
+
+/// A forest: a deep, close hush under the canopy, a faint leaf rustle and
+/// the odd creak of a trunk.
+fn bed_forest() -> Buf {
+    let rate = BED_RATE as f32;
+    let len = (BED_SECONDS * rate) as usize;
+    let gust = swell(len, rate, 0.25, 71);
+    let (mut hush, mut hp, mut leaf) = (Pole2::default(), OnePole::default(), Pole2::default());
+    let samples = looped_noise(len, 72, |n, i| {
+        let g = (gust[i % len] + 1.0) * 0.5;
+        let deep = hush.low(n, 380.0, rate) * 1.7;
+        let rustle = leaf.low(hp.high(n, 2500.0, rate), 5000.0, rate) * 0.5;
+        (deep + rustle * g * g) * (0.5 + 0.5 * g)
+    });
+    let mut buf = bed_buf(samples);
+    let mut rng = Rng(73);
+    for k in 0..4u32 {
+        let at = (rng.noise() * 0.5 + 0.5) * BED_SECONDS;
+        let base = 90.0 + 50.0 * (rng.noise() * 0.5 + 0.5);
+        let mut phase = 0.0f32;
+        buf.at(
+            at,
+            |t, r| {
+                phase += TAU * base * (1.0 - 0.25 * t) / rate;
+                let wobble = 1.0 + 0.5 * r.noise();
+                (phase.sin() + 0.5 * (phase * 2.0).sin()) * adsr(t, 0.12, 0.3, 0.9) * 0.08 * wobble
+            },
+            0.9,
+            74 + k,
+        );
+    }
+    buf
+}
+
+/// A fen: a low drone over still water and the croaking of frogs.
+fn bed_fen() -> Buf {
+    let rate = BED_RATE as f32;
+    let len = (BED_SECONDS * rate) as usize;
+    let surge = swell(len, rate, 0.2, 81);
+    let mut mud = Pole2::default();
+    let samples = looped_noise(len, 82, |n, i| {
+        let g = (surge[i % len] + 1.0) * 0.5;
+        mud.low(n, 480.0, rate) * (0.5 + 0.5 * g) * 1.3
+    });
+    let mut buf = bed_buf(samples);
+    // The drone: two low tones whole cycles long in the loop, so it joins.
+    let (f1, f2) = (56.0, 83.0);
+    for (f, a) in [(f1, 0.1), (f2, 0.06)] {
+        buf.at(0.0, |t, _| (TAU * f * t).sin() * a, BED_SECONDS, 83);
+    }
+    // Frogs: a croak is a low tone chopped at about 25 Hz; they call in pairs.
+    let mut rng = Rng(84);
+    for k in 0..9u32 {
+        let at = (rng.noise() * 0.5 + 0.5) * BED_SECONDS;
+        let f = 130.0 + 120.0 * (rng.noise() * 0.5 + 0.5);
+        for r in 0..(2 + (k % 2)) {
+            buf.at(
+                at + 0.2 * r as f32,
+                |t, _| {
+                    let gate = (TAU * 26.0 * t).sin().max(0.0);
+                    ((TAU * f * t).sin() + 0.5 * (TAU * f * 2.0 * t).sin())
+                        * gate
+                        * adsr(t, 0.01, 0.06, 0.16)
+                        * 0.1
+                },
+                0.16,
+                85 + k,
+            );
+        }
+    }
+    buf
+}
+
+/// Highland: thin wind over moor and rock, a narrow whistling howl in gusts.
+fn bed_highland() -> Buf {
+    let rate = BED_RATE as f32;
+    let len = (BED_SECONDS * rate) as usize;
+    let gust = swell(len, rate, 0.3, 91);
+    let (mut hp, mut band) = (OnePole::default(), Pole2::default());
+    let samples = looped_noise(len, 92, |n, i| {
+        let g = (gust[i % len] + 1.0) * 0.5;
+        let howl = band.low(hp.high(n, 500.0, rate), 700.0 + 700.0 * g, rate);
+        howl * (0.15 + 0.85 * g * g) * 2.6
+    });
+    let mut buf = bed_buf(samples);
+    // A whistle in the gusts: a tone with a slow +-25 Hz waver, whole cycles
+    // per loop so it joins.
+    let f = 880.0;
+    buf.at(
+        0.0,
+        |t, _| {
+            let g = (gust[((t * rate) as usize) % len] + 1.0) * 0.5;
+            let phase = TAU * f * t - 50.0 * (TAU * 0.5 * t).cos();
+            phase.sin() * g.powi(3) * 0.05
+        },
+        BED_SECONDS,
+        93,
+    );
+    buf
+}
+
+/// The bone waste: dry hollow air, a low moan in the hollows and the rattle
+/// of small bones.
+fn bed_waste() -> Buf {
+    let rate = BED_RATE as f32;
+    let len = (BED_SECONDS * rate) as usize;
+    let gust = swell(len, rate, 0.2, 101);
+    let (mut hollow, mut dry, mut hp) = (Pole2::default(), Pole2::default(), OnePole::default());
+    let samples = looped_noise(len, 102, |n, i| {
+        let g = (gust[i % len] + 1.0) * 0.5;
+        let moan = hollow.low(n, 260.0 + 140.0 * g, rate) * 2.0;
+        let grit = dry.low(hp.high(n, 2800.0, rate), 6000.0, rate) * 0.25;
+        (moan + grit) * (0.35 + 0.65 * g)
+    });
+    let mut buf = bed_buf(samples);
+    scatter_ticks(&mut buf, 28, (1400.0, 3200.0), 0.12, 0.006, 103);
+    buf
+}
+
+/// Rain: a steady patter on ground and leaves, thicker in the heavy bursts.
+fn bed_rain() -> Buf {
+    let rate = BED_RATE as f32;
+    let len = (BED_SECONDS * rate) as usize;
+    let burst = swell(len, rate, 0.4, 111);
+    let patter = swell(len, rate, 40.0, 112);
+    let (mut hp, mut lp, mut low) = (OnePole::default(), Pole2::default(), Pole2::default());
+    let samples = looped_noise(len, 113, |n, i| {
+        let b = (burst[i % len] + 1.0) * 0.5;
+        let p = (patter[i % len] + 1.0) * 0.5;
+        let hiss = lp.low(hp.high(n, 1400.0, rate), 7000.0, rate);
+        let body = low.low(n, 500.0, rate) * 0.5;
+        (hiss * (0.55 + 0.45 * p) + body) * (0.7 + 0.3 * b)
+    });
+    bed_buf(samples)
+}
+
+/// Burning woods: a low roar of flame, a steady sizzle and a hail of pops.
+fn bed_fire() -> Buf {
+    let rate = BED_RATE as f32;
+    let len = (BED_SECONDS * rate) as usize;
+    let flare = swell(len, rate, 0.6, 121);
+    let (mut roar, mut hp, mut sizz) = (Pole2::default(), OnePole::default(), Pole2::default());
+    let samples = looped_noise(len, 122, |n, i| {
+        let f = (flare[i % len] + 1.0) * 0.5;
+        let low = roar.low(n, 260.0 + 300.0 * f, rate) * 2.0;
+        let hiss = sizz.low(hp.high(n, 3500.0, rate), 7500.0, rate) * 0.3;
+        (low + hiss) * (0.5 + 0.5 * f)
+    });
+    let mut buf = bed_buf(samples);
+    scatter_ticks(&mut buf, 140, (700.0, 4200.0), 0.3, 0.004, 123);
+    buf
+}
+
+/// Steel turned aside on steel: a bright ring with a sharp tick.
+fn hit_parry() -> Buf {
+    let mut b = Buf::new(0.35, SFX_RATE);
+    crack(&mut b, 0.0, 0.8, 130);
+    for (ratio, amp, tau) in [(1.0, 0.7, 0.12), (2.76, 0.5, 0.08), (5.4, 0.3, 0.05)] {
+        let f = 1700.0 * ratio;
+        b.at(
+            0.0,
+            |t, _| (TAU * f * t).sin() * amp * decay(t, tau),
+            0.35,
+            131,
+        );
+    }
+    b
+}
+
+/// A blow taken on a shield: a dull knock of wood and a crack.
+fn hit_block() -> Buf {
+    let mut b = Buf::new(0.25, SFX_RATE);
+    thud(&mut b, 0.0, 0.8, 150.0, 0.035, 140);
+    knock(&mut b, 0.0, 420.0, 0.7, 141);
+    crack(&mut b, 0.0, 0.5, 142);
+    b
+}
+
+/// A blow into flesh: a dull thump and a breath of a slice.
+fn hit_flesh() -> Buf {
+    let mut b = Buf::new(0.25, SFX_RATE);
+    let rate = b.rate;
+    thud(&mut b, 0.0, 0.8, 140.0, 0.045, 150);
+    let (mut hp, mut lp) = (OnePole::default(), Pole2::default());
+    b.at(
+        0.0,
+        |t, rng| lp.low(hp.high(rng.noise(), 2000.0, rate), 5000.0, rate) * decay(t, 0.04) * 1.3,
+        0.15,
+        151,
+    );
+    b
+}
+
+/// A blow into the Brood: a wet crunch and squelch.
+fn hit_ichor() -> Buf {
+    let mut b = Buf::new(0.3, SFX_RATE);
+    let rate = b.rate;
+    let mut phase = 0.0f32;
+    let mut lp = Pole2::default();
+    b.at(
+        0.0,
+        |t, rng| {
+            phase += TAU * (230.0 - 140.0 * t.min(0.2) / 0.2) / rate;
+            let squelch = lp.low(rng.noise(), 900.0, rate) * (0.5 + 0.5 * (TAU * 38.0 * t).sin());
+            (squelch * 0.9 + phase.sin() * 0.5) * decay(t, 0.07)
+        },
+        0.3,
+        160,
+    );
+    crack(&mut b, 0.0, 0.5, 161);
+    b
+}
+
+/// A blow into the Choir: glass chipping and a short, high chime.
+fn hit_crystal() -> Buf {
+    let mut b = Buf::new(0.4, SFX_RATE);
+    crack(&mut b, 0.0, 0.9, 170);
+    for (f, amp, tau) in [(2350.0, 0.5, 0.1), (3150.0, 0.4, 0.07), (4400.0, 0.3, 0.05)] {
+        b.at(
+            0.0,
+            |t, _| (TAU * f * t).sin() * amp * decay(t, tau),
+            0.4,
+            171,
+        );
+    }
+    tick(&mut b, 0.02, 5200.0, 0.4, 0.01, 172);
+    b
+}
+
+/// A blow into the Concord: a dry crack of bone and a small clatter.
+fn hit_bone() -> Buf {
+    let mut b = Buf::new(0.3, SFX_RATE);
+    crack(&mut b, 0.0, 1.0, 180);
+    knock(&mut b, 0.0, 320.0, 0.6, 181);
+    tick(&mut b, 0.05, 1800.0, 0.3, 0.008, 182);
+    tick(&mut b, 0.09, 2400.0, 0.2, 0.008, 183);
+    b
+}
+
+/// Under a blow on armour: a short, low clang.
+fn hit_armour() -> Buf {
+    let mut b = Buf::new(0.4, SFX_RATE);
+    for (ratio, amp, tau) in [(1.0, 0.8, 0.16), (2.4, 0.6, 0.1), (4.1, 0.4, 0.06)] {
+        let f = 540.0 * ratio;
+        b.at(
+            0.0,
+            |t, _| (TAU * f * t).sin() * amp * decay(t, tau),
+            0.4,
+            190,
+        );
+    }
+    crack(&mut b, 0.0, 0.5, 191);
+    b
+}
+
+/// Under a heavy or crushing blow: a deep thump.
+fn hit_heavy() -> Buf {
+    let mut b = Buf::new(0.4, SFX_RATE);
+    thud(&mut b, 0.0, 1.0, 52.0, 0.12, 200);
+    thud(&mut b, 0.01, 0.5, 90.0, 0.06, 201);
+    b
+}
+
+/// A tile of woods catching: a gathering whoosh and a few pops.
+fn kindle() -> Buf {
+    let mut b = Buf::new(1.0, SFX_RATE);
+    let rate = b.rate;
+    let (mut hp, mut lp) = (OnePole::default(), Pole2::default());
+    b.at(
+        0.0,
+        |t, rng| {
+            let n = lp.low(
+                hp.high(rng.noise(), 120.0, rate),
+                250.0 + 2600.0 * (t / 0.5).min(1.0),
+                rate,
+            );
+            n * adsr(t, 0.18, 0.45, 1.0) * 1.5
+        },
+        1.0,
+        210,
+    );
+    for k in 0..6u32 {
+        tick(
+            &mut b,
+            0.25 + 0.1 * k as f32,
+            900.0 + 400.0 * (k % 3) as f32,
+            0.25,
+            0.004,
+            211 + k,
+        );
+    }
+    b
+}
+
+/// The rivers rising: a long surge of rushing water with a deep rumble.
+fn flood_rush() -> Buf {
+    let mut b = Buf::new(1.9, SFX_RATE);
+    let rate = b.rate;
+    let (mut hp, mut lp, mut rumble) = (OnePole::default(), Pole2::default(), Pole2::default());
+    b.at(
+        0.0,
+        |t, rng| {
+            let n = rng.noise();
+            let sweep = 500.0 + 1500.0 * (t / 1.0).min(1.0);
+            let rush = lp.low(hp.high(n, 200.0, rate), sweep, rate);
+            let low = rumble.low(n, 140.0, rate) * 1.5;
+            (rush + low) * adsr(t, 0.6, 0.8, 1.9)
+        },
+        1.9,
+        220,
+    );
+    b
 }
 
 // ---------------------------------------------------------------- toolkit

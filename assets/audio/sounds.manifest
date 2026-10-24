@@ -6,7 +6,7 @@
 # Hashes are XXH3-128.
 manifest = 1
 baker = gc_sfx 1
-clips = 38
+clips = 55
 sources = synthesised; battle cries from assets-src/voices
-bank = 95860796843f8f966fd47d7f2fee75db
-bank_bytes = 971574
+bank = 21cd288f6ebd50c43b2876a16a8d42c3
+bank_bytes = 1481106

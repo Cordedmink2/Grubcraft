@@ -138,7 +138,7 @@ fn chances(h: Habitat) -> (f32, f32) {
 
 /// The habitat of the tile `p` is in, on the map. A map with no habitats (a
 /// Conquest map, painted in lands) gets the nearest habitat to its land.
-fn habitat_at(map: &Map, p: Vec2) -> Option<Habitat> {
+pub(crate) fn habitat_at(map: &Map, p: Vec2) -> Option<Habitat> {
     let tiles = map.tiles as i32;
     let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
     if !(0..tiles).contains(&x) || !(0..tiles).contains(&y) {
