@@ -1,0 +1,22 @@
+// Wildlife and villagers (docs/34-ambient-life.md, stages 4 and 5), baked into assets/buildings/creatures.pak
+// by tools/gc_artbake
+// (`cargo run -p gc_artbake --release -- --config assets-src/buildings/creatures.ron --out assets/buildings/creatures.pak`).
+// The build script joins every pack in assets/buildings into the model pack, so these are looked up by
+// name like any model; no unit in data/ uses them, so they are only ever drawn by gc_game::ambient.
+// Each is built from code in Blender (design/creatures/source/: `crit.py` is the kit) with its own small rig,
+// painted in vertex colours that are baked to the albedo map. Clips: Idle, Walk, Run, and Cheer, which
+// plays a grazer's head-down feeding. Faces +z, stands on the ground at the origin, `height` is the head's top.
+(
+    models: [
+        (
+            name: "Deer",
+            source: "shared:grubcraft/creatures/deer/deer.glb",
+            height: 1.5,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Cheer": "Cheer" },
+            lod_triangles: (3000, 1400, 600, 220),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/deer/albedo.png",
+            )),
+        ),
+    ],
+)

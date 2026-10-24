@@ -924,6 +924,8 @@ struct Art {
     looks: buildings::Looks,
     /// Each model's height, in tiles.
     heights: Vec<f32>,
+    /// The deer of the ambient wildlife, if the pack has it.
+    deer: Option<usize>,
     /// This frame's camera, for choosing levels of detail.
     view: LodView,
     /// Instances per model and level of detail (model * LODS + lod).
@@ -1363,6 +1365,7 @@ impl App {
             clips: models::Clips::new(&models),
             looks: buildings::Looks::new(&buildings::Table::new(&game_data), &models),
             heights: models.models.iter().map(|m| m.height).collect(),
+            deer: models.by_name("Deer"),
             view: LodView {
                 eye: glam::Vec3::ZERO,
                 forward: glam::Vec3::NEG_Z,
@@ -3738,6 +3741,57 @@ impl Running {
                 |a, b| (hm.height_at(b.x, b.y) - hm.height_at(a.x, a.y)).abs(),
             );
         }
+        // Deer grazing near the camera, and bolting from soldiers in view.
+        {
+            let showing = !self.menu_open
+                && self.viewer.is_none()
+                && !self.commander
+                && self.art.as_ref().is_some_and(|a| a.deer.is_some());
+            if showing {
+                // Deer stand on ground no building or tree covers, keep away
+                // from buildings, and bolt from the soldiers the viewer sees
+                // (so unseen armies give nothing away).
+                let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
+                let threats: Vec<Vec2> = world
+                    .regiments
+                    .iter()
+                    .filter(|r| reveal || world.sees(viewer, r.handle))
+                    .map(|r| from_fx_vec(r.position))
+                    .collect();
+                let shown = buildings::shown_to(viewer, reveal);
+                let reach = ambient::wildlife::reach(view_distance)
+                    + ambient::wildlife::CELL as f32
+                    + ambient::wildlife::TAME;
+                let towns: Vec<Vec2> = (world.structures().into_iter())
+                    .flat_map(gc_sim::Structures::iter)
+                    .filter(|s| shown(s))
+                    .map(|s| buildings::centre_of(s.tile, s.width, s.depth))
+                    .filter(|c| c.distance(view_focus) <= reach)
+                    .collect();
+                self.ambient.wildlife.advance(
+                    if live {
+                        dt.as_secs_f32() * fx_speed
+                    } else {
+                        0.0
+                    },
+                    view_focus,
+                    view_distance,
+                    heightmap,
+                    |p| {
+                        let tile = (p.x.floor() as i32, p.y.floor() as i32);
+                        !scenery.occupied_at(tile) && !scenery.standing(tile).any(|s| s.tree)
+                    },
+                    |p| {
+                        towns
+                            .iter()
+                            .any(|c| c.distance(p) < ambient::wildlife::TAME)
+                    },
+                    &threats,
+                );
+            } else {
+                self.ambient.wildlife.hush();
+            }
+        }
         // Rain and snow, the one weather clearing and the one coming in;
         // nobody is looking at the field behind the menu or in the unit
         // viewer.
@@ -4690,6 +4744,7 @@ impl Running {
         self.siege.clear();
         self.aftermath.clear();
         self.ambient.walkers.clear();
+        self.ambient.wildlife.clear();
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
@@ -6413,6 +6468,38 @@ impl Running {
                     color: [r, g, b, gc_render::TONE_NEUTRAL],
                     lift: 0.0,
                     scale: 1.0,
+                    ..Default::default()
+                });
+            }
+        }
+        if let Some(deer) = art.deer {
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            for d in self.ambient.wildlife.seen() {
+                let tile = (d.pos.x.floor() as i32, d.pos.y.floor() as i32);
+                if !(reveal || fog.sees_tile(tile)) {
+                    continue;
+                }
+                let foot = Vec3::new(d.pos.x, ground(d.pos.x, d.pos.y), d.pos.y);
+                let Some(lod) = art.view.place(art.heights[deer] * d.scale, foot) else {
+                    continue;
+                };
+                let (action, rate) = match d.doing {
+                    ambient::wildlife::Doing::Graze => (Action::Cheer, 1.0),
+                    ambient::wildlife::Doing::Stand => (Action::Idle, 1.0),
+                    ambient::wildlife::Doing::Walk => (Action::Walk, 1.0),
+                    ambient::wildlife::Doing::Bolt => (Action::Run, ambient::wildlife::RUN_RATE),
+                };
+                let Some(pose) = art.clips.pose(deer, action, (time + d.phase * 4.0) * rate) else {
+                    continue;
+                };
+                art.buckets[deer * LODS + lod].push(SoldierInstance {
+                    pos: d.pos.to_array(),
+                    facing: d.facing.to_array(),
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [255, 255, 255, gc_render::TONE_NEUTRAL],
+                    lift: 0.0,
+                    scale: d.scale,
                     ..Default::default()
                 });
             }

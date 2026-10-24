@@ -22,7 +22,7 @@ Mario wants a world that looks lived in: a base where people are doing things, l
 | 1 | **Clearing land on screen** (idea 22). Workers swing at the tile they clear, throwing chips or leaves. When the tile is cleared its trees tip over away from the cutter, dust and leaves fly where the crown lands, the trunks lie a while and are hauled off, and bushes are torn up. | Particles (done), scenery lean (this stage) |
 | 2 | **Living touches without models** (built, except mist). Fireflies at dusk over fens and wet woods, pollen in meadows, dust devils in the waste, leaves falling in old woods. Mist pooling on low ground is left to the weather stage of the lighting thread. Particle recipes on a habitat sample of the ground round the camera, as the sound beds do ([09](09-art-and-audio.md)). | Particles, `Map.habitat` (done), lighting looks (done) |
 | 3 | **Busy bases** (idea 10; hearth smoke, lit windows and faction glows built as 3a, walkers between buildings as 3b, log piles beside halls as 3d, the rest not yet). Chimney and cook-fire smoke from finished buildings, lit windows and torches at dusk, sparks from smithies, workers walking between a base's buildings, log piles beside the halls, stacked supplies, carts and porters on the road from a seep to its granary. The faction decides what it is: Ember Clans' hearth smoke and lanterns, Concord bone carts and green fire, Choir resonance motes, Brood pulses and tending larvae. | Stage 1, building models' anchor points, the animation engine for a proper carrying walk |
-| 4 | **Wildlife** (idea 3). Flocks that lift from woods when an army marches by and settle again, carrion birds over a battlefield's dead, moths round Grub seeps, butterflies in flower meadows, grazers that bolt from soldiers, fish rises and dragonflies over water. Each land has its own fauna. Creatures are a picture: soldiers walk through them. | Animal models and clips on the animation engine (T5) |
+| 4 | **Wildlife** (idea 3; deer built as 4a, the rest not yet). Flocks that lift from woods when an army marches by and settle again, carrion birds over a battlefield's dead, moths round Grub seeps, butterflies in flower meadows, grazers that bolt from soldiers, fish rises and dragonflies over water. Each land has its own fauna. Creatures are a picture: soldiers walk through them. | Animal models and clips on the animation engine (T5) |
 | 5 | **Villagers** (idea 3). Neutral hamlets and towns get people: porters, farmers, children, dogs, who go about their day, stop to look at an army, and shut their doors when a fight starts. Faction bases borrow a few of their worker models as non-selectable helpers. | Stage 4's creature system, worker models |
 
 Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model format, so the animal models are baked once.
@@ -158,3 +158,24 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 ### Not yet
 
 - Stacks that grow with the owner's wood, stacked supplies and sacks for other buildings, carts, and piles for the bone, crystal and chitin factions (which would want their own models).
+
+## Stage 4a as built: deer
+
+*2026-10-24. Game, creature pack and baker only; nothing in the simulation. The first creature, and the pipeline the rest follow.*
+
+### What a player sees
+
+- Small herds of two to five deer graze the open land near the camera, on meadow, forest, highland and valley ground (not fen or waste; a map with no land data counts as meadow). They graze head down, stand with ears up, and now and then the herd walks to new pasture a few tiles away. Deer differ a little in size and are out of step with each other.
+- A herd bolts when a soldier the viewer sees comes within 15 tiles, runs until it is 30 tiles from every one (or nine seconds, whichever is first), and then stands alert; it stays alert while any soldier is within 30 tiles, only a soldier within 7 tiles startles it again, and after five quiet seconds it walks back to its pasture. Soldiers walk through deer; they are a picture, not in anyone's way.
+- A herd is not made with its home within 14 tiles of a building's middle; its pasture can lie up to nine tiles from home, so deer can graze nearer a building than that, and a building put up beside a herd later does not move it. Grazing spots are dry, gently sloping and free of trees and buildings; a run or a bolt does not look at trees or buildings (only at water and steep ground).
+- Herds are made in cells whose middle is within 36 tiles of the camera's focus plus 0.9 of its distance (75 at most), and forgotten again a little beyond that. Not in the Commander View, behind a menu, or in the unit viewer; while the game is paused they stand still.
+
+### How it works
+
+- `gc_game::ambient::wildlife::Wildlife` keeps herds by 20 by 20 tile cell of the map. A hash of the cell says whether it holds a herd (four in ten where the land suits) and where its home is, so coming back to a place finds the same herds in the same spots; cells away from the camera are forgotten and made again at home. Movement is floats on the effects clock with its own random generator; nothing is hashed in the simulation and nothing is saved or sent. The frame's update in `main.rs` passes the visible regiments' positions as threats and the town centres, and a closure says whether a spot is clear of buildings and trees.
+- The model is `Deer` in `assets/buildings/creatures.pak`, baked from `assets-src/buildings/creatures.ron` by `gc_artbake` and joined into the model pack by `build.rs` like the building packs. It is made from code in Blender (`design/creatures/source/crit.py` is the small creature kit: a rig of bones with two-bone legs, painted vertex colours baked to an albedo map, clips written as keyframes; `deer.py` is the deer) with four levels of detail (3,000 to 220 triangles) and 1.1 MB in the pack. Clips: Idle, Walk, Run (a bound) and Cheer, which plays the graze (the picker's fall-backs for the fighting moves never reach Cheer, so a creature that only grazes cannot be asked to attack).
+- Deer are drawn as `SoldierInstance`s in `push_building_models` with the pose from `art.clips.pose`, standing on the ground by `art.view.place`. The baker no longer insists on tangents for a model without a normal map (the deer has none); a model with one still must have them.
+
+### Not yet
+
+- Birds (flocks lifting when an army marches by, carrion birds over the dead), butterflies and moths, fish rises and dragonflies, the other lands' fauna, hunted deer leaving a carcass, and herds that react to fights rather than to soldiers alone.

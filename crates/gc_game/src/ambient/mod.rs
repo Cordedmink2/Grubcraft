@@ -9,12 +9,14 @@ pub mod felling;
 pub mod piles;
 pub mod touches;
 pub mod walkers;
+pub mod wildlife;
 
 use glam::Vec2;
 
 pub use felling::{Felling, Style};
 pub use touches::Touches;
 pub use walkers::Walkers;
+pub use wildlife::Wildlife;
 
 use crate::scenery::{Scenery, Stood};
 
@@ -24,6 +26,7 @@ pub struct Ambient {
     pub felling: Felling,
     pub touches: Touches,
     pub walkers: Walkers,
+    pub wildlife: Wildlife,
     /// Seconds until `--fell-demo` fells the trees round the camera.
     fell_demo: Option<f32>,
 }
@@ -41,6 +44,7 @@ impl Ambient {
             felling: Felling::default(),
             touches: Touches::default(),
             walkers: Walkers::default(),
+            wildlife: Wildlife::default(),
             fell_demo: fell_demo.then_some(FELL_DEMO_AFTER),
         }
     }

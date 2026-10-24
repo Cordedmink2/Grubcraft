@@ -845,8 +845,11 @@ fn bake_model(
     if indices.is_empty() {
         return Err("no triangles".into());
     }
-    if cfg.textures.is_some() && verts.iter().any(|v| v.tangent == Vec4::ZERO) {
-        return Err("a textured model needs tangents (export them with the glTF)".into());
+    // Tangents orient a normal map; a model with only a colour map (the
+    // creatures) has none, and the flat normal it gets needs no tangent.
+    let normal_mapped = cfg.textures.as_ref().is_some_and(|t| t.normal.is_some());
+    if normal_mapped && verts.iter().any(|v| v.tangent == Vec4::ZERO) {
+        return Err("a normal-mapped model needs tangents (export them with the glTF)".into());
     }
 
     // 2. Into game space: face +z, feet on the ground, `height` tall.
