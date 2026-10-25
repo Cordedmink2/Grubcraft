@@ -147,7 +147,7 @@ pub fn overlaps(a: Foot, b: Foot, gap: i32) -> bool {
 }
 
 /// Whether footprint `f` comes within [`LANE`] of the segment `a`-`b`.
-fn crosses(f: Foot, a: Vec2, b: Vec2) -> bool {
+pub(super) fn crosses(f: Foot, a: Vec2, b: Vec2) -> bool {
     let min = Vec2::new(f[0] as f32, f[1] as f32);
     let max = min + Vec2::new(f[2] as f32, f[3] as f32);
     // Nowhere near the lane's box: no need to walk it.

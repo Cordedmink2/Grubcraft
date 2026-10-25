@@ -8260,7 +8260,9 @@ fn season_news(season: gc_sim::sky::Season) -> &'static str {
         Season::Spring => "Spring: Grub comes in as usual again, and any ice thaws",
         Season::Summer => "Summer: the woods are dry and catch fire easily",
         Season::Autumn => "Autumn: the harvest is in, and Grub comes in faster",
-        Season::Winter => "Winter: Grub comes in slower, and the shallows freeze unless in flood",
+        Season::Winter => {
+            "Winter: Grub comes in slower, and the shallows freeze over unless in flood: troops march across the ice"
+        }
     }
 }
 

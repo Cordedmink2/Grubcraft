@@ -4,7 +4,9 @@
 //! [`Kit`] from the baked data and the map; the simulation itself knows
 //! nothing of factions.
 
-use gc_sim::structures::{BuildingStats, DROP_OFF_GRUB, LARVAE, Role, TRADE_POST, VEINS};
+use gc_sim::structures::{
+    BuildingStats, DROP_OFF_GRUB, GATE, LARVAE, LINE, Role, TRADE_POST, VEINS,
+};
 use gc_sim::{BuildingId, ConquestUnit, Resource, UnitId, World};
 use glam::Vec2;
 
@@ -197,6 +199,44 @@ impl Kit {
             .filter(|b| b.stats.role == Role::Defence && b.stats.tier <= tier.max(1))
             .filter(|b| b.stats.upgrades_from.is_none())
             .min_by_key(|b| b.price())
+    }
+
+    /// Building type `id`, if it is the faction's.
+    pub fn building(&self, id: BuildingId) -> Option<&KitBuilding> {
+        self.buildings.iter().find(|b| b.id == id)
+    }
+
+    /// The faction's first wall: drawn a tile a piece, raised from
+    /// nothing.
+    pub fn wall(&self) -> Option<&KitBuilding> {
+        self.buildings.iter().find(|b| {
+            b.stats.role == Role::Wall
+                && b.stats.flags & LINE != 0
+                && b.stats.flags & GATE == 0
+                && b.stats.upgrades_from.is_none()
+        })
+    }
+
+    /// The faction's first gate, if it has one (the Choir's walls let its
+    /// own through).
+    pub fn gate(&self) -> Option<&KitBuilding> {
+        self.buildings.iter().find(|b| {
+            b.stats.role == Role::Wall
+                && b.stats.flags & GATE != 0
+                && b.stats.upgrades_from.is_none()
+        })
+    }
+
+    /// The faction's works of `role`: its bridge, stakes, barricade or
+    /// trap.
+    pub fn works(&self, role: Role) -> Option<&KitBuilding> {
+        self.buildings.iter().find(|b| b.stats.role == role)
+    }
+
+    /// Whether building `b` uses up the worker who starts it (the Brood's
+    /// Gnawers, but for bridges and field works).
+    pub fn uses_up_builder(&self, b: &KitBuilding) -> bool {
+        self.worker().is_some_and(|w| w.unit.consumed) && !b.stats.spares_builder()
     }
 
     /// The building that adds larvae, main buildings aside: the Brood's

@@ -66,6 +66,10 @@ pub const CLEAR_CAP: u8 = 32;
 pub const BLOCKED: u8 = 0;
 /// Cost of a cell on a bridge's deck: open ground.
 pub const DECK: u8 = 1;
+/// The map's cost of a ford or shallows cell (see `gc_map`), and of open
+/// ground, which a frozen ford costs (see [`Nav::set_frozen`]).
+pub const FORD: u8 = 3;
+pub const OPEN: u8 = 1;
 /// The widest berth (cells from a block's centre that routes keep clear of
 /// blocked ground) any regiment asks for: 8 tiles.
 pub const MAX_BERTH: u8 = 16;
@@ -163,6 +167,9 @@ struct Grid {
     /// open at [`DECK`] cost over deep water or a flood, unless a building
     /// stands there too. Empty until the first bridge.
     bridged: Vec<u8>,
+    /// The fords are frozen over (see [`Nav::set_frozen`]): costed as open
+    /// ground. Every ford freezes and thaws at once.
+    frozen: bool,
     /// Steps (8-way) to the nearest blocked cell or the map edge, capped at
     /// [`CLEAR_CAP`].
     clear: Vec<u8>,
@@ -1984,6 +1991,7 @@ impl Grid {
             opened: Vec::new(),
             flooded: Vec::new(),
             bridged: Vec::new(),
+            frozen: false,
             clear: vec![0; n],
             area: vec![0; n],
             areas: 0,

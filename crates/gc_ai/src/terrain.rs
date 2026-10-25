@@ -7,7 +7,7 @@
 //! of those (flank anchors, high ground, fords) is worked out in
 //! [`crate::ground`]; where to hide, in the Captain's ambush plans.
 
-use gc_sim::nav::{BLOCKED, CELLS_PER_TILE, CLEARANCE};
+use gc_sim::nav::{BLOCKED, CELLS_PER_TILE, CLEARANCE, FORD, OPEN};
 use gc_sim::{Cover, Growth};
 use glam::Vec2;
 
@@ -47,6 +47,9 @@ pub struct Terrain {
     /// read the soft tiles (`gc_sim::Terrain::soaked`, `rubble_moves`);
     /// `None` before the first look.
     soaked: Option<(u32, u32)>,
+    /// The water is frozen over (`gc_sim::Terrain::frozen`): fords and
+    /// shallows are dry ground till the thaw; deep water stays blocked.
+    frozen: bool,
 }
 
 /// What changes which tiles are soft: the rain's soaking and rubble.
@@ -70,6 +73,7 @@ impl Terrain {
             seen: 0,
             soft: Vec::new(),
             soaked: None,
+            frozen: false,
         }
     }
 
@@ -92,6 +96,7 @@ impl Terrain {
             seen: 0,
             soft: Vec::new(),
             soaked: None,
+            frozen: false,
         };
         t.measure_clearance();
         t
@@ -158,6 +163,7 @@ impl Terrain {
     /// be walked again.
     /// The soft tiles are read again when rain soaks or dries any.
     pub fn follow(&mut self, ground: &gc_sim::Terrain) {
+        self.frozen = ground.frozen();
         if self.soaked != Some(soft_stamp(ground)) {
             self.soaked = Some(soft_stamp(ground));
             self.read_soft(ground);
@@ -190,6 +196,7 @@ impl Terrain {
     pub fn stale(&self, ground: &gc_sim::Terrain) -> bool {
         (!self.growth.is_empty() && self.seen != ground.changes())
             || self.soaked != Some(soft_stamp(ground))
+            || self.frozen != ground.frozen()
     }
 
     /// Read which tiles are soft from the simulation's ground.
@@ -304,9 +311,12 @@ impl Terrain {
         !self.inside(p, 0.0) || self.cell(p).is_some_and(|c| self.cost[c] == BLOCKED)
     }
 
-    /// Whether `p` is under water, deep or not.
+    /// Whether `p` is under water, deep or not; frozen over, only deep
+    /// water counts (the ice on the fords is walked as dry ground).
     pub fn water(&self, p: Vec2) -> bool {
-        !self.height.is_empty() && self.height(p) < self.water_level
+        !self.height.is_empty()
+            && self.height(p) < self.water_level
+            && !(self.frozen && !self.blocked(p))
     }
 
     /// Whether `p` is soft underfoot: bog, or mud the rain has soaked (slow
@@ -339,6 +349,67 @@ impl Terrain {
         Some((y * self.side + x) as usize)
     }
 
+    /// Whether water (or cliffs) cut the open ground nearest `home` off
+    /// from that nearest every one of `others` (each within a few tiles),
+    /// the ground's own way (buildings aside): reaching any of them needs
+    /// a bridge. Never on an open plane.
+    pub fn cut_off(&self, home: Vec2, others: impl IntoIterator<Item = Vec2>) -> bool {
+        if self.side == 0 {
+            return false;
+        }
+        let Some(start) = self.open_near(home) else {
+            return false;
+        };
+        let side = self.side as usize;
+        let mut seen = vec![false; self.cost.len()];
+        let mut todo = vec![start];
+        seen[start] = true;
+        while let Some(c) = todo.pop() {
+            let (x, y) = (c % side, c / side);
+            let next = [
+                (x > 0).then(|| c - 1),
+                (x + 1 < side).then(|| c + 1),
+                (y > 0).then(|| c - side),
+                (y + 1 < side).then(|| c + side),
+            ];
+            for n in next.into_iter().flatten() {
+                if !seen[n] && self.cost[n] != BLOCKED {
+                    seen[n] = true;
+                    todo.push(n);
+                }
+            }
+        }
+        others
+            .into_iter()
+            .all(|p| self.open_near(p).is_none_or(|c| !seen[c]))
+    }
+
+    /// The open cell nearest `p` within 4 tiles, if any (any cell on an
+    /// open plane).
+    fn open_near(&self, p: Vec2) -> Option<usize> {
+        let c = self.cell(p)?;
+        if self.cost[c] != BLOCKED {
+            return Some(c);
+        }
+        let side = self.side;
+        let (x, y) = (c as i32 % side, c as i32 / side);
+        let reach = 4 * CELLS_PER_TILE;
+        (1..=reach).find_map(|r| {
+            (-r..=r)
+                .flat_map(|d| {
+                    [
+                        (x + d, y - r),
+                        (x + d, y + r),
+                        (x - r, y + d),
+                        (x + r, y + d),
+                    ]
+                })
+                .filter(|&(cx, cy)| cx >= 0 && cy >= 0 && cx < side && cy < side)
+                .map(|(cx, cy)| (cy * side + cx) as usize)
+                .find(|&n| self.cost[n] != BLOCKED)
+        })
+    }
+
     /// Whether a regiment's centre can stand at `p`.
     pub fn walkable(&self, p: Vec2) -> bool {
         if !self.inside(p, 0.0) {
@@ -349,7 +420,10 @@ impl Terrain {
 
     /// Ground cost at `p`: 1 open, higher slow, 0 blocked.
     pub fn cost(&self, p: Vec2) -> u8 {
-        self.cell(p).map_or(1, |c| self.cost[c])
+        match self.cell(p).map_or(OPEN, |c| self.cost[c]) {
+            FORD if self.frozen => OPEN,
+            c => c,
+        }
     }
 
     /// Whether `p` is on the map with `margin` tiles to spare.
@@ -450,6 +524,29 @@ fn square_ring(a: f32) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn water_cuts_the_land_till_a_ford_joins_it() {
+        // 32 tiles across, a deep river across rows 30 to 33 (cells).
+        let side = 64usize;
+        let mut nav = vec![1u8; side * side];
+        for cy in 30..34 {
+            nav[cy * side..(cy + 1) * side].fill(BLOCKED);
+        }
+        let (north, south) = (Vec2::new(5.0, 5.0), Vec2::new(25.0, 25.0));
+        assert!(Terrain::new(&nav, 32).cut_off(north, [south]));
+        for cy in 30..34 {
+            nav[cy * side + 40] = FORD;
+        }
+        let t = Terrain::new(&nav, 32);
+        assert!(!t.cut_off(north, [south]));
+        // Frozen over, the ford costs as open ground.
+        let ford = Vec2::new(20.25, 15.25);
+        assert_eq!(t.cost(ford), FORD);
+        let mut iced = t.clone();
+        iced.frozen = true;
+        assert_eq!(iced.cost(ford), OPEN);
+    }
 
     #[test]
     fn matches_the_sims_idea_of_walkable() {

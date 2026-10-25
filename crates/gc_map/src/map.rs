@@ -17,10 +17,10 @@ pub const CLIFF_RISE_PER_TILE: i64 = 120;
 /// Water deeper than this (hundredths of a tile) can't be waded;
 /// shallower water is a ford.
 const FORD_DEPTH: i64 = 35;
-/// Nav costs: open ground, steep ground, fords (see `gc_sim::nav`).
-const OPEN: u8 = 1;
+/// Nav costs: open ground and fords as the simulation reads them (a
+/// frozen ford costs as open ground), and steep ground.
+use gc_sim::nav::{FORD, OPEN};
 const STEEP: u8 = 2;
-const FORD: u8 = 3;
 
 /// What a tile is like to walk on: the worst of its walkable-ground cells
 /// (see [`Map::tile_ground`]).

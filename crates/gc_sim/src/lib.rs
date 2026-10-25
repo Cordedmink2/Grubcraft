@@ -122,7 +122,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 51;
+pub const SIM_VERSION: u32 = 52;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -2734,6 +2734,10 @@ impl World {
             c.economy.set_season(season.grub_percent());
         }
         let frozen = season == sky::Season::Winter && self.terrain.rise() == 0;
+        if frozen != self.terrain.frozen() {
+            // Routes cost the frozen fords as open ground till the thaw.
+            self.nav.set_frozen(frozen, &self.regiments);
+        }
         self.terrain.set_frozen(frozen);
     }
 

@@ -10,7 +10,7 @@
 //! as they do in a Field Battle.
 
 use gc_sim::economy::SUPPLY_LIMIT;
-use gc_sim::structures::Role;
+use gc_sim::structures::{Role, StructureHandle};
 use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
@@ -22,7 +22,7 @@ use super::{Sense, spymaster};
 use crate::captain::{Captain, Ctx};
 use crate::difficulty::Knobs;
 use crate::orders::{Act, Orders, ROUTINE, Want};
-use crate::perception::{Perception, Seen, right_of, v2};
+use crate::perception::{Class, Perception, Seen, right_of, v2};
 use crate::personality::Personality;
 
 /// Ticks between the Marshal's looks.
@@ -72,6 +72,21 @@ const HEART_HOLDERS: usize = 6;
 const RALLY_OUT: f32 = 16.0;
 /// Within this many tiles of its target the army goes for the buildings.
 const AT_TARGET: f32 = 20.0;
+/// How far from a foot regiment an enemy holding a raised wall is climbed
+/// to on ladders, in tiles.
+const CLIMB_REACH: f32 = 14.0;
+/// The share of those knocking a base down that may climb its walls.
+const CLIMBERS_SHARE: usize = 2;
+/// Enemies this near home are met from its raised walls, in tiles: up to
+/// [`WALL_MEN`] of its archers (or foot) man the stretch nearest them,
+/// within [`MAN_REACH`] of them.
+const MAN_HOME: f32 = 30.0;
+const MAN_REACH: f32 = 16.0;
+const WALL_MEN: usize = 2;
+/// A regiment sent onto a wall (its own to man, or an enemy's to climb)
+/// that is not up it after this many seconds is given up on: it is kept
+/// off walls till the fight ends and does something else.
+const WALL_GRACE: u32 = 20;
 /// A start counts as looked at once a regiment comes this near it.
 const SCOUTED: f32 = 14.0;
 /// Regiments within this many tiles of the rally point are waiting there.
@@ -140,6 +155,15 @@ pub struct Marshal {
     /// The regiments standing on the Titan's Heart: the Marshal keeps them
     /// there, out of the Captain's battle, which would draw them off it.
     holders: Vec<RegimentHandle>,
+    /// The regiments it has sent onto its own walls against enemies at
+    /// home, and the tile each holds: kept there, out of the Captain's
+    /// battle, until the enemies are gone.
+    manning: Vec<(RegimentHandle, StructureHandle, u32)>,
+    /// Regiments sent up walls since the tick in each, to man or to climb.
+    climbing: Vec<(RegimentHandle, u32)>,
+    /// Regiments that did not get up a wall in time: not sent again till
+    /// the fight ends.
+    off_walls: Vec<RegimentHandle>,
     /// After falling back, it gathers until this tick before setting out.
     regroup_until: u32,
     /// Since when it has gone for the Heart without holding it.
@@ -181,6 +205,9 @@ impl Marshal {
             scouted: Vec::new(),
             battle: None,
             holders: Vec::new(),
+            manning: Vec::new(),
+            climbing: Vec::new(),
+            off_walls: Vec::new(),
             regroup_until: 0,
             contesting_since: None,
             raid_until: 0,
@@ -374,10 +401,12 @@ impl Marshal {
         // stands there; the rest of the army goes on as the Marshal says.
         let at = b.at;
         let holders = &self.holders;
+        let manning = &self.manning;
         view.subset(&mut b.view, |r| {
             let fights = if r.owner == party {
                 s.kit.is_fighter(r.unit)
                     && !holders.contains(&r.handle)
+                    && !manning.iter().any(|m| m.0 == r.handle)
                     && !lent.contains(&r.handle)
             } else {
                 !s.kit.all_workers.contains(&r.unit)
@@ -575,12 +604,21 @@ impl Marshal {
             self.out.extend(waiting.iter().map(|r| r.handle));
             self.set_out_with += waiting.iter().map(|r| u32::from(r.models)).sum::<u32>();
         }
-        let (going, staying): (Vec<&Seen>, Vec<&Seen>) =
-            army.iter().partition(|r| self.out.contains(&r.handle));
+        self.man_walls(s, army, home);
+        let (going, staying): (Vec<&Seen>, Vec<&Seen>) = army
+            .iter()
+            .filter(|r| !self.mans(r.handle))
+            .partition(|r| self.out.contains(&r.handle));
         let face = home.map_or(Vec2::Y, |h| (rally - h).normalize_or(Vec2::Y));
         march(s, &staying, rally, face, &mut self.wants, 1);
         if !matches!(self.goal, Goal::Heart(_)) {
             self.holders.clear();
+        }
+        if !matches!(self.goal, Goal::Attack(_)) {
+            self.climbing.clear();
+        }
+        if !matches!(self.goal, Goal::Attack(_) | Goal::Defend(_)) {
+            self.off_walls.clear();
         }
         match self.goal {
             Goal::Gather => {}
@@ -798,24 +836,63 @@ impl Marshal {
     /// buildings, towers first, spread over the few nearest.
     /// On a raid, main buildings next.
     fn knock_down(&mut self, s: &Sense, going: &[&Seen], at: Vec2, raiding: bool) {
-        let mut targets = enemy_buildings(s);
-        targets.retain(|t| t.at.distance(at) <= AT_TARGET * 2.0);
+        let mut targets = spymaster::enemy_sighted(s);
+        // Walls and barricades in the way are knocked down too; a bridge is
+        // anyone's to cross, and stakes are walked through.
+        targets.retain(|t| {
+            t.at.distance(at) <= AT_TARGET * 2.0 && !matches!(t.role, Role::Bridge | Role::Stakes)
+        });
         if targets.is_empty() {
             return;
         }
+        // Towers first, then a gate by the target (it opens the way in),
+        // then the buildings themselves; wall and barricade tiles only
+        // when nothing else stands near.
         targets.sort_by(|a, b| {
             let key = |t: &Sighted| {
+                let d = t.at.distance(at);
                 (
                     t.role != Role::Defence,
+                    !(t.gate && d <= AT_TARGET),
+                    matches!(t.role, Role::Wall | Role::Barricade),
                     raiding && t.role != Role::Main,
-                    t.at.distance(at) as i32,
+                    d as i32,
                 )
             };
             key(a).cmp(&key(b))
         });
         targets.truncate(3);
+        // No climbers among fewer than CLIMBERS_SHARE regiments.
+        let held = if going.len() >= CLIMBERS_SHARE {
+            enemy_walls_held(s)
+        } else {
+            Vec::new()
+        };
+        let mut climbers = 0;
         for (k, r) in going.iter().enumerate() {
             if r.engaged {
+                continue;
+            }
+            // Foot near an enemy holding a raised wall go up it on ladders,
+            // a share of them at most; they keep at it while they may.
+            if climbers < going.len() / CLIMBERS_SHARE
+                && self.may_go_up(s, r.handle)
+                && let Some(&(_, tile)) = held
+                    .iter()
+                    .filter(|(p, _)| p.distance(r.pos) <= CLIMB_REACH)
+                    .min_by(|a, b| a.0.distance(r.pos).total_cmp(&b.0.distance(r.pos)))
+                && s.world.climb_check(r.handle, tile).is_ok()
+            {
+                climbers += 1;
+                if !self.climbing.iter().any(|c| c.0 == r.handle) {
+                    self.climbing.push((r.handle, s.now));
+                }
+                self.wants.push(Want {
+                    regiment: r.handle,
+                    act: Act::Climb(tile),
+                    priority: 2,
+                    group: 0,
+                });
                 continue;
             }
             // Keep at one it has already been sent to while it stands; one
@@ -834,6 +911,113 @@ impl Marshal {
                 priority: 2,
                 group: 0,
             });
+        }
+    }
+
+    /// Against enemies near home, send up to [`WALL_MEN`] archers (or foot
+    /// where it has none) onto its raised walls nearest them, and keep
+    /// them there while the enemies stay; when they go, the men come down
+    /// with the rest of the army's orders.
+    fn man_walls(&mut self, s: &Sense, army: &[&Seen], home: Option<Vec2>) {
+        let threat = match (self.goal, home) {
+            (Goal::Defend(at), Some(home)) if at.distance(home) <= MAN_HOME => at,
+            _ => {
+                self.manning.clear();
+                return;
+            }
+        };
+        // Men whose tile has fallen, who broke, or who never got up are
+        // let go (the last kept off walls till the fight ends).
+        let late = s.now.saturating_sub(WALL_GRACE * gc_sim::TICKS_PER_SECOND);
+        let structures = s.world.structures();
+        let mut dropped = Vec::new();
+        self.manning.retain(|&(h, tile, since)| {
+            let keep = army.iter().any(|r| r.handle == h && !r.broken())
+                && structures.is_some_and(|st| st.get(tile).is_some())
+                && (since > late || s.world.on_wall(h));
+            if !keep && since <= late && !s.world.on_wall(h) {
+                dropped.push(h);
+            }
+            keep
+        });
+        self.off_walls.extend(dropped);
+        if self.manning.len() < WALL_MEN {
+            self.find_wall_men(s, army, threat);
+        }
+        for &(regiment, tile, _) in &self.manning {
+            self.wants.push(Want {
+                regiment,
+                act: Act::Man(tile),
+                priority: 3,
+                group: 0,
+            });
+        }
+    }
+
+    /// Whether regiment `h` may be sent up a wall to climb: not one given
+    /// up on, nor one sent up long ago that is still not there (that one
+    /// is given up on now).
+    fn may_go_up(&mut self, s: &Sense, h: RegimentHandle) -> bool {
+        if self.off_walls.contains(&h) {
+            return false;
+        }
+        // One that got up is timed afresh if sent again.
+        self.climbing.retain(|c| !s.world.on_wall(c.0));
+        let late = s.now.saturating_sub(WALL_GRACE * gc_sim::TICKS_PER_SECOND);
+        let stuck = self
+            .climbing
+            .iter()
+            .any(|&(c, since)| c == h && since <= late);
+        if stuck {
+            self.climbing.retain(|c| c.0 != h);
+            self.off_walls.push(h);
+        }
+        !stuck
+    }
+
+    /// Whether regiment `h` is one it keeps on its walls.
+    fn mans(&self, h: RegimentHandle) -> bool {
+        self.manning.iter().any(|m| m.0 == h)
+    }
+
+    /// Send more of `army` onto its raised walls nearest `threat`, up to
+    /// [`WALL_MEN`].
+    fn find_wall_men(&mut self, s: &Sense, army: &[&Seen], threat: Vec2) {
+        let Some(st) = s.world.structures() else {
+            return;
+        };
+        let table = st.buildings();
+        let mut walls: Vec<(f32, StructureHandle)> = st
+            .iter()
+            .filter(|v| v.owner == s.party && v.finished())
+            .filter(|v| {
+                table
+                    .get(usize::from(v.building))
+                    .is_some_and(|b| b.role == Role::Wall)
+            })
+            .map(|v| (v2(v.centre()).distance(threat), v.handle))
+            .filter(|&(d, _)| d <= MAN_REACH)
+            .collect();
+        walls.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // Archers first, then foot; never one already in a fight.
+        let mut men: Vec<&Seen> = army
+            .iter()
+            .copied()
+            .filter(|r| !r.engaged && !self.mans(r.handle) && !self.off_walls.contains(&r.handle))
+            .collect();
+        men.sort_by_key(|r| s.view.unit(r).class != Class::Ranged);
+        for r in men {
+            if self.manning.len() >= WALL_MEN {
+                break;
+            }
+            let free = walls
+                .iter()
+                .map(|w| w.1)
+                .filter(|t| !self.manning.iter().any(|m| m.1 == *t))
+                .find(|&t| s.world.man_check(r.handle, t).is_ok());
+            if let Some(t) = free {
+                self.manning.push((r.handle, t, s.now));
+            }
         }
     }
 
@@ -946,6 +1130,17 @@ fn we_hold_heart(s: &Sense) -> bool {
     heart_held_by_enemy(s) == Some(false)
 }
 
+/// Where each enemy regiment it sees on a wall stands, with the first
+/// wall tile it holds: what its foot climb to.
+fn enemy_walls_held(s: &Sense) -> Vec<(Vec2, StructureHandle)> {
+    s.view
+        .regiments
+        .iter()
+        .filter(|r| s.view.hostile(s.party, r.owner) && s.world.on_wall(r.handle))
+        .filter_map(|r| Some((r.pos, *s.world.wall_tiles(r.handle).first()?)))
+        .collect()
+}
+
 /// An enemy regiment worth fighting: not a worker.
 fn is_foe(s: &Sense, r: &Seen) -> bool {
     s.view.hostile(s.party, r.owner) && !s.kit.all_workers.contains(&r.unit)
@@ -953,14 +1148,7 @@ fn is_foe(s: &Sense, r: &Seen) -> bool {
 
 /// The rally point: in front of home, towards the nearest other start.
 fn rally_point(s: &Sense, home: Vec2) -> Vec2 {
-    let toward = s
-        .kit
-        .starts
-        .iter()
-        .filter(|p| p.distance(home) > 30.0)
-        .min_by(|a, b| a.distance(home).total_cmp(&b.distance(home)))
-        .copied()
-        .unwrap_or(home + Vec2::Y);
+    let toward = super::nearest_other_start(s, home).unwrap_or(home + Vec2::Y);
     let p = home + (toward - home).normalize_or(Vec2::Y) * RALLY_OUT;
     s.terrain.clamp(p, 4.0)
 }
@@ -976,6 +1164,11 @@ fn threat_to_home(s: &Sense, army: &[&Seen], home: Option<Vec2>) -> Option<(Vec2
     let mine: Vec<(Vec2, bool)> = st
         .iter()
         .filter(|v| v.owner == s.party)
+        .filter(|v| {
+            st.buildings()
+                .get(usize::from(v.building))
+                .is_none_or(|b| !spymaster::is_works(b.role))
+        })
         .map(|v| {
             let at = v2(v.centre());
             (at, home.is_some_and(|h| h.distance(at) <= THREAT))

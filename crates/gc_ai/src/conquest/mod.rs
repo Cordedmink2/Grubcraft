@@ -60,6 +60,9 @@ pub struct Sense<'a> {
     pub focus: Option<u8>,
     /// When its Sovereign's next timing push sets out.
     pub push: Option<u32>,
+    /// Its personality's caution, 0 to 1: how early and how much it
+    /// fortifies.
+    pub caution: f32,
 }
 
 impl Sense<'_> {
@@ -86,6 +89,24 @@ impl Sense<'_> {
             group,
         }
     }
+}
+
+/// A start further than this from home, tiles, is someone else's.
+const OTHER_START: f32 = 30.0;
+
+/// The nearest start to `home` that is someone else's: where the nearest
+/// enemy comes from (the rally point and the works face it).
+fn nearest_other_start(s: &Sense, home: Vec2) -> Option<Vec2> {
+    other_starts(s, home).min_by(|a, b| a.distance(home).total_cmp(&b.distance(home)))
+}
+
+/// The starts on the map that are someone else's.
+fn other_starts<'a>(s: &'a Sense, home: Vec2) -> impl Iterator<Item = Vec2> + 'a {
+    s.kit
+        .starts
+        .iter()
+        .copied()
+        .filter(move |p| p.distance(home) > OTHER_START)
 }
 
 /// A Conquest mind's economy and army.
@@ -172,6 +193,7 @@ impl Realm {
             plan: self.plan.opening(self.opening_at(captain.view.tick)),
             focus: None,
             push: None,
+            caution: captain.persona.caution(),
         };
         // A level that adapts reads its enemies' early builds and answers
         // the most pressing.
