@@ -84,3 +84,24 @@ fn the_core_configs_use_exactly_the_committed_masks() {
     c.sort();
     assert_eq!(used, c, "configs and masks differ");
 }
+
+#[test]
+fn every_mask_marks_a_visible_team_region() {
+    // The regression this guards: V-13 shipped with a 0.00% mask (no team colour at all) and four more
+    // were under 0.5% (speckle). Units and heroes need >= 1.5% of the map; buildings >= 0.75%.
+    // Documented weak masks (retexture or hand-paint is a follow-up): V-19 hearth hut (red door banner
+    // only) and B-23 pustule (a few orange veins) -- they pass the floor but read thin on the model.
+    const UNITS: [&str; 7] = ["V-01", "V-03", "V-13", "B-02", "B-03", "B-04", "B-13"];
+    for (name, _, _, px) in masks() {
+        let pct = px.iter().filter(|v| **v == 255).count() as f32 * 100.0 / px.len() as f32;
+        let floor = if UNITS.contains(&name.as_str()) {
+            1.5
+        } else {
+            0.75
+        };
+        assert!(
+            pct >= floor,
+            "{name}: only {pct:.2}% team colour (floor {floor}%)"
+        );
+    }
+}
