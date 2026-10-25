@@ -38,7 +38,7 @@
     (
         name: "Early pressure",
         summary: "Two production buildings on few workers and a small first wave, before you are set up",
-        who: ["The Red Banner", "The Hungering", "The Dissonance"],
+        who: ["The Red Banner", "The Hungering", "The Dissonance", "The Wayfarer King"],
         workers_first: 5,
         producers: 2,
         worker_cap: Some(10),
@@ -64,7 +64,7 @@
     (
         name: "Walls first",
         summary: "Two towers by the hall, then a slower, safer build",
-        who: ["The Iron Lord", "The Grand Chord", "The Long Ledger", "The Auditor"],
+        who: ["The Iron Lord", "The Grand Chord", "The Long Ledger", "The Auditor", "The Oathkeeper"],
         workers_first: 6,
         producers: 1,
         worker_cap: None,

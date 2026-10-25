@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn the_data_file_parses_with_two_per_faction() {
         let all = all();
-        assert_eq!(all.len(), 8);
+        assert_eq!(all.len(), 10);
         for f in Faction::ALL {
             assert_eq!(of_faction(f).count(), 2, "{f:?}");
         }

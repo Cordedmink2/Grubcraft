@@ -50,6 +50,7 @@ pub fn short_name(faction: Faction) -> &'static str {
         Faction::Brood => "Brood",
         Faction::Choir => "Choir",
         Faction::CarrionConcord => "Carrion",
+        Faction::Oathbound => "Oathbound",
     }
 }
 

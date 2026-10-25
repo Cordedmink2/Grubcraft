@@ -72,6 +72,8 @@ impl Style {
             gc_ai::Faction::CarrionConcord => Style::Burn,
             gc_ai::Faction::Choir => Style::Shatter,
             gc_ai::Faction::Brood => Style::Gnaw,
+            // Timber people: they fell like the Clans.
+            gc_ai::Faction::Oathbound => Style::Fell,
         }
     }
 }

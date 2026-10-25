@@ -6132,7 +6132,7 @@ impl Running {
                 continue;
             };
             let style = match faction {
-                gc_ai::Faction::EmberClans => HitStyle::Flesh,
+                gc_ai::Faction::EmberClans | gc_ai::Faction::Oathbound => HitStyle::Flesh,
                 gc_ai::Faction::Brood => HitStyle::Ichor,
                 gc_ai::Faction::Choir => HitStyle::Crystal,
                 // Only the dead, who never rout, bleed ghost-light.

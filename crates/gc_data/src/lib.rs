@@ -54,14 +54,16 @@ pub enum Faction {
     Brood = 1,
     Choir = 2,
     CarrionConcord = 3,
+    Oathbound = 4,
 }
 
 impl Faction {
-    pub const ALL: [Faction; 4] = [
+    pub const ALL: [Faction; 5] = [
         Faction::EmberClans,
         Faction::Brood,
         Faction::Choir,
         Faction::CarrionConcord,
+        Faction::Oathbound,
     ];
 
     /// The faction stored as `v`, or `None` for a number no faction has.
@@ -80,6 +82,7 @@ impl Faction {
             Faction::Brood => "Brood",
             Faction::Choir => "Choir",
             Faction::CarrionConcord => "Carrion Concord",
+            Faction::Oathbound => "Oathbound",
         }
     }
 }

@@ -1,0 +1,313 @@
+// Guide text for the Oathbound (format: docs/17-unit-rosters.md#guide-data,
+// docs/08-ui-ux.md#guide). Numbers are not written here: the Guide reads them
+// from data/rosters/oathbound.ron. Every building and unit in the roster
+// needs an entry (a test checks), summaries are at most 350 characters and
+// taglines at most 80, plain ASCII.
+(
+    faction: Oathbound,
+    buildings: [
+        (
+            name: "Rootwatch Hall",
+            summary: "Your starting base: Seedtenders drop Grub and Marrow here, it trains new Seedtenders, and regiments reinforce beside it. It is Fortified, so rams hit it for triple damage. Upgrade it to the Highhall once income allows; that opens dawnblades, ram riders, Gale Sails and a second hero.",
+            notes: [
+                ("Highhall", "The gate to the mid game: dawnblades, ram riders, Gale Sails and a second hero. It costs Marrow, so claim a vein first."),
+            ],
+            tips: [
+                (icon: Grub, text: "Queue Seedtenders early and put them on the nearest seeps."),
+                (icon: Marrow, text: "Claim a Marrow vein early, since the Highhall upgrade costs Marrow."),
+                (icon: Alarm, text: "Keep wardens close to the hall, since rams hit Fortified halls for triple damage."),
+            ],
+        ),
+        (
+            name: "Highhall",
+            summary: "The Rootwatch Hall's second tier. It keeps working as a hall while it upgrades and raises your supply cap. It unlocks the Ram Yard, Gale Dock and Loomhall and every tier-2 regiment. Upgrade again for the Ribwarden once your army is paying for itself.",
+            notes: [
+                ("Crownhold", "The late game: the Ribwarden, the third hero and the top upgrades. Expensive, so upgrade when you hold a second base."),
+            ],
+            tips: [
+                (icon: Hammer, text: "Upgrade once you can pay 300 Grub and 100 Marrow; the hall keeps working."),
+                (icon: Supply, text: "Upgrade before supply caps your army, since the Highhall adds more supply."),
+                (icon: Sword, text: "Once it stands, queue Dawnblades at the Muster Hall as your shock core."),
+            ],
+        ),
+        (
+            name: "Crownhold",
+            summary: "The final tier of the main building. It raises the supply cap again, lets the Court of Oaths wake the Ribwarden and opens the third hero slot. Nothing is left to upgrade, so spend on armies and defence from here.",
+            notes: [],
+            tips: [
+                (icon: Supply, text: "It adds the most supply of the three tiers, so build it before you cap out."),
+                (icon: Hammer, text: "Spend on towers and walls from here: the Oathbound hold ground best."),
+                (icon: Flag, text: "Wake the Ribwarden at the Court of Oaths once the Crownhold stands."),
+            ],
+        ),
+        (
+            name: "Wayhall",
+            summary: "A cheaper hall for expansions: takes Grub and Marrow and reinforces regiments, but trains nothing and cannot be upgraded. Build one beside a far seep to claim it. It adds a little supply and is the Oathbound's way to take new ground.",
+            notes: [],
+            tips: [
+                (icon: Grub, text: "Put one beside a far seep so Seedtenders do not walk home."),
+                (icon: Alarm, text: "Guard it with a tower, since a lone Wayhall is the first thing raiders hit."),
+                (icon: Supply, text: "It adds 6 supply, which helps when you expand."),
+            ],
+        ),
+        (
+            name: "Hearthhouse",
+            summary: "Housing, and a small Grub drop-off to build beside a seep. Each one adds 10 supply, so raise one before you hit the supply cap. It is small and cheap, so put several behind your walls rather than at the front.",
+            notes: [],
+            tips: [
+                (icon: Supply, text: "Raise one before you hit the supply cap, since each adds 10 supply."),
+                (icon: Grub, text: "It takes Grub, so a Hearthhouse beside a seep shortens the walk."),
+                (icon: Alarm, text: "Keep Hearthhouses back from the front, since raiders will burn them."),
+            ],
+        ),
+        (
+            name: "Grove",
+            summary: "A Grub drop-off to plant beside seeps so Seedtenders walk less. In this first pass it is a Granary: a shorter walk and nothing more. Groves that grow richer as they age are the design intent, but the growth is not built yet.",
+            notes: [],
+            tips: [
+                (icon: Grub, text: "Put one beside each far seep so Seedtenders walk less on every trip."),
+                (icon: Marrow, text: "It takes Grub only, so send Marrow to a Rootwatch Hall or Wayhall."),
+                (icon: Alarm, text: "Keep it behind a tower, since it is soft and burns easily."),
+            ],
+        ),
+        (
+            name: "Muster Hall",
+            summary: "The infantry barracks: wardens and boughbows at tier 1, wayfarers and dawnblades at tier 2. Regiments reinforce beside it, so raise it near the front. It is your first military building and the one you will build most.",
+            notes: [],
+            tips: [
+                (icon: Flag, text: "Place it near the front, since regiments reinforce beside it."),
+                (icon: Spear, text: "Train wardens first to anchor the line, with boughbows kept behind them."),
+                (icon: Sword, text: "Add Dawnblades once the Highhall stands, since they need Marrow as well."),
+            ],
+        ),
+        (
+            name: "Ram Yard",
+            summary: "Trains Ramriders, shock cavalry on great horned rams. Tier 2 and needs Marrow. Regiments reinforce beside it. Cavalry ride down archers, artillery and routing troops; keep wardens nearby for the enemy's own horse.",
+            notes: [],
+            tips: [
+                (icon: Spear, text: "Keep wardens nearby, since the enemy's own horse will come for your riders."),
+                (icon: Charge, text: "Send Ramriders at archers, artillery and routing troops, not into braced spears."),
+                (icon: Marrow, text: "Claim Marrow first, since the Ram Yard and its riders both cost Marrow."),
+            ],
+        ),
+        (
+            name: "Gale Dock",
+            summary: "Builds Gale Sails, the Oathbound's only flyers: fast gliders that scout far and drop fire pots. Tier 2 and needs Marrow. Build one to scout, to hunt workers and artillery, or to burn walls out from under a defender.",
+            notes: [],
+            tips: [
+                (icon: Bow, text: "Scout with Gale Sails, which see 18 tiles; only archers and flyers can answer them."),
+                (icon: Marrow, text: "Save Marrow for it, since the Gale Dock and each Sail both cost Marrow."),
+                (icon: Alarm, text: "Use them to hunt workers and artillery, or to burn walls under a defender."),
+            ],
+        ),
+        (
+            name: "Wrightyard",
+            summary: "Builds Heartwood Rams at tier 1 and Thornthrowers at tier 3, so it is your only siege and artillery. Raise one before you attack a base: rams are how you break Fortified halls, towers and walls.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Build one or two rams before you assault a base; they break Fortified buildings."),
+                (icon: Spear, text: "Escort rams with wardens, since rams cannot fight and cavalry catch them."),
+                (icon: Alarm, text: "Keep Thornthrowers behind a line, since their stones can hit your own troops."),
+            ],
+        ),
+        (
+            name: "Loomhall",
+            summary: "Trains Loomwrights, who weave mending and ward threads over a regiment. Tier 2 and needs Marrow. One Loomwright with a line of wardens heals the line between fights and steadies it in them.",
+            notes: [],
+            tips: [
+                (icon: Heart, text: "Keep a Loomwright with your main line, since its aura heals out of combat."),
+                (icon: Marrow, text: "It costs Marrow, so claim a vein before you queue them."),
+                (icon: Alarm, text: "Loomwrights are fragile, so keep them behind the spears."),
+            ],
+        ),
+        (
+            name: "Court of Oaths",
+            summary: "Hires and revives heroes and holds the Oaths Pledges; each finished Court earns a point of Oaths every 30 seconds. Build it early, since heroes lead your army and Oaths are the Oathbound's faction power. At tier 3 it wakes the Ribwarden.",
+            notes: [],
+            tips: [
+                (icon: Heart, text: "Build it early and revive fallen heroes here, since heroes lead your army."),
+                (icon: Flag, text: "Each finished Court earns Oaths every 30 seconds, so a second Court adds to them."),
+                (icon: Sword, text: "Save Oaths for a decisive fight, since the Briar Hounds fade after 60 seconds."),
+            ],
+        ),
+        (
+            name: "Runeforge",
+            summary: "Researches weapon and armour upgrades. Raise one once your first regiments are out. Upgrades are not designed or built yet, so for now it marks the road your tech will take and nothing more.",
+            notes: [
+                ("Research", "Weapon and armour upgrades are planned for the Runeforge. No research, costs or times are designed or built yet, so nothing can be bought here today."),
+            ],
+            tips: [
+                (icon: Book, text: "Ignore its research for now, since no upgrades are designed or built yet."),
+                (icon: Hammer, text: "It is a Tier 1 building, so it is cheap to raise early."),
+                (icon: Alarm, text: "Keep it behind your walls, since it is Structure and burns."),
+            ],
+        ),
+        (
+            name: "Signal Tower",
+            summary: "Two archers on a tower with a horn: they shoot at ground and air, and reach 32 tiles, further than any regiment but siege. Put one by the hall and one at each far base. Fortified, so rams hit it for triple damage.",
+            notes: [],
+            tips: [
+                (icon: Bow, text: "Put one at each far base, since it shoots at ground and air."),
+                (icon: Alarm, text: "Keep a ram escort away, since rams hit Fortified towers for triple damage."),
+                (icon: Hammer, text: "It is cheap and fast, so raise two by the hall."),
+            ],
+        ),
+        (
+            name: "Spear-Thrower Tower",
+            summary: "A bolt thrower on a tower: one heavy bolt at a time, long reach, ground only. It punishes cavalry and monsters that charge a wall. Tier 2 and needs Marrow. Fortified, so rams hit it for triple damage.",
+            notes: [],
+            tips: [
+                (icon: Charge, text: "Put it where cavalry would charge your wall; one bolt stops a rider."),
+                (icon: Marrow, text: "It costs Marrow, so claim a vein before you build several."),
+                (icon: Alarm, text: "It cannot shoot at air, so keep a Signal Tower beside it."),
+            ],
+        ),
+        (
+            name: "Stone-Hurler Tower",
+            summary: "A stone hurler on a tower: slow heavy stones that smash packed blocks. Ground only. Tier 2 and needs Marrow. Stones burst on a target, so use it to break up a dense attack before it reaches the wall.",
+            notes: [],
+            tips: [
+                (icon: Alarm, text: "It is slow, so it is best against packed blocks, not skirmishers."),
+                (icon: Marrow, text: "It costs Marrow, so claim a vein before you build several."),
+                (icon: Bow, text: "It cannot shoot at air, so keep a Signal Tower beside it."),
+            ],
+        ),
+        (
+            name: "Thornwall",
+            summary: "Level 1 of the Oathbound wall: a hedge of thorned stakes you draw like a wall, at any angle, for 10 Grub a tile. It blocks movement and burns, so fire is its enemy. Raise it to a Stonebough Wall for more toughness.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Draw it like a wall, at any angle. It costs little and goes up fast."),
+                (icon: Alarm, text: "Fire burns it, so keep archers behind it ready to answer a torch."),
+                (icon: Move, text: "It blocks your own troops too, so leave a gap where your line must pass."),
+            ],
+        ),
+        (
+            name: "Stonebough Wall",
+            summary: "Level 2 of the wall: sandstone bound with living boughs, 2.5 times as tough as a Thornwall. Select a Thornwall and press U to raise its stretch. A worker raises it a tile at a time and it stays up meanwhile.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Select a Thornwall and press U to raise its stretch."),
+                (icon: Grub, text: "Each tile costs 15 Grub, paid for the whole stretch up front."),
+                (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further."),
+            ],
+        ),
+        (
+            name: "Crown Wall",
+            summary: "Level 3, the top: a crowned wall with loopholes, 4 times as tough as a Thornwall. Needs a Highhall. Select a Stonebough Wall and press U to raise its stretch. Its twist: a stone falls every 3 s on each regiment hacking at it, and archers on it shoot a quarter faster.",
+            notes: [],
+            tips: [
+                (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),
+                (icon: Alarm, text: "Right-click an enemy raised wall with foot or archers to climb it; spears stop climbers."),
+                (icon: Grub, text: "Each tile costs 20 Grub and 5 Marrow, paid for the whole stretch up front."),
+            ],
+        ),
+        (
+            name: "Oathgate",
+            summary: "A wall segment your side walks through and enemies do not. Select it to set Auto (opens as your regiments march up, shuts 2 s after), Locked (shut to everyone) or Open (anyone can pass). Enemies break it down like any wall.",
+            notes: [],
+            tips: [
+                (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it under attack."),
+                (icon: Hammer, text: "Place it on your own Thornwall and it replaces that stretch."),
+                (icon: Alarm, text: "It is the weak point of a wall, so keep a tower beside it."),
+            ],
+        ),
+        (
+            name: "Oath Stakes",
+            summary: "A line of sharpened stakes you draw like a wall, at any angle, for 4 Grub a tile. Anyone walks through at half pace, but nobody charges through: enemy riders and beasts that run onto it are stopped dead, hurt and disordered.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Draw it like a wall, at any angle. It costs little and goes up fast."),
+                (icon: Spear, text: "Spearmen and archers can plant a free line with Plant stakes (C): stand 10 s."),
+                (icon: Alarm, text: "Ranks that charge into it are stopped dead; keep your own charges off it."),
+            ],
+        ),
+        (
+            name: "Hurdle Barricade",
+            summary: "A line of woven hurdles and baskets you draw like a wall, for 8 Grub a tile. It blocks walking like a wall, and your troops within 2 tiles of it take 30 percent less from arrows and 20 percent less from blows to their front.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Draw it like a wall, at any angle. It costs little and goes up fast."),
+                (icon: Bow, text: "Put your archers and spears within 2 tiles behind it to take the cover."),
+                (icon: Alarm, text: "It blocks your own troops too, so leave a gap where your line must pass."),
+            ],
+        ),
+    ],
+    units: [
+        (
+            name: "Seedtender",
+            tagline: "Worker: gathers Grub and Marrow, builds and repairs.",
+            summary: "The Oathbound's worker. Carries 10 Grub or 5 Marrow a trip to a Rootwatch Hall, Hearthhouse or Grove, and builds and repairs every Oathbound structure. Poor fighters, so keep them out of raids. Train a steady stream early.",
+        ),
+        (
+            name: "Wardens",
+            tagline: "Spear line: shield wall, swears a Stand to hold ground.",
+            summary: "The Oathbound's sturdy spear and shield line. Reach lets the second rank fight, and the Shield Line stops charges cold. A Sworn Stand adds defence while they hold still, so they anchor your front. They lose to archers and heavy infantry.",
+        ),
+        (
+            name: "Boughbows",
+            tagline: "Archers: long volleys, steadied by a Sworn Stand.",
+            summary: "Archers who shoot ground and air. They shred infantry in the open and are steadier standing still, but weak in melee and die to cavalry. Keep them behind the wardens.",
+        ),
+        (
+            name: "Wayfarers",
+            tagline: "Skirmishers: fast, shrug off morale loss.",
+            summary: "Light skirmishers and scouts, fast and hard to break. They harass archers and workers and chase routers. They lose to heavy infantry and cavalry in a straight fight.",
+        ),
+        (
+            name: "Dawnblades",
+            tagline: "Elite heavy infantry: greatswords that break holding lines.",
+            summary: "Elite greatswordsmen with strong attack and defence. Line Breaker adds damage to regiments holding still, and they can swear a Stand of their own. They beat light infantry and spears but fear archers and cavalry.",
+        ),
+        (
+            name: "Ramriders",
+            tagline: "Shock cavalry: huge charge, rides down routers.",
+            summary: "Heavy shock cavalry on great horned rams, with the Oathbound's biggest charge bonus. Ride Down adds damage to routing regiments, so they finish a broken line. Spears and braced lines stop them cold.",
+        ),
+        (
+            name: "Loomwrights",
+            tagline: "Support: mending and ward threads over a regiment.",
+            summary: "A weaver who heals regiments out of combat and steadies them in it with ward threads. Fragile and a priority target, so keep one behind your line. Two Loomwrights do not stack on one regiment.",
+        ),
+        (
+            name: "Gale Sails",
+            tagline: "Flyer: sees 18 tiles, burns structures.",
+            summary: "A fast flying glider that sees 18 tiles instead of the usual 12 and drops fire pots that set structures burning. Fragile, but only archers and other flyers can answer it. Use it to scout, hunt workers and burn walls.",
+        ),
+        (
+            name: "Heartwood Ram",
+            tagline: "Siege: triple damage to Fortified buildings.",
+            summary: "A covered ram that only harms structures (triple against Fortified halls, towers and walls) and takes half damage from ranged volleys. It cannot fight regiments, so escort it with wardens.",
+        ),
+        (
+            name: "Thornthrower",
+            tagline: "Artillery: long-range stones that bleed morale.",
+            summary: "A trebuchet. Each shot bursts over 3 tiles and costs the regiments it hits extra morale. It cannot fire at targets closer than 10 tiles and can hit your own troops, so keep it behind a line.",
+        ),
+        (
+            name: "Ribwarden",
+            tagline: "Monster: terror aura, a rib-bone guardian giant.",
+            summary: "A guardian giant of rib-bone and old timber with huge hit points, crushing blows and a Terror aura that bleeds enemy morale within 10 tiles. Woken at the Court of Oaths at tier 3. Slow, so bring spears to hold it up.",
+        ),
+        (
+            name: "Briar Hounds",
+            tagline: "Summoned hounds: last 60 s and never rout.",
+            summary: "Called by Waking the Ribs at a Court of Oaths or hero. Fast thorn hounds that never rout, cost no supply and fade after 60 seconds. They cannot be trained, so spend Oaths when a fight needs them.",
+        ),
+        (
+            name: "The Regent-Marshal",
+            tagline: "Hero commander: rallies routers, bolsters defence.",
+            summary: "A commander who holds the army together: the horn ends routs, his aura raises melee defence, and the Banner of the Fallen Crown makes every Oathbound regiment steadier and faster. He can lose to a focused charge.",
+        ),
+        (
+            name: "The Oakmantle Huntress",
+            tagline: "Hero ranger: long shots, snares and a hidden cloak.",
+            summary: "A ranger with a long bow. Longshot punishes a single regiment, Snare Trail roots a block, and her cloak hides her when still. Rain of Boughs rakes a whole area. Fragile in melee, so keep her behind the line.",
+        ),
+        (
+            name: "The Loomkeeper",
+            tagline: "Hero mystic: mending, binding and far-sight.",
+            summary: "A mystic who mends regiments, binds a regiment in place with an Oath-Knot, and reveals the map with Far-Sight. Her ultimate wakes rib-bone hounds to fight beside her. Fragile, so keep her behind the line.",
+        ),
+    ],
+)

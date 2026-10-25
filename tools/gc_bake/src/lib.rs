@@ -29,6 +29,7 @@ pub const DATA_FILES: &[&str] = &[
     "rosters/brood.ron",
     "rosters/choir.ron",
     "rosters/carrion_concord.ron",
+    "rosters/oathbound.ron",
 ];
 
 #[derive(Debug)]
@@ -64,6 +65,7 @@ impl From<FactionDef> for Faction {
             FactionDef::Brood => Faction::Brood,
             FactionDef::Choir => Faction::Choir,
             FactionDef::CarrionConcord => Faction::CarrionConcord,
+            FactionDef::Oathbound => Faction::Oathbound,
         }
     }
 }
@@ -341,7 +343,7 @@ mod tests {
         let hex: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,
-            "77b5ef4c2393a0dd581e1bc2708115a71de51cf56e92bc406ae0bbffe33e6ff6"
+            "f03b4ac67b7be4a2ed1fede7177da7d91d45f0b993c83b6618bf6d0c2ed9b760"
         );
     }
 
@@ -370,7 +372,7 @@ mod tests {
     #[test]
     fn bakes_rosters_in_faction_order() {
         let baked = bake(&temp_data(ONE)).unwrap();
-        assert_eq!((baked.buildings, baked.conquest_units), (4, 4));
+        assert_eq!((baked.buildings, baked.conquest_units), (5, 5));
         let store = aligned(&baked.pack);
         let bytes = &bytemuck::cast_slice::<u128, u8>(&store)[..baked.pack.len()];
         let pack = Pack::parse(bytes).unwrap();

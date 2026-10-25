@@ -34,6 +34,7 @@ pub fn faction_difficulty(f: Faction) -> &'static str {
         Faction::Brood => "medium",
         Faction::Choir => "hard",
         Faction::CarrionConcord => "medium-hard",
+        Faction::Oathbound => "medium",
     }
 }
 

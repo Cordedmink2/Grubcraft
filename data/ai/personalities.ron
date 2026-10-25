@@ -86,4 +86,22 @@
         doctrines: (hold_the_line: 90, hammer_and_anvil: 25, refused_flank: 35, skirmish_screen: 30, ambush: 15),
         army: Defensive,
     ),
+    (
+        name: "The Oathkeeper",
+        faction: Oathbound,
+        summary: "Plants a Stand behind walls and towers, lets you break on them, then counterattacks",
+        aggression: 25, caution: 75, patience: 85, cunning: 30, opportunism: 45,
+        greed: 30, honour: 95, vengefulness: 35,
+        doctrines: (hold_the_line: 90, hammer_and_anvil: 50, refused_flank: 35, skirmish_screen: 40, ambush: 20),
+        army: Defensive,
+    ),
+    (
+        name: "The Wayfarer King",
+        faction: Oathbound,
+        summary: "A mobile host of riders and skirmishers that strikes the flank, then withdraws behind its line",
+        aggression: 60, caution: 40, patience: 35, cunning: 75, opportunism: 70,
+        greed: 40, honour: 70, vengefulness: 55,
+        doctrines: (hold_the_line: 45, hammer_and_anvil: 75, refused_flank: 60, skirmish_screen: 70, ambush: 50),
+        army: Balanced,
+    ),
 ]

@@ -17,6 +17,7 @@ const ROSTERS: &[(&str, FactionDef)] = &[
     ("brood.ron", FactionDef::Brood),
     ("choir.ron", FactionDef::Choir),
     ("carrion_concord.ron", FactionDef::CarrionConcord),
+    ("oathbound.ron", FactionDef::Oathbound),
 ];
 
 fn data_dir() -> PathBuf {
@@ -323,9 +324,11 @@ fn live_unit_stats_match_the_rosters() {
 
 /// Every building besides the main building that adds supply, and how much,
 /// as docs/04-economy.md lists it.
-const SUPPLY: [(&str, u8); 6] = [
+const SUPPLY: [(&str, u8); 8] = [
     ("Farmstead", 10),
+    ("Hearthhouse", 10),
     ("Outpost Hall", 6),
+    ("Wayhall", 6),
     ("Pustule", 8),
     ("Resonator", 4),
     ("Siphon", 4),

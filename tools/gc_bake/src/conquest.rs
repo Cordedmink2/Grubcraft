@@ -13,12 +13,16 @@ use crate::{BakeError, invalid, name_bytes, to_fx, to_ticks, unit_record};
 
 /// The roster files, relative to the data directory, in `Faction` order, with
 /// the faction each must name.
-pub(crate) const ROSTER_FILES: [(&str, FactionDef); 4] = [
+pub(crate) const ROSTER_FILES: [(&str, FactionDef); 5] = [
     ("rosters/ember_clans.ron", FactionDef::EmberClans),
     ("rosters/brood.ron", FactionDef::Brood),
     ("rosters/choir.ron", FactionDef::Choir),
     ("rosters/carrion_concord.ron", FactionDef::CarrionConcord),
+    ("rosters/oathbound.ron", FactionDef::Oathbound),
 ];
+
+/// The Oathbound meter's name in the roster; it bakes as the Honor meter.
+const OATHS_METER: &str = "Oaths";
 
 /// The passive ability that gives a unit the discipline trait
 /// (`WEAPON_DISCIPLINE`).
@@ -188,6 +192,9 @@ fn power_record(
                 .ok_or_else(|| bad(&format!("{n} is not a summoned unit")))?,
         ),
     };
+    // The Oathbound's Oaths are paid from the Honor machinery (docs/38): the
+    // roster says "Oaths", the simulation's meter is Honor.
+    let meter = if meter == OATHS_METER { "Honor" } else { meter };
     let meter = match cq::METER_NAMES.iter().position(|&n| n == meter) {
         _ if effect == cq::POWER_NOT_BUILT => cq::METER_NOT_BUILT,
         Some(m) if m > 0 => m as u8,

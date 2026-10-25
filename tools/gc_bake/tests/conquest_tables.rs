@@ -107,6 +107,7 @@ fn starting_state_matches_the_economy_doc() {
         // docs/04-economy.md, "Starting state (Conquest)".
         for (name, count) in [
             ("Hands", 5),
+            ("Seedtender", 5),
             ("Gnawer", 4),
             ("Tuner", 3),
             ("Ledger Clerk", 4),
@@ -125,7 +126,7 @@ fn starting_state_matches_the_economy_doc() {
             .iter()
             .map(|u| u32::from(u.start_count))
             .sum();
-        assert_eq!(starters, 5 + 4 + 3 + 4 + 1);
+        assert_eq!(starters, 5 + 5 + 4 + 3 + 4 + 1);
     });
 }
 
@@ -276,14 +277,29 @@ fn formation_discipline_bakes_as_a_unit_trait() {
             .filter(|u| u.stats.discipline())
             .map(|u| u.stats.name())
             .collect();
-        assert_eq!(with, ["Yari Ashigaru", "Yumi Ashigaru", "Katana Samurai"]);
+        // The Oathbound's Sworn Stand is the same trait (data-only first pass).
+        assert_eq!(
+            with,
+            [
+                "Yari Ashigaru",
+                "Yumi Ashigaru",
+                "Katana Samurai",
+                "Wardens",
+                "Boughbows",
+                "Dawnblades"
+            ]
+        );
         for u in data.conquest_units {
             assert_eq!(
                 u.stats.weapons & WEAPON_DISCIPLINE != 0,
                 u.stats.discipline()
             );
             if u.stats.discipline() {
-                assert_eq!(u.stats.faction(), Faction::EmberClans, "{}", u.stats.name());
+                assert!(
+                    matches!(u.stats.faction(), Faction::EmberClans | Faction::Oathbound),
+                    "{}",
+                    u.stats.name()
+                );
             }
         }
         // Field Battles read the same trait from `units.ron`.
@@ -302,7 +318,10 @@ fn every_other_faction_meter_ability_is_not_built_yet() {
     with_real_data(|data| {
         let mut others = 0;
         for p in data.powers {
+            // The Clans' Edicts and the Oathbound's built Pledges (Levy,
+            // Rally to the Banner, Waking the Ribs) are built; the rest are not.
             if p.faction() == Faction::EmberClans
+                || (p.faction() == Faction::Oathbound && p.built())
                 || p.name() == "Overclock"
                 || p.name() == "Phase Shift"
             {

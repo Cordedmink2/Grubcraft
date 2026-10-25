@@ -423,4 +423,5 @@ pub enum FactionDef {
     Brood,
     Choir,
     CarrionConcord,
+    Oathbound,
 }

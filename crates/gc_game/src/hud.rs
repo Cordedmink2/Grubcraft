@@ -1799,6 +1799,8 @@ fn faction_dye(f: gc_ai::Faction) -> [u8; 3] {
         gc_ai::Faction::Brood => gc_ui::ui::theme::WODE,
         gc_ai::Faction::Choir => gc_ui::ui::theme::WOAD,
         gc_ai::Faction::CarrionConcord => [112, 84, 120, 255],
+        // Moss green: the Oathbound's timber-and-oak palette.
+        gc_ai::Faction::Oathbound => [84, 120, 78, 255],
     };
     [r, g, b]
 }

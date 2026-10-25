@@ -486,6 +486,7 @@ fn worker_of(faction: Faction) -> &'static str {
         Faction::CarrionConcord => "Ledger Clerk",
         Faction::Choir => "Tuner",
         Faction::Brood => "Gnawer",
+        Faction::Oathbound => "Seedtender",
     }
 }
 

@@ -18,7 +18,13 @@ fn entries() -> Vec<Entry> {
 #[test]
 fn every_unit_and_hero_is_in_the_catalog_in_faction_order() {
     let mut expected = 0;
-    for file in ["ember_clans", "brood", "choir", "carrion_concord"] {
+    for file in [
+        "ember_clans",
+        "brood",
+        "choir",
+        "carrion_concord",
+        "oathbound",
+    ] {
         let path = data_dir().join("rosters").join(format!("{file}.ron"));
         let roster: Roster = ron::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         expected += roster.units.len() + roster.heroes.len();
@@ -28,7 +34,7 @@ fn every_unit_and_hero_is_in_the_catalog_in_faction_order() {
     let factions: Vec<u8> = all.iter().map(|e| e.faction).collect();
     assert!(factions.windows(2).all(|w| w[0] <= w[1]));
     assert_eq!(factions.first(), Some(&0));
-    assert_eq!(factions.last(), Some(&3));
+    assert_eq!(factions.last(), Some(&4));
 }
 
 #[test]
