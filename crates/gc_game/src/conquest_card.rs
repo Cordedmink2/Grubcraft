@@ -1125,8 +1125,8 @@ mod tests {
             assert_eq!(card((true, false), upgrade_of(&table, up))[SLOT_LAST], None);
         }
         assert_eq!(
-            seen, 3,
-            "a gate each for the Clans, the Concord and the Brood"
+            seen, 4,
+            "a gate each for the Clans, the Concord, the Brood and the Oathbound"
         );
         assert!(GateMode::ALL.len() < SLOT_LAST);
     }

@@ -183,6 +183,59 @@ mod tests {
         /// to go while they were near.
         pub raids: u32,
         pub raid_kills: u32,
+        /// The most works it had standing at once over the match, by kind.
+        pub works: Works,
+    }
+
+    /// Works a side has standing (finished or going up), by kind.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct Works {
+        pub walls: u32,
+        pub gates: u32,
+        pub barricades: u32,
+        pub stakes: u32,
+        pub traps: u32,
+        pub bridges: u32,
+    }
+
+    impl Works {
+        /// Side `p`'s works now.
+        fn of(world: &World, p: PlayerId) -> Works {
+            use gc_sim::structures::{GATE, Role};
+            let mut w = Works::default();
+            let Some(st) = world.structures() else {
+                return w;
+            };
+            let table = st.buildings();
+            for v in st.iter().filter(|v| v.owner == p) {
+                let Some(b) = table.get(usize::from(v.building)) else {
+                    continue;
+                };
+                let n = match b.role {
+                    Role::Wall if b.flags & GATE != 0 => &mut w.gates,
+                    Role::Wall => &mut w.walls,
+                    Role::Barricade => &mut w.barricades,
+                    Role::Stakes => &mut w.stakes,
+                    Role::Trap => &mut w.traps,
+                    Role::Bridge => &mut w.bridges,
+                    _ => continue,
+                };
+                *n += 1;
+            }
+            w
+        }
+
+        /// The most of each kind in either.
+        fn most(self, o: Works) -> Works {
+            Works {
+                walls: self.walls.max(o.walls),
+                gates: self.gates.max(o.gates),
+                barricades: self.barricades.max(o.barricades),
+                stakes: self.stakes.max(o.stakes),
+                traps: self.traps.max(o.traps),
+                bridges: self.bridges.max(o.bridges),
+            }
+        }
     }
 
     /// A headless Conquest match played to its end (or the time limit).
@@ -229,7 +282,7 @@ mod tests {
             let lens: String = self.lens.iter().map(|l| format!("\n  {l}")).collect();
             format!(
                 "side {p} {:?}: bank {}/{}, supply {}/{}, {} buildings, {} regiments, \
-                 {} orders ({} economy)\n    {}{lens}",
+                 {} orders ({} economy), most works {:?}\n    {}{lens}",
                 self.faction,
                 b.grub,
                 b.marrow,
@@ -239,6 +292,7 @@ mod tests {
                 self.regiments,
                 self.orders,
                 self.clicks,
+                self.works,
                 self.summary
             )
         }
@@ -263,6 +317,7 @@ mod tests {
                 .and_then(|r| r.marshal.scout.first_enemy_start_looked_at()),
             raids: mind.realm().map_or(0, |r| r.marshal.raider.raids()),
             raid_kills: mind.realm().map_or(0, |r| r.marshal.raider.kills()),
+            works: Works::of(world, p),
         }
     }
 
@@ -344,11 +399,17 @@ mod tests {
         let every = 120 * TICKS_PER_SECOND;
         let mut cmds = Vec::new();
         let mut noted = vec![0u32; factions.len()];
+        let mut works = vec![Works::default(); factions.len()];
         while world.verdict().is_none() && world.tick_count() < end {
             cmds.clear();
             minds.tick(&world, &mut cmds);
             world.tick(&cmds);
             let t = world.tick_count();
+            if t.is_multiple_of(10 * TICKS_PER_SECOND) {
+                for (p, w) in works.iter_mut().enumerate() {
+                    *w = w.most(Works::of(&world, p as PlayerId));
+                }
+            }
             if journal {
                 for (p, last) in noted.iter_mut().enumerate() {
                     let Some(m) = minds.get(p as PlayerId) else {
@@ -384,7 +445,11 @@ mod tests {
             sides: factions
                 .iter()
                 .enumerate()
-                .map(|(p, &f)| standing(&world, &minds, p as PlayerId, f))
+                .map(|(p, &f)| {
+                    let mut s = standing(&world, &minds, p as PlayerId, f);
+                    s.works = s.works.most(works[p]);
+                    s
+                })
                 .collect(),
         }
     }
@@ -552,7 +617,7 @@ mod tests {
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_lens_panel_shows_its_economy_belief_and_plan() {
         let factions = [Faction::EmberClans, Faction::Choir];
-        let played = play(0, &factions, &[Difficulty::Veteran], 7, 8);
+        let played = play(0, &factions, &[Difficulty::Veteran], 8, 8);
         let mut weighed = false;
         for (p, side) in played.sides.iter().enumerate() {
             let find = |label: &str| {
@@ -578,7 +643,7 @@ mod tests {
         }
         // By eight minutes the armies have met, and somebody weighed up
         // the other's.
-        assert!(weighed, "{:#?}", played.sides[0].lens);
+        assert!(weighed, "{}", played.report());
     }
 
     /// A General's scout comes to look at the enemy's start within the
@@ -635,6 +700,48 @@ mod tests {
         for side in &played.sides {
             assert_eq!(side.raids, 0);
             assert!(side.lens.iter().all(|l| !l.starts_with("  raid    ")));
+        }
+    }
+
+    /// Generals fortify (docs/26-fortifications.md, stage 8): in a
+    /// one-on-one on Ribcage Pass some side draws a front wall with a gate,
+    /// a barricade at its rally point and traps on the approach; a
+    /// Veteran puts up field works at most, and no walls or traps.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_generals_wall_and_trap_veterans_only_field_works() {
+        // Traps come last, once Grub piles up: a quick win may come first,
+        // so one of the two games is enough for them.
+        let mut traps = 0;
+        for f in [Faction::EmberClans, Faction::CarrionConcord] {
+            let played = play(0, &[f, f], &[Difficulty::General], 8, 40);
+            let most = played
+                .sides
+                .iter()
+                .fold(Works::default(), |m, s| m.most(s.works));
+            assert!(
+                most.walls >= 5 && most.gates >= 1 && most.barricades >= 1,
+                "{f:?}: {}",
+                played.report()
+            );
+            traps += most.traps;
+        }
+        assert!(traps >= 1, "no traps laid in either game");
+        let played = play(
+            0,
+            &[Faction::CarrionConcord; 2],
+            &[Difficulty::Veteran],
+            8,
+            40,
+        );
+        for side in &played.sides {
+            let w = side.works;
+            assert_eq!(
+                (w.walls, w.gates, w.traps),
+                (0, 0, 0),
+                "{}",
+                played.report()
+            );
         }
     }
 

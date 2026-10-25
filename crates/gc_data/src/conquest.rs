@@ -18,7 +18,7 @@ pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Pack path of the faction powers table (the faction meters' abilities).
 pub const POWERS_PATH: &str = "data/powers";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 11;
+pub const BUILDING_SCHEMA: u32 = 12;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
 pub const CONQUEST_UNIT_SCHEMA: u32 = 5;
@@ -53,10 +53,12 @@ pub enum Role {
     Stakes = 10,
     /// A drawn waist-high barricade (see `gc_sim::fieldworks`).
     Barricade = 11,
+    /// A hidden trap, a tile big (see `gc_sim::traps`).
+    Trap = 12,
 }
 
 impl Role {
-    pub const ALL: [Role; 12] = [
+    pub const ALL: [Role; 13] = [
         Role::Main,
         Role::Outpost,
         Role::Housing,
@@ -69,6 +71,7 @@ impl Role {
         Role::Bridge,
         Role::Stakes,
         Role::Barricade,
+        Role::Trap,
     ];
 
     pub fn from_u8(v: u8) -> Option<Role> {
@@ -146,6 +149,17 @@ pub const TWIST_MENDS: u8 = 2;
 pub const TWIST_SINGS: u8 = 3;
 /// Each melee blow on it hurts the striker.
 pub const TWIST_THORNS: u8 = 4;
+/// [`BuildingRecord::trap`]: what a hidden trap does to the first enemy
+/// regiment onto it (schema 12, docs/26 stage 6).
+pub const TRAP_NONE: u8 = 0;
+/// A spike pit: it hurts the regiment.
+pub const TRAP_PIT: u8 = 1;
+/// Grave-hands: they hold the regiment where it stands.
+pub const TRAP_HANDS: u8 = 2;
+/// A shard mine: it stuns the regiment.
+pub const TRAP_MINE: u8 = 3;
+/// A burrow nest: a regiment of [`BuildingRecord::trap_unit`] bursts out.
+pub const TRAP_NEST: u8 = 4;
 /// The furthest a field, tuning or link reaches, in tiles.
 pub const MAX_REACH_TILES: u8 = 30;
 
@@ -205,8 +219,15 @@ pub struct BuildingRecord {
     pub link_tiles: u8,
     /// A `TWIST_*`: a drawn wall's faction twist (schema 9).
     pub twist: u8,
+    /// A `TRAP_*`: what a hidden trap does (schema 12).
+    pub trap: u8,
+    /// Always 0.
+    pub pad: u8,
+    /// A burrow nest's regiment, as an index into the Conquest unit table;
+    /// 0 for any other building (schema 12).
+    pub trap_unit: u16,
     /// Always 0 (the record is padded to a multiple of 4 bytes).
-    pub pad: [u8; 2],
+    pub pad2: [u8; 2],
 }
 
 impl BuildingRecord {
@@ -513,7 +534,7 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     if b.width == 0 || b.depth == 0 || b.width > MAX_FOOTPRINT || b.depth > MAX_FOOTPRINT {
         return Err("footprint sides are 1 to 5 tiles");
     }
-    if b.flags & !BUILDING_FLAGS != 0 || b.pad != [0; 2] {
+    if b.flags & !BUILDING_FLAGS != 0 || b.pad != 0 || b.pad2 != [0; 2] {
         return Err("unknown building flags");
     }
     if b.twist > TWIST_THORNS {
@@ -531,6 +552,21 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
         && (b.flags != BUILDING_LINE || b.twist != TWIST_NONE || b.upgrades_from != NONE)
     {
         return Err("a bridge or field work is drawn as a line, and is nothing more");
+    }
+    if b.trap > TRAP_NEST || (b.role == Role::Trap as u8) != (b.trap != TRAP_NONE) {
+        return Err("a trap, and only a trap, has a known trap kind");
+    }
+    if b.trap != TRAP_NEST && b.trap_unit != 0 {
+        return Err("only a burrow nest names a unit");
+    }
+    if b.trap != TRAP_NONE
+        && ((b.width, b.depth) != (1, 1)
+            || b.flags != 0
+            || b.twist != TWIST_NONE
+            || b.upgrades_from != NONE
+            || b.attack_range != 0)
+    {
+        return Err("a trap is a tile big, and nothing more");
     }
     if b.flags & (BUILDING_PASS | BUILDING_GROWN) != 0 && b.flags & BUILDING_LINE == 0 {
         return Err("only a wall drawn as a line is walked through or grown");
@@ -663,7 +699,7 @@ mod tests {
     #[test]
     fn record_layouts_are_stable() {
         // Changing these means bumping the schemas.
-        assert_eq!(size_of::<BuildingRecord>(), 68);
+        assert_eq!(size_of::<BuildingRecord>(), 72);
         assert_eq!(align_of::<BuildingRecord>(), 4);
         assert_eq!(size_of::<ConquestUnitRecord>(), 96);
         assert_eq!(align_of::<ConquestUnitRecord>(), 4);

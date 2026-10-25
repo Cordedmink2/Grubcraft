@@ -866,7 +866,8 @@ mod tests {
     #[test]
     fn every_faction_opens_with_its_hall_workers_and_stores() {
         let data = data();
-        let map = make_map(1, 0);
+        // A six-start Wilds map: the four-player Teeth cannot seat five.
+        let map = make_map(2, 0);
         let factions = Faction::ALL;
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -1167,14 +1168,14 @@ mod tests {
             s.seen_by(0)
         };
         assert!(seen(0), "you see your own Hive");
-        let plain = crate::land::sources(&world, buildings::shown_to(0, false), &table);
+        let plain = crate::land::sources(&world, buildings::shown_to(&table, 0, false), &table);
         assert!(plain.iter().any(|s| s.centre == at(&mine)));
         assert_eq!(
             plain.iter().any(|s| s.centre == at(&theirs)),
             seen(1),
             "no land in the fog"
         );
-        let all = crate::land::sources(&world, buildings::shown_to(0, true), &table);
+        let all = crate::land::sources(&world, buildings::shown_to(&table, 0, true), &table);
         assert!(all.iter().any(|s| s.centre == at(&theirs)));
         assert!(all.len() > plain.len() || seen(1));
     }
@@ -1196,7 +1197,7 @@ mod tests {
             let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
             let opening = opening(&data, &table, &map, &world, &factions);
             world.tick(&opening);
-            let all = crate::land::sources(&world, buildings::shown_to(0, true), &table);
+            let all = crate::land::sources(&world, buildings::shown_to(&table, 0, true), &table);
             assert!(!all.is_empty(), "{faction:?} spreads no land");
             assert!(all.iter().all(|s| s.kind == kind), "{faction:?}: {all:?}");
         }

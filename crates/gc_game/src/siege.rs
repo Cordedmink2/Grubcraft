@@ -332,6 +332,8 @@ pub enum Sound {
     Hum,
     /// A Mausoleum Wall is mended.
     Chime,
+    /// A hidden trap goes off.
+    Sprung,
 }
 
 /// A soldier at a building's wall on screen: where he stands, the way he
@@ -828,6 +830,40 @@ impl Siege {
         push_capped(&mut self.falls, MAX_FALLS, k, fall);
         if now {
             self.collapse(look);
+        }
+    }
+
+    /// A hidden trap went off at `at` on ground `y` high (an
+    /// `Event::Sprung`): dust and earth for a pit or a nest, a dark puff
+    /// with bone for grasping hands, glass and sparkle for a mine. Its
+    /// look is dropped, for the trap is gone and did not fall.
+    pub fn sprung(
+        &mut self,
+        structure: StructureHandle,
+        at: Vec2,
+        y: f32,
+        trap: gc_sim::structures::Trap,
+    ) {
+        use gc_sim::structures::Trap;
+        self.forget(structure);
+        let p = up(at, y + 0.1);
+        match trap {
+            Trap::Mine => {
+                self.fx.chips(p, Vec2::ZERO, [190, 236, 250], 6.0, 0.05);
+                self.fx.motes(up(at, y + 0.3), 0.35, [214, 246, 255], 6.0);
+                self.fx.glow_puff(up(at, y + 0.2), [170, 226, 250]);
+                self.noise(Sound::Chime, at);
+            }
+            Trap::Hands => {
+                self.fx.dust_cloud(p, 0.7, 3.0, [54, 44, 50]);
+                self.fx.chips(p, Vec2::ZERO, [226, 218, 194], 3.0, 0.05);
+                self.noise(Sound::Sprung, at);
+            }
+            Trap::Pit | Trap::Nest(_) | Trap::None => {
+                self.fx.dust_cloud(p, 0.8, 4.0, [128, 98, 70]);
+                self.fx.chips(p, Vec2::ZERO, [96, 72, 52], 5.0, 0.07);
+                self.noise(Sound::Sprung, at);
+            }
         }
     }
 

@@ -275,6 +275,18 @@
             flags: [Line],
             effect: "A waist-high barricade of shed husks and resin, drawn out and built in seconds. Nobody walks through it; your troops close behind it take less from arrows and from blows across it.",
         ),
+        (
+            name: "Burrow Nest",
+            role: Trap,
+            tier: 1,
+            cost: (grub: 40, marrow: 0),
+            build_time: 10.0,
+            hp: 60,
+            armour: Living,
+            footprint: (1, 1),
+            trap: Nest("Skitterlings"),
+            effect: "A nest of Skitterlings dug in under the soil, a tile big, hidden from the enemy. When the first enemy regiment steps onto it, a swarm of Skitterlings bursts out beside it and fights for 30 seconds. Then it is gone.",
+        ),
     ],
     units: [
         (

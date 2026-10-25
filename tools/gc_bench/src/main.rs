@@ -471,6 +471,7 @@ fn conquest_six(opts: &Options) -> bool {
         tunes: None,
         links: 0,
         twist: gc_sim::structures::WallTwist::None,
+        trap: gc_sim::structures::Trap::None,
     };
     let buildings = [
         hall,

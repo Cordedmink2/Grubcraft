@@ -73,6 +73,7 @@ fn world() -> World {
         tunes: None,
         links: 0,
         twist: WallTwist::None,
+        trap: gc_sim::structures::Trap::None,
     };
     let stakes = BuildingStats {
         role: Role::Stakes,

@@ -47,6 +47,7 @@ fn building(role: Role, side: u8, flags: u16, attack: Option<TowerAttack>) -> Bu
         tunes: None,
         links: 0,
         twist: gc_sim::structures::WallTwist::None,
+        trap: gc_sim::structures::Trap::None,
     }
 }
 

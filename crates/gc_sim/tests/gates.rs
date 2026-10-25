@@ -40,6 +40,7 @@ fn building(width: u8, depth: u8, flags: u16) -> BuildingStats {
         tunes: None,
         links: 0,
         twist: gc_sim::structures::WallTwist::None,
+        trap: gc_sim::structures::Trap::None,
     }
 }
 

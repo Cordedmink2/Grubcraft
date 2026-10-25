@@ -70,6 +70,9 @@ const SCATTER_RADIUS: f32 = 5.0;
 const SCARE_RISE: f32 = 2.0;
 const SCARE_FALL: f32 = 0.18;
 /// Where a circling crow flies: radius, height and angular speed.
+/// The first crow of a flock perches on the stub of the standard its regiment
+/// left (a pole 0.9 tiles tall, its splinters reaching a little higher).
+const PERCH_HEIGHT: f32 = 0.9;
 const CIRCLE_RADIUS: f32 = 4.5;
 const CIRCLE_HEIGHT: f32 = 4.0;
 const CIRCLE_SPEED: f32 = 0.7;
@@ -298,6 +301,14 @@ impl Aftermath {
         })
     }
 
+    /// Whether the standard a flock was drawn to (the first to fall at its
+    /// centre) is still standing, with its splintered stub for a crow.
+    fn perch_standing(&self, f: &Flock) -> bool {
+        self.standards
+            .iter()
+            .any(|s| s.at == f.at && s.age < STANDARD_SECONDS - STANDARD_FADE)
+    }
+
     /// The standards regiments carry off, as `pose` places each carrier
     /// (its centre and facing, or `None` when it is gone or out of sight):
     /// planted in the rear rank, side by side.
@@ -341,11 +352,12 @@ impl Aftermath {
             if !sees(mid + Vec3::Y * CIRCLE_HEIGHT, SPREAD + CIRCLE_RADIUS * 2.0) {
                 continue;
             }
+            let perch = self.perch_standing(f);
             for k in 0..crows_of(f.dead) {
                 if out.len() >= room {
                     return;
                 }
-                if let Some(b) = crow(f, k, mid.y, &ground) {
+                if let Some(b) = crow(f, k, mid.y, &ground, perch) {
                     out.push(b);
                 }
             }
@@ -366,11 +378,12 @@ impl Aftermath {
             if !sees(mid + Vec3::Y * CIRCLE_HEIGHT, SPREAD + CIRCLE_RADIUS * 2.0) {
                 continue;
             }
+            let perch = self.perch_standing(f);
             for k in 0..crows_of(f.dead) {
                 if out.len() >= room {
                     return;
                 }
-                out.extend(bird(f, k, mid.y, &ground));
+                out.extend(bird(f, k, mid.y, &ground, perch));
             }
         }
     }
@@ -415,9 +428,15 @@ fn crows_of(dead: usize) -> usize {
 /// Crow `k` of flock `s` (whose centre lies at height `floor`), if it is
 /// there: out of sight before it comes and after it leaves, circling as it
 /// arrives, on the ground pecking among the dead, and in the air again
-/// whenever soldiers walk near.
-fn crow(s: &Flock, k: usize, floor: f32, ground: &impl Fn(Vec2) -> f32) -> Option<BoxInstance> {
-    let b = bird(s, k, floor, ground)?;
+/// whenever soldiers walk near. With `perch`, crow 0 sits on the standard.
+fn crow(
+    s: &Flock,
+    k: usize,
+    floor: f32,
+    ground: &impl Fn(Vec2) -> f32,
+    perch: bool,
+) -> Option<BoxInstance> {
+    let b = bird(s, k, floor, ground, perch)?;
     let wings = WING_SPAN * (0.35 + 0.65 * b.flapping);
     Some(BoxInstance {
         pos: b.pos.to_array(),
@@ -449,7 +468,13 @@ pub struct Bird {
     peck: f32,
 }
 
-fn bird(s: &Flock, k: usize, floor: f32, ground: &impl Fn(Vec2) -> f32) -> Option<Bird> {
+fn bird(
+    s: &Flock,
+    k: usize,
+    floor: f32,
+    ground: &impl Fn(Vec2) -> f32,
+    perch: bool,
+) -> Option<Bird> {
     let h = |axis| 0.5 + 0.5 * crate::spread_hash(s.seed, k, axis);
     let comes = CROW_ARRIVE + CROW_GAP * k as f32 * (0.6 + 0.8 * h(1));
     let t = s.age - comes;
@@ -469,7 +494,16 @@ fn bird(s: &Flock, k: usize, floor: f32, ground: &impl Fn(Vec2) -> f32) -> Optio
         (1.0 - smooth(circling, circling + 2.0, t)).max(s.scare)
     };
     let away = gone.max(0.0);
-    let spot = s.at + Vec2::from_angle(TAU * h(3)) * (SPREAD * h(4).sqrt());
+    // Crow 0 comes down on the standard's stub (when it still stands), the
+    // others on the ground among the dead. Crow 0 keeps to the place of the
+    // standard whatever happens to it, so if the standard is dropped (too
+    // many on the field) it only comes down to the ground there.
+    let perched = perch && k == 0;
+    let spot = if k == 0 {
+        s.at
+    } else {
+        s.at + Vec2::from_angle(TAU * h(3)) * (SPREAD * h(4).sqrt())
+    };
     let theta = TAU * h(5) + s.age * CIRCLE_SPEED * (0.8 + 0.4 * h(6));
     let radius = CIRCLE_RADIUS * (0.7 + 0.6 * h(7)) + away * 5.0;
     let ring = s.at + Vec2::from_angle(theta) * radius;
@@ -478,7 +512,14 @@ fn bird(s: &Flock, k: usize, floor: f32, ground: &impl Fn(Vec2) -> f32) -> Optio
     let flapping = (s.age * (8.0 + 3.0 * h(9)) + TAU * h(10)).sin().abs();
     // On the ground he pecks and now and then hops; in the air the wings beat.
     let peck = (s.age * (1.5 + h(11)) + TAU * h(12)).sin();
-    let hop = (s.age * 0.35 + TAU * h(13)).sin().max(0.97) - 0.97;
+    let hop = if perched {
+        0.0
+    } else {
+        (s.age * 0.35 + TAU * h(13)).sin().max(0.97) - 0.97
+    };
+    // Its height over the ground it is above: the stub's top when it sits,
+    // the circle's when aloft, blended with how far aloft it is.
+    let sat = if perched { PERCH_HEIGHT } else { 0.0 };
     let facing = if aloft > 0.5 {
         Vec2::from_angle(theta + TAU / 4.0)
     } else {
@@ -487,7 +528,7 @@ fn bird(s: &Flock, k: usize, floor: f32, ground: &impl Fn(Vec2) -> f32) -> Optio
     Some(Bird {
         pos,
         facing,
-        lift: aloft * (up + floor - ground(pos)) + hop * 12.0,
+        lift: aloft * (up + floor - ground(pos)) + (1.0 - aloft) * sat + hop * 12.0,
         aloft,
         phase: h(15) * 3.0,
         flapping,
@@ -642,10 +683,9 @@ mod tests {
     fn crows_settle_on_the_ground_and_rise_when_soldiers_come() {
         let mut a = after_a_wipe_out();
         a.advance(CROW_ARRIVE + 60.0, std::iter::empty());
-        assert!(
-            crows_at(&a).iter().all(|c| c.lift < 0.5),
-            "settled on the field"
-        );
+        // One sits on the standard's stub; the rest are on the ground.
+        let up = |a: &Aftermath| crows_at(a).iter().filter(|c| c.lift > 0.5).count();
+        assert_eq!(up(&a), 1, "settled on the field, one on the stub");
         let near = [Vec2::new(31.0, 30.0)];
         for _ in 0..10 {
             a.advance(0.2, near.iter().copied());
@@ -657,10 +697,51 @@ mod tests {
         for _ in 0..100 {
             a.advance(0.2, std::iter::empty());
         }
-        assert!(
-            crows_at(&a).iter().all(|c| c.lift < 0.5),
-            "and they settle again once it has passed"
-        );
+        assert_eq!(up(&a), 1, "and they settle again once it has passed");
+    }
+
+    #[test]
+    fn the_first_crow_perches_on_the_standard_while_it_stands() {
+        let mut a = after_a_wipe_out();
+        a.advance(CROW_ARRIVE + 60.0, std::iter::empty());
+        let mut birds = Vec::new();
+        a.birds(flat, |_, _| true, &mut birds, usize::MAX);
+        let perched: Vec<&Bird> = birds.iter().filter(|b| b.lift > 0.5).collect();
+        assert_eq!(perched.len(), 1);
+        assert_eq!(perched[0].pos, Vec2::new(30.0, 30.0), "on the stub");
+        assert_eq!(perched[0].lift, PERCH_HEIGHT);
+        assert_eq!(perched[0].aloft, 0.0);
+        // Over a hill it still sits at the stub: the height is above the
+        // ground it is drawn on, whatever the ground's height.
+        let mut hill = Vec::new();
+        a.birds(|p| 0.3 * p.x, |_, _| true, &mut hill, usize::MAX);
+        let first = hill
+            .iter()
+            .find(|b| b.pos == Vec2::new(30.0, 30.0))
+            .unwrap();
+        assert_eq!(first.lift, PERCH_HEIGHT);
+        assert_eq!(first.aloft, 0.0);
+        // Soldiers walking up flush it with the rest, and it comes back.
+        for _ in 0..10 {
+            a.advance(0.2, [Vec2::new(31.0, 30.0)].into_iter());
+        }
+        let mut up = Vec::new();
+        a.birds(flat, |_, _| true, &mut up, usize::MAX);
+        assert!(up.iter().all(|b| b.aloft > 0.9));
+        for _ in 0..100 {
+            a.advance(0.2, std::iter::empty());
+        }
+        let mut back = Vec::new();
+        a.birds(flat, |_, _| true, &mut back, usize::MAX);
+        assert_eq!(back.iter().filter(|b| b.lift > 0.5).count(), 1);
+        // A standard that is gone leaves no perch: all of them on the ground.
+        a.standards.clear();
+        let mut bare = Vec::new();
+        a.birds(flat, |_, _| true, &mut bare, usize::MAX);
+        assert!(!bare.is_empty() && bare.iter().all(|b| b.lift < 0.5));
+        // ...and the crow that was on it comes down where it sat, it does
+        // not hop off sideways.
+        assert!(bare.iter().any(|b| b.pos == Vec2::new(30.0, 30.0)));
     }
 
     #[test]

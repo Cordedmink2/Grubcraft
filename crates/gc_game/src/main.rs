@@ -2541,7 +2541,7 @@ impl Running {
     fn pick_building(&self, accept: impl Fn(&StructureView) -> bool) -> Option<StructureHandle> {
         let ray = self.cursor_ray()?;
         let hm = &self.heightmap;
-        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
+        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
         buildings::pick(
             &self.world,
             &self.buildings,
@@ -3982,7 +3982,7 @@ impl Running {
             self.last_frame,
             &mut self.renderer,
             &self.world,
-            buildings::shown_to(self.sandbox.side, self.reveal_all),
+            buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all),
             self.heightmap.tiles,
             &self.buildings,
         );
@@ -4121,6 +4121,14 @@ impl Running {
                 |tile| reveal || fog.sees_tile(tile),
                 &mut self.effects,
             );
+            let hm = &self.heightmap;
+            self.ambient.caravans.dust(
+                dt.as_secs_f32() * fx_speed,
+                look.wet.max(look.snow),
+                |p| hm.drawn_height(p.x, p.y),
+                |tile| reveal || fog.sees_tile(tile),
+                &mut self.effects,
+            );
         }
         // Insects follow the effects clock, which stops while paused, so they
         // hang where they are; behind the menu, in the unit viewer and in
@@ -4144,7 +4152,7 @@ impl Running {
             let sun = look.sun_dir().y;
             let dusk = ambient::touches::dusk_of(sun);
             let (reveal, fog) = (self.reveal_all, &self.fog);
-            let shown = buildings::shown_to(self.sandbox.side, reveal);
+            let shown = buildings::shown_to(&self.buildings, self.sandbox.side, reveal);
             for s in (self.world.structures().into_iter()).flat_map(gc_sim::Structures::iter) {
                 let Some(look) = self.siege.look(s.handle).filter(|_| shown(&s)) else {
                     continue;
@@ -4214,7 +4222,7 @@ impl Running {
                     .filter(|r| r.engaged && (reveal || world.sees(viewer, r.handle)))
                     .map(|r| from_fx_vec(r.position))
                     .collect();
-                let shown = buildings::shown_to(viewer, reveal);
+                let shown = buildings::shown_to(&self.buildings, viewer, reveal);
                 let reach = ambient::wildlife::reach(view_distance)
                     + ambient::wildlife::CELL as f32
                     + ambient::wildlife::TAME;
@@ -5931,7 +5939,7 @@ impl Running {
         // Only buildings the viewer is shown, so arrows don't trace hidden
         // ones.
         let world = &self.world;
-        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
+        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
         let dry = |p: Vec2| {
             let ground = heightmap.height_at(p.x, p.y);
             (ground >= water && !buildings::covers(world, shown, p)).then_some(ground)
@@ -6093,6 +6101,21 @@ impl Running {
                         self.siege.forget(structure);
                     }
                 }
+                // A sprung trap bursts for its own side, and for anyone who
+                // sees the regiment that sprang it.
+                Event::Sprung(sprung) => {
+                    let side = self.sandbox.side;
+                    if self.reveal_all
+                        || !self.world.hostile(side, sprung.owner)
+                        || self.world.sees(side, sprung.on)
+                    {
+                        let at = buildings::centre_of(sprung.tile, 1, 1);
+                        let y = self.heightmap.drawn_height(at.x, at.y);
+                        self.siege.sprung(sprung.structure, at, y, sprung.trap);
+                    } else {
+                        self.siege.forget(sprung.structure);
+                    }
+                }
                 Event::Flooded { closed } => flooded = Some(closed),
                 Event::Season { season } => news = Some(season_news(season)),
                 _ => {}
@@ -6158,7 +6181,7 @@ impl Running {
     /// stuck arrows and rubble as boxes, and dust, smoke, fire and sparks as
     /// particles. Their sounds play here too.
     fn push_siege(&mut self, cull: &gc_render::Cull) {
-        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
+        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
         let standing = self
             .world
             .structures()
@@ -6697,7 +6720,7 @@ impl Running {
             &self.buildings,
             ground,
             |p| color_of(parties, p),
-            buildings::shown_to(self.sandbox.side, self.reveal_all),
+            buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all),
             |s| {
                 let art = art.as_ref()?;
                 Some(art.looks.top(art.looks.model_of(s)?))
@@ -6751,7 +6774,7 @@ impl Running {
         );
         buildings::push_haste(
             &self.world,
-            buildings::shown_to(self.sandbox.side, self.reveal_all),
+            buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all),
             haste_glow,
             &mut self.instances,
         );
@@ -6761,7 +6784,7 @@ impl Running {
     /// Hand the renderer the scenery near the camera, minus what stands
     /// under a building the viewer can see.
     fn push_scenery(&mut self, focus: Vec2, distance: f32, cull: &gc_render::Cull) {
-        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
+        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
         let rects = self.world.structures().into_iter().flat_map(|all| {
             all.iter()
                 .filter(shown)
@@ -6855,7 +6878,7 @@ impl Running {
         }
         let reach = scenery::stump_reach(distance);
         let (reveal, fog) = (self.reveal_all, &self.fog);
-        let shown = buildings::shown_to(self.sandbox.side, reveal);
+        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, reveal);
         let mut looks = Vec::new();
         for s in (self.world.structures().into_iter()).flat_map(gc_sim::Structures::iter) {
             let Some(look) = self.siege.look(s.handle).filter(|_| shown(&s)) else {
@@ -7003,7 +7026,7 @@ impl Running {
         };
         let hm = &self.heightmap;
         let ground = |x, z| hm.drawn_height(x, z);
-        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
+        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
         for s in structures.iter().filter(|s| shown(s)) {
             let Some(stats) = self.buildings.stats.get(usize::from(s.building)) else {
                 continue;
@@ -7276,11 +7299,18 @@ impl Running {
                 let Some(pose) = art.clips.pose(model, action, (time + c.phase) * rate) else {
                     continue;
                 };
+                // The cart (the ox too) is pitched to the slope it is on; the
+                // people keep upright.
+                let mut flags = models::pose_flags(pose, 0, false);
+                if c.piece == Piece::Cart {
+                    let tilt = ambient::caravans::tilt_of(|p| ground(p.x, p.y), c.pos, c.facing);
+                    [flags[2], flags[3]] = gc_render::pitch_bytes(tilt);
+                }
                 art.buckets[model * LODS + lod].push(SoldierInstance {
                     pos: c.pos.to_array(),
                     facing: c.facing.to_array(),
                     frames: pose.rows,
-                    flags: models::pose_flags(pose, 0, false),
+                    flags,
                     color: [255, 255, 255, gc_render::TONE_NEUTRAL],
                     lift: 0.0,
                     scale: 1.0,
@@ -7301,7 +7331,7 @@ impl Running {
         let hm = &self.heightmap;
         // As the skinning shader clamps it, so the lift lands where meant.
         let ground = |x, z| hm.drawn_height(x, z);
-        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
+        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
         let time = self.puppets.time();
         for fall in self.siege.sinking() {
             let height = art.looks.top(fall.model);
@@ -7418,7 +7448,7 @@ impl Running {
             return Vec::new();
         };
         let (reveal, fog) = (self.reveal_all, &self.fog);
-        let shown = buildings::shown_to(self.sandbox.side, reveal);
+        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, reveal);
         let mut homes = Vec::new();
         for s in (self.world.structures().into_iter()).flat_map(gc_sim::Structures::iter) {
             let centre = buildings::centre_of(s.tile, s.width, s.depth);
@@ -7465,6 +7495,7 @@ impl Running {
                                 | Role::Bridge
                                 | Role::Stakes
                                 | Role::Barricade
+                                | Role::Trap
                         )
                     ),
                 worker: worker.unwrap_or(0),
@@ -8229,7 +8260,9 @@ fn season_news(season: gc_sim::sky::Season) -> &'static str {
         Season::Spring => "Spring: Grub comes in as usual again, and any ice thaws",
         Season::Summer => "Summer: the woods are dry and catch fire easily",
         Season::Autumn => "Autumn: the harvest is in, and Grub comes in faster",
-        Season::Winter => "Winter: Grub comes in slower, and the shallows freeze unless in flood",
+        Season::Winter => {
+            "Winter: Grub comes in slower, and the shallows freeze over unless in flood: troops march across the ice"
+        }
     }
 }
 

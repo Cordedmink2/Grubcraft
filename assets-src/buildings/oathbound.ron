@@ -1,0 +1,101 @@
+// Oathbound placeholder art, baked into assets/buildings/oathbound.pak by tools/gc_artbake
+// (`cargo run -p gc_artbake --release -- --config assets-src/buildings/oathbound.ron --out assets/buildings/oathbound.pak`).
+// Every source is a `repo:` file (Kenney Castle Kit and CDmir's Alien Bug, both CC0) following
+// docs/16-art-sourcing.md, so the pack bakes on any host. Each entry is a stand-in: when the Meshy asset
+// with the catalogue ID in the comment is made, only the `source` line changes (docs/38-oathbound.md,
+// research catalogue 04). Names are exactly as in data/rosters/oathbound.ron; a building has `#1`..`#3`
+// construction stages and the finished model under its own name, a gatehouse only `#3` and the finished one.
+// Placeholders still to model (they draw as boxes or reuse nothing): see docs/38.
+(
+    models: [
+        (
+            name: "Rootwatch Hall #1",
+            source: "repo:kenney/castle-kit/glb/tower-base.glb",
+            height: 1.31,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+        ),
+        (
+            name: "Rootwatch Hall #2",
+            source: "repo:kenney/castle-kit/glb/tower-square-mid.glb",
+            height: 1.31,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+        ),
+        (
+            name: "Rootwatch Hall #3",
+            source: "repo:kenney/castle-kit/glb/tower-square-top.glb",
+            height: 1.35,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+        ),
+        (
+            name: "Rootwatch Hall",
+            source: "repo:kenney/castle-kit/glb/tower-square-top-roof-high.glb",
+            height: 1.35,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+        ),
+        (
+            name: "Oathgate #1",
+            source: "repo:kenney/castle-kit/glb/gate.glb",
+            height: 0.91,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+        ),
+        (
+            name: "Oathgate #2",
+            source: "repo:kenney/castle-kit/glb/gate.glb",
+            height: 0.91,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+        ),
+        (
+            name: "Oathgate #3",
+            source: "repo:kenney/castle-kit/glb/metal-gate.glb",
+            height: 0.73,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+        ),
+        (
+            name: "Oathgate",
+            source: "repo:kenney/castle-kit/glb/metal-gate.glb",
+            height: 0.73,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+        ),
+        (
+            name: "Warden's Gatehouse #3",
+            source: "repo:kenney/castle-kit/glb/wall-narrow-gate.glb",
+            height: 1.31,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+        ),
+        (
+            name: "Warden's Gatehouse",
+            source: "repo:kenney/castle-kit/glb/wall-narrow-gate.glb",
+            height: 1.31,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+        ),
+        (
+            name: "Seedtender",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 0.7,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+    ],
+)

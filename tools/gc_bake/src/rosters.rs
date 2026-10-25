@@ -64,6 +64,9 @@ pub struct Building {
     /// A faction's top wall level: what it does besides stand there.
     #[serde(default)]
     pub twist: Twist,
+    /// A hidden trap: what it does to the first enemy onto it.
+    #[serde(default)]
+    pub trap: Trap,
     pub effect: String,
 }
 
@@ -76,6 +79,18 @@ pub enum Twist {
     Mends,
     Sings,
     Thorns,
+}
+
+/// A hidden trap's kind (docs/26, stage 6).
+#[derive(Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Trap {
+    #[default]
+    None,
+    Pit,
+    Hands,
+    Mine,
+    /// A regiment of the named unit of its own roster bursts out.
+    Nest(String),
 }
 
 /// The nodes a building tunes, and how far from its edge, in tiles.
@@ -106,6 +121,7 @@ pub enum Role {
     Bridge,
     Stakes,
     Barricade,
+    Trap,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]

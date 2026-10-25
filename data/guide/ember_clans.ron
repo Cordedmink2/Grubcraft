@@ -233,6 +233,16 @@
                 (icon: Alarm, text: "It blocks your own troops too, so leave a gap where your line must pass."),
             ],
         ),
+        (
+            name: "Spike Pit",
+            summary: "A hidden pit under a woven lid, for 15 Grub on one tile. The first enemy regiment to walk onto it falls in: its front rank is hurt and the regiment is thrown into disorder. Your enemies cannot see it, and once it is sprung it is gone.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Built by a worker like any building, on one tile. Nothing can be built on it."),
+                (icon: Alarm, text: "Only you can see it. Enemies never see it, not even in the open."),
+                (icon: Spear, text: "Dig it where a road narrows or at a gap in your walls. Your own troops walk over it safely."),
+            ],
+        ),
     ],
     units: [
         (

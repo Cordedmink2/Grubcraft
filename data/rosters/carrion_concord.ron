@@ -327,6 +327,18 @@
             flags: [Line],
             effect: "A waist-high barricade of coffins and bone crates, drawn out and built in seconds. Nobody walks through it; your troops close behind it take less from arrows and from blows across it.",
         ),
+        (
+            name: "Grave Hands",
+            role: Trap,
+            tier: 1,
+            cost: (grub: 20, marrow: 0),
+            build_time: 8.0,
+            hp: 60,
+            armour: Structure,
+            footprint: (1, 1),
+            trap: Hands,
+            effect: "A shallow grave whose dead wait just under the earth, a tile big, hidden from the enemy. The first enemy regiment onto it is gripped by the ankles and held where it stands for 6 seconds. Then it is gone.",
+        ),
     ],
     units: [
         (

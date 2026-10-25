@@ -171,6 +171,16 @@
                 (icon: Alarm, text: "It blocks your own troops too, so leave a gap where your line must pass."),
             ],
         ),
+        (
+            name: "Shard Mine",
+            summary: "A half-buried shard for 20 Grub on one tile. The first enemy regiment to walk onto it is stunned for 4 seconds: it halts, falls into disorder and cannot move. It needs no power. Your enemies cannot see it, and once it is sprung it is gone.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Built by a worker like any building, on one tile. Nothing can be built on it."),
+                (icon: Alarm, text: "Only you can see it. Enemies never see it, not even in the open."),
+                (icon: Bow, text: "Stun a regiment in front of your line. Your own troops walk over it safely."),
+            ],
+        ),
     ],
     units: [
         (

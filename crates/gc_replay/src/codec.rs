@@ -7,7 +7,7 @@
 //! bumping [`crate::FORMAT`].
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::structures::{Armour, Breaker, Role, TowerAttack, VEINS, WallTwist};
+use gc_sim::structures::{Armour, Breaker, Role, TowerAttack, Trap, VEINS, WallTwist};
 use gc_sim::{
     BuildingStats, Command, ConquestUnit, Formation, Mass, Meter, NodeSetup, PlayerCommand,
     PowerEffect, PowerStats, PowerTarget, RegimentHandle, Resource, StructureHandle, TradePost,
@@ -125,6 +125,10 @@ impl Writer {
         }
         self.u8(b.links);
         self.u8(b.twist as u8);
+        self.u8(b.trap.kind());
+        if let Trap::Nest(unit) = b.trap {
+            self.var(u64::from(unit));
+        }
     }
 
     pub fn power(&mut self, p: &PowerStats) {
@@ -657,6 +661,7 @@ impl<'a> Reader<'a> {
             tunes: None,
             links: 0,
             twist: gc_sim::structures::WallTwist::None,
+            trap: Trap::None,
         };
         if format >= 19 {
             b.field = self.u8()?;
@@ -669,6 +674,15 @@ impl<'a> Reader<'a> {
             }
             if format >= 42 {
                 b.twist = WallTwist::from_u8(self.u8()?)?;
+            }
+            if format >= 45 {
+                let kind = self.u8()?;
+                let unit = if kind == Trap::Nest(0).kind() {
+                    self.var_as()?
+                } else {
+                    0
+                };
+                b.trap = Trap::from_kind(kind, unit)?;
             }
         } else if b.flags & VEINS != 0 {
             // Before fields were data, root-veins reached 15 tiles from a
@@ -984,6 +998,7 @@ mod tests {
             tunes: None,
             links: 0,
             twist: gc_sim::structures::WallTwist::None,
+            trap: gc_sim::structures::Trap::None,
         };
         let drop_off_marrow = 2;
         let trade_post = gc_sim::structures::TRADE_POST;
@@ -997,8 +1012,9 @@ mod tests {
                 let mut r = Reader::new(&w.buf);
                 let read = r.building(format).expect("it reads");
                 assert_eq!(read.flags, flags, "format {format}");
-                // All but the twist byte, which came in format 42.
-                assert_eq!(r.remaining(), 1, "format {format}");
+                // All but the twist and trap bytes, which came in formats
+                // 42 and 45.
+                assert_eq!(r.remaining(), 2, "format {format}");
             }
         }
         // A flag past a byte takes two.

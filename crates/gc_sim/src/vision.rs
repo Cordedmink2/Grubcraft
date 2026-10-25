@@ -455,7 +455,9 @@ impl Vision {
         if self.fog
             && let Some(s) = &structures
         {
-            self.posts.extend(s.standing().map(|slot| Post {
+            // A hidden trap keeps no watch, and nobody sees it from one.
+            let watching = s.standing().filter(|&slot| !s.stats_of(slot).hidden());
+            self.posts.extend(watching.map(|slot| Post {
                 slot,
                 owner: s.owner_of(slot),
                 block: s.block(slot),

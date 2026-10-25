@@ -111,7 +111,13 @@ pub(crate) fn bake_rosters(data_dir: &Path, units: &[UnitRecord]) -> Result<Tabl
             }
         }
         for b in &r.buildings {
-            let record = building_record(file, faction, b, &building_at[i], &r.starting_buildings)?;
+            let record = building_record(
+                file,
+                faction,
+                b,
+                (&building_at[i], &unit_at[i]),
+                &r.starting_buildings,
+            )?;
             cq::validate_building(&record, buildings).map_err(|why| invalid(file, &b.name, why))?;
             building_records.push(record);
         }
@@ -250,7 +256,7 @@ fn building_record(
     file: &Path,
     faction: Faction,
     b: &rosters::Building,
-    building_at: &Index,
+    (building_at, unit_at): (&Index, &Index),
     starting: &[String],
 ) -> Result<BuildingRecord, BakeError> {
     let bad = |why: String| invalid(file, &b.name, why);
@@ -268,6 +274,18 @@ fn building_record(
             .get(from.as_str())
             .ok_or_else(|| bad(format!("upgrades unknown building {from}")))?,
         None => cq::NONE,
+    };
+    let (trap, trap_unit) = match &b.trap {
+        rosters::Trap::None => (cq::TRAP_NONE, 0),
+        rosters::Trap::Pit => (cq::TRAP_PIT, 0),
+        rosters::Trap::Hands => (cq::TRAP_HANDS, 0),
+        rosters::Trap::Mine => (cq::TRAP_MINE, 0),
+        rosters::Trap::Nest(n) => (
+            cq::TRAP_NEST,
+            *unit_at
+                .get(n.as_str())
+                .ok_or_else(|| bad(format!("its nest names no unit {n}")))?,
+        ),
     };
     Ok(BuildingRecord {
         name: name_bytes(&b.name).map_err(bad)?,
@@ -311,7 +329,10 @@ fn building_record(
             rosters::Twist::Sings => cq::TWIST_SINGS,
             rosters::Twist::Thorns => cq::TWIST_THORNS,
         },
-        pad: [0; 2],
+        trap,
+        pad: 0,
+        trap_unit,
+        pad2: [0; 2],
     })
 }
 
@@ -400,6 +421,7 @@ fn building_role(r: rosters::Role) -> cq::Role {
         rosters::Role::Bridge => cq::Role::Bridge,
         rosters::Role::Stakes => cq::Role::Stakes,
         rosters::Role::Barricade => cq::Role::Barricade,
+        rosters::Role::Trap => cq::Role::Trap,
     }
 }
 

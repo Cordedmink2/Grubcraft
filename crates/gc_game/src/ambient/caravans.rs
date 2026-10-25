@@ -12,7 +12,9 @@
 //! the renderer.
 
 use gc_map::Map;
-use glam::Vec2;
+use glam::{Vec2, Vec3};
+
+use crate::effects;
 
 use super::hamlets::{Hamlets, Rng, Size, route_clear};
 use super::villagers::{Eyes, Kind};
@@ -36,6 +38,18 @@ const WALK_SECONDS: f32 = 2.0;
 /// The cart's pace, tiles a second: a wheel rolls its rim in one turn, so the
 /// wheels roll without slipping.
 pub const CART_PACE: f32 = std::f32::consts::TAU * WHEEL_RADIUS / WALK_SECONDS;
+/// Where the cart's wheels touch the ground, from its middle: this far
+/// behind and to each side (`oxcart.py`'s hubs).
+const WHEEL_BACK: f32 = 0.62;
+const WHEEL_SIDE: f32 = 0.8;
+/// The pace a wheel's dust is thrown up at: more than the cart's own, as a
+/// soldier's foot throws it, for a puff that shows beside the ox's.
+const DUST_PACE: f32 = 3.0;
+/// Ground wetter than this (`Look::wet`) is mud, not dust.
+const DUST_UNTIL_WET: f32 = 0.35;
+/// How far either side of its middle the ground is looked at to pitch a cart
+/// to a slope, in tiles.
+const TILT_SPAN: f32 = 1.4;
 /// How fast a caravan turns about at the end of its route, radians a second:
 /// slowly enough that the people on the arc round it walk at their pace.
 const TURN_CART: f32 = 0.65;
@@ -132,6 +146,9 @@ pub struct Seen {
     pub pos: Vec2,
     pub facing: Vec2,
     pub moving: bool,
+    /// Whether it is going somewhere (not turning about on the spot, where
+    /// it is `moving` but nothing travels): for what the wheels throw up.
+    pub rolling: bool,
     /// How fast to play the Walk clip, so the strides match the pace.
     pub rate: f32,
     pub phase: f32,
@@ -286,6 +303,53 @@ fn near_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     p.distance(a + ab * t)
 }
 
+/// How far a cart at `pos` facing `facing` is pitched by the ground under
+/// it, in radians, forward end up when it climbs: the ground's slope along
+/// the cart, over a stretch about as long as the cart and ox.
+pub fn tilt_of(ground: impl Fn(Vec2) -> f32, pos: Vec2, facing: Vec2) -> f32 {
+    let (behind, ahead) = (
+        ground(pos - facing * TILT_SPAN),
+        ground(pos + facing * TILT_SPAN),
+    );
+    ((ahead - behind) / (2.0 * TILT_SPAN)).atan()
+}
+
+impl Seen {
+    /// Where the two wheels of a cart (this piece) touch the ground.
+    fn wheels(&self) -> [Vec2; 2] {
+        let side = Vec2::new(-self.facing.y, self.facing.x);
+        let back = self.pos - self.facing * WHEEL_BACK;
+        [back + side * WHEEL_SIDE, back - side * WHEEL_SIDE]
+    }
+}
+
+impl Caravans {
+    /// Dust off the wheels of the carts on the move, `dt` seconds of effects
+    /// time, in dry weather (`wet`: the look's ground wetness, or its snow
+    /// cover if that is more) and where the viewer can see; `ground` is the height the ground is drawn at.
+    pub fn dust(
+        &self,
+        dt: f32,
+        wet: f32,
+        ground: impl Fn(Vec2) -> f32,
+        visible: impl Fn((i32, i32)) -> bool,
+        fx: &mut effects::Field,
+    ) {
+        if dt <= 0.0 || wet >= DUST_UNTIL_WET {
+            return;
+        }
+        for c in &self.seen {
+            let tile = (c.pos.x.floor() as i32, c.pos.y.floor() as i32);
+            if c.piece != Piece::Cart || !c.rolling || !visible(tile) {
+                continue;
+            }
+            for w in c.wheels() {
+                fx.footstep(dt, Vec3::new(w.x, ground(w), w.y), c.facing, DUST_PACE);
+            }
+        }
+    }
+}
+
 impl Train {
     fn new(index: usize, route: &Route) -> Train {
         let mut rng = Rng::seeded(index as u32 * 7919 + route.len() as u32);
@@ -393,12 +457,14 @@ impl Train {
         let facing = self.facing;
         let side = facing.perp();
         let moving = self.moving(route);
+        let rolling = moving && !self.turning(route);
         let pace = self.pace();
         let piece = |piece, pos, rate, phase| Seen {
             piece,
             pos,
             facing,
             moving,
+            rolling,
             rate,
             phase: self.phase + phase,
         };
@@ -473,6 +539,75 @@ mod tests {
         }
     }
 
+    /// Train 0 with just a cart in view at (30, 30), going or standing.
+    fn cart_seen(moving: bool) -> Caravans {
+        let mut c = set_at(40.0);
+        c.seen = vec![Seen {
+            piece: Piece::Cart,
+            pos: Vec2::new(30.0, 30.0),
+            facing: Vec2::X,
+            moving,
+            rolling: moving,
+            rate: 1.0,
+            phase: 0.0,
+        }];
+        c
+    }
+
+    /// The dust a second of `c` makes in dry weather (`wet` 0) or `wet`.
+    fn dust_made(c: &Caravans, wet: f32, seconds: f32, visible: bool) -> usize {
+        let mut fx = effects::Field::new(None);
+        let mut n = 0;
+        for _ in 0..(seconds * 30.0) as usize {
+            c.dust(1.0 / 30.0, wet, |_| 0.0, |_| visible, &mut fx);
+            n += fx
+                .frame(1.0 / 30.0, 1.0, Vec2::new(30.0, 30.0), 200.0, |_| 0.0)
+                .len();
+        }
+        n
+    }
+
+    #[test]
+    fn the_wheels_touch_the_ground_behind_and_beside_the_cart() {
+        let c = cart_seen(true);
+        let [a, b] = c.seen[0].wheels();
+        assert!((a - Vec2::new(30.0 - WHEEL_BACK, 30.0 + WHEEL_SIDE)).length() < 1e-5);
+        assert!((b - Vec2::new(30.0 - WHEEL_BACK, 30.0 - WHEEL_SIDE)).length() < 1e-5);
+    }
+
+    #[test]
+    fn a_moving_cart_raises_dust_in_the_dry_and_nothing_else_does() {
+        assert!(dust_made(&cart_seen(true), 0.0, 20.0, true) > 5);
+        assert_eq!(dust_made(&cart_seen(false), 0.0, 20.0, true), 0, "standing");
+        assert_eq!(dust_made(&cart_seen(true), 0.6, 20.0, true), 0, "mud");
+        assert_eq!(
+            dust_made(&cart_seen(true), 0.0, 20.0, false),
+            0,
+            "out of sight"
+        );
+        let mut walkers = cart_seen(true);
+        walkers.seen[0].piece = Piece::Porter;
+        assert_eq!(dust_made(&walkers, 0.0, 20.0, true), 0, "on foot");
+    }
+
+    #[test]
+    fn a_cart_pitches_to_the_slope_it_is_on() {
+        let level = tilt_of(|_| 3.0, Vec2::new(30.0, 30.0), Vec2::X);
+        assert_eq!(level, 0.0);
+        // Climbing, forward end up; going the other way down the same hill, down.
+        let hill = |p: Vec2| 0.12 * p.x;
+        let up = tilt_of(hill, Vec2::new(30.0, 30.0), Vec2::X);
+        let down = tilt_of(hill, Vec2::new(30.0, 30.0), -Vec2::X);
+        assert!((up - 0.12f32.atan()).abs() < 1e-5, "{up}");
+        assert!((down + up).abs() < 1e-5, "{down}");
+        // Across the slope it does not pitch.
+        assert!(tilt_of(hill, Vec2::new(30.0, 30.0), Vec2::Y).abs() < 1e-5);
+        // The steepest way a route allows (`route_clear`'s climb over a
+        // step) is a pitch of under ten degrees.
+        let steepest = (crate::ambient::hamlets::ROUTE_CLIMB / 0.75).atan();
+        assert!(steepest < 0.17, "{steepest}");
+    }
+
     #[test]
     fn the_cart_goes_at_the_pace_the_model_was_built_for() {
         // `oxcart.py`'s wheels turn once in its two-second Walk clip.
@@ -541,6 +676,14 @@ mod tests {
     }
 
     #[test]
+    fn a_cart_on_the_way_is_rolling() {
+        let c = set_at(40.0);
+        let mut out = Vec::new();
+        c.trains[0].show(&c.routes[0], &mut out);
+        assert!(!out.is_empty() && out.iter().all(|s| s.moving && s.rolling));
+    }
+
+    #[test]
     fn the_cart_walks_round_while_it_turns_and_stands_when_it_has() {
         let mut c = set_at(0.0);
         let r = c.routes[0];
@@ -556,6 +699,10 @@ mod tests {
         let t = &c.trains[0];
         assert!(t.facing.dot(r.heading(false)) < 0.99);
         assert!(t.turning(&r) && t.moving(&r));
+        // It walks round, but nothing travels: no dust off the wheels.
+        let mut out = Vec::new();
+        t.show(&r, &mut out);
+        assert!(out.iter().all(|s| s.moving && !s.rolling), "{out:?}");
         run(&mut c, 5.0, QUIET);
         let t = &c.trains[0];
         assert!(t.unload > 0.5, "the wait ended before the turn was checked");

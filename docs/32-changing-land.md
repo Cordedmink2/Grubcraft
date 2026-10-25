@@ -210,8 +210,9 @@ Stage 6 turns the year in Conquest: spring, summer, autumn and winter come round
 ### Seeing it
 
 - The top bar has a season chip ("Spring", "Summer: dry", "Autumn: harvest", "Winter: frost"), and a message says what each new season brings (`Event::Season`, told of each season after the first spring). The lighting and ground threads can draw summer grass, autumn leaves, snow and ice from `World::season()` and `Terrain::frozen()`.
-- **Not yet:** routes still price frozen fords as wading ground (the walkable grid doesn't change), and the computer players' own reading of the ground still sees the ice as water, so they don't plan by the season (stocking up before winter, crossing the ice); the land's look doesn't change with it yet.
-- No golden changes: goldens have no seasons, so `SIM_VERSION` is unchanged.
+- **Crossing the ice** (2026-10-25, [26](26-fortifications.md) stage 8): routes cost frozen fords and shallows as open ground till the thaw (`Nav::set_frozen`, which reprices each grid's ford cells with `Grid::reprice` and relinks only their sectors), so a march takes the ice where it is shorter, and the computer players' reading of the ground treats it as dry (`gc_ai::Terrain::water` and `cost`), so battle sites and ford crossings follow the season. Deep water stays impassable. `SIM_VERSION` 52.
+- **Not yet:** the computer players don't plan by the season (stocking up before winter); the land's look doesn't change with it yet.
+- No golden changes at stage 6: goldens have no seasons, so `SIM_VERSION` was unchanged then (crossing the ice later bumped it to 52).
 
 ## The one ground change
 

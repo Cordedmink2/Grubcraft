@@ -310,7 +310,7 @@ mod tests {
         let mut world = sandbox_world(&data);
         let mut spawns = Vec::new();
         for (k, &f) in Faction::ALL.iter().enumerate() {
-            let (x0, y0) = (12 + 90 * (k as i32 % 2), 12 + 90 * (k as i32 / 2));
+            let (x0, y0) = (12 + 40 * (k as i32 % 3), 12 + 60 * (k as i32 / 3));
             for (j, unit) in placeable(data.conquest_units, f).into_iter().enumerate() {
                 spawns.push(spawn(
                     &world,
@@ -345,7 +345,7 @@ mod tests {
         }
         assert!(
             soldiers(&world) < before,
-            "the four factions met and fought"
+            "the five factions met and fought"
         );
     }
 }

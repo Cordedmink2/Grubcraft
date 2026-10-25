@@ -67,6 +67,7 @@ fn world(gatehouse: bool) -> World {
         tunes: None,
         links: 0,
         twist: WallTwist::None,
+        trap: gc_sim::structures::Trap::None,
     };
     let gate = BuildingStats {
         cost_grub: 60,

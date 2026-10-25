@@ -41,6 +41,8 @@ pub struct Strategy {
     /// Sends a small fast raiding party at the enemy's workers once its
     /// army is big enough to spare one.
     pub raids: bool,
+    /// What works it puts up (docs/26-fortifications.md, stage 8).
+    pub fortifies: Fortify,
     /// What its opening changes while it lasts (docs/18-ai.md, "Steward"):
     /// the usual play outside one, see [`Strategy::opening`].
     pub early: Early,
@@ -53,6 +55,21 @@ const PUNISH_WAVE: u8 = 10;
 /// How long it keeps answering an enemy's early build, ticks: past it, the
 /// usual rules.
 pub const ANSWER_UNTIL: u32 = (8.0 * 60.0 * TICKS) as u32;
+
+/// What works a level puts up against its enemies (see the Steward's
+/// Engineer).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Fortify {
+    /// None at all.
+    #[default]
+    None,
+    /// Field works only: a barricade at its rally point, and stakes there
+    /// against riders and monsters.
+    Field,
+    /// Field works, a front wall with a gate (raised once it is rich),
+    /// traps on the approach, and a bridge when water cuts it off.
+    Full,
+}
 
 /// How a level scouts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -165,6 +182,7 @@ impl Strategy {
                 gangs_up: false,
                 pushes: false,
                 raids: false,
+                fortifies: Fortify::None,
                 early: Early::USUAL,
             },
             Difficulty::Veteran => Strategy {
@@ -179,6 +197,7 @@ impl Strategy {
                 gangs_up: false,
                 pushes: false,
                 raids: false,
+                fortifies: Fortify::Field,
                 early: Early::USUAL,
             },
             Difficulty::General => Strategy {
@@ -193,6 +212,7 @@ impl Strategy {
                 gangs_up: true,
                 pushes: false,
                 raids: false,
+                fortifies: Fortify::Full,
                 early: Early::USUAL,
             },
             Difficulty::Warlord => Strategy {
@@ -207,6 +227,7 @@ impl Strategy {
                 gangs_up: true,
                 pushes: true,
                 raids: true,
+                fortifies: Fortify::Full,
                 early: Early::USUAL,
             },
         }

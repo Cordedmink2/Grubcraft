@@ -315,6 +315,9 @@ regiment_fields! {
     /// Ticks left of a Choir Singing Wall's slowing (see
     /// [`crate::twists`]): half as many blows on buildings, a slower walk.
     sung_left: u16 = 0,
+    /// Ticks left of being held fast by a trap (see [`crate::traps`]): it
+    /// can't move from where it stands.
+    trapped_left: u16 = 0,
     /// Soldiers it lost since the Concord's Mausoleum Walls last counted
     /// the dead (see [`crate::twists`]); cleared every tick.
     deaths: u16 = 0,
@@ -678,7 +681,7 @@ impl Regiments {
     /// Whether slot `i` is standing, not marching (it may be fighting).
     /// What the formation discipline bonus and its readouts go by.
     pub(crate) fn still(&self, i: usize) -> bool {
-        self.target[i].is_none()
+        self.target[i].is_none() || self.trapped_left[i] > 0
     }
 
     /// Whether slot `i` can't rout: steadfast, or a summoned regiment (see
@@ -893,6 +896,18 @@ impl Regiments {
         self.take_damage_hp(i, amount).0
     }
 
+    /// Slot `i` runs onto points (stakes, a spike pit): it falls into
+    /// disorder, `each` hit points for every soldier of its front rank are
+    /// taken off it, and it is gone if that leaves nobody.
+    pub(crate) fn onto_points(&mut self, i: usize, each: u32) {
+        let front = u32::from(self.files[i].min(self.models[i]));
+        self.disorder(i);
+        self.take_damage(i, each * front);
+        if self.models[i] == 0 {
+            self.despawn(self.handle(i));
+        }
+    }
+
     /// The last `count` soldiers of slot `i` lose `amount` hit points
     /// each, none of them below one: hurt, not killed (a fall, say).
     pub(crate) fn wound_last(&mut self, i: usize, count: usize, amount: u32) {
@@ -1070,6 +1085,15 @@ impl Regiments {
                 // Locked in melee: only turn toward the enemy (set by combat).
                 if let Some(want) = self.target_facing[i] {
                     self.facing[i] = self.facing[i].turn_toward(want, turn / 2);
+                }
+                continue;
+            }
+            // Held fast by a trap: it may turn where it stands, and goes
+            // on where it was going after.
+            if self.trapped_left[i] > 0 {
+                self.run_up[i] = 0;
+                if let Some(want) = self.target_facing[i] {
+                    self.facing[i] = self.facing[i].turn_toward(want, turn);
                 }
                 continue;
             }

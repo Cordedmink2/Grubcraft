@@ -11,8 +11,12 @@
 //! Resonators and Siphons tuning nodes for the Choir, whose workers only
 //! build.
 
+mod engineer;
+
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
-use gc_sim::structures::{BuildingStats, Role, StructureHandle, StructureView, TRADE_POST, VEINS};
+use gc_sim::structures::{
+    BuildingStats, LINE, Role, StructureHandle, StructureView, TRADE_POST, VEINS,
+};
 use gc_sim::{BuildingId, Command, RegimentHandle, Resource, TICKS_PER_SECOND, TradePost, UnitId};
 use glam::Vec2;
 
@@ -143,6 +147,8 @@ pub struct Steward {
     /// Where each caravan on the road last was seen to be, and since when:
     /// one that doesn't move for a long while is stuck.
     drift: Vec<(RegimentHandle, Vec2, u32)>,
+    /// The works it puts up against its enemies.
+    engineer: engineer::Engineer,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -278,6 +284,7 @@ impl Steward {
         if !soldiers_first {
             self.train_army(s, clicks, &look);
         }
+        self.fortify(s, clicks, &look, rally);
         if let Some(rally) = rally {
             self.rally(s, clicks, &look, rally);
         }
@@ -703,12 +710,25 @@ impl Steward {
     /// worker. One growing on its own (a Brood building that used up its
     /// Gnawer) needs nobody.
     fn finish_buildings(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
+        // A wall goes up tile by tile under one builder: one more worker
+        // at most for a line's unfinished tiles, however many there are.
+        let is_line = |h: StructureHandle| {
+            look.mine
+                .iter()
+                .any(|m| m.view.handle == h && m.stats.flags & LINE != 0)
+        };
+        let mut line_manned = self.busy.iter().any(|b| is_line(b.0))
+            || look
+                .workers
+                .iter()
+                .any(|w| s.world.building_target(w.handle).is_some_and(is_line));
         for m in look
             .mine
             .iter()
             .filter(|m| !m.finished() && !m.view.growing)
         {
-            if self.is_busy(m.view.handle) {
+            let line = m.stats.flags & LINE != 0;
+            if self.is_busy(m.view.handle) || (line && line_manned) {
                 continue;
             }
             let building = look
@@ -730,6 +750,7 @@ impl Steward {
             ) {
                 self.sent.push((w, s.now));
                 self.busy.push((m.view.handle, None, s.now));
+                line_manned |= line;
             }
         }
     }

@@ -164,26 +164,21 @@ pub(crate) fn stakes_bite(
         if structures.owner_of(s) == regs.owner[i] {
             continue;
         }
-        let front = u32::from(regs.files[i].min(regs.models[i]));
         // Stopped dead, as on braced points.
         regs.run_up[i] = 0;
         regs.charge[i] = 0;
-        regs.disorder(i);
         regs.halt(i);
-        regs.take_damage(i, STAKE_HP * front);
-        if regs.models[i] == 0 {
-            regs.despawn(regs.handle(i));
-        }
+        regs.onto_points(i, STAKE_HP);
         structures.wear_down(s, STAKE_WEAR * HP_SCALE, nav, regs);
     }
 }
 
 impl Structures {
-    /// Whether any stake tile, finished or not, stands in `foot`.
-    pub(crate) fn stakes_in(&self, foot: [i32; 4]) -> bool {
+    /// Whether any stake or trap tile, finished or not, stands in `foot`.
+    pub(crate) fn walked_in(&self, foot: [i32; 4]) -> bool {
         let [x, y, w, d] = foot;
-        let lo = self.stake_tiles.partition_point(|&(t, _)| t < (x, y));
-        self.stake_tiles[lo..]
+        let lo = self.walked_tiles.partition_point(|&(t, _)| t < (x, y));
+        self.walked_tiles[lo..]
             .iter()
             .take_while(|&&(t, _)| t.0 < x + w)
             .any(|&((_, ty), _)| ty >= y && ty < y + d)
@@ -191,9 +186,10 @@ impl Structures {
 
     /// The finished stake tile standing at `tile`, if any.
     fn stakes_at(&self, tile: (i32, i32)) -> Option<usize> {
-        let at = self.stake_tiles.partition_point(|&(t, _)| t < tile);
-        let &(t, s) = self.stake_tiles.get(at)?;
-        (t == tile && self.finished(s as usize)).then_some(s as usize)
+        let at = self.walked_tiles.partition_point(|&(t, _)| t < tile);
+        let &(t, s) = self.walked_tiles.get(at)?;
+        let s = s as usize;
+        (t == tile && self.finished(s) && self.stats_of(s).role == Role::Stakes).then_some(s)
     }
 }
 

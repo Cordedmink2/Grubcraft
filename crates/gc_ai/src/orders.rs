@@ -34,6 +34,10 @@ pub enum Act {
     Attack(RegimentHandle),
     /// Close with an enemy building and knock it down (Conquest).
     Siege(StructureHandle),
+    /// Climb an enemy's raised wall tile on ladders and take it (Conquest).
+    Climb(StructureHandle),
+    /// Climb onto its own raised wall tile and hold the walkway (Conquest).
+    Man(StructureHandle),
 }
 
 /// A decision about one regiment.
@@ -200,7 +204,7 @@ impl Orders {
             },
             // Buildings aren't in the look: the Marshal, which can tell, has
             // a stopped siege forgotten so it can be sent again.
-            Act::Siege(_) => return false,
+            Act::Siege(_) | Act::Climb(_) | Act::Man(_) => return false,
         };
         let last = s.last_distance;
         if let Some(sent) = self.sent[i].as_mut() {
@@ -213,7 +217,7 @@ impl Orders {
                 let reach = view.get(t).map_or(0.0, |t| r.radius() + t.radius());
                 !r.moving && distance > range.max(reach) + 2.0
             }
-            Act::Siege(_) => false,
+            Act::Siege(_) | Act::Climb(_) | Act::Man(_) => false,
         };
         let walking_away = last.is_some_and(|d| distance > d + 1.0);
         (stopped_short && s.retries < RETRIES) || walking_away
@@ -373,14 +377,16 @@ fn already_there(r: &crate::perception::Seen, act: &Act) -> bool {
                 && r.pos.distance(to) < ARRIVED
                 && facing.is_none_or(|f| f.dot(r.facing) > FACING_SLACK)
         }
-        Act::Attack(_) | Act::Siege(_) => false,
+        Act::Attack(_) | Act::Siege(_) | Act::Climb(_) | Act::Man(_) => false,
     }
 }
 
 fn same(a: &Act, b: &Act) -> bool {
     match (a, b) {
         (Act::Attack(x), Act::Attack(y)) => x == y,
-        (Act::Siege(x), Act::Siege(y)) => x == y,
+        (Act::Siege(x), Act::Siege(y))
+        | (Act::Climb(x), Act::Climb(y))
+        | (Act::Man(x), Act::Man(y)) => x == y,
         (
             Act::Move {
                 to: a,
@@ -416,6 +422,14 @@ fn command(regiment: RegimentHandle, act: &Act) -> Command {
         },
         Act::Attack(target) => Command::Attack { regiment, target },
         Act::Siege(structure) => Command::AttackStructure {
+            regiment,
+            structure,
+        },
+        Act::Climb(structure) => Command::Climb {
+            regiment,
+            structure,
+        },
+        Act::Man(structure) => Command::ManWall {
             regiment,
             structure,
         },

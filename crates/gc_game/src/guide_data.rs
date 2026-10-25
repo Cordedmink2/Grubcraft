@@ -96,6 +96,7 @@ enum Role {
     Bridge,
     Stakes,
     Barricade,
+    Trap,
     #[serde(other)]
     Other,
 }
@@ -569,6 +570,7 @@ fn role_name(r: Role) -> &'static str {
         Role::Bridge => "Bridge",
         Role::Stakes => "Stakes",
         Role::Barricade => "Barricade",
+        Role::Trap => "Trap",
         Role::Other => "Building",
     }
 }
