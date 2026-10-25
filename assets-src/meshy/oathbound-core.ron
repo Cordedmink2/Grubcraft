@@ -1,0 +1,86 @@
+// Meshy core assets, oathbound (t_c53e4b62). Sources are `shared:` (generated GLBs and 2K albedo PNGs live in the
+// artefacts folder, not the repo: ~8 MB each). Team colour: a per-model mask from assets-src/meshy/masks (strict red-cloth
+// rule + median clean-up, see tools/gc_artbake/tests/meshy_masks.rs). Bake:
+//   gc_artbake --config assets-src/meshy/oathbound-core.ron --shared <meshy-core dir> --out <x>.pak
+(
+    models: [
+        (
+            name: "Seedtender", // V-01
+            source: "shared:models/V-01-anim.glb",
+            height: 0.7,
+            clips: { "Idle": "Idle", "Attack": "Attack", "Attack2": "Attack", "Hit": "Hit_Reaction", "Die": "Dead" },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((albedo: "shared:textures/V-01/albedo.png", team: Some("repo:meshy/masks/V-01.png"))),
+        ),
+        (
+            name: "Boughbows", // V-03
+            source: "shared:models/V-03-anim.glb",
+            height: 0.9,
+            clips: { "Idle": "Idle", "Attack": "Attack", "Attack2": "Attack", "Hit": "Hit_Reaction", "Die": "Dead" },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((albedo: "shared:textures/V-03/albedo.png", team: Some("repo:meshy/masks/V-03.png"))),
+        ),
+        (
+            name: "The Regent-Marshal", // V-13
+            source: "shared:models/V-13-anim.glb",
+            height: 1.1,
+            clips: { "Idle": "Idle", "Attack": "Attack", "Attack2": "Attack", "Hit": "Hit_Reaction", "Die": "Dead" },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((albedo: "shared:textures/V-13/albedo.png", team: Some("repo:meshy/masks/V-13.png"))),
+        ),
+        (
+            name: "Rootwatch Hall", // V-16
+            source: "shared:models/V-16-textured.glb",
+            height: 1.35,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((albedo: "shared:textures/V-16/albedo.png", team: Some("repo:meshy/masks/V-16.png"))),
+        ),
+        (
+            name: "Hearthhouse", // V-19
+            source: "shared:models/V-19-textured.glb",
+            height: 1.0,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (10000, 3500, 1200, 400),
+            textures: Some((albedo: "shared:textures/V-19/albedo.png", team: Some("repo:meshy/masks/V-19.png"))),
+        ),
+        (
+            name: "Grove", // V-20
+            source: "shared:models/V-20-textured.glb",
+            height: 1.4,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (10000, 3500, 1200, 400),
+            textures: Some((albedo: "shared:textures/V-20/albedo.png", team: Some("repo:meshy/masks/V-20.png"))),
+        ),
+        (
+            name: "Muster Hall", // V-21
+            source: "shared:models/V-21-textured.glb",
+            height: 1.4,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (10000, 3500, 1200, 400),
+            textures: Some((albedo: "shared:textures/V-21/albedo.png", team: Some("repo:meshy/masks/V-21.png"))),
+        ),
+        (
+            name: "Court of Oaths", // V-26
+            source: "shared:models/V-26-textured.glb",
+            height: 1.6,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (10000, 3500, 1200, 400),
+            textures: Some((albedo: "shared:textures/V-26/albedo.png", team: Some("repo:meshy/masks/V-26.png"))),
+        ),
+        (
+            name: "Signal Tower", // V-28
+            source: "shared:models/V-28-textured.glb",
+            height: 2.0,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (10000, 3500, 1200, 400),
+            textures: Some((albedo: "shared:textures/V-28/albedo.png", team: Some("repo:meshy/masks/V-28.png"))),
+        ),
+    ],
+)
