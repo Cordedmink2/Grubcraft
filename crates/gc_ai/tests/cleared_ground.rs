@@ -88,6 +88,7 @@ fn the_minds_see_cleared_ground() {
         tunes: None,
         links: 0,
         twist: gc_sim::structures::WallTwist::None,
+        trap: gc_sim::structures::Trap::None,
     };
     assert!(w.conquest(&ConquestSetup {
         buildings: &[hall],

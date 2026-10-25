@@ -36,7 +36,7 @@ use crate::gates::GateMode;
 use crate::nav::{CELLS_PER_TILE, CLEARANCE, Door, Nav};
 use crate::regiments::{Order, RegimentHandle, Regiments};
 use crate::verdict::Mains;
-use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
+use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
 
 /// Index of a building type in the match's building table.
 pub type BuildingId = u16;
@@ -63,6 +63,8 @@ pub enum Role {
     Stakes = 10,
     /// A drawn barricade (see `gc_sim::fieldworks`).
     Barricade = 11,
+    /// A hidden trap (see `gc_sim::traps`).
+    Trap = 12,
 }
 
 impl Role {
@@ -79,7 +81,7 @@ impl Role {
         })
     }
 
-    pub const ALL: [Role; 12] = [
+    pub const ALL: [Role; 13] = [
         Role::Main,
         Role::Outpost,
         Role::Housing,
@@ -92,6 +94,7 @@ impl Role {
         Role::Bridge,
         Role::Stakes,
         Role::Barricade,
+        Role::Trap,
     ];
 
     pub fn from_u8(v: u8) -> Option<Role> {
@@ -128,6 +131,48 @@ impl WallTwist {
 
     pub fn from_u8(v: u8) -> Option<WallTwist> {
         WallTwist::ALL.get(usize::from(v)).copied()
+    }
+}
+
+/// What a hidden trap does to the first enemy regiment onto it (docs/26
+/// stage 6; see [`crate::traps`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Trap {
+    #[default]
+    None,
+    /// The Ember spike pit: the regiment's front rank is hurt.
+    Pit,
+    /// The Concord grave-hands: the regiment is held where it stands.
+    Hands,
+    /// The Choir shard mine: the regiment is stunned.
+    Mine,
+    /// The Brood burrow nest: a regiment of this unit bursts out.
+    Nest(UnitId),
+}
+
+impl Trap {
+    /// Its kind as a byte, 0 for none (a nest's unit apart).
+    pub fn kind(self) -> u8 {
+        match self {
+            Trap::None => 0,
+            Trap::Pit => 1,
+            Trap::Hands => 2,
+            Trap::Mine => 3,
+            Trap::Nest(_) => 4,
+        }
+    }
+
+    /// The trap of kind `kind` ([`Trap::kind`]), a nest's regiment being
+    /// of `unit`.
+    pub fn from_kind(kind: u8, unit: UnitId) -> Option<Trap> {
+        Some(match kind {
+            0 => Trap::None,
+            1 => Trap::Pit,
+            2 => Trap::Hands,
+            3 => Trap::Mine,
+            4 => Trap::Nest(unit),
+            _ => return None,
+        })
     }
 }
 
@@ -319,6 +364,8 @@ pub struct BuildingStats {
     /// A drawn wall's faction twist ([`WallTwist::None`] for any other
     /// building).
     pub twist: WallTwist,
+    /// A hidden trap's kind ([`Trap::None`] for any other building).
+    pub trap: Trap,
 }
 
 /// Largest footprint side, in tiles.
@@ -347,9 +394,15 @@ impl BuildingStats {
     }
 
     /// Whether it is walked through, built or not, so it never stands on
-    /// the walkable grid: stakes (see [`crate::fieldworks`]).
+    /// the walkable grid: stakes (see [`crate::fieldworks`]) and traps
+    /// (see [`crate::traps`]).
     pub fn walked_through(&self) -> bool {
-        self.role == Role::Stakes
+        matches!(self.role, Role::Stakes | Role::Trap)
+    }
+
+    /// Whether only its owner ever sees it: a trap (see [`crate::traps`]).
+    pub fn hidden(&self) -> bool {
+        self.role == Role::Trap
     }
 
     /// Its footprint, `(width, depth)` in tiles, turned `turn` quarter
@@ -398,6 +451,11 @@ impl BuildingStats {
                 reload_ticks: a.reload_ticks.max(1),
                 ..a
             }),
+            trap: if self.role == Role::Trap && line {
+                self.trap
+            } else {
+                Trap::None
+            },
             ..self
         }
     }
@@ -431,6 +489,14 @@ impl BuildingStats {
         }
         h.u8(self.links);
         h.u8(self.twist as u8);
+        // Nothing for most buildings, so the hashes of worlds without
+        // traps stay as they were.
+        if self.trap != Trap::None {
+            h.u8(self.trap.kind());
+            if let Trap::Nest(unit) = self.trap {
+                h.u16(unit);
+            }
+        }
     }
 }
 
@@ -702,9 +768,15 @@ pub struct Structures {
     /// Field work tiles finished or gone since the ground last heard (see
     /// [`crate::fieldworks::settle_field`]).
     pub(crate) field: Vec<crate::fieldworks::FieldMark>,
-    /// Every standing stake tile, finished or not, by tile, sorted: stakes
-    /// aren't on the walkable grid, so this is how they are found.
-    pub(crate) stake_tiles: Vec<((i32, i32), u32)>,
+    /// Every standing stake and trap tile, finished or not, by tile, sorted
+    /// (see [`BuildingStats::walked_through`]): they aren't on the walkable
+    /// grid, so this is how they are found.
+    pub(crate) walked_tiles: Vec<((i32, i32), u32)>,
+    /// How many traps stand, finished or not (see [`crate::traps`]).
+    pub(crate) traps: u32,
+    /// The finished traps, while [`crate::traps::spring`] looks them over
+    /// (kept so a tick doesn't allocate).
+    pub(crate) trap_scratch: Vec<usize>,
     /// Blows struck on buildings in the last tick, and by whom, for the
     /// events (one a regiment at most).
     pub(crate) struck: Vec<(StructureHandle, RegimentHandle)>,
@@ -716,6 +788,8 @@ pub struct Structures {
     /// Wall twists that answered in the last tick, for the events (see
     /// [`crate::twists`]).
     pub(crate) twisted: Vec<crate::twists::Twisted>,
+    /// Traps that went off in the last tick (see [`crate::traps`]).
+    pub(crate) sprung: Vec<crate::traps::Sprung>,
     /// Scratch for [`Structures::mend_by_the_dead`], kept so a tick never
     /// allocates.
     pub(crate) mending: Vec<u32>,
@@ -816,12 +890,15 @@ impl Structures {
             rubble: Vec::with_capacity(8),
             decks: Vec::with_capacity(n),
             field: Vec::new(),
-            stake_tiles: Vec::new(),
+            walked_tiles: Vec::new(),
+            traps: 0,
+            trap_scratch: Vec::new(),
             struck: Vec::with_capacity(regiments),
             consumed: Vec::with_capacity(regiments),
             climbed: Vec::with_capacity(regiments),
             // A blow's answer from each regiment, and a mended tile for each.
             twisted: Vec::with_capacity(2 * regiments),
+            sprung: Vec::new(),
             mending: Vec::with_capacity(n),
             seen: vec![0; n],
             fog: false,
@@ -1306,7 +1383,14 @@ impl Structures {
         self.larva_clock[i] = 0;
         self.haste_left[i] = 0;
         self.haste_percent[i] = 0;
-        self.seen[i] = if self.fog { 1 << owner } else { u8::MAX };
+        // A trap is hidden from all but its owner, fog or none.
+        let stats = self.buildings[building as usize];
+        self.traps += u32::from(stats.role == Role::Trap);
+        self.seen[i] = if self.fog || stats.hidden() {
+            1 << owner
+        } else {
+            u8::MAX
+        };
         self.reload[i] = 0;
         self.focus[i] = None;
         self.toll[i] = 0;
@@ -1317,8 +1401,8 @@ impl Structures {
         self.gate_hold[i] = 0;
         self.line[i] = [0; 4];
         if self.buildings[building as usize].walked_through() {
-            let at = self.stake_tiles.partition_point(|&(t, _)| t < tile);
-            self.stake_tiles.insert(at, (tile, index));
+            let at = self.walked_tiles.partition_point(|&(t, _)| t < tile);
+            self.walked_tiles.insert(at, (tile, index));
         }
         Some(i)
     }
@@ -1508,8 +1592,9 @@ impl Structures {
 
     /// Mark slot `i` free, its ground already given back.
     fn free_slot(&mut self, i: usize) {
+        self.traps -= u32::from(self.stats_of(i).role == Role::Trap);
         if self.stats_of(i).walked_through() {
-            self.stake_tiles.retain(|&(_, s)| s as usize != i);
+            self.walked_tiles.retain(|&(_, s)| s as usize != i);
         }
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.hp[i] = 0;
@@ -1576,6 +1661,7 @@ impl Structures {
         self.consumed.clear();
         self.climbed.clear();
         self.twisted.clear();
+        self.sprung.clear();
         self.upgrades();
         self.crew.fill(0);
         // A building that used up its worker grows as one builder would

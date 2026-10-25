@@ -411,8 +411,8 @@ impl Conquest {
         {
             return Err(Refusal::Built);
         }
-        // Stakes are walked through, so the grid doesn't show them.
-        if self.structures.stakes_in(foot) {
+        // Stakes and traps are walked through, so the grid doesn't show them.
+        if self.structures.walked_in(foot) {
             return Err(Refusal::Built);
         }
         Ok(())

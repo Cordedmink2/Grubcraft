@@ -293,6 +293,18 @@
             flags: [Line],
             effect: "A waist-high barricade of fused glass slabs, drawn out and built in seconds. Nobody walks through it; your troops close behind it take less from arrows and from blows across it.",
         ),
+        (
+            name: "Shard Mine",
+            role: Trap,
+            tier: 1,
+            cost: (grub: 20, marrow: 0),
+            build_time: 8.0,
+            hp: 60,
+            armour: Structure,
+            footprint: (1, 1),
+            trap: Mine,
+            effect: "A buried shard tuned to burst, a tile big, hidden from the enemy. The first enemy regiment onto it is stunned for 4 seconds: halted, in disorder, and unable to move. It needs no power. Then it is gone.",
+        ),
     ],
     units: [
         (

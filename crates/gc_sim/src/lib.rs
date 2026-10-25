@@ -51,6 +51,7 @@ mod state;
 pub mod structures;
 pub mod terrain;
 pub mod towers;
+pub mod traps;
 pub mod twists;
 pub mod veins;
 pub mod verdict;
@@ -121,7 +122,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 50;
+pub const SIM_VERSION: u32 = 51;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1666,6 +1667,23 @@ impl World {
                 &mut self.nav,
                 &self.terrain,
             );
+            traps::spring(
+                &mut conquest.structures,
+                &mut self.regiments,
+                &self.units,
+                &mut self.nav,
+                &self.combat,
+                &self.stances,
+            );
+            // A burrow nest's regiment looks about it from where it stands.
+            for h in conquest.structures.sprung.iter().filter_map(|s| s.raised) {
+                self.vision.start(
+                    &self.regiments,
+                    &self.units,
+                    &self.terrain,
+                    h.index as usize,
+                );
+            }
             fieldworks::settle_field(&mut conquest.structures.field, &mut self.terrain);
             self.clear_land();
             if let Some(c) = &mut self.conquest {
@@ -1732,7 +1750,7 @@ impl World {
             if let Some(conquest) = &self.conquest {
                 let s = &conquest.structures;
                 self.events
-                    .fallen(&s.tolled, &s.struck, &s.twisted, &s.fallen);
+                    .fallen(&s.tolled, &s.struck, &s.twisted, &s.sprung, &s.fallen);
             }
         }
         self.tick += 1;

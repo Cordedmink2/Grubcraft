@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 45: hidden traps (a building's trap; read as none);
 /// - 44: planting stakes (the plant stakes command, tag 40);
 /// - 43: the sky's year of seasons (read as none);
 /// - 42: the drawn walls' faction twists (read as none);
@@ -100,7 +101,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 44;
+pub const FORMAT: u16 = 45;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -1545,6 +1546,7 @@ mod tests {
             tunes: None,
             links: 0,
             twist: gc_sim::structures::WallTwist::None,
+            trap: gc_sim::structures::Trap::None,
         };
         let buildings = [
             hall,
@@ -1574,6 +1576,7 @@ mod tests {
                 depth: 1,
                 flags: gc_sim::structures::LINE,
                 twist: gc_sim::structures::WallTwist::Mends,
+                trap: gc_sim::structures::Trap::None,
                 ..hall
             },
         ];

@@ -796,7 +796,7 @@ impl Running {
         }
         hud.blocks.clear();
         if let Some(structures) = self.world.structures() {
-            let shown = crate::buildings::shown_to(side, self.reveal_all);
+            let shown = crate::buildings::shown_to(&self.buildings, side, self.reveal_all);
             hud.blocks
                 .extend(structures.iter().filter(|s| shown(s)).map(|s| Block {
                     rect: [
@@ -926,6 +926,11 @@ impl Running {
                         } else {
                             wall_tip(self.buildings.stats[usize::from(b)].flags)
                         };
+                    }
+                    if let Some(Action::Lay(b)) = card.slots[i]
+                        && self.buildings.is_trap(b)
+                    {
+                        tip = TRAP_TIP;
                     }
                     if let Some(Action::Upgrade(b)) = card.slots[i]
                         && self.buildings.is_gate(b)
@@ -1920,6 +1925,9 @@ const WALL_TIP_GROWN: &str = "Draw this wall: click its start, then each end or 
 
 /// The build-menu tooltip of a bridge.
 const BRIDGE_TIP: &str = "Draw a straight bridge across a river: click the near bank, then the far bank. A worker builds it out from the bank, a tile at a time, and anyone can cross it. Troops on a tile that falls drop into the river. Right-click ends it.";
+
+/// The build-menu tooltip of a hidden trap.
+const TRAP_TIP: &str = "A hidden trap, laid like any building on one tile. Only you can see it. The first enemy regiment to walk onto it springs it, and it is gone. Nothing can be built on it. See the guide for what this one does.";
 
 /// The build-menu tooltips of stakes and a barricade.
 const STAKES_TIP: &str = "Draw a line of stakes at any angle: click its start, then each end or bend. Cheap and quick. Anyone walks through at half pace, but nobody charges through: enemy riders and beasts are stopped dead. Spearmen and archers can plant a free line (C). Right-click ends it.";

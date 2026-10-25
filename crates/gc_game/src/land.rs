@@ -190,7 +190,9 @@ fn settled_reach(role: Role) -> Option<f32> {
         Role::Housing | Role::Economy | Role::Production | Role::Tech | Role::Heroes => {
             Some(OTHER_REACH)
         }
-        Role::Defence | Role::Wall | Role::Bridge | Role::Stakes | Role::Barricade => None,
+        Role::Defence | Role::Wall | Role::Bridge | Role::Stakes | Role::Barricade | Role::Trap => {
+            None
+        }
     }
 }
 

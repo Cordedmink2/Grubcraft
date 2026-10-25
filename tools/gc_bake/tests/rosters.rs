@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use gc_bake::rosters::{
     Ability, Armour, Building, BuildingFlag, Class, FactionDef, Flag, From, Kind, Node, Role,
-    Roster, Stats, Unit,
+    Roster, Stats, Trap, Unit,
 };
 use serde::Deserialize;
 
@@ -387,6 +387,10 @@ fn buildings_follow_the_design_rules() {
                     [BuildingFlag::Line],
                     "{at}: a bridge or field work is drawn"
                 );
+            } else if b.role == Role::Trap {
+                assert_eq!(b.footprint, (1, 1), "{at}: a trap is a tile big");
+                assert!(b.flags.is_empty(), "{at}: a trap is nothing more");
+                assert_ne!(b.trap, Trap::None, "{at}: a trap needs a kind");
             } else if b.role == Role::Wall {
                 assert!(
                     across.min(deep) == 1 && across.max(deep) <= 3,
@@ -475,7 +479,10 @@ fn buildings_follow_the_design_rules() {
                 b.flags.contains(&BuildingFlag::NeedsPower),
                 choir
                     && !powers
-                    && !matches!(b.role, Role::Bridge | Role::Stakes | Role::Barricade),
+                    && !matches!(
+                        b.role,
+                        Role::Bridge | Role::Stakes | Role::Barricade | Role::Trap
+                    ),
                 "{at}: needs power"
             );
             assert_eq!(

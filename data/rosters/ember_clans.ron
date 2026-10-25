@@ -353,6 +353,18 @@
             flags: [Line],
             effect: "A waist-high barricade of carts, logs and baskets, drawn out and built in seconds. Nobody walks through it; your troops close behind it take less from arrows and from blows across it.",
         ),
+        (
+            name: "Spike Pit",
+            role: Trap,
+            tier: 1,
+            cost: (grub: 15, marrow: 0),
+            build_time: 8.0,
+            hp: 60,
+            armour: Structure,
+            footprint: (1, 1),
+            trap: Pit,
+            effect: "A pit of sharpened stakes under a woven lid, a tile big, hidden from the enemy. The first enemy regiment onto it falls in: its front rank is hurt and it is thrown into disorder. Then it is gone.",
+        ),
     ],
     units: [
         (

@@ -155,7 +155,12 @@ impl Kit {
             // lines, and the host puts the gate up.
             !matches!(
                 s.role,
-                Role::Main | Role::Wall | Role::Bridge | Role::Stakes | Role::Barricade
+                Role::Main
+                    | Role::Wall
+                    | Role::Bridge
+                    | Role::Stakes
+                    | Role::Barricade
+                    | Role::Trap
             ) && s.upgrades_from.is_none()
                 && s.tier <= 1
         });

@@ -192,6 +192,16 @@
                 (icon: Alarm, text: "It blocks your own troops too, so leave a gap where your line must pass."),
             ],
         ),
+        (
+            name: "Burrow Nest",
+            summary: "A resin-crusted burrow mound for 40 Grub on one tile. The first enemy regiment to walk onto it wakes the nest: a regiment of Skitterlings bursts out beside it for you and fights for 30 seconds. Your enemies cannot see it, and once it is sprung it is gone.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Built by a worker like any building, on one tile. Nothing can be built on it."),
+                (icon: Alarm, text: "Only you can see it. Enemies never see it, not even in the open."),
+                (icon: Sword, text: "The Skitterlings are yours, but only for 30 seconds. Your own troops walk over it safely."),
+            ],
+        ),
     ],
     units: [
         (

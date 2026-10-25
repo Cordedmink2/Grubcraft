@@ -596,7 +596,24 @@ fn summon_spot(
     shrine: StructureHandle,
 ) -> Option<(FxVec2, Angle)> {
     let s = structures.resolve(shrine)?;
-    if !structures.finished_with(player, HONOR).any(|i| i == s) || regs.free.is_empty() {
+    if !structures.finished_with(player, HONOR).any(|i| i == s) {
+        return None;
+    }
+    spot_beside(structures, regs, nav, stats, player, s)
+}
+
+/// Where and facing which way a regiment of `stats` of `player`'s would
+/// stand beside building slot `s` (see [`summon_spot`]): `None` if there
+/// is no room or the regiment pool is full.
+fn spot_beside(
+    structures: &Structures,
+    regs: &Regiments,
+    nav: &Nav,
+    stats: &UnitStats,
+    player: PlayerId,
+    s: usize,
+) -> Option<(FxVec2, Angle)> {
+    if regs.free.is_empty() {
         return None;
     }
     let berth = Regiments::berth_of(stats, Formation::Line, stats.files, stats.models);
@@ -633,6 +650,27 @@ fn summon(
 ) -> Option<RegimentHandle> {
     let stats = units.get(usize::from(unit))?;
     let (at, facing) = summon_spot(structures, regs, nav, stats, player, shrine)?;
+    let h = regs.spawn(player, unit, at, facing, stats)?;
+    regs.summoned_left[h.index as usize] = lasts;
+    Some(h)
+}
+
+/// Put a regiment of `unit` of `player`'s down beside building slot `s`
+/// for `lasts` ticks, where [`spot_beside`] says: a burrow nest's (see
+/// [`crate::traps`]). `None` if there is no room for it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn raise_beside(
+    structures: &Structures,
+    regs: &mut Regiments,
+    nav: &Nav,
+    units: &[UnitStats],
+    player: PlayerId,
+    unit: UnitId,
+    s: usize,
+    lasts: u16,
+) -> Option<RegimentHandle> {
+    let stats = units.get(usize::from(unit))?;
+    let (at, facing) = spot_beside(structures, regs, nav, stats, player, s)?;
     let h = regs.spawn(player, unit, at, facing, stats)?;
     regs.summoned_left[h.index as usize] = lasts;
     Some(h)
@@ -716,6 +754,7 @@ impl Regiments {
             &mut self.steadfast_left,
             &mut self.stoned_left,
             &mut self.sung_left,
+            &mut self.trapped_left,
         ] {
             for left in lefts.iter_mut() {
                 *left = left.saturating_sub(1);

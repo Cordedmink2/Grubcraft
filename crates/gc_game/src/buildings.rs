@@ -111,6 +111,9 @@ const STAKE_STAGGER: f32 = 0.13;
 const STAKE_LEAN: f32 = 0.07;
 /// The cord that binds a finished stake line, this high.
 const STAKE_CORD: f32 = 0.22;
+/// A hidden trap lies nearly flush with the ground; its health bar floats
+/// this high.
+const TRAP_HEIGHT: f32 = 0.16;
 const BARRICADE_HEIGHT: f32 = 0.68;
 const BARRICADE_BASE: f32 = 0.44;
 const BARRICADE_THICK: f32 = 0.55;
@@ -251,6 +254,7 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
             record::Role::Bridge => Role::Bridge,
             record::Role::Stakes => Role::Stakes,
             record::Role::Barricade => Role::Barricade,
+            record::Role::Trap => Role::Trap,
         },
         tier: b.tier,
         upgrades_from: (b.upgrades_from != record::NONE).then_some(b.upgrades_from),
@@ -282,6 +286,8 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
         links: b.link_tiles,
         // Validated when the table is loaded.
         twist: gc_sim::structures::WallTwist::from_u8(b.twist).unwrap_or_default(),
+        // Validated when the table is loaded.
+        trap: gc_sim::structures::Trap::from_kind(b.trap, b.trap_unit).unwrap_or_default(),
     }
 }
 
@@ -363,6 +369,11 @@ impl Table {
     pub fn is_fieldwork(&self, building: BuildingId) -> bool {
         (self.stats.get(usize::from(building)))
             .is_some_and(|s| matches!(s.role, Role::Stakes | Role::Barricade))
+    }
+
+    /// Whether `building` is a hidden trap (seen by its owner alone).
+    pub fn is_trap(&self, building: BuildingId) -> bool {
+        (self.stats.get(usize::from(building))).is_some_and(|s| s.role == Role::Trap)
     }
 
     /// The faction's building of the stakes kind, if it has one.
@@ -644,6 +655,7 @@ pub fn height_of(role: Role) -> f32 {
         Role::Bridge => DECK_TOP + RAIL_HEIGHT,
         Role::Stakes => STAKE_HEIGHT,
         Role::Barricade => BARRICADE_HEIGHT,
+        Role::Trap => TRAP_HEIGHT,
         Role::Main => MAIN_HEIGHT,
         _ => HEIGHT,
     }
@@ -1037,6 +1049,136 @@ struct Fieldwork {
     team: [u8; 3],
 }
 
+/// One tile of a hidden trap, low and subtle (its owner is the only one
+/// who is shown it): a dug patch while it goes up, then by kind a woven
+/// lid over a pit with a few stake tips, a disturbed grave mound with bone
+/// fingers, a glinting half-buried shard, or a resin-crusted burrow mound.
+/// `dim` shades a colour with the hit points.
+fn push_trap_tile(
+    s: &StructureView,
+    trap: gc_sim::structures::Trap,
+    dim: impl Fn([u8; 3]) -> [u8; 3],
+    out: &mut Vec<BoxInstance>,
+) {
+    use gc_sim::structures::Trap;
+    let centre = centre_of(s.tile, s.width, s.depth);
+    let facing = Vec2::new(0.8, 0.6);
+    let part = |at: Vec2, size: [f32; 3], c: [u8; 3], glow: u8, lift: f32| BoxInstance {
+        pos: (centre + at).to_array(),
+        facing: facing.to_array(),
+        size,
+        color: {
+            let c = dim(c);
+            [c[0], c[1], c[2], glow]
+        },
+        lift,
+    };
+    if !s.finished() {
+        // Freshly dug earth.
+        out.push(part(Vec2::ZERO, [0.7, 0.05, 0.7], [96, 72, 52], 0, 0.0));
+        out.push(part(
+            Vec2::new(0.22, 0.2),
+            [0.2, 0.08, 0.16],
+            [84, 62, 44],
+            0,
+            0.0,
+        ));
+        return;
+    }
+    match trap {
+        Trap::Pit | Trap::None => {
+            out.push(part(Vec2::ZERO, [0.76, 0.04, 0.76], [74, 54, 38], 0, 0.0));
+            // The woven lid, laid in two crossing layers.
+            out.push(part(Vec2::ZERO, [0.7, 0.03, 0.14], [156, 120, 70], 0, 0.04));
+            out.push(part(
+                Vec2::new(0.0, 0.18),
+                [0.7, 0.03, 0.14],
+                [148, 112, 64],
+                0,
+                0.04,
+            ));
+            out.push(part(
+                Vec2::new(0.0, -0.18),
+                [0.7, 0.03, 0.14],
+                [148, 112, 64],
+                0,
+                0.04,
+            ));
+            out.push(part(Vec2::ZERO, [0.12, 0.03, 0.7], [132, 98, 56], 0, 0.07));
+            for (x, z) in [(-0.2, -0.12), (0.18, 0.1), (0.02, 0.26)] {
+                out.push(part(
+                    Vec2::new(x, z),
+                    [0.06, 0.13, 0.06],
+                    [196, 160, 104],
+                    0,
+                    0.07,
+                ));
+            }
+        }
+        Trap::Hands => {
+            out.push(part(Vec2::ZERO, [0.72, 0.11, 0.6], [74, 60, 54], 0, 0.0));
+            out.push(part(
+                Vec2::new(-0.05, 0.04),
+                [0.46, 0.08, 0.38],
+                [88, 72, 64],
+                0,
+                0.11,
+            ));
+            for (x, z, h) in [
+                (-0.2, -0.18, 0.22),
+                (0.0, -0.22, 0.28),
+                (0.2, -0.16, 0.2),
+                (0.26, 0.1, 0.16),
+            ] {
+                out.push(part(
+                    Vec2::new(x, z),
+                    [0.05, h, 0.05],
+                    [226, 218, 194],
+                    0,
+                    0.06,
+                ));
+            }
+        }
+        Trap::Mine => {
+            out.push(part(Vec2::ZERO, [0.62, 0.04, 0.62], [92, 96, 104], 0, 0.0));
+            out.push(part(
+                Vec2::new(-0.04, 0.0),
+                [0.1, 0.3, 0.1],
+                [150, 226, 244],
+                90,
+                0.0,
+            ));
+            out.push(part(
+                Vec2::new(0.12, 0.08),
+                [0.07, 0.2, 0.07],
+                [214, 246, 255],
+                120,
+                0.0,
+            ));
+            out.push(part(
+                Vec2::new(-0.18, -0.12),
+                [0.07, 0.15, 0.07],
+                [128, 206, 226],
+                70,
+                0.0,
+            ));
+        }
+        Trap::Nest(_) => {
+            out.push(part(Vec2::ZERO, [0.78, 0.12, 0.78], [84, 54, 52], 0, 0.0));
+            out.push(part(Vec2::ZERO, [0.5, 0.1, 0.5], [112, 78, 62], 8, 0.12));
+            // The mouth of the burrow, dark and ringed with crusted resin.
+            out.push(part(Vec2::ZERO, [0.2, 0.04, 0.2], [20, 12, 16], 0, 0.22));
+            out.push(part(
+                Vec2::new(0.2, -0.2),
+                [0.14, 0.14, 0.14],
+                [168, 120, 70],
+                20,
+                0.1,
+            ));
+        }
+    }
+}
+
 /// One tile of a field work, from boxes (no model).
 ///
 /// Stakes: a row of thin posts, each with a tip stepped out across the
@@ -1265,9 +1407,14 @@ fn push_gate(
 }
 
 /// Whether `side` is shown a building: in fog of war, enemy buildings show
-/// once seen; with `reveal_all`, everything shows.
-pub fn shown_to(side: PlayerId, reveal_all: bool) -> impl Fn(&StructureView) -> bool + Copy {
-    move |s| reveal_all || s.seen_by(side)
+/// once seen; with `reveal_all`, everything shows. A hidden trap shows to
+/// its owner alone, fog of war or not.
+pub fn shown_to(
+    table: &Table,
+    side: PlayerId,
+    reveal_all: bool,
+) -> impl Fn(&StructureView) -> bool + Copy + '_ {
+    move |s| (reveal_all && !table.is_trap(s.building)) || s.seen_by(side)
 }
 
 /// Draw every standing building that `shown` allows: a box in its owner's
@@ -1326,6 +1473,9 @@ pub fn push(
                 team,
             };
             push_fieldwork_tile(&s, works, &ground, out);
+        } else if stats.role == Role::Trap {
+            let dim = |c: [u8; 3]| shade(c, s.hp, s.max_hp);
+            push_trap_tile(&s, stats.trap, dim, out);
         } else {
             match (s.gate.is_some() && s.finished(), model) {
                 (true, _) => push_gate(
@@ -2952,6 +3102,44 @@ mod tests {
             let out_of = (Vec2::from(step.pos) - Vec2::from(ghost.pos)).dot(facing_of(turn));
             let half = if turn % 2 == 0 { d } else { w };
             assert!((out_of - (f32::from(half) / 2.0 + 0.5)).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn a_trap_is_drawn_low_and_inside_its_tile() {
+        use gc_sim::structures::Trap;
+        for built in [40, 100] {
+            for trap in [Trap::Pit, Trap::Hands, Trap::Mine, Trap::Nest(0)] {
+                let view = StructureView {
+                    handle: StructureHandle {
+                        index: 0,
+                        generation: 0,
+                    },
+                    owner: 0,
+                    building: 0,
+                    tile: (4, 6),
+                    width: 1,
+                    depth: 1,
+                    turn: 0,
+                    hp: 60,
+                    max_hp: 60,
+                    built_percent: built,
+                    upgrading: None,
+                    growing: false,
+                    seen: 1,
+                    gate: None,
+                    open: false,
+                    line: None,
+                };
+                let mut out = Vec::new();
+                push_trap_tile(&view, trap, |c| c, &mut out);
+                assert!(!out.is_empty());
+                for b in &out {
+                    assert!(b.lift + b.size[1] <= 0.4, "{trap:?} too tall");
+                    let off = Vec2::from(b.pos) - Vec2::new(4.5, 6.5);
+                    assert!(off.abs().max_element() <= 0.5, "{trap:?} off its tile");
+                }
+            }
         }
     }
 

@@ -256,6 +256,11 @@ impl<'a> GameData<'a> {
             conquest::validate_conquest_unit(u, buildings.len(), conquest_units.len())
                 .map_err(|why| DataError::BadConquestUnit(i, why))?;
         }
+        for (i, b) in buildings.iter().enumerate() {
+            if b.trap == conquest::TRAP_NEST && usize::from(b.trap_unit) >= conquest_units.len() {
+                return Err(DataError::BadBuilding(i, "its nest names no unit"));
+            }
+        }
         let powers = table::<PowerRecord>(pack, POWERS_PATH, conquest::POWER_SCHEMA)?;
         for (i, p) in powers.iter().enumerate() {
             conquest::validate_power(p, buildings.len(), conquest_units)

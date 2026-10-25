@@ -202,6 +202,16 @@
                 (icon: Alarm, text: "It blocks your own troops too, so leave a gap where your line must pass."),
             ],
         ),
+        (
+            name: "Grave Hands",
+            summary: "A disturbed grave mound for 20 Grub on one tile. The first enemy regiment to walk onto it is seized by bony hands and held where it stands for 6 seconds. Your enemies cannot see it, and once it is sprung it is gone.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Built by a worker like any building, on one tile. Nothing can be built on it."),
+                (icon: Alarm, text: "Only you can see it. Enemies never see it, not even in the open."),
+                (icon: Bow, text: "Hold them under your archers for 6 seconds. Your own troops walk over it safely."),
+            ],
+        ),
     ],
     units: [
         (

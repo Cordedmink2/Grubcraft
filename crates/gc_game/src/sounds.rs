@@ -1242,6 +1242,7 @@ impl Sounds {
             Sound::Thorn => (SoundId::WallHit, 0.4, 0.8, PRI_BLOWS),
             Sound::Hum => (SoundId::Waver, 0.25, 0.8, PRI_MORALE),
             Sound::Chime => (SoundId::Rally, 0.25, 0.8, PRI_MORALE),
+            Sound::Sprung => (SoundId::SiegeImpact, 0.5, 1.0, PRI_BLOWS),
         };
         self.play_at(sound, noise.at, gain, reach, priority);
     }

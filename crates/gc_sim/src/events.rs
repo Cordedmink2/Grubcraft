@@ -104,6 +104,9 @@ pub enum Event {
         twist: WallTwist,
         on: Option<RegimentHandle>,
     },
+    /// A hidden trap went off (see [`crate::traps`]); its handle is no
+    /// longer live.
+    Sprung(crate::traps::Sprung),
     /// A worker was used up to start a building growing (the Brood's
     /// Gnawers; its handle is no longer live). It is not told as a loss.
     Consumed {
@@ -212,6 +215,7 @@ impl Events {
         tolled: &[StructureHandle],
         struck: &[(StructureHandle, RegimentHandle)],
         twisted: &[Twisted],
+        sprung: &[crate::traps::Sprung],
         fallen: &[StructureHandle],
     ) {
         self.list
@@ -228,6 +232,7 @@ impl Events {
                 on,
             }),
         );
+        self.list.extend(sprung.iter().map(|&s| Event::Sprung(s)));
         self.list
             .extend(fallen.iter().map(|&structure| Event::Fallen { structure }));
     }

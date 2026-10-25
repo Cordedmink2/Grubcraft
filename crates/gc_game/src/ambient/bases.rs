@@ -33,7 +33,7 @@ const OUTSIDE: f32 = 0.1;
 fn lived_in(role: Role) -> bool {
     !matches!(
         role,
-        Role::Wall | Role::Defence | Role::Bridge | Role::Stakes | Role::Barricade
+        Role::Wall | Role::Defence | Role::Bridge | Role::Stakes | Role::Barricade | Role::Trap
     )
 }
 
