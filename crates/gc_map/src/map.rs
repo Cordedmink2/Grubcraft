@@ -100,6 +100,10 @@ pub struct Map {
     /// tile, row by row, worked out from the habitat (or the land on a map
     /// that wasn't grown) by [`Map::settle_growth`] (empty: firm everywhere).
     pub footing: Vec<u8>,
+    /// Which way and how fast the rivers run on each tile, one
+    /// `gc_sim::Flow` byte per tile, row by row (empty: still water
+    /// everywhere, as on a map that wasn't grown).
+    pub flow: Vec<u8>,
     /// Starts, seeps, veins, hamlets and the rest. A generated map has its
     /// four starts and nothing else.
     pub objects: Vec<Placed>,
@@ -151,6 +155,7 @@ impl Map {
             habitat: Vec::new(),
             growth: Vec::new(),
             footing: Vec::new(),
+            flow: Vec::new(),
             objects: Vec::new(),
             set_pieces: Vec::new(),
         }
@@ -224,6 +229,7 @@ impl Map {
             cover: &self.cover,
             growth: &self.growth,
             footing: &self.footing,
+            flow: &self.flow,
         }
     }
 
@@ -440,7 +446,8 @@ pub fn map_hash(nav: &[u8], ground: &gc_sim::Ground) -> u64 {
         .chain(heights.flat_map(|v| v.to_le_bytes()))
         .chain(ground.cover.iter().copied())
         .chain(ground.growth.iter().copied())
-        .chain(ground.footing.iter().copied());
+        .chain(ground.footing.iter().copied())
+        .chain(ground.flow.iter().copied());
     fnv1a(bytes) ^ nav.len() as u64
 }
 

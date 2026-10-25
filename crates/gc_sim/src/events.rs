@@ -127,6 +127,12 @@ pub enum Event {
     /// The rivers rose over the fords and shut them (`closed`), or went
     /// down and opened them again (see [`crate::flood`]).
     Flooded { closed: bool },
+    /// A dry summer dropped the water so the summer fords can be waded
+    /// (`open`), or it came back over them (see [`crate::flood`]).
+    Shallows { open: bool },
+    /// A flash flood is coming down a river, has shut its fords, or has
+    /// passed and they are open again (see [`crate::flash`]).
+    FlashFlood { stage: crate::flash::Stage },
     /// A new season began (see [`crate::sky::Season`]); not told of the
     /// match's first spring.
     Season { season: crate::sky::Season },
@@ -201,6 +207,16 @@ impl Events {
     /// Tell of the fords shutting in a flood, or opening again.
     pub(crate) fn flooded(&mut self, closed: bool) {
         self.list.push(Event::Flooded { closed });
+    }
+
+    /// Tell of the summer fords opening, or going deep again.
+    pub(crate) fn shallows(&mut self, open: bool) {
+        self.list.push(Event::Shallows { open });
+    }
+
+    /// Tell of a flash flood coming, arriving or passing.
+    pub(crate) fn flash(&mut self, stage: crate::flash::Stage) {
+        self.list.push(Event::FlashFlood { stage });
     }
 
     /// Tell of a new season.

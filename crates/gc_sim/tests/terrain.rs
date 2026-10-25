@@ -79,6 +79,7 @@ fn world_full(
             cover,
             growth: &[],
             footing,
+            flow: &[],
         },
         champions: false,
         sky: gc_sim::Sky::STILL,

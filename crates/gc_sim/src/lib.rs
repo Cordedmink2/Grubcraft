@@ -29,6 +29,7 @@ pub mod economy;
 pub mod events;
 pub mod fieldworks;
 pub mod fire;
+pub mod flash;
 pub mod flood;
 pub mod fork;
 pub mod formation;
@@ -77,7 +78,7 @@ use structures::Work;
 pub use structures::{
     BuildingId, BuildingStats, Refusal, StructureHandle, StructureView, Structures,
 };
-pub use terrain::{Cover, Footing, Ground, Growth, Terrain};
+pub use terrain::{Cover, Flow, Footing, Ground, Growth, Terrain};
 pub use verdict::{
     EXILE_TICKS, HEART_HOLD_TICKS, HEART_REACH, HEART_UNLOCK_TICKS, HOLD_TICKS, HeartView, Verdict,
     Victories, Win,
@@ -122,7 +123,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 52;
+pub const SIM_VERSION: u32 = 55;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -906,7 +907,7 @@ impl World {
         );
         nav.set_sides(setup.teams.len(), |a, b| !stances.hostile(a, b));
         let vision = Vision::new(setup.capacities.regiments as usize, &terrain, &stances);
-        let flood = flood::Flood::new(&terrain, &nav, setup.map_tiles);
+        let flood = flood::Flood::new(&terrain, &nav, setup.map_tiles, setup.seed);
         World {
             tick: 0,
             rng: Pcg32::new(setup.seed, streams::WORLD),
@@ -1568,6 +1569,8 @@ impl World {
         }
         self.events.clear();
         // The sky moves on even while the armies deploy.
+        // The spells under way at the start count as begun on the first tick.
+        let begun = if self.tick == 0 { 0 } else { self.sky.begun() };
         if self.sky.tick(self.tick) {
             self.set_air();
         }
@@ -1577,6 +1580,9 @@ impl World {
             self.rivers();
             self.seasons();
         }
+        // After the seasons, so a storm on the first tick of spring finds
+        // the water thawed.
+        self.flash(begun);
         // Time stands still while the armies deploy.
         if self.deploying() {
             self.judge.deploying();
@@ -1615,6 +1621,7 @@ impl World {
         self.burn();
         if self.tick.is_multiple_of(TICKS_PER_SECOND) {
             self.sweep_fords();
+            self.wade_out();
         }
         self.combat.after_move(
             &mut self.regiments,
@@ -2680,21 +2687,104 @@ impl World {
     /// One second of the rivers (see [`flood`]): the water rises or goes
     /// down with the ground's wetness, and the fords shut or open with it.
     fn rivers(&mut self) {
-        let shut = (self.flood).second(&mut self.terrain, self.sky.wet(), !self.scratch);
-        if let Some(closed) = shut {
+        let at = self.sky.season(self.tick);
+        let weather = self.sky.weather();
+        let snow = match weather.kind {
+            WeatherKind::Snow => weather.strength,
+            _ => 0,
+        };
+        let wet = self.sky.wet();
+        let turn = (self.flood).second(&mut self.terrain, wet, at, snow, !self.scratch);
+        if let Some(closed) = turn.fords {
             (self.nav).set_flooded_all(self.flood.runs(), closed, &self.regiments);
             self.events.flooded(closed);
+            // A flash flood's river stays shut when the rain's flood goes.
+            if !closed && self.flood.flash.shut() {
+                (self.nav).set_flooded_all(self.flood.flash.runs(), true, &self.regiments);
+                self.events.flash(flash::Stage::Here);
+            }
         }
+        if let Some(open) = turn.shallows {
+            let runs = self.flood.shallow_runs();
+            (self.nav).set_exposed_all(runs, open, &self.regiments);
+            self.events.shallows(open);
+        }
+    }
+
+    /// One tick of the flash floods (see [`flash`]): a storm among the
+    /// spells begun since `begun` may set one off, and a running wave
+    /// raises the water down its river and shuts its fords once. A
+    /// rehearsal sets none off, but a running one runs on in it.
+    fn flash(&mut self, begun: usize) {
+        if !self.scratch {
+            let season = self.sky.season(self.tick).map(|s| s.season);
+            let frozen = self.terrain.frozen();
+            for spell in self.sky.spells_since(begun) {
+                self.flood.flash.storm(spell, season, frozen);
+            }
+        }
+        if self.flood.flash.wave().is_none() {
+            return;
+        }
+        let turn = self.flood.flash.tick();
+        self.terrain.set_wave(self.flood.flash.water());
+        if turn.coming {
+            self.events.flash(flash::Stage::Coming);
+        }
+        // A rain flood that has shut every ford keeps them shut, and tells
+        // when they open. A rehearsal never changes the walkable grid it
+        // shares.
+        if let Some(shut) = turn.fords.filter(|_| !self.flood.closed() && !self.scratch) {
+            (self.nav).set_flooded_all(self.flood.flash.runs(), shut, &self.regiments);
+            self.events.flash(if shut {
+                flash::Stage::Here
+            } else {
+                flash::Stage::Gone
+            });
+        }
+        if self.flood.flash.wave().is_none() {
+            self.terrain.set_wave(None);
+        }
+    }
+
+    /// One second of the summer fords gone deep again (with seasons):
+    /// regiments still standing in their deep water with nowhere else to
+    /// go (no order, or a chase, and not fighting, as in a shut ford) are
+    /// ordered to the nearest bank where their block fits.
+    fn wade_out(&mut self) {
+        if self.flood.exposed() || self.flood.shallow_runs().is_empty() || self.season().is_none() {
+            return;
+        }
+        let mut stuck = core::mem::take(&mut self.stranded);
+        stuck.clear();
+        let r = &self.regiments;
+        stuck.extend((0..r.alive.len()).filter(|&i| {
+            let p = r.position[i];
+            r.alive[i]
+                && r.models[i] > 0
+                && (r.target[i].is_none() || r.attack_target[i].is_some())
+                && r.foe(i).is_none()
+                && self.flood.on_shallows(p)
+                && !self.terrain.on_deck(p)
+                && self.nav.blocked(r.owner[i], p)
+        }));
+        self.send_to_bank(stuck);
     }
 
     /// One second of the regiments caught in shut fords (see
     /// [`flood::Flood::sweep`]): those with nowhere else to go are ordered
-    /// to the nearest bank where their block fits, as a player's move
-    /// order would, leaving off any work.
+    /// to the nearest bank where their block fits.
     fn sweep_fords(&mut self) {
         let mut stuck = core::mem::take(&mut self.stranded);
         self.flood
             .sweep(&mut self.regiments, &self.terrain, &mut stuck);
+        self.send_to_bank(stuck);
+    }
+
+    /// The regiments `stuck` go to the nearest bank where their block
+    /// fits, as a player's move order would, leaving off any work; the
+    /// list is kept for its room.
+    fn send_to_bank(&mut self, stuck: Vec<usize>) {
         for &i in &stuck {
             let (h, here) = (self.regiments.handle(i), self.regiments.position[i]);
             let berth = self.regiments.berth(&self.units, i);
@@ -2733,7 +2823,9 @@ impl World {
         if let Some(c) = &mut self.conquest {
             c.economy.set_season(season.grub_percent());
         }
-        let frozen = season == sky::Season::Winter && self.terrain.rise() == 0;
+        let frozen = season == sky::Season::Winter
+            && self.terrain.rise() == 0
+            && self.flood.flash().wave().is_none();
         if frozen != self.terrain.frozen() {
             // Routes cost the frozen fords as open ground till the thaw.
             self.nav.set_frozen(frozen, &self.regiments);
@@ -2749,6 +2841,13 @@ impl World {
 
     /// The rivers' fords, and whether a flood has shut them (how far it
     /// has raised the water is [`Terrain::rise`]).
+    /// Whether this is a rehearsal's world (see [`World::fork_region`]):
+    /// it sets no flood or flash flood going, and keeps the fords as it
+    /// found them.
+    pub fn is_scratch(&self) -> bool {
+        self.scratch
+    }
+
     pub fn flood(&self) -> &flood::Flood {
         &self.flood
     }
@@ -3020,9 +3119,12 @@ impl World {
                 }
                 // Only while the rivers are up, so a dry match hashes as
                 // before.
-                if self.terrain.rise() > 0 {
-                    self.flood.hash_into(self.terrain.rise(), h);
+                let (rise, low) = (self.terrain.rise(), self.terrain.low());
+                if rise > 0 || self.flood.seasonal(low) {
+                    self.flood.hash_into(rise, low, h);
                 }
+                // Only while a flash flood runs.
+                self.flood.flash().hash_into(h);
             }
             other => unreachable!("no hash for system {other}"),
         }

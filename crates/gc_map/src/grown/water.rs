@@ -46,6 +46,9 @@ pub(super) struct Water {
     pub(super) river: Vec<bool>,
     /// Lake tiles.
     pub(super) lake: Vec<bool>,
+    /// Which way and how fast the water runs on each tile, one
+    /// `gc_sim::Flow` byte a tile (0 still: lakes and dry land).
+    pub(super) flow: Vec<u8>,
     /// The middle tile of each ford (shallows across a river), for sites
     /// and trails to use.
     #[allow(dead_code)]
@@ -214,6 +217,22 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
         acc[last - i] = acc[i];
     }
 
+    // The current, down each river line, the south half the north's
+    // turned copy.
+    let mut flow = flow_layer(&lines, n);
+    for i in 0..nn / 2 {
+        flow[last - i] = gc_sim::Flow::turned(flow[i]);
+    }
+    // The middle tile of an odd map is its own turned copy: still.
+    if nn % 2 == 1 {
+        flow[nn / 2] = 0;
+    }
+    for i in 0..nn {
+        if !river[i] || lake[i] {
+            flow[i] = 0;
+        }
+    }
+
     let mut fords = carve(h, seeds, keep, &near_keep, &river, &lake, &lines);
     // Make the carved land (and the fords) the same turned copy.
     for i in 0..nn / 2 {
@@ -232,6 +251,7 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
         acc,
         river,
         lake,
+        flow,
         fords,
     }
 }
@@ -549,13 +569,13 @@ fn chaikin(pts: &[(i32, i32)], rounds: usize) -> Vec<(i32, i32)> {
     pts
 }
 
-/// The tiles under the rivers: a disc as wide as the river at every point
-/// of every line.
-fn rasterize(lines: &[Line], n: usize) -> Vec<bool> {
-    let mut out = vec![false; n * n];
+/// Calls `f(tile, d2, line, k)` for each tile within point `k` of each
+/// river line's disc (half its width there, and an eighth of a tile),
+/// `d2` its squared distance from the point (fixed point).
+fn each_disc(lines: &[Line], n: usize, mut f: impl FnMut(usize, i64, &Line, usize)) {
     let ni = n as i64;
     for line in lines {
-        for (&(px, py), &w) in line.pts.iter().zip(&line.width) {
+        for (k, (&(px, py), &w)) in line.pts.iter().zip(&line.width).enumerate() {
             let r = i64::from(w) / 2 + i64::from(ONE) / 8;
             let r2 = r * r;
             let reach = ((r * 3 / 2) >> 16) + 1;
@@ -566,13 +586,58 @@ fn rasterize(lines: &[Line], n: usize) -> Vec<bool> {
                         x * i64::from(ONE) - i64::from(px),
                         y * i64::from(ONE) - i64::from(py),
                     );
-                    if dx * dx + dy * dy <= r2 {
-                        out[(y * ni + x) as usize] = true;
+                    let d2 = dx * dx + dy * dy;
+                    if d2 <= r2 {
+                        f((y * ni + x) as usize, d2, line, k);
                     }
                 }
             }
         }
     }
+}
+
+/// The tiles under the rivers: a disc as wide as the river at every point
+/// of every line.
+fn rasterize(lines: &[Line], n: usize) -> Vec<bool> {
+    let mut out = vec![false; n * n];
+    each_disc(lines, n, |i, _, _, _| out[i] = true);
+    out
+}
+
+/// The current on each tile the river lines cover: the way the nearest
+/// point of its line runs (lines run from source to mouth), fast where
+/// the river is narrow and slow where it is wide, as `gc_sim::Flow` bytes.
+fn flow_layer(lines: &[Line], n: usize) -> Vec<u8> {
+    let mut out = vec![0u8; n * n];
+    let mut best = vec![i64::MAX; n * n];
+    each_disc(lines, n, |i, d2, line, k| {
+        if d2 >= best[i] {
+            return;
+        }
+        // The way from this point to the next (the last: from the one before).
+        let (a, b) = match line.pts.get(k + 1) {
+            Some(&b) => (line.pts[k], b),
+            None if k > 0 => (line.pts[k - 1], line.pts[k]),
+            None => return,
+        };
+        let way = gc_fixed::FxVec2::new(
+            gc_fixed::Fx::from_raw(b.0 - a.0),
+            gc_fixed::Fx::from_raw(b.1 - a.1),
+        );
+        if way == gc_fixed::FxVec2::ZERO {
+            return;
+        }
+        let w = line.width[k];
+        let speed = if w < 3 * ONE {
+            3
+        } else if w < 6 * ONE {
+            2
+        } else {
+            1
+        };
+        best[i] = d2;
+        out[i] = gc_sim::Flow::byte(Angle::of_vec(way), speed);
+    });
     out
 }
 
@@ -828,6 +893,25 @@ mod tests {
             assert_eq!(wa.river, wb.river);
             assert_eq!(wa.lake, wb.lake);
             assert_eq!(wa.acc, wb.acc);
+            assert_eq!(wa.flow, wb.flow);
+            // The rivers run, the lakes and land are still, and the turned
+            // half runs the turned way.
+            let last = n * n - 1;
+            for i in 0..n * n {
+                if wa.flow[i] != 0 {
+                    assert!(wa.river[i] && !wa.lake[i], "flow off a river at {i}");
+                }
+                let both = |k: usize| wa.river[k] && !wa.lake[k];
+                if i < n * n / 2 && both(i) && both(last - i) {
+                    assert_eq!(wa.flow[last - i], gc_sim::Flow::turned(wa.flow[i]));
+                }
+            }
+            let rivers = (0..n * n).filter(|&i| wa.river[i] && !wa.lake[i]).count();
+            let running = wa.flow.iter().filter(|&&f| f != 0).count();
+            assert!(
+                running * 10 >= rivers * 9,
+                "{running} of {rivers} river tiles run"
+            );
             for (i, &kept) in keep.iter().enumerate() {
                 if kept {
                     assert_eq!(a.v[i], h0.v[i], "keep tile {i} changed");

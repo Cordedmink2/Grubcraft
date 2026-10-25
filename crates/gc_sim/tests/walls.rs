@@ -74,6 +74,7 @@ fn world_with(grub: u32) -> World {
             cover: &cover,
             growth: &growth,
             footing: &[],
+            flow: &[],
         },
         champions: false,
         sky: gc_sim::Sky::STILL,

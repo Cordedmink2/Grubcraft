@@ -94,6 +94,7 @@ fn world(spells: &'static [Spell]) -> World {
             cover: &[],
             growth: &[],
             footing: &[],
+            flow: &[],
         },
         champions: false,
         sky: Sky {

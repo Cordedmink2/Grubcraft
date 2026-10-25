@@ -289,12 +289,12 @@ mod tests {
         };
         assert_eq!(at_320(1), 0x1175_1bfe_378b_818e);
         assert_eq!(at_320(4), 0x4810_c8ad_25ff_bc7c);
-        // Grown land: erosion and the river lines are the parts most
-        // likely to drift, and each of the dials.
-        assert_eq!(hash(GROWN + 1), 0x50b6_c09e_8ea3_7260);
-        assert_eq!(hash(GROWN + 2), 0x76c6_8292_05a5_cca6);
-        assert_eq!(hash(GROWN + 3), 0xbbda_03c3_1259_862c);
+        // Grown land: erosion and the river lines (and their current) are
+        // the parts most likely to drift, and each of the dials.
+        assert_eq!(hash(GROWN + 1), 0xf798_2e56_9277_ddfc);
+        assert_eq!(hash(GROWN + 2), 0xa641_0256_1301_c7c4);
+        assert_eq!(hash(GROWN + 3), 0x6ed2_be3e_a937_fa04);
         // Measured fairness: the start search and the paired sites.
-        assert_eq!(hash(MEASURED + 2), 0x397f_d670_b27e_6b4f);
+        assert_eq!(hash(MEASURED + 2), 0xe091_35fc_34d1_d981);
     }
 }

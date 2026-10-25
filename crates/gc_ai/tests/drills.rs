@@ -227,6 +227,7 @@ fn run_seeded(
             cover: &[],
             growth: &[],
             footing: &[],
+            flow: &[],
         },
         champions: false,
         sky: gc_sim::Sky::STILL,

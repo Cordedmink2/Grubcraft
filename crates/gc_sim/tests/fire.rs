@@ -44,6 +44,7 @@ fn world(cover: &[u8], sky: Sky<'static>) -> World {
             cover,
             growth: &[],
             footing: &[],
+            flow: &[],
         },
         champions: false,
         sky,

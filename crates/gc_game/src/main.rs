@@ -4053,8 +4053,11 @@ impl Running {
             look.snow = 0.0;
         }
         self.renderer.set_look(look);
-        // The water rises in a flood (docs/32-changing-land.md).
-        let rise = f32::from(self.world.terrain().rise()) / gc_sim::terrain::HEIGHT_UNITS as f32;
+        // The water rises in a flood (docs/32-changing-land.md) and drops
+        // in a dry summer (docs/38-living-waterways.md).
+        let t = self.world.terrain();
+        let rise = (t.water_line() - i32::from(t.water_level())) as f32
+            / gc_sim::terrain::HEIGHT_UNITS as f32;
         self.renderer
             .set_water_level(self.heightmap.water_level() + rise);
         // A battle that has just begun draws the bars; blows shook the screen
@@ -5959,8 +5962,7 @@ impl Running {
         }
         // Buildings whose blows this tick were shown.
         let mut shown = Vec::new();
-        let mut flooded = None;
-        let mut news = None;
+        let mut news = Vec::new();
         let (focus, distance) = self.view_focus();
         for e in self.world.events() {
             match *e {
@@ -6116,18 +6118,34 @@ impl Running {
                         self.siege.forget(sprung.structure);
                     }
                 }
-                Event::Flooded { closed } => flooded = Some(closed),
-                Event::Season { season } => news = Some(season_news(season)),
+                Event::Flooded { closed } => news.push(if closed {
+                    "The rivers are in flood: the fords can't be crossed"
+                } else {
+                    "The rivers have gone down: the fords are open again"
+                }),
+                Event::Season { season } => news.push(season_news(season)),
+                Event::FlashFlood { stage } => news.push(match stage {
+                    gc_sim::flash::Stage::Coming => {
+                        "A flash flood is coming down the river: get off the fords"
+                    }
+                    gc_sim::flash::Stage::Here => {
+                        "The flash flood is here: that river's fords can't be crossed"
+                    }
+                    gc_sim::flash::Stage::Gone => {
+                        "The flash flood has passed: the fords are open again"
+                    }
+                }),
+                Event::Shallows { open } => news.push(if open {
+                    "Low water: the shallows at the rivers' edges can be waded"
+                } else {
+                    "The water is back up: the summer fords are deep again"
+                }),
                 _ => {}
             }
         }
-        match flooded {
-            Some(true) => self.say("The rivers are in flood: the fords can't be crossed".into()),
-            Some(false) => self.say("The rivers have gone down: the fords are open again".into()),
-            None => {}
-        }
-        if let Some(news) = news {
-            self.say(news.into());
+        // Said together, so none hides another from the same tick.
+        if !news.is_empty() {
+            self.say(news.join(". "));
         }
         for b in self.world.blows() {
             self.puppets.struck(b);

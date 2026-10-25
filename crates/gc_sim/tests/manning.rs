@@ -52,6 +52,7 @@ fn world() -> World {
             cover: &cover,
             growth: &growth,
             footing: &[],
+            flow: &[],
         },
         champions: false,
         sky: gc_sim::Sky::STILL,

@@ -577,6 +577,13 @@ impl Minds {
         if self.terrain.stale(world.terrain()) {
             Arc::make_mut(&mut self.terrain).follow(world.terrain());
         }
+        // So are the rivers' fords shutting and opening.
+        // A rehearsal's world keeps its fords as it found them, and so do
+        // its minds.
+        let water = terrain::Water::of(world);
+        if !world.is_scratch() && self.terrain.seen_water() != water {
+            Arc::make_mut(&mut self.terrain).read_water(world, water);
+        }
         self.view.capture(world);
         // Regiments hidden in cover or fog of war are hidden from the
         // computer players too (docs/20-ambushes.md).

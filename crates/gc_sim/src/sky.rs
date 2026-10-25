@@ -519,6 +519,21 @@ impl SkyState {
         self.now
     }
 
+    /// How many spells have begun so far.
+    pub(crate) fn begun(&self) -> usize {
+        self.next
+    }
+
+    /// The spells begun from `from` on (see [`SkyState::begun`]), in
+    /// changing weather only: a fixed sky of one spell has none.
+    pub(crate) fn spells_since(&self, from: usize) -> &[Spell] {
+        if self.spells.len() > 1 {
+            &self.spells[from.min(self.next)..self.next]
+        } else {
+            &[]
+        }
+    }
+
     pub(crate) fn daylight(&self, tick: u32) -> Daylight {
         let passed = if self.runs { tick % self.day_ticks } else { 0 };
         Daylight {
