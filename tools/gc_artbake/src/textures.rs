@@ -358,4 +358,45 @@ mod tests {
         assert_eq!(b[3], (DEFAULT_ROUGHNESS * 255.0).round() as u8);
         assert_eq!(levels[2 * mips].1[..4], [0, 0, 0, 0]);
     }
+
+    #[test]
+    fn a_team_mask_lands_in_the_albedo_alpha() {
+        // Albedo 2x TEXTURE_SIZE of flat colour; team mask white in the left half only.
+        let dir = std::env::temp_dir().join(format!("gc_artbake_team_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let side = TEXTURE_SIZE * 2;
+        let write = |name: &str, f: &dyn Fn(u32) -> u8| {
+            let path = dir.join(name);
+            let mut enc = png::Encoder::new(std::fs::File::create(&path).unwrap(), side, side);
+            enc.set_color(png::ColorType::Rgb);
+            let mut w = enc.write_header().unwrap();
+            let mut data = Vec::new();
+            for _y in 0..side {
+                for x in 0..side {
+                    data.extend_from_slice(&[f(x); 3]);
+                }
+            }
+            w.write_image_data(&data).unwrap();
+            w.finish().unwrap();
+            path
+        };
+        let albedo_path = write("albedo.png", &|_| 90);
+        write("team.png", &|x| if x < side / 2 { 255 } else { 0 });
+        let cfg = TextureConfig {
+            albedo: "albedo.png".into(),
+            team: Some("team.png".into()),
+            normal: None,
+            orm: None,
+            emissive: None,
+        };
+        let albedo = load_png(&albedo_path).unwrap();
+        let resolve = |s: &str| Ok(dir.join(s));
+        let lv = levels(&cfg, &albedo, &albedo_path, resolve).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        let px = &lv[0].1;
+        let side0 = TEXTURE_SIZE as usize;
+        let alpha = |x: usize| px[(x) * 4 + 3];
+        assert_eq!(alpha(0), 255, "masked texel takes the team colour");
+        assert_eq!(alpha(side0 - 1), 0, "unmasked texel keeps its base colour");
+    }
 }
