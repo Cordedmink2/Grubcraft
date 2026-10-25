@@ -550,7 +550,7 @@ mod tests {
 
     fn entries() -> Vec<Entry> {
         let mut v = Vec::new();
-        for f in 0..4 {
+        for f in 0..Faction::ALL.len() {
             for k in 0..30 {
                 // The Brood have no models in this test.
                 let clips: &[&'static str] = if f == 1 {
@@ -627,8 +627,9 @@ mod tests {
         };
         frame(&mut v, &mut ui, right.clone());
         assert_eq!(v.selected().unwrap().name, "Unit 1-0");
-        frame(&mut v, &mut ui, right.clone());
-        frame(&mut v, &mut ui, right.clone());
+        for _ in 0..Faction::ALL.len() - 2 {
+            frame(&mut v, &mut ui, right.clone());
+        }
         frame(&mut v, &mut ui, right);
         assert_eq!(v.selected().unwrap().name, "Unit 0-0", "wraps round");
         let left = UiInput {
@@ -636,7 +637,10 @@ mod tests {
             ..UiInput::default()
         };
         frame(&mut v, &mut ui, left);
-        assert_eq!(v.selected().unwrap().name, "Unit 3-0");
+        assert_eq!(
+            v.selected().unwrap().name,
+            format!("Unit {}-0", Faction::ALL.len() - 1)
+        );
     }
 
     #[test]
