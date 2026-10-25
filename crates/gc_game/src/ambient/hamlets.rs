@@ -132,7 +132,7 @@ impl Ground<'_> {
 /// How steep a track may be: the most the ground may climb between two
 /// points `ROUTE_STEP` tiles apart.
 const ROUTE_STEP: f32 = 0.75;
-const ROUTE_CLIMB: f32 = 0.12;
+pub(super) const ROUTE_CLIMB: f32 = 0.12;
 
 /// Whether a cart can go from `a` to `b` in a straight line over dry,
 /// gently sloping ground that is not woods.

@@ -196,6 +196,20 @@ pub struct SoldierInstance {
     pub feet: u8,
 }
 
+/// The tip and way bytes of [`SoldierInstance::flags`] (its third and
+/// fourth) for a model pitched `radians` about its base, forward end up when
+/// positive: a cart on a slope. It is the tip the instance already has (a
+/// fallen man or a toppling building, `tipped` in world.wgsl) taken toward
+/// the model's back for a climb and its front for a descent, so lighting,
+/// shadows and foot IK (off for a tipped model) already follow it. The angle
+/// is kept under the quarter turn that means lying down.
+pub fn pitch_bytes(radians: f32) -> [u8; 2] {
+    let tip = (radians.abs() / std::f32::consts::FRAC_PI_2 * 255.0)
+        .round()
+        .min(254.0) as u8;
+    [tip, if radians > 0.0 { 128 } else { 0 }]
+}
+
 /// [`SoldierInstance::feet`]: no foot IK at all (the fallen and the dead).
 pub const FEET_AS_POSED: u8 = 255;
 
@@ -1441,6 +1455,18 @@ fn upload_materials(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pitch_is_a_tip_toward_the_back_for_a_climb_and_the_front_for_a_descent() {
+        assert_eq!(pitch_bytes(0.0)[0], 0, "level is upright");
+        let up = pitch_bytes(0.2);
+        let down = pitch_bytes(-0.2);
+        assert_eq!(up[0], down[0]);
+        assert!((32..=33).contains(&up[0]), "{up:?}");
+        assert_eq!((up[1], down[1]), (128, 0));
+        // Never the quarter turn that means lying down.
+        assert_eq!(pitch_bytes(5.0)[0], 254);
+    }
 
     #[test]
     fn the_rig_names_the_legs_it_can_bend_and_each_joint_takes_its_fix() {
