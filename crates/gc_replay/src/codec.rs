@@ -453,6 +453,11 @@ impl Writer {
                 self.handle(regiment);
                 self.structure(structure);
             }
+            Command::PlantStakes { regiment, building } => {
+                self.u8(40);
+                self.handle(regiment);
+                self.var(u64::from(building));
+            }
             Command::SetGate { structure, mode } => {
                 self.u8(28);
                 self.structure(structure);
@@ -907,6 +912,10 @@ impl<'a> Reader<'a> {
                 regiment: self.handle()?,
                 structure: self.structure()?,
             },
+            40 => Command::PlantStakes {
+                regiment: self.handle()?,
+                building: self.var_as()?,
+            },
             tag @ (34 | 35) => Command::RaiseWall {
                 structure: self.structure()?,
                 regiment: if tag == 34 {
@@ -1176,6 +1185,13 @@ mod tests {
                     index: 13,
                     generation: 4,
                 },
+            },
+            Command::PlantStakes {
+                regiment: RegimentHandle {
+                    index: 6,
+                    generation: 2,
+                },
+                building: 41,
             },
             Command::ManWall {
                 regiment: RegimentHandle {

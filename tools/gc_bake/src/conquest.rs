@@ -391,6 +391,8 @@ fn building_role(r: rosters::Role) -> cq::Role {
         rosters::Role::Defence => cq::Role::Defence,
         rosters::Role::Wall => cq::Role::Wall,
         rosters::Role::Bridge => cq::Role::Bridge,
+        rosters::Role::Stakes => cq::Role::Stakes,
+        rosters::Role::Barricade => cq::Role::Barricade,
     }
 }
 

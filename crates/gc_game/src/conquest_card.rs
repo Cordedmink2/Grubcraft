@@ -282,6 +282,14 @@ impl Running {
                     }
                     label.push_str(if self.buildings.is_bridge(b) {
                         "Bridge"
+                    } else if self.buildings.stats[usize::from(b)].role
+                        == gc_sim::structures::Role::Stakes
+                    {
+                        "Stakes"
+                    } else if self.buildings.stats[usize::from(b)].role
+                        == gc_sim::structures::Role::Barricade
+                    {
+                        "Barricade"
                     } else {
                         short(self.buildings.name(b))
                     });

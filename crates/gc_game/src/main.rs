@@ -2122,6 +2122,13 @@ impl ApplicationHandler for App {
                         KeyCode::KeyX if grid_key => r.battle_press(hud::SLOT_TORCHES),
                         KeyCode::KeyE if grid_key => r.battle_press(hud::SLOT_BURN),
                         KeyCode::KeyV if grid_key => r.battle_press(hud::SLOT_FALL_BACK),
+                        // C plants stakes in Conquest while the selection can; otherwise
+                        // it stays the credits key.
+                        KeyCode::KeyC
+                            if grid_key && r.conquest_match() && !r.plantable().is_empty() =>
+                        {
+                            r.battle_press(hud::SLOT_PLANT);
+                        }
                         KeyCode::Space if grid_key => r.jump_to_alert(),
                         // F1 finds an idle worker while there is one to find,
                         // and otherwise opens the Marshal's Scroll (like H).
@@ -3107,6 +3114,44 @@ impl Running {
             (true, false) => "Torches ready: they burn once it is dark".into(),
             (false, _) => "Torches out: hidden in the dark again".into(),
         });
+    }
+
+    /// The selected regiments that may plant stakes now, each with the
+    /// stakes of its faction's to plant.
+    fn plantable(&self) -> Vec<(RegimentHandle, gc_sim::BuildingId)> {
+        self.selected
+            .iter()
+            .filter_map(|&h| {
+                let unit = self.world.regiments.get(h)?.unit;
+                let faction = self.data.conquest_units.get(usize::from(unit))?.faction();
+                let stakes = self.buildings.stakes_of(faction)?;
+                self.world.plant_check(h, stakes).ok().map(|()| (h, stakes))
+            })
+            .collect()
+    }
+
+    /// C in Conquest: the selection's spearmen and archers halt, and after
+    /// ten seconds a free line of stakes goes up a tile in front of them.
+    fn plant_stakes(&mut self) {
+        if !self.conquest_match() {
+            return;
+        }
+        let ready = self.plantable();
+        if ready.is_empty() {
+            self.say("Only spearmen and archers out of the fight can plant stakes".into());
+            return;
+        }
+        for (regiment, building) in ready {
+            self.human_orders.push(PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::PlantStakes { regiment, building },
+            });
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        self.say(
+            "Planting stakes: they stand for ten seconds, then a free line goes up in front. Moving or fighting calls it off"
+                .into(),
+        );
     }
 
     /// V: the selection pulls back out of its fights in good order.
@@ -7411,7 +7456,17 @@ impl Running {
                         )
                     )
                     && worker.is_some(),
-                visit: done && !matches!(role, Some(Role::Wall | Role::Defence | Role::Bridge)),
+                visit: done
+                    && !matches!(
+                        role,
+                        Some(
+                            Role::Wall
+                                | Role::Defence
+                                | Role::Bridge
+                                | Role::Stakes
+                                | Role::Barricade
+                        )
+                    ),
                 worker: worker.unwrap_or(0),
                 centre,
                 half,

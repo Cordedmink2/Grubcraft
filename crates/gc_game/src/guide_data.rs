@@ -94,6 +94,8 @@ enum Role {
     Defence,
     Wall,
     Bridge,
+    Stakes,
+    Barricade,
     #[serde(other)]
     Other,
 }
@@ -509,6 +511,12 @@ fn building_flag_text(f: BuildingFlag, b: &RBuilding) -> Option<String> {
             "Gate: your side walks through, enemies don't; select it to set Auto, Locked or Open"
                 .into()
         }
+        BuildingFlag::Line if b.role == Role::Stakes => {
+            "Drawn like a wall at any angle; anyone walks through at half pace, nobody charges through. Spearmen and archers can plant it free".into()
+        }
+        BuildingFlag::Line if b.role == Role::Barricade => {
+            "Drawn like a wall at any angle; blocks walking, and troops of yours within 2 tiles take less damage".into()
+        }
         BuildingFlag::Line if b.role == Role::Bridge => {
             "Drawn straight across water, bank to bank; anyone can cross it, and troops on a tile that falls drop in the river".into()
         }
@@ -556,6 +564,8 @@ fn role_name(r: Role) -> &'static str {
         Role::Defence => "Defence",
         Role::Wall => "Wall",
         Role::Bridge => "Bridge",
+        Role::Stakes => "Stakes",
+        Role::Barricade => "Barricade",
         Role::Other => "Building",
     }
 }

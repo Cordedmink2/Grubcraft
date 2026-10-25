@@ -198,21 +198,34 @@ impl Running {
         matches!(self.hud.armed, Some(Armed::Wall(b, _)) if self.buildings.is_bridge(b))
     }
 
+    /// The role of the building the wall tool is armed with.
+    fn armed_role(&self) -> Option<Role> {
+        let Some(Armed::Wall(b, _)) = self.hud.armed else {
+            return None;
+        };
+        self.buildings.stats.get(usize::from(b)).map(|s| s.role)
+    }
+
     /// The places a wall of yours likes to end on: the ends of your own
-    /// walls, your towers and your gates; for a bridge, the ends of your own
-    /// bridges.
+    /// walls, your towers and your gates; for a bridge, stakes or a
+    /// barricade, the ends of your own works of that kind.
     fn wall_anchors(&self) -> Vec<Anchor> {
         let Some(all) = self.world.structures() else {
             return Vec::new();
         };
         let side = self.sandbox.side;
-        let bridge = self.bridge_armed();
+        // Walls, bridges, stakes and barricades each snap to their own.
+        let kind = |role: Role| match role {
+            Role::Bridge | Role::Stakes | Role::Barricade => role,
+            _ => Role::Wall,
+        };
+        let armed = kind(self.armed_role().unwrap_or(Role::Wall));
         let mut out = Vec::new();
         for s in all.iter().filter(|s| s.owner == side) {
             let Some(stats) = self.buildings.stats.get(usize::from(s.building)) else {
                 continue;
             };
-            if (stats.role == Role::Bridge) != bridge {
+            if kind(stats.role) != armed {
                 continue;
             }
             let rect = [s.tile.0, s.tile.1, i32::from(s.width), i32::from(s.depth)];
@@ -229,8 +242,8 @@ impl Running {
                 out.push(Anchor { rect, joins: false });
             }
         }
-        // The ends of your planned lines, too (blueprints are never bridges).
-        for p in (self.world.plans().iter()).filter(|p| p.owner == side && !bridge) {
+        // The ends of your planned lines, too (blueprints are walls only).
+        for p in (self.world.plans().iter()).filter(|p| p.owner == side && armed == Role::Wall) {
             let [x0, y0, x1, y1] = p.line.map(i32::from);
             if p.tile == (x0, y0) || p.tile == (x1, y1) {
                 out.push(Anchor {
@@ -423,6 +436,14 @@ impl Running {
         let Some(Armed::Wall(building, _)) = self.hud.armed else {
             return false;
         };
+        if self.buildings.is_fieldwork(building) && matches!(code, KeyCode::KeyB | KeyCode::KeyO) {
+            self.say(if code == KeyCode::KeyB {
+                "Field works are built by workers at once: they have no blueprints.".into()
+            } else {
+                "Field works are drawn as lines: no rings.".into()
+            });
+            return true;
+        }
         if self.buildings.is_bridge(building) && matches!(code, KeyCode::KeyB | KeyCode::KeyO) {
             self.say(if code == KeyCode::KeyB {
                 "A bridge is built by workers at once: it has no blueprints.".into()
@@ -747,6 +768,8 @@ impl Running {
     fn why_now(&self, building: BuildingId, why: Refusal) -> &'static str {
         if self.buildings.is_bridge(building) {
             bridge_why(why)
+        } else if self.buildings.is_fieldwork(building) {
+            fieldwork_why(why)
         } else {
             buildings::why(why)
         }
@@ -781,6 +804,8 @@ impl Running {
         if from.is_none() {
             return Some(if bridge {
                 bridge_start_hint()
+            } else if self.buildings.is_fieldwork(id) {
+                fieldwork_start_hint(self.buildings.name(id))
             } else {
                 start_hint(blueprint)
             });
@@ -864,6 +889,22 @@ fn bridge_why(why: Refusal) -> &'static str {
     match why {
         Refusal::Rough => "A bridge needs dry land at both ends and some water between them.",
         Refusal::Built => "Something is already built or bridged there.",
+        other => buildings::why(other),
+    }
+}
+
+/// The hint before stakes or a barricade (`name`) has a start.
+fn fieldwork_start_hint(name: &str) -> String {
+    format!(
+        "Click where the {name} starts, then where it ends or bends - right-click or Esc to stop"
+    )
+}
+
+/// A refusal in the words of stakes and barricades.
+fn fieldwork_why(why: Refusal) -> &'static str {
+    match why {
+        Refusal::Rough => "Stakes and barricades can't go on water or rough ground.",
+        Refusal::Built => "Something is already built there.",
         other => buildings::why(other),
     }
 }
@@ -979,6 +1020,8 @@ mod tests {
             start_hint(false),
             start_hint(true),
             bridge_start_hint(),
+            fieldwork_start_hint("Coffin Barricade"),
+            fieldwork_start_hint("Shard Stakes"),
             ring_start_hint(true),
             hint_line(32, Some("320 Grub, 100 Marrow"), ", ground to clear", false),
             hint_line(32, None, ", ground to clear", false),

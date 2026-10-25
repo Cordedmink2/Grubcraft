@@ -27,6 +27,7 @@ pub mod conquest;
 pub mod deploy;
 pub mod economy;
 pub mod events;
+pub mod fieldworks;
 pub mod fire;
 pub mod flood;
 pub mod fork;
@@ -120,7 +121,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 49;
+pub const SIM_VERSION: u32 = 50;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -778,6 +779,13 @@ pub enum Command {
         regiment: RegimentHandle,
         structure: StructureHandle,
     },
+    /// Conquest: a regiment of spearmen or archers halts and hammers a
+    /// free line of stakes of type `building` across its front (see
+    /// [`fieldworks`]).
+    PlantStakes {
+        regiment: RegimentHandle,
+        building: BuildingId,
+    },
 }
 
 impl Command {
@@ -815,6 +823,7 @@ impl Command {
             | Command::WorkPlan { .. }
             | Command::ManWall { .. }
             | Command::Climb { .. }
+            | Command::PlantStakes { .. }
             | Command::Rally { .. }
             | Command::HandOver { .. } => true,
             Command::SpawnRegiment { .. }
@@ -1248,6 +1257,14 @@ impl World {
             .map(|_| ())
     }
 
+    /// Whether regiment `r` may plant stakes of type `building` (see
+    /// [`Command::PlantStakes`]), or why not.
+    pub fn plant_check(&self, r: RegimentHandle, building: BuildingId) -> Result<(), Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        let i = self.regiments.resolve(r).ok_or(Refusal::Unknown)?;
+        c.plant_check(i, &self.regiments, &self.units, building)
+    }
+
     /// Whether regiment `r` may climb enemy wall tile `h` on ladders (see
     /// [`Command::Climb`]), or why not.
     pub fn climb_check(&self, r: RegimentHandle, h: StructureHandle) -> Result<(), Refusal> {
@@ -1636,6 +1653,20 @@ impl World {
                 &mut self.regiments,
                 &self.units,
             );
+            fieldworks::stakes_bite(
+                &mut conquest.structures,
+                &mut self.regiments,
+                &self.units,
+                &self.terrain,
+                &mut self.nav,
+            );
+            conquest.tend_planting(
+                &mut self.regiments,
+                &self.units,
+                &mut self.nav,
+                &self.terrain,
+            );
+            fieldworks::settle_field(&mut conquest.structures.field, &mut self.terrain);
             self.clear_land();
             if let Some(c) = &mut self.conquest {
                 c.tend_plans(&mut self.nav, &mut self.regiments, &self.terrain);
@@ -2090,6 +2121,16 @@ impl World {
                     return false;
                 };
                 conquest.climb_wall(r, structure, &mut self.regiments, &self.units, &self.nav)
+            }
+            Command::PlantStakes { regiment, building } => {
+                let r = self
+                    .regiments
+                    .resolve(regiment)
+                    .filter(|&r| self.stances.can_command(pc.player, self.regiments.owner[r]));
+                let (Some(r), Some(conquest)) = (r, &mut self.conquest) else {
+                    return false;
+                };
+                conquest.plant_stakes(r, &mut self.regiments, &self.units, building)
             }
             Command::WorkPlan { regiment } => {
                 match (self.worker_of(pc.player, regiment), &mut self.conquest) {

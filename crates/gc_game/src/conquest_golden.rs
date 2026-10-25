@@ -113,6 +113,8 @@ pub(crate) struct Kit {
     pub gate: Option<BuildingId>,
     /// Its wall drawn as a line, if it builds one.
     pub wall: Option<BuildingId>,
+    /// Its stakes, if it has any to plant.
+    pub stakes: Option<BuildingId>,
     /// What a worker, a soldier and the upgrade cost: Grub, Marrow and
     /// supply.
     pub worker_cost: [u32; 3],
@@ -151,8 +153,10 @@ impl Kit {
             let s = table.stats[i];
             // Not walls, bridges or gates: walls and bridges are drawn as
             // lines, and the host puts the gate up.
-            !matches!(s.role, Role::Main | Role::Wall | Role::Bridge)
-                && s.upgrades_from.is_none()
+            !matches!(
+                s.role,
+                Role::Main | Role::Wall | Role::Bridge | Role::Stakes | Role::Barricade
+            ) && s.upgrades_from.is_none()
                 && s.tier <= 1
         });
         let barracks = *plain
@@ -184,6 +188,9 @@ impl Kit {
         let wall = ids(&|i| table.stats[i].flags & gc_sim::structures::LINE != 0)
             .first()
             .copied();
+        let stakes = ids(&|i| table.stats[i].role == Role::Stakes)
+            .first()
+            .copied();
         let building_cost = |b: u16| {
             [
                 u32::from(stats(b).cost_grub),
@@ -202,6 +209,7 @@ impl Kit {
         Kit {
             gate,
             wall,
+            stakes,
             main,
             keep,
             worker,
@@ -259,6 +267,9 @@ struct Side {
     /// once on the march and in sight of it, and whether it got up.
     climber: Option<RegimentHandle>,
     climbed: bool,
+    /// Whether, before the march, a regiment of spearmen or archers was
+    /// set to plant stakes.
+    planted: bool,
 }
 
 /// The Clans' Shrine and their three built Edicts, as the first side plays
@@ -694,6 +705,9 @@ impl Match {
         self.tower(p, out);
         self.gate(p, out);
         self.wall(p, &workers, out);
+        if t < march_at {
+            self.stakes(p, out);
+        }
         if p == 1 {
             self.powers(p, out);
         } else {
@@ -847,6 +861,30 @@ impl Match {
                 },
             });
             self.sides[usize::from(p)].manning = true;
+        }
+    }
+
+    /// Before the march, once its wall is drawn, the first of side `p`'s
+    /// idle regiments that can plants a stake line across its front.
+    fn stakes(&mut self, p: PlayerId, out: &mut Vec<PlayerCommand>) {
+        let (side, Some(b)) = (self.sides[usize::from(p)], self.kits[usize::from(p)].stakes) else {
+            return;
+        };
+        if side.planted || side.waller.is_none() {
+            return;
+        }
+        let pick = (self.world.regiments.iter()).find(|r| {
+            r.owner == p && !r.moving && !r.engaged && self.world.plant_check(r.handle, b).is_ok()
+        });
+        if let Some(r) = pick {
+            out.push(PlayerCommand {
+                player: p,
+                command: Command::PlantStakes {
+                    regiment: r.handle,
+                    building: b,
+                },
+            });
+            self.sides[usize::from(p)].planted = true;
         }
     }
 

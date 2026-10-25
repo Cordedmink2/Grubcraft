@@ -27,7 +27,7 @@ use crate::conquest::Conquest;
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments};
 use crate::stances::Stances;
-use crate::structures::{Refusal, StructureHandle, Work, footprint_centre};
+use crate::structures::{Refusal, Role, StructureHandle, Work, footprint_centre};
 use crate::veins::foot_reaches;
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats, Vec};
 use gc_fixed::{Angle, Fx, FxVec2};
@@ -216,7 +216,7 @@ impl Conquest {
     /// a regiment that mans walls, steady and not fighting. `i` if so.
     fn walkway_check(&self, i: usize, r: usize, regs: &Regiments) -> Result<usize, Refusal> {
         let s = &self.structures;
-        let wall = (s.is_line(i) && !s.is_bridge(i)) || s.is_gate(i);
+        let wall = s.stats_of(i).role == Role::Wall || s.is_gate(i);
         if !wall || !self.unit(regs.unit[r]).mans_walls {
             return Err(Refusal::Unknown);
         }

@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 44: planting stakes (the plant stakes command, tag 40);
 /// - 43: the sky's year of seasons (read as none);
 /// - 42: the drawn walls' faction twists (read as none);
 /// - 41: the burn command (tag 39; nothing to read in older files);
@@ -99,7 +100,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 43;
+pub const FORMAT: u16 = 44;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.

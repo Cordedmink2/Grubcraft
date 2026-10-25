@@ -1637,7 +1637,10 @@ impl Combat {
                     / u128::from(CHARGE_TICKS);
             let heart = u128::from(heart_percent(regs.morale_state[i]));
             let room = u128::from(attacker.weapon_room_percent(regs.formation[i]));
-            let ground = terrain.melee_percent(regs.position[i], regs.position[j]);
+            let mut ground = terrain.melee_percent(regs.position[i], regs.position[j]);
+            if side == Side::Front && terrain.sheltered(regs.owner[j], regs.position[j]) {
+                ground = ground * crate::fieldworks::COVER_MELEE_PERCENT / 100;
+            }
             let (shaken, exposed) = (
                 100 - disorder_percent(regs.disorder[i]),
                 100 + disorder_percent(regs.disorder[j]),
@@ -1827,8 +1830,11 @@ impl Combat {
                 / 100;
             // A wall's parapet covers those on it, not those still on
             // their ladders.
+            // Nor are those behind a barricade of their own side's.
             let expected = if regs.on_wall[j] && !regs.climber[j] {
                 expected * crate::manning::WALL_COVER_PERCENT / 100
+            } else if terrain.sheltered(regs.owner[j], regs.position[j]) {
+                expected * crate::fieldworks::COVER_ARROW_PERCENT / 100
             } else {
                 expected
             };

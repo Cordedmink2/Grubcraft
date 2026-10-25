@@ -15,7 +15,7 @@ use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 36;
+pub const PROTOCOL: u8 = 37;
 
 const MAGIC: [u8; 2] = *b"GC";
 

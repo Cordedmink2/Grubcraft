@@ -376,13 +376,17 @@ fn buildings_follow_the_design_rules() {
                 assert_eq!(b.cost.marrow, 0, "{at}: tier-1 buildings cost no Marrow");
             }
             let (across, deep) = b.footprint;
-            if b.role == Role::Bridge {
+            if matches!(b.role, Role::Bridge | Role::Stakes | Role::Barricade) {
                 assert_eq!(
                     b.footprint,
                     (1, 1),
-                    "{at}: a bridge is drawn a tile at a time"
+                    "{at}: a bridge or field work is drawn a tile at a time"
                 );
-                assert_eq!(b.flags, [BuildingFlag::Line], "{at}: a bridge is drawn");
+                assert_eq!(
+                    b.flags,
+                    [BuildingFlag::Line],
+                    "{at}: a bridge or field work is drawn"
+                );
             } else if b.role == Role::Wall {
                 assert!(
                     across.min(deep) == 1 && across.max(deep) <= 3,
@@ -463,12 +467,15 @@ fn buildings_follow_the_design_rules() {
                 );
             }
             // Every Choir building but those that power a field (and its
-            // bridge, out over the water) needs power; nobody else's does
+            // bridge, out over the water, and its field works, out on the
+            // field) needs power; nobody else's does
             // (docs/21).
             let powers = b.flags.contains(&BuildingFlag::PowersField);
             assert_eq!(
                 b.flags.contains(&BuildingFlag::NeedsPower),
-                choir && !powers && b.role != Role::Bridge,
+                choir
+                    && !powers
+                    && !matches!(b.role, Role::Bridge | Role::Stakes | Role::Barricade),
                 "{at}: needs power"
             );
             assert_eq!(

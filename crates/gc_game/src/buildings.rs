@@ -98,6 +98,24 @@ const BONE_DECK: [u8; 3] = [226, 218, 194];
 const GLASS_DECK: [u8; 3] = [150, 226, 242];
 const GLASS_DECK_GLOW: u8 = 90;
 const CHITIN_DECK: [u8; 3] = [92, 62, 70];
+/// Field works: a stake line is a row of thin stakes (this many to a tile,
+/// each a low post and a tip leaning out across the line), a barricade a
+/// chunky waist-high slab with a beam and two posts. Heights in tiles.
+const STAKE_HEIGHT: f32 = 0.62;
+const STAKES_PER_TILE: usize = 4;
+const STAKE_LOW: f32 = 0.38;
+const STAKE_THIN: f32 = 0.09;
+/// How far a stake's foot stands off the line, and how much further its
+/// tip leans out, alternately to each side.
+const STAKE_STAGGER: f32 = 0.13;
+const STAKE_LEAN: f32 = 0.07;
+/// The cord that binds a finished stake line, this high.
+const STAKE_CORD: f32 = 0.22;
+const BARRICADE_HEIGHT: f32 = 0.68;
+const BARRICADE_BASE: f32 = 0.44;
+const BARRICADE_THICK: f32 = 0.55;
+/// A field work tile shares this much of the side's colour.
+const FIELDWORK_TEAM_TINT: u32 = 25;
 /// Each wall level past the first stands this much taller and thicker.
 const LEVEL_RISE: f32 = 0.45;
 const LEVEL_THICKEN: f32 = 0.1;
@@ -231,6 +249,8 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
             record::Role::Defence => Role::Defence,
             record::Role::Wall => Role::Wall,
             record::Role::Bridge => Role::Bridge,
+            record::Role::Stakes => Role::Stakes,
+            record::Role::Barricade => Role::Barricade,
         },
         tier: b.tier,
         upgrades_from: (b.upgrades_from != record::NONE).then_some(b.upgrades_from),
@@ -338,6 +358,20 @@ impl Table {
         (self.stats.get(usize::from(building))).is_some_and(|s| s.role == Role::Bridge)
     }
 
+    /// Whether `building` is a line of stakes or a barricade (field works,
+    /// drawn with the wall tool but never a wall slab).
+    pub fn is_fieldwork(&self, building: BuildingId) -> bool {
+        (self.stats.get(usize::from(building)))
+            .is_some_and(|s| matches!(s.role, Role::Stakes | Role::Barricade))
+    }
+
+    /// The faction's building of the stakes kind, if it has one.
+    pub fn stakes_of(&self, faction: Faction) -> Option<BuildingId> {
+        (self.stats.iter().zip(&self.factions))
+            .position(|(s, &f)| f == faction && s.role == Role::Stakes)
+            .map(|i| i as BuildingId)
+    }
+
     /// Whether `building` is a gate or a gatehouse.
     pub fn is_gate(&self, building: BuildingId) -> bool {
         (self.stats.get(usize::from(building)))
@@ -382,6 +416,9 @@ impl Table {
     pub fn wall_look(&self, building: BuildingId, open: bool) -> WallLook {
         match self.stats.get(usize::from(building)) {
             Some(s) if s.role == Role::Bridge => bridge_look(self.faction(building)),
+            Some(s) if matches!(s.role, Role::Stakes | Role::Barricade) => {
+                fieldwork_look(s.role, self.faction(building))
+            }
             Some(s) => wall_look(self.faction(building), s.flags, self.level(building), open),
             None => WallLook::PLAIN,
         }
@@ -605,6 +642,8 @@ pub fn height_of(role: Role) -> f32 {
     match role {
         Role::Wall => WALL_HEIGHT,
         Role::Bridge => DECK_TOP + RAIL_HEIGHT,
+        Role::Stakes => STAKE_HEIGHT,
+        Role::Barricade => BARRICADE_HEIGHT,
         Role::Main => MAIN_HEIGHT,
         _ => HEIGHT,
     }
@@ -806,6 +845,41 @@ pub fn bridge_look(faction: Option<Faction>) -> WallLook {
     }
 }
 
+/// What a field work of `role` is made of for `faction`: its body colour,
+/// the trim (stake tips, the beam of a barricade) and how much it glows.
+fn fieldwork_colours(role: Role, faction: Option<Faction>) -> ([u8; 3], [u8; 3], u8) {
+    let stakes = role == Role::Stakes;
+    match (faction, stakes) {
+        (Some(Faction::CarrionConcord), true) => ([226, 218, 194], [246, 242, 226], 0),
+        (Some(Faction::CarrionConcord), false) => ([92, 76, 70], [220, 212, 186], 0),
+        (Some(Faction::Choir), true) => ([140, 222, 240], [214, 246, 255], 70),
+        (Some(Faction::Choir), false) => ([128, 206, 226], [208, 244, 255], 60),
+        (Some(Faction::Brood), true) => ([64, 44, 52], [120, 92, 80], 0),
+        (Some(Faction::Brood), false) => ([78, 52, 60], [122, 88, 70], 0),
+        (_, true) => ([140, 98, 58], [190, 150, 98], 0),
+        (_, false) => ([118, 80, 48], [168, 124, 76], 0),
+    }
+}
+
+/// The look of a field work (stakes or a barricade) of `faction`: low, in
+/// its material's colours. Used for the ghost; the finished work is drawn
+/// by [`push_fieldwork_tile`].
+pub fn fieldwork_look(role: Role, faction: Option<Faction>) -> WallLook {
+    let (colour, _, glow) = fieldwork_colours(role, faction);
+    let (height, thick) = if role == Role::Stakes {
+        (STAKE_HEIGHT, 0.5)
+    } else {
+        (BARRICADE_HEIGHT, BARRICADE_THICK)
+    };
+    WallLook {
+        height,
+        thick,
+        colour: Some(colour),
+        glow,
+        ..WallLook::PLAIN
+    }
+}
+
 /// The look of a drawn wall of `faction` with building `flags` at `level`
 /// (1 to 3); `open` is true while its door is open to everyone (a dropped
 /// Light Curtain).
@@ -947,6 +1021,113 @@ fn push_bridge_tile(s: &StructureView, deck: [u8; 4], team: [u8; 3], out: &mut V
             size: [RAIL_THIN, RAIL_THIN, len],
             color: wood,
             lift: top + RAIL_HEIGHT - RAIL_THIN,
+        });
+    }
+}
+
+/// What one tile of a field work is drawn in.
+struct Fieldwork {
+    /// Stakes, or else a barricade.
+    stakes: bool,
+    /// The body colour with its glow, already dimmed with the hit points.
+    body: [u8; 4],
+    /// The stake tips or the beam.
+    trim: [u8; 3],
+    /// The owner's colour, dimmed too.
+    team: [u8; 3],
+}
+
+/// One tile of a field work, from boxes (no model).
+///
+/// Stakes: a row of thin posts, each with a tip stepped out across the
+/// line, to one side and the other in turn, bound by a cord when finished.
+/// Barricade: a chunky slab along the line with a lighter beam on top and
+/// two posts standing proud, as of carts or coffins piled up. Either grows
+/// with `built_percent`: the stakes shorter and fewer, the barricade lower
+/// and bare.
+fn push_fieldwork_tile(
+    s: &StructureView,
+    works: Fieldwork,
+    ground: &impl Fn(f32, f32) -> f32,
+    out: &mut Vec<BoxInstance>,
+) {
+    let (centre, dir, len) = match s.line.and_then(|line| wall_piece(line, s.tile)) {
+        Some(p) => (p.centre, p.dir, p.len),
+        None => (centre_of(s.tile, s.width, s.depth), Vec2::X, 1.0),
+    };
+    let side = Vec2::new(-dir.y, dir.x);
+    let done = f32::from(s.built_percent.min(100)) / 100.0;
+    let grow = 0.35 + 0.65 * done;
+    let [r, g, b, glow] = works.body;
+    let wood = tint([r, g, b], works.team, FIELDWORK_TEAM_TINT);
+    let tip = tint(works.trim, works.team, FIELDWORK_TEAM_TINT);
+    let wood = [wood[0], wood[1], wood[2], glow];
+    let tip = [tip[0], tip[1], tip[2], glow];
+    if works.stakes {
+        let shown = if s.finished() {
+            STAKES_PER_TILE
+        } else {
+            ((STAKES_PER_TILE as f32 * done).ceil() as usize).clamp(1, STAKES_PER_TILE)
+        };
+        for i in 0..shown {
+            let along = (i as f32 + 0.5) / STAKES_PER_TILE as f32 - 0.5;
+            let lean = if i % 2 == 0 { 1.0 } else { -1.0 };
+            let foot = centre + dir * (along * len) + side * (lean * STAKE_STAGGER);
+            let low = STAKE_LOW * grow;
+            out.push(BoxInstance {
+                pos: foot.to_array(),
+                facing: dir.to_array(),
+                size: [STAKE_THIN, low, STAKE_THIN],
+                color: wood,
+                lift: 0.0,
+            });
+            out.push(BoxInstance {
+                pos: (foot + side * (lean * STAKE_LEAN)).to_array(),
+                facing: dir.to_array(),
+                size: [
+                    STAKE_THIN * 0.7,
+                    (STAKE_HEIGHT - STAKE_LOW) * grow,
+                    STAKE_THIN * 0.7,
+                ],
+                color: tip,
+                lift: low,
+            });
+        }
+        if s.finished() {
+            out.push(BoxInstance {
+                pos: centre.to_array(),
+                facing: dir.to_array(),
+                size: [0.05, 0.05, len],
+                color: wood,
+                lift: STAKE_CORD,
+            });
+        }
+        return;
+    }
+    let base_height = BARRICADE_BASE * grow;
+    let base = wall_block(s, base_height, BARRICADE_THICK, wood, ground);
+    out.push(base);
+    if !s.finished() {
+        return;
+    }
+    let top = base.lift + base.size[1];
+    out.push(BoxInstance {
+        size: [
+            BARRICADE_THICK * 0.7,
+            BARRICADE_HEIGHT - BARRICADE_BASE,
+            base.size[2],
+        ],
+        color: tip,
+        lift: top,
+        ..base
+    });
+    for sign in [-1.0, 1.0] {
+        out.push(BoxInstance {
+            pos: (centre + dir * (sign * len * 0.3)).to_array(),
+            facing: dir.to_array(),
+            size: [0.14, BARRICADE_HEIGHT + 0.08 - BARRICADE_BASE, 0.14],
+            color: wood,
+            lift: top,
         });
     }
 }
@@ -1111,7 +1292,7 @@ pub fn push(
     };
     let right = Vec2::new(-across.y, across.x);
     for s in structures.iter().filter(|s| shown(s)) {
-        if out.len() + 9 > MAX_BOX_INSTANCES {
+        if out.len() + 12 > MAX_BOX_INSTANCES {
             return;
         }
         let Some(stats) = table.stats.get(usize::from(s.building)) else {
@@ -1135,6 +1316,16 @@ pub fn push(
         if stats.role == Role::Bridge {
             let team = shade(team(s.owner), s.hp, s.max_hp);
             push_bridge_tile(&s, [r, g, b, look.glow], team, out);
+        } else if matches!(stats.role, Role::Stakes | Role::Barricade) {
+            let (_, trim, _) = fieldwork_colours(stats.role, table.faction(s.building));
+            let team = shade(team(s.owner), s.hp, s.max_hp);
+            let works = Fieldwork {
+                stakes: stats.role == Role::Stakes,
+                body: [r, g, b, look.glow],
+                trim: shade(trim, s.hp, s.max_hp),
+                team,
+            };
+            push_fieldwork_tile(&s, works, &ground, out);
         } else {
             match (s.gate.is_some() && s.finished(), model) {
                 (true, _) => push_gate(
@@ -2265,6 +2456,62 @@ mod tests {
         let mut later = Vec::new();
         push_bridge_tile(&view, [150, 106, 62, 0], [200, 40, 40], &mut later);
         assert!(later[0].size[1] > frame[0].size[1]);
+    }
+
+    #[test]
+    fn each_faction_has_stakes_and_a_barricade_that_are_low_and_not_walls() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let (mut stakes, mut barricades) = (0, 0);
+        for b in 0..table.len() as BuildingId {
+            if !table.is_fieldwork(b) {
+                continue;
+            }
+            let faction = table.faction(b).expect("a field work has a faction");
+            assert!(table.is_wall(b) && !table.is_bridge(b));
+            assert!(table.buildable(faction).any(|x| x == b));
+            let role = table.stats[usize::from(b)].role;
+            if role == Role::Stakes {
+                stakes += 1;
+                assert_eq!(table.stakes_of(faction), Some(b));
+            } else {
+                barricades += 1;
+            }
+            let look = table.wall_look(b, false);
+            assert!(
+                look.height < WALL_HEIGHT * 0.6 && look.height > 0.5,
+                "{look:?}"
+            );
+            assert!(look.cap.is_none() && !look.merlons && look.lift == 0.0);
+            assert_eq!(height_of(role), look.height);
+        }
+        assert_eq!((stakes, barricades), (4, 4));
+    }
+
+    #[test]
+    fn field_work_tiles_are_boxes_that_stay_low_and_grow_while_going_up() {
+        let works = |stakes| Fieldwork {
+            stakes,
+            body: [140, 98, 58, 0],
+            trim: [190, 150, 98],
+            team: [200, 40, 40],
+        };
+        let flat = |_: f32, _: f32| 0.0;
+        for stakes in [true, false] {
+            let mut view = footprint_view((10, 5), 1, 1, 0);
+            view.line = Some([10, 3, 10, 9]);
+            let mut done = Vec::new();
+            push_fieldwork_tile(&view, works(stakes), &flat, &mut done);
+            assert!(done.len() >= 4 && done.len() <= 10, "{}", done.len());
+            let top = done.iter().map(|b| b.lift + b.size[1]).fold(0.0, f32::max);
+            assert!(top <= BARRICADE_HEIGHT + 0.1 && top > 0.5, "{top}");
+            view.built_percent = 20;
+            let mut early = Vec::new();
+            push_fieldwork_tile(&view, works(stakes), &flat, &mut early);
+            let early_top = early.iter().map(|b| b.lift + b.size[1]).fold(0.0, f32::max);
+            assert!(!early.is_empty() && early.len() < done.len(), "{stakes}");
+            assert!(early_top < top, "{early_top} {top}");
+        }
     }
 
     /// The extent of `slabs` along one axis (`x` or not), as (low, high).

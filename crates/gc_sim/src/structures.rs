@@ -59,6 +59,10 @@ pub enum Role {
     Wall = 8,
     /// A drawn bridge over water (see `gc_sim::bridges`).
     Bridge = 9,
+    /// A drawn line of stakes (see `gc_sim::fieldworks`).
+    Stakes = 10,
+    /// A drawn barricade (see `gc_sim::fieldworks`).
+    Barricade = 11,
 }
 
 impl Role {
@@ -70,12 +74,12 @@ impl Role {
             Role::Main => 32,
             Role::Outpost => 28,
             Role::Defence => 36,
-            Role::Wall | Role::Bridge => 8,
+            Role::Wall | Role::Bridge | Role::Stakes | Role::Barricade => 8,
             _ => 20,
         })
     }
 
-    pub const ALL: [Role; 10] = [
+    pub const ALL: [Role; 12] = [
         Role::Main,
         Role::Outpost,
         Role::Housing,
@@ -86,6 +90,8 @@ impl Role {
         Role::Defence,
         Role::Wall,
         Role::Bridge,
+        Role::Stakes,
+        Role::Barricade,
     ];
 
     pub fn from_u8(v: u8) -> Option<Role> {
@@ -334,6 +340,18 @@ impl BuildingStats {
         self.role == Role::Bridge
     }
 
+    /// Whether any worker builds it by hand, even one used up on the other
+    /// buildings it starts (the Brood's Gnawers): bridges and field works.
+    pub fn spares_builder(&self) -> bool {
+        matches!(self.role, Role::Bridge | Role::Stakes | Role::Barricade)
+    }
+
+    /// Whether it is walked through, built or not, so it never stands on
+    /// the walkable grid: stakes (see [`crate::fieldworks`]).
+    pub fn walked_through(&self) -> bool {
+        self.role == Role::Stakes
+    }
+
     /// Its footprint, `(width, depth)` in tiles, turned `turn` quarter
     /// turns: an odd turn swaps the sides.
     pub fn size(&self, turn: u8) -> (u8, u8) {
@@ -556,7 +574,7 @@ impl Approach {
 }
 
 /// Hit points are kept in hundredths, so a halved blow of 1 still counts.
-const HP_SCALE: u32 = 100;
+pub(crate) const HP_SCALE: u32 = 100;
 /// How far beyond its block's front a melee regiment reaches a wall, in
 /// tiles: a regiment's centre keeps about a tile and a quarter from
 /// blocked ground, so this lets the front rank touch it.
@@ -681,6 +699,12 @@ pub struct Structures {
     /// Bridge tiles finished (`true`) or fallen since the ground last
     /// heard, each as its footprint (see [`crate::bridges::settle_decks`]).
     pub(crate) decks: Vec<([i32; 4], bool)>,
+    /// Field work tiles finished or gone since the ground last heard (see
+    /// [`crate::fieldworks::settle_field`]).
+    pub(crate) field: Vec<crate::fieldworks::FieldMark>,
+    /// Every standing stake tile, finished or not, by tile, sorted: stakes
+    /// aren't on the walkable grid, so this is how they are found.
+    pub(crate) stake_tiles: Vec<((i32, i32), u32)>,
     /// Blows struck on buildings in the last tick, and by whom, for the
     /// events (one a regiment at most).
     pub(crate) struck: Vec<(StructureHandle, RegimentHandle)>,
@@ -791,6 +815,8 @@ impl Structures {
             fallen: Vec::with_capacity(n),
             rubble: Vec::with_capacity(8),
             decks: Vec::with_capacity(n),
+            field: Vec::new(),
+            stake_tiles: Vec::new(),
             struck: Vec::with_capacity(regiments),
             consumed: Vec::with_capacity(regiments),
             climbed: Vec::with_capacity(regiments),
@@ -1149,6 +1175,16 @@ impl Structures {
         self.add_hp(i, hp * HP_SCALE);
     }
 
+    /// Building slot `i` loses `scaled` hit points (in 1/[`HP_SCALE`]),
+    /// and falls at none.
+    pub(crate) fn wear_down(&mut self, i: usize, scaled: u32, nav: &mut Nav, regs: &Regiments) {
+        self.hp[i] = self.hp[i].saturating_sub(scaled);
+        if self.hp[i] == 0 {
+            self.fallen.push(self.handle(i));
+            self.remove(i, nav, regs);
+        }
+    }
+
     /// Building slot `i` loses `per_second` hit points a second; whether
     /// that wears it out. A worn-out building is left at its last hit point
     /// for the caller to take down.
@@ -1234,10 +1270,11 @@ impl Structures {
         regs: &Regiments,
     ) -> Option<StructureHandle> {
         let i = self.take_slot(owner, building, tile, turn)?;
-        nav.set_built(self.footprint(i), true, regs);
-        if self.is_bridge(i) {
-            self.deck_up(i);
+        // A bridge goes in as built too: `ground_up` swaps that for a deck.
+        if self.walls_ground(i) || self.is_bridge(i) {
+            nav.set_built(self.footprint(i), true, regs);
         }
+        self.ground_up(i);
         Some(self.handle(i))
     }
 
@@ -1279,6 +1316,10 @@ impl Structures {
         self.gate_door[i] = Door::default();
         self.gate_hold[i] = 0;
         self.line[i] = [0; 4];
+        if self.buildings[building as usize].walked_through() {
+            let at = self.stake_tiles.partition_point(|&(t, _)| t < tile);
+            self.stake_tiles.insert(at, (tile, index));
+        }
         Some(i)
     }
 
@@ -1296,7 +1337,9 @@ impl Structures {
     ) -> Option<StructureHandle> {
         let i = self.take_slot(owner, building, tile, turn)?;
         self.lay_foundation(i);
-        nav.set_built(self.footprint(i), true, regs);
+        if self.walls_ground(i) {
+            nav.set_built(self.footprint(i), true, regs);
+        }
         Some(self.handle(i))
     }
 
@@ -1409,10 +1452,8 @@ impl Structures {
         for &i in slots {
             self.shut_door(i, nav, regs);
         }
-        // A finished bridge stands on nothing on the walkable grid but its
-        // deck (see `crate::bridges::settle_decks`).
         let feet: Vec<[i32; 4]> = (slots.iter())
-            .filter(|&&i| !(self.is_bridge(i) && self.finished(i)))
+            .filter(|&&i| self.walls_ground(i))
             .map(|&i| self.footprint(i))
             .collect();
         // One by one, so a builder handed on to another of them is handed
@@ -1421,9 +1462,7 @@ impl Structures {
             if hand_on {
                 self.hand_on_wall(i, regs);
             }
-            if self.is_bridge(i) {
-                self.deck_down(i);
-            }
+            self.ground_down(i);
             self.free_slot(i);
         }
         nav.set_built_all(&feet, false, regs);
@@ -1433,11 +1472,10 @@ impl Structures {
     pub(crate) fn remove(&mut self, i: usize, nav: &mut Nav, regs: &Regiments) {
         self.hand_on_wall(i, regs);
         self.shut_door(i, nav, regs);
-        if self.is_bridge(i) && self.finished(i) {
-            self.deck_down(i);
-        } else {
+        if self.walls_ground(i) {
             nav.set_built(self.footprint(i), false, regs);
         }
+        self.ground_down(i);
         self.free_slot(i);
     }
 
@@ -1470,6 +1508,9 @@ impl Structures {
 
     /// Mark slot `i` free, its ground already given back.
     fn free_slot(&mut self, i: usize) {
+        if self.stats_of(i).walked_through() {
+            self.stake_tiles.retain(|&(_, s)| s as usize != i);
+        }
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.hp[i] = 0;
         self.work_left[i] = 0;
@@ -1596,10 +1637,11 @@ impl Structures {
                 && kinds
                     .get(usize::from(regs.unit[r]))
                     .is_some_and(|k| k.consumed)
-                && !self.is_bridge(s)
+                && !self.stats_of(s).spares_builder()
             {
                 // Used up to start it growing, if nothing has yet (a bridge
-                // is built by hand, so a Gnawer can carry one across).
+                // or field work is built by hand, so a Gnawer can carry one
+                // across).
                 if !self.finished(s) && !self.growing(s) {
                     self.growing[s] = true;
                     let worker = regs.handle(r);
@@ -1690,8 +1732,9 @@ impl Structures {
         let before = risen(self.work_left[s]);
         self.work_left[s] = self.work_left[s].saturating_sub(hand * steps);
         self.hp[s] = (self.hp[s] + risen(self.work_left[s]) - before).min(max);
-        if self.work_left[s] == 0 && self.is_bridge(s) {
-            self.deck_up(s);
+        if self.work_left[s] == 0 {
+            // A bridge's deck opens, a field work starts working.
+            self.ground_up(s);
         }
         true
     }

@@ -41,20 +41,6 @@ impl Structures {
             (kx - x).abs() + (ky - y).abs() == 1 && self.is_bridge(k) && self.finished(k)
         })
     }
-
-    /// Building slot `i`, a bridge tile, is finished or put up whole: its
-    /// deck opens (see [`settle_decks`]).
-    pub(crate) fn deck_up(&mut self, i: usize) {
-        self.decks.push((self.footprint(i), true));
-    }
-
-    /// Building slot `i`, a bridge tile, is coming down: its deck shuts, if
-    /// it was finished (see [`settle_decks`]).
-    pub(crate) fn deck_down(&mut self, i: usize) {
-        if self.finished(i) {
-            self.decks.push((self.footprint(i), false));
-        }
-    }
 }
 
 /// Bring the ground up to date with the bridge tiles finished and fallen

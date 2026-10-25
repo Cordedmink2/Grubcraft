@@ -46,8 +46,8 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Fx, FxVec2};
 
-use crate::Mass;
 use crate::sky::WET_FULL;
+use crate::{Mass, PlayerId};
 
 /// Height units per tile of height.
 pub const HEIGHT_UNITS: u32 = 256;
@@ -262,6 +262,11 @@ pub struct Terrain {
     rubble: Vec<(u32, u16)>,
     /// Tiles a finished bridge spans, by index, sorted: nobody wades there.
     decks: Vec<u32>,
+    /// Tiles of finished stakes, by index, sorted (see
+    /// [`crate::fieldworks`]).
+    stakes: Vec<u32>,
+    /// Tiles of finished barricades, as index times 8 plus owner, sorted.
+    barricades: Vec<u32>,
     /// How many times a tile has come to be rubble or stopped being, so
     /// readers of the soft ground know when to look again.
     rubble_moves: u32,
@@ -335,6 +340,8 @@ impl Terrain {
             soaked: 0,
             rubble: Vec::with_capacity(64),
             decks: Vec::new(),
+            stakes: Vec::new(),
+            barricades: Vec::new(),
             rubble_moves: 0,
             side: map_tiles as i32,
             rise: 0,
@@ -642,7 +649,7 @@ impl Terrain {
     /// Whether a charge can start from `p`, or be made onto a regiment at
     /// `p`: not in water and not in soft ground.
     pub fn bears_charge(&self, p: FxVec2) -> bool {
-        !self.wet(p) && !self.soft(p)
+        !self.wet(p) && !self.soft(p) && !self.staked(p)
     }
 
     /// Pace kept climbing from `p` a tile along `heading`, percent (100 on
@@ -711,16 +718,58 @@ impl Terrain {
 
     /// A bridge tile at `(x, y)` was finished (`on`) or fell.
     pub(crate) fn set_deck(&mut self, x: i32, y: i32, on: bool) {
-        let Some(i) = index_in(self.side, x, y) else {
-            return;
-        };
-        match (self.decks.binary_search(&(i as u32)), on) {
-            (Err(at), true) => self.decks.insert(at, i as u32),
-            (Ok(at), false) => {
-                self.decks.remove(at);
-            }
-            _ => {}
+        if let Some(i) = index_in(self.side, x, y) {
+            set_member(&mut self.decks, i as u32, on);
         }
+    }
+
+    /// Whether there are finished stakes anywhere.
+    pub fn any_stakes(&self) -> bool {
+        !self.stakes.is_empty()
+    }
+
+    /// Whether `p` is on a tile of finished stakes.
+    pub fn staked(&self, p: FxVec2) -> bool {
+        !self.stakes.is_empty()
+            && index_in(self.side, p.x.floor_int(), p.y.floor_int())
+                .is_some_and(|i| self.stakes.binary_search(&(i as u32)).is_ok())
+    }
+
+    /// A stake tile at `(x, y)` was finished (`on`) or fell.
+    pub(crate) fn set_stakes(&mut self, x: i32, y: i32, on: bool) {
+        if let Some(i) = index_in(self.side, x, y) {
+            set_member(&mut self.stakes, i as u32, on);
+        }
+    }
+
+    /// `owner`'s barricade tile at `(x, y)` was finished (`on`) or fell.
+    pub(crate) fn set_cover(&mut self, x: i32, y: i32, owner: PlayerId, on: bool) {
+        if let Some(i) = index_in(self.side, x, y) {
+            set_member(&mut self.barricades, i as u32 * 8 + u32::from(owner), on);
+        }
+    }
+
+    /// Whether `owner`'s regiment centred at `p` is behind cover: one of
+    /// `owner`'s finished barricades within
+    /// [`crate::fieldworks::COVER_TILES`] of its tile.
+    pub fn sheltered(&self, owner: PlayerId, p: FxVec2) -> bool {
+        if self.barricades.is_empty() {
+            return false;
+        }
+        let reach = crate::fieldworks::COVER_TILES;
+        let (x, y) = (p.x.floor_int(), p.y.floor_int());
+        let (x0, x1) = ((x - reach).max(0), (x + reach).min(self.side - 1));
+        (y - reach..=y + reach)
+            .filter(|&row| row >= 0 && row < self.side)
+            .any(|row| {
+                let first = (row * self.side + x0) as u32 * 8;
+                let last = (row * self.side + x1) as u32 * 8 + 7;
+                let from = self.barricades.partition_point(|&k| k < first);
+                self.barricades[from..]
+                    .iter()
+                    .take_while(|&&k| k <= last)
+                    .any(|&k| k % 8 == u32::from(owner))
+            })
     }
 
     /// The map's water line, in height units (0 with no water), before
@@ -814,8 +863,13 @@ impl Terrain {
             false => 100,
         };
         let climb = self.climb_percent(p, heading);
-        let percents = [wading, woods, soft, climb];
-        if percents == [100; 4] {
+        let stakes = if self.staked(p) {
+            crate::fieldworks::STAKE_PACE_PERCENT
+        } else {
+            100
+        };
+        let percents = [wading, woods, soft, climb, stakes];
+        if percents == [100; 5] {
             return step;
         }
         let raw =
@@ -834,5 +888,16 @@ impl Terrain {
             }
         };
         through(from) * through(aim) / 100
+    }
+}
+
+/// Put `key` in the sorted set `set` (`on`) or take it out.
+fn set_member(set: &mut Vec<u32>, key: u32, on: bool) {
+    match (set.binary_search(&key), on) {
+        (Err(at), true) => set.insert(at, key),
+        (Ok(at), false) => {
+            set.remove(at);
+        }
+        _ => {}
     }
 }

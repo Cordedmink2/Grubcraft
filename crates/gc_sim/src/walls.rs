@@ -24,7 +24,7 @@ use crate::conquest::{Conquest, overgrown, overlaps};
 use crate::nav::Nav;
 use crate::regiments::Regiments;
 use crate::structures::{
-    BuildingId, BuildingStats, GATE, GROWN, LINE, Refusal, StructureHandle, Structures, Work,
+    BuildingId, BuildingStats, GATE, GROWN, LINE, Refusal, Role, StructureHandle, Structures, Work,
 };
 use crate::terrain::Terrain;
 use crate::{PlayerId, Vec};
@@ -77,11 +77,11 @@ pub struct WallTile {
 }
 
 impl Structures {
-    /// The footprints of `owner`'s own walls and gates that touch the box
-    /// `area`.
-    fn own_walls_in(&self, owner: PlayerId, area: [i32; 4]) -> Vec<[i32; 4]> {
+    /// The footprints of `owner`'s own drawn tiles of `role` (walls and
+    /// gates, stakes, barricades) that touch the box `area`.
+    fn own_walls_in(&self, owner: PlayerId, role: Role, area: [i32; 4]) -> Vec<[i32; 4]> {
         self.own_in(owner, LINE | GATE, area)
-            .filter(|&i| !self.is_bridge(i))
+            .filter(|&i| self.stats_of(i).role == role)
             .map(|i| self.footprint(i))
             .collect()
     }
@@ -161,13 +161,14 @@ impl Structures {
     /// over the water is next only once a builder can reach it.
     pub(crate) fn next_wall_tile(&self, owner: PlayerId, i: usize) -> Option<usize> {
         let [x, y, _, _] = self.footprint(i);
-        let bridge = self.is_bridge(i);
+        let role = self.stats_of(i).role;
+        let bridge = role == Role::Bridge;
         self.standing()
             .filter(|&j| {
                 j != i
                     && self.owner_of(j) == owner
                     && self.is_line(j)
-                    && self.is_bridge(j) == bridge
+                    && self.stats_of(j).role == role
                     && self.wall_work_left(j)
                     && (!bridge || self.reachable_deck(j))
             })
@@ -209,8 +210,10 @@ impl Structures {
             let h = self.handle(i);
             ends = Some(ends.map_or((h, h), |(first, _)| (first, h)));
         }
-        let feet: Vec<[i32; 4]> = plan.iter().map(|t| [t.tile.0, t.tile.1, 1, 1]).collect();
-        nav.set_built_all(&feet, true, regs);
+        if !self.buildings()[usize::from(building)].walked_through() {
+            let feet: Vec<[i32; 4]> = plan.iter().map(|t| [t.tile.0, t.tile.1, 1, 1]).collect();
+            nav.set_built_all(&feet, true, regs);
+        }
         ends
     }
 
@@ -283,8 +286,8 @@ impl Conquest {
         terrain: &Terrain,
     ) -> Result<Vec<WallTile>, Refusal> {
         let (b, mut plan) = self.wall_fits(player, building, from, to, nav, regs, terrain)?;
-        // Nor for a bridge, whose line is laid whole.
-        if b.flags & GROWN != 0 || b.is_bridge() {
+        // Nor for a bridge or field work: blueprints are for walls.
+        if b.flags & GROWN != 0 || b.role != Role::Wall {
             return Err(Refusal::Unknown);
         }
         plan.retain(|t| !self.blueprints.planned(player, t.tile));
@@ -344,7 +347,7 @@ impl Conquest {
         if b.is_bridge() {
             return Ok((b, self.bridge_line(player, &tiles, area, nav, terrain)?));
         }
-        let own = self.structures.own_walls_in(player, area);
+        let own = self.structures.own_walls_in(player, b.role, area);
         let plan: Vec<WallTile> = tiles
             .into_iter()
             .filter(|&t| !own.iter().any(|&foot| overlaps(foot, [t.0, t.1, 1, 1])))
@@ -398,12 +401,12 @@ impl Conquest {
         };
         // A grown wall takes no worker; any other a worker that isn't used
         // up on the building it starts, which would leave the rest unbuilt
-        // (nobody is used up on a bridge: see `Structures::update`).
+        // (nobody is used up on a bridge or field work: see `BuildingStats::spares_builder`).
         let worker = match (r, stats.flags & GROWN != 0) {
             (None, true) => None,
             (Some(r), false)
                 if self.is_builder(r, regs)
-                    || (stats.is_bridge() && self.unit(regs.unit[r]).worker) =>
+                    || (stats.spares_builder() && self.unit(regs.unit[r]).worker) =>
             {
                 Some(r)
             }

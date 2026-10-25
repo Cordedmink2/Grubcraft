@@ -73,6 +73,9 @@ pub const SLOT_FORMATION: usize = 3;
 pub const SLOT_BRACE: usize = 8;
 /// Torches (X): light the selection's torches or put them out.
 pub const SLOT_TORCHES: usize = 9;
+/// Plant stakes (C), in Conquest: the slot Run keeps for itself until that
+/// order arrives.
+pub const SLOT_PLANT: usize = 10;
 pub const SLOT_FALL_BACK: usize = 11;
 /// The first of the four slots (A, S, D, F) a hero's abilities use.
 // Run (C) shares its key with the sandbox's credits tool, which moves when
@@ -123,6 +126,9 @@ const TIPS: [&str; GRID_SLOTS] = [
     "Run at full pace, tiring as you go. Not in the game yet.",
     "Back out of the fight in good order, taking one parting blow.",
 ];
+
+/// The tooltip of the Plant stakes order (Conquest spearmen and archers).
+const PLANT_TIP: &str = "Plant stakes: spearmen and archers stand 10 s to hammer a free line of stakes a tile in front. Moving or fighting calls it off.";
 
 /// An alert stays this long (in sim ticks, so a paused game keeps it) after
 /// the last time it happened.
@@ -740,6 +746,8 @@ impl Running {
             sky: &sky,
             season,
         };
+        let conquest = self.conquest_match();
+        let plantable = conquest && !self.plantable().is_empty();
         let hud = &mut self.hud;
         // A power being aimed needs no selection, unless it shifts one (see
         // `drop_stale_power`).
@@ -865,6 +873,13 @@ impl Running {
         grid[SLOT_BRACE].state = ready(has_orders && has_spears);
         grid[SLOT_FALL_BACK].state = ready(has_orders);
         grid[SLOT_TORCHES].state = ready(has_orders);
+        if conquest {
+            let slot = &mut grid[SLOT_PLANT];
+            slot.label = "Stakes";
+            slot.icon = Icon::Hammer;
+            slot.tip = PLANT_TIP;
+            slot.state = ready(has_orders && plantable);
+        }
         let burnable = has_orders && !self.world.deploying() && self.world.weather_lets_fire();
         grid[SLOT_BURN].state = ready(burnable);
         if has_orders && !burnable {
@@ -900,6 +915,14 @@ impl Running {
                     {
                         tip = if self.buildings.is_bridge(b) {
                             BRIDGE_TIP
+                        } else if self.buildings.is_fieldwork(b) {
+                            if self.buildings.stats[usize::from(b)].role
+                                == gc_sim::structures::Role::Stakes
+                            {
+                                STAKES_TIP
+                            } else {
+                                BARRICADE_TIP
+                            }
                         } else {
                             wall_tip(self.buildings.stats[usize::from(b)].flags)
                         };
@@ -1276,6 +1299,7 @@ impl Running {
             SLOT_BRACE => self.toggle_brace(),
             SLOT_TORCHES => self.toggle_torches(),
             SLOT_BURN => self.burn_woods(),
+            SLOT_PLANT => self.plant_stakes(),
             SLOT_FALL_BACK => self.fall_back(),
             _ => {}
         }
@@ -1896,6 +1920,10 @@ const WALL_TIP_GROWN: &str = "Draw this wall: click its start, then each end or 
 
 /// The build-menu tooltip of a bridge.
 const BRIDGE_TIP: &str = "Draw a straight bridge across a river: click the near bank, then the far bank. A worker builds it out from the bank, a tile at a time, and anyone can cross it. Troops on a tile that falls drop into the river. Right-click ends it.";
+
+/// The build-menu tooltips of stakes and a barricade.
+const STAKES_TIP: &str = "Draw a line of stakes at any angle: click its start, then each end or bend. Cheap and quick. Anyone walks through at half pace, but nobody charges through: enemy riders and beasts are stopped dead. Spearmen and archers can plant a free line (C). Right-click ends it.";
+const BARRICADE_TIP: &str = "Draw a barricade like a wall: click its start, then each end or bend. Nobody walks through. Your troops within 2 tiles take less from arrows and blows. Right-click ends it.";
 
 /// The build-menu tooltip for the wall `flags` describe.
 fn wall_tip(flags: u16) -> &'static str {

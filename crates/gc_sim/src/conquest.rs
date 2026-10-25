@@ -202,6 +202,8 @@ pub(crate) struct Conquest {
     pub(crate) blueprints: Blueprints,
     /// Regiments on the walls (see [`crate::manning`]).
     pub(crate) manning: crate::manning::Manning,
+    /// Regiments planting stakes (see [`crate::fieldworks`]).
+    pub(crate) planting: Vec<crate::fieldworks::Planting>,
 }
 
 /// Whether the footprints `a` and `b` (`[x, y, w, d]`) share a tile.
@@ -233,6 +235,7 @@ impl Conquest {
             clearing: Clearing::new(regiments, setup.build_percent),
             blueprints: Blueprints::default(),
             manning: crate::manning::Manning::new(setup.structures as usize),
+            planting: Vec::new(),
         }
     }
 
@@ -408,6 +411,10 @@ impl Conquest {
         {
             return Err(Refusal::Built);
         }
+        // Stakes are walked through, so the grid doesn't show them.
+        if self.structures.stakes_in(foot) {
+            return Err(Refusal::Built);
+        }
         Ok(())
     }
 
@@ -474,7 +481,7 @@ impl Conquest {
             return Vec::new();
         }
         (self.structures.own_in(player, LINE, foot))
-            .filter(|&i| !self.structures.is_bridge(i))
+            .filter(|&i| self.structures.stats_of(i).role == Role::Wall)
             .collect()
     }
 
@@ -894,5 +901,6 @@ impl Conquest {
         self.honor.hash_into(h);
         self.blueprints.hash_into(regs, h);
         self.manning.hash_into(regs, h);
+        self.hash_planting(regs, h);
     }
 }

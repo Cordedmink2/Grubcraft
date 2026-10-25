@@ -151,6 +151,26 @@
                 (icon: Alarm, text: "Enemies can cross it too, so guard it. A tile that falls drops troops into the river."),
             ],
         ),
+        (
+            name: "Shard Stakes",
+            summary: "A line of glass shards set point up that you draw like a wall, at any angle, for 4 Grub a tile. Anyone walks through at half pace, but nobody charges through: enemy riders and beasts that run onto it are stopped dead, hurt and disordered. It wears down each time.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Draw it like a wall, at any angle. It costs little and goes up fast."),
+                (icon: Spear, text: "Spearmen and archers can plant a free line with Plant stakes (C): stand 10 s."),
+                (icon: Alarm, text: "Ranks that charge into it are stopped dead; keep your own charges off it."),
+            ],
+        ),
+        (
+            name: "Glass Barricade",
+            summary: "A line of thick glass slabs you draw like a wall, for 8 Grub a tile. It blocks walking like a wall, and your troops within 2 tiles of it take 30 percent less from arrows and 20 percent less from blows to their front. Enemy troops get no cover from it.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Draw it like a wall, at any angle. It costs little and goes up fast."),
+                (icon: Bow, text: "Put your archers and spears within 2 tiles behind it to take the cover."),
+                (icon: Alarm, text: "It blocks your own troops too, so leave a gap where your line must pass."),
+            ],
+        ),
     ],
     units: [
         (
