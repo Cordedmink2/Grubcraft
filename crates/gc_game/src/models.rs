@@ -1023,6 +1023,37 @@ mod tests {
     }
 
     #[test]
+    fn the_bodies_on_rigs_of_their_own_reel_three_ways() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        for name in [
+            "Chitin Guard",
+            "Colossus Maw",
+            "Mantid Reapers",
+            "Drone-Moths",
+            "Mounted Samurai",
+            "The Daimyo",
+            "Glass Striders",
+            "Yabusame Riders",
+            "Harmonic Walkers",
+            "Debt Collectors",
+        ] {
+            let m = models.by_name(name).unwrap();
+            let own = &clips.by_model[m];
+            // His own hit and the two reels made for his rig.
+            assert_eq!(own.staggers.len(), 3, "{name}");
+            let reel = |look| {
+                clips
+                    .fight(m, Move::Stagger(0.5), 0.0, look)
+                    .unwrap()
+                    .0
+                    .rows[0]
+            };
+            assert!((0..=255).any(|look| reel(look) != reel(0)), "{name}");
+        }
+    }
+
+    #[test]
     fn a_soldier_varies_his_blows_and_his_regiment_its_staggers() {
         let models = load().unwrap();
         let clips = Clips::new(&models);

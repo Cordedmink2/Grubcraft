@@ -294,6 +294,9 @@
                 "Attack2": "Ride_Rear", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Cheer",
             },
             contacts: {"Attack": 0.43, "Attack2": 0.57},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/mounted-samurai-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (14000, 5000, 1700, 550),
             textures: Some((
                 albedo: "shared:grubcraft/ember/mounted-samurai/albedo.png",
@@ -315,6 +318,9 @@
                 "Shoot": "Ride_Shoot", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Cheer",
             },
             contacts: {"Attack": 0.37},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/yabusame-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (14000, 5000, 1700, 550),
             textures: Some((
                 albedo: "shared:grubcraft/ember/yabusame/albedo.png",
@@ -336,6 +342,9 @@
                 "Attack2": "Ride_Rear", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Rally",
             },
             contacts: {"Attack": 0.43, "Attack2": 0.57},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/mounted-samurai-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (14000, 5000, 1700, 550),
             textures: Some((
                 albedo: "shared:grubcraft/ember/daimyo/albedo.png",
@@ -435,6 +444,9 @@
                 "Idle": "Idle_Sword", "Walk": "Walk", "Run": "Run", "Attack": "Sword_Slash", "Attack2": "Kick_Right", "Hit": "HitRecieve", "Die": "Death", "Cheer": "Wave",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.5},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/harmonic-walkers-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/choir/harmonic-walkers/albedo.png",
@@ -453,6 +465,9 @@
                 "Idle": "Ride_Idle", "Walk": "Ride_Walk", "Run": "Ride_Run", "Attack": "Ride_Slash", "Attack2": "Ride_Rear", "Hit": "Ride_Hit", "Die": "Ride_Death", "Cheer": "Ride_Cheer",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.57},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/glass-striders-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (14000, 5000, 1700, 550),
             textures: Some((
                 albedo: "shared:grubcraft/choir/glass-striders/albedo.png",
@@ -676,6 +691,9 @@
                 "Idle": "Cav_Idle", "Walk": "Cav_Walk", "Run": "Cav_Run", "Attack": "Cav_Attack", "Attack2": "Cav_Attack2", "Hit": "Cav_Hit", "Die": "Cav_Die", "Cheer": "Cav_Cheer",
             },
             contacts: {"Attack": 0.33, "Attack2": 0.53},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/debt-collectors-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (14000, 5000, 1700, 550),
             textures: Some((
                 albedo: "shared:grubcraft/concord/debt-collectors/albedo.png",
@@ -840,6 +858,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Block": "Block",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.33},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/chitinguard-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/chitinguard/albedo.png",
@@ -857,6 +878,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Shoot": "Shoot",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.33},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/bulk-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (20000, 7000, 2400, 800),
             textures: Some((
                 albedo: "shared:grubcraft/brood/bulk/albedo.png",
@@ -874,6 +898,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
             contacts: {"Attack": 0.5, "Attack2": 0.8},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/maw-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (20000, 7000, 2400, 800),
             textures: Some((
                 albedo: "shared:grubcraft/brood/maw/albedo.png",
@@ -891,6 +918,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.33},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/devourer-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (12000, 4000, 1400, 450),
             textures: Some((
                 albedo: "shared:grubcraft/brood/devourer/albedo.png",
@@ -908,6 +938,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.33},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/whisperer-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (12000, 4000, 1400, 450),
             textures: Some((
                 albedo: "shared:grubcraft/brood/whisperer/albedo.png",
@@ -925,6 +958,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.33},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/gnawer-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/gnawer/albedo.png",
@@ -942,6 +978,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.33},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/skitterlings-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/skitterlings/albedo.png",
@@ -959,6 +998,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.33},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/reclaimer-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/reclaimer/albedo.png",
@@ -976,6 +1018,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Shoot": "Shoot",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.33},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/spitters-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/spitters/albedo.png",
@@ -993,6 +1038,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.33},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/burrowers-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/burrowers/albedo.png",
@@ -1010,6 +1058,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.17},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/mantid-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/mantid/albedo.png",
@@ -1027,6 +1078,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Shoot": "Shoot", "Block": "Block",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.33},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/shellbacks-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/shellbacks/albedo.png",
@@ -1044,6 +1098,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer", "Shoot": "Shoot",
             },
             contacts: {"Attack": 0.5, "Attack2": 0.37},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/moths-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/moths/albedo.png",
@@ -1061,6 +1118,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.23},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/spawnlings-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (8400, 3000, 1000, 350),
             textures: Some((
                 albedo: "shared:grubcraft/brood/spawnlings/albedo.png",
@@ -1078,6 +1138,9 @@
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer",
             },
             contacts: {"Attack": 0.47, "Attack2": 0.33},
+            // Two reels from a blow, made for its rig (docs/33, stage 5).
+            moves_from: Some("shared:grubcraft/fight-library/staggers/queen-staggers.glb"),
+            moves: [(anim: "S_Stagger_A", act: "Hit"), (anim: "S_Stagger_B", act: "Hit")],
             lod_triangles: (12000, 4000, 1400, 450),
             textures: Some((
                 albedo: "shared:grubcraft/brood/queen/albedo.png",
