@@ -5941,7 +5941,16 @@ impl Running {
                             .filter(|c| c.pos.distance(at) <= aftermath::DEAD_RADIUS)
                             .count();
                         let tint = color_of(&self.parties, owner);
-                        self.aftermath.wiped(regiment, at, facing, tint, dead);
+                        // The nearest foe by takes the standard.
+                        let world = &self.world;
+                        let victor = (world.regiments.iter())
+                            .filter(|f| world.hostile(f.owner, owner) && !world.is_worker(f.handle))
+                            .map(|f| (f.handle, from_fx_vec(f.position).distance(at)))
+                            .filter(|&(_, d)| d <= aftermath::TAKE_RADIUS)
+                            .min_by(|a, b| a.1.total_cmp(&b.1))
+                            .map(|(h, _)| h);
+                        self.aftermath
+                            .wiped(regiment, at, facing, tint, dead, victor);
                     }
                 }
                 Event::Contact { regiment, foe } => {
@@ -6732,6 +6741,14 @@ impl Running {
             });
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));
         let fallen = self.aftermath.standards(|p| ground_of(map, p));
+        let carried = self.aftermath.trophies(
+            |h| {
+                let r = world.regiments.get(h)?;
+                (!self.commander && (self.reveal_all || world.sees(viewer, h)))
+                    .then(|| drawn_pose(prev, alpha, &r))
+            },
+            |p| ground_of(map, p),
+        );
         let piled = self.wood_piles(focus, distance);
         let hamlets: Vec<scenery::Extra> = if self.commander {
             Vec::new()
@@ -6752,6 +6769,7 @@ impl Running {
                 .chain(banners)
                 .chain(falling)
                 .chain(fallen)
+                .chain(carried)
                 .chain(stumps)
                 .chain(piled)
                 .chain(hamlets),

@@ -23,6 +23,18 @@ use crate::scenery::{self, Extra, Model};
 /// is forgotten.
 const MAX_STANDARDS: usize = 96;
 const MAX_FLOCKS: usize = 48;
+const MAX_TROPHIES: usize = 96;
+/// Captured standards one regiment carries at most (the oldest give way).
+const TROPHIES_PER_REGIMENT: usize = 3;
+/// Seconds a captured standard is carried before it is put away.
+const TROPHY_SECONDS: f32 = 600.0;
+/// How near a living regiment of a foe must stand to take the standard of
+/// one wiped out, in tiles.
+pub const TAKE_RADIUS: f32 = 10.0;
+/// A captured standard rides this far behind the centre of the regiment
+/// that took it, and this far apart from the others, in tiles.
+const TROPHY_BEHIND: f32 = 1.6;
+const TROPHY_APART: f32 = 0.9;
 /// The fallen this close to where a regiment was wiped out are counted for
 /// the crows.
 pub const DEAD_RADIUS: f32 = 12.0;
@@ -88,6 +100,18 @@ struct Standard {
     age: f32,
 }
 
+/// A standard taken from a wiped-out regiment, carried in the rear by the
+/// regiment that did it.
+struct Trophy {
+    winner: RegimentHandle,
+    /// The colour of the regiment it was taken from.
+    tint: [u8; 3],
+    /// Seconds since it was taken.
+    age: f32,
+    /// Counts the trophies taken, so equal ages still have an order.
+    seq: u32,
+}
+
 /// The crows over a battlefield.
 struct Flock {
     at: Vec2,
@@ -112,6 +136,9 @@ struct Seen {
 #[derive(Default)]
 pub struct Aftermath {
     standards: Vec<Standard>,
+    trophies: Vec<Trophy>,
+    /// Trophies taken so far (see [`Trophy::seq`]).
+    taken: u32,
     flocks: Vec<Flock>,
     /// Per regiment slot.
     seen: Vec<Option<Seen>>,
@@ -123,6 +150,7 @@ impl Aftermath {
     /// Forget it all: a new match, a seek.
     pub fn clear(&mut self) {
         self.standards.clear();
+        self.trophies.clear();
         self.flocks.clear();
         self.seen.clear();
     }
@@ -147,22 +175,35 @@ impl Aftermath {
 
     /// Regiment `h` of `tint`'s colour was wiped out at `at`, facing
     /// `facing`, with `dead` fallen soldiers lying around (its own included).
-    /// Workers go unmourned.
-    pub fn wiped(&mut self, h: RegimentHandle, at: Vec2, facing: Vec2, tint: [u8; 3], dead: usize) {
+    /// A `victor` standing by takes its standard and carries it; else the
+    /// torn standard is left where it fell. Workers go unmourned.
+    pub fn wiped(
+        &mut self,
+        h: RegimentHandle,
+        at: Vec2,
+        facing: Vec2,
+        tint: [u8; 3],
+        dead: usize,
+        victor: Option<RegimentHandle>,
+    ) {
         if self.slot(h).is_some_and(|s| s.worker) {
             return;
         }
-        push_oldest(
-            &mut self.standards,
-            MAX_STANDARDS,
-            Standard {
-                at,
-                facing,
-                tint,
-                age: 0.0,
-            },
-            |s| s.age,
-        );
+        if let Some(winner) = victor {
+            self.take(winner, tint);
+        } else {
+            push_oldest(
+                &mut self.standards,
+                MAX_STANDARDS,
+                Standard {
+                    at,
+                    facing,
+                    tint,
+                    age: 0.0,
+                },
+                |s| s.age,
+            );
+        }
         let near = |f: &&mut Flock| f.age < CROW_STAY && f.at.distance(at) <= MERGE_RADIUS;
         if let Some(f) = self.flocks.iter_mut().find(near) {
             // The same fight going on: more crows for the dead, and if none
@@ -183,10 +224,38 @@ impl Aftermath {
         push_oldest(&mut self.flocks, MAX_FLOCKS, flock, |f| f.age);
     }
 
+    /// Regiment `winner` takes a standard of `tint`'s colour; past three, its
+    /// oldest is put away.
+    fn take(&mut self, winner: RegimentHandle, tint: [u8; 3]) {
+        let held = || {
+            self.trophies
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| t.winner == winner)
+        };
+        if held().count() >= TROPHIES_PER_REGIMENT
+            && let Some((i, _)) = held().min_by_key(|(_, t)| t.seq)
+        {
+            self.trophies.remove(i);
+        }
+        self.taken = self.taken.wrapping_add(1);
+        push_oldest(
+            &mut self.trophies,
+            MAX_TROPHIES,
+            Trophy {
+                winner,
+                tint,
+                age: 0.0,
+                seq: self.taken,
+            },
+            |t| t.age,
+        );
+    }
+
     /// `dt` seconds on: standards and flocks age and expire, and crows near
     /// soldiers (`living`: where they stand) take to the air.
     pub fn advance(&mut self, dt: f32, living: impl Iterator<Item = Vec2>) {
-        if self.standards.is_empty() && self.flocks.is_empty() {
+        if self.standards.is_empty() && self.flocks.is_empty() && self.trophies.is_empty() {
             return;
         }
         self.living.clear();
@@ -195,6 +264,10 @@ impl Aftermath {
             s.age += dt;
         }
         self.standards.retain(|s| s.age < STANDARD_SECONDS);
+        for t in &mut self.trophies {
+            t.age += dt;
+        }
+        self.trophies.retain(|t| t.age < TROPHY_SECONDS);
         for f in &mut self.flocks {
             f.age += dt;
             let disturbed = (self.living.iter())
@@ -222,6 +295,35 @@ impl Aftermath {
             phase: scenery::turn_of(s.facing),
             lean: 0,
             fall: 0,
+        })
+    }
+
+    /// The standards regiments carry off, as `pose` places each carrier
+    /// (its centre and facing, or `None` when it is gone or out of sight):
+    /// planted in the rear rank, side by side.
+    pub fn trophies<'a>(
+        &'a self,
+        pose: impl Fn(RegimentHandle) -> Option<(Vec2, Vec2)> + 'a,
+        ground: impl Fn(Vec2) -> f32 + 'a,
+    ) -> impl Iterator<Item = Extra> + 'a {
+        self.trophies.iter().filter_map(move |t| {
+            let (centre, facing) = pose(t.winner)?;
+            // Where it stands among the carrier's others, oldest to the left.
+            let mine = || self.trophies.iter().filter(|o| o.winner == t.winner);
+            let rank = mine().filter(|o| o.seq < t.seq).count();
+            let side = (rank as f32 - (mine().count() as f32 - 1.0) / 2.0) * TROPHY_APART;
+            let at = centre - facing * TROPHY_BEHIND + facing.perp() * side;
+            let turn = scenery::turn_of(facing);
+            Some(Extra {
+                model: Model::BannerShattered,
+                at: Vec3::new(at.x, ground(at), at.y),
+                turn,
+                scale: 0.8 * ((TROPHY_SECONDS - t.age) / STANDARD_FADE).clamp(0.0, 1.0),
+                tint: t.tint.map(|c| c / 2),
+                phase: turn,
+                lean: 0,
+                fall: 0,
+            })
         })
     }
 
@@ -416,7 +518,14 @@ mod tests {
 
     fn after_a_wipe_out() -> Aftermath {
         let mut a = Aftermath::default();
-        a.wiped(handle(1), Vec2::new(30.0, 30.0), Vec2::X, [200, 40, 40], 40);
+        a.wiped(
+            handle(1),
+            Vec2::new(30.0, 30.0),
+            Vec2::X,
+            [200, 40, 40],
+            40,
+            None,
+        );
         a
     }
 
@@ -433,6 +542,47 @@ mod tests {
         assert!(fading[0].scale > 0.0 && fading[0].scale < 1.0);
         a.advance(STANDARD_FADE, std::iter::empty());
         assert_eq!(a.standards(flat).count(), 0);
+    }
+
+    #[test]
+    fn a_victor_by_takes_the_standard_and_carries_it_in_the_rear() {
+        let mut a = Aftermath::default();
+        let fell = |a: &mut Aftermath, n: u32, tint: [u8; 3]| {
+            let (at, facing) = (Vec2::new(30.0, 30.0), Vec2::X);
+            a.wiped(handle(n), at, facing, tint, 8, Some(handle(9)));
+        };
+        let pose = |h: RegimentHandle| (h == handle(9)).then_some((Vec2::new(50.0, 40.0), Vec2::X));
+        fell(&mut a, 1, [200, 40, 40]);
+        assert_eq!(a.standards(flat).count(), 0, "nothing is left on the field");
+        let carried: Vec<_> = a.trophies(pose, flat).collect();
+        assert_eq!(carried.len(), 1);
+        assert_eq!(carried[0].model, Model::BannerShattered);
+        assert!(carried[0].at.x < 50.0, "behind the centre");
+        assert_eq!(carried[0].at.z, 40.0, "and in the middle of the rank");
+        // A carrier that is gone, unseen or another one shows nothing.
+        assert_eq!(a.trophies(|_| None, flat).count(), 0);
+        assert_eq!(
+            a.trophies(|h| (h == handle(8)).then_some((Vec2::ZERO, Vec2::X)), flat)
+                .count(),
+            0
+        );
+        // At most three, side by side, the oldest to the left; the first is
+        // put away for the fourth, though all were taken in the same tick.
+        for (n, red) in [(2, 100), (3, 150), (4, 250)] {
+            fell(&mut a, n, [red, 0, 0]);
+        }
+        let mut row: Vec<_> = a.trophies(pose, flat).collect();
+        assert_eq!(row.len(), TROPHIES_PER_REGIMENT);
+        row.sort_by(|p, q| p.at.z.total_cmp(&q.at.z));
+        let reds: Vec<u8> = row.iter().map(|e| e.tint[0]).collect();
+        assert_eq!(
+            reds,
+            [50, 75, 125],
+            "the first (200) is gone, the rest in order"
+        );
+        // And in the end put away.
+        a.advance(TROPHY_SECONDS + 1.0, std::iter::empty());
+        assert_eq!(a.trophies(pose, flat).count(), 0);
     }
 
     #[test]
@@ -547,7 +697,14 @@ mod tests {
         let mut a = after_a_wipe_out();
         a.advance(CROW_ARRIVE + 30.0, std::iter::empty());
         let before = crows_at(&a).len();
-        a.wiped(handle(2), Vec2::new(33.0, 31.0), Vec2::Y, [40, 40, 200], 60);
+        a.wiped(
+            handle(2),
+            Vec2::new(33.0, 31.0),
+            Vec2::Y,
+            [40, 40, 200],
+            60,
+            None,
+        );
         assert_eq!(
             a.standards(flat).count(),
             2,
@@ -557,7 +714,14 @@ mod tests {
         assert_ne!(tints[0], tints[1]);
         assert_eq!(a.flocks.len(), 1);
         assert!(crows_at(&a).len() >= before, "no crow vanishes");
-        a.wiped(handle(3), Vec2::new(90.0, 90.0), Vec2::Y, [40, 40, 200], 10);
+        a.wiped(
+            handle(3),
+            Vec2::new(90.0, 90.0),
+            Vec2::Y,
+            [40, 40, 200],
+            10,
+            None,
+        );
         assert_eq!(a.flocks.len(), 2);
     }
 
@@ -565,7 +729,14 @@ mod tests {
     fn a_flock_that_has_left_is_not_joined() {
         let mut a = after_a_wipe_out();
         a.advance(CROW_STAY + 1.0, std::iter::empty());
-        a.wiped(handle(2), Vec2::new(31.0, 30.0), Vec2::Y, [40, 40, 200], 60);
+        a.wiped(
+            handle(2),
+            Vec2::new(31.0, 30.0),
+            Vec2::Y,
+            [40, 40, 200],
+            60,
+            None,
+        );
         assert_eq!(a.flocks.len(), 2, "a new battle there has crows of its own");
     }
 
@@ -573,7 +744,7 @@ mod tests {
     fn workers_are_not_mourned() {
         let mut a = Aftermath::default();
         a.tend(handle(5), true, true, 1.0);
-        a.wiped(handle(5), Vec2::new(30.0, 30.0), Vec2::X, [90; 3], 40);
+        a.wiped(handle(5), Vec2::new(30.0, 30.0), Vec2::X, [90; 3], 40, None);
         assert_eq!(a.standards(flat).count(), 0);
         assert!(a.flocks.is_empty());
     }
@@ -588,6 +759,7 @@ mod tests {
                 Vec2::X,
                 [90; 3],
                 50,
+                None,
             );
             a.advance(1.0, std::iter::empty());
         }
