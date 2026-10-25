@@ -43,6 +43,8 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 - **Idea 21, less-flat textures** (Mario, 2026-10-23, at minimal cost): (1) a small shared set of repeating detail textures (stone, wood, plaster, cloth, tiles) layered by material over every building and unit; (2) real grass and soil textures with normal maps blended across the ground, from the Grass001 and Ground054 sets in the project files (built 2026-10-23, see [10](10-architecture.md)); (3) lighting stage 1, already planned; (4) a stronger bake with crevice darkening, colour varied from block to block and stronger normals, then every building and unit re-baked; (5) the same surface detail on scenery (Mario, 2026-10-23): trees, bushes, grass, rocks, stumps and the other scenery models get bark, leaf, stone and moss detail textures with surface relief, rocks share the Rock035 cliff textures so they match the mountains, tree and rock bases blend into the ground, and the whole scenery pack is re-baked with the stronger bake. (Built 2026-10-23, render only: see [25](25-scenery-models.md#surface-detail); the scenery pack was re-baked with the stronger bake's colour variation on 2026-10-24.)
 - **Idea 22, clearing land to expand** (Mario, 2026-10-23): trees and scrub stand in the way of a growing base, with the full mechanics, animations and planning. See [Idea 22 in brief](#idea-22-in-brief).
 
+- **Idea 23, living waterways** (Mario, 2026-10-25): rivers that vary with the seasons, currents and flash floods. Planned in [38](38-living-waterways.md), to be built later.
+
 Not in it: faction depth stages 7 to 9 (Tithe, Brood metamorphosis, heroes). They fit in any wave from 2 on without clashing with this plan if Mario wants them.
 
 ## Idea 22 in brief
