@@ -292,6 +292,20 @@ impl Flash {
         reached && g.fords.binary_search(&(y, x)).is_ok()
     }
 
+    /// The fords and summer fords, as `(row, column)` and sorted, of the
+    /// river a wave is coming down or has shut: from its warning till they
+    /// open again (empty otherwise). The computer players keep off them.
+    pub fn threatened(&self) -> &[(i32, i32)] {
+        match self.wave {
+            Some(w) => {
+                let g = &self.groups[usize::from(w.group)];
+                let before = w.warned && w.ticks < front_ticks(g.top, g.first);
+                if w.shut || before { &g.fords } else { &[] }
+            }
+            None => &[],
+        }
+    }
+
     /// The wave's river's fords as runs, to shut or open on the walkable
     /// grid (empty with no wave).
     pub(crate) fn runs(&self) -> &[[i32; 4]] {

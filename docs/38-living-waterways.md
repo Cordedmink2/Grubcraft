@@ -102,6 +102,15 @@ Built 2026-10-25 (`gc_sim::flash`).
 - **Warning.** 8 seconds before the front reaches the first ford, or at once if it starts closer, `Event::FlashFlood { stage: Coming }` puts up "A flash flood is coming down the river: get off the fords". `Here` and `Gone` follow. While a rain flood has every ford shut, the rain flood's own messages tell it; if the rain's flood goes first, `Here` comes again for the river still shut. The rumble and the drawn wave belong to the sound and lighting threads.
 - **Shared state.** The wave (its river, age and two flags) is hashed with the ground only while one runs. Rehearsals (scratch worlds) set none off, and a running wave runs on in them but never changes the walkable grid they share. A storm at the very start of a match rolls on the first tick, and one at the start of spring rolls after the thaw. `SIM_VERSION` 55. No golden moves: none has changing weather on a map with running water.
 
+## Built: stage 4, computer players read the water
+
+Built 2026-10-25 (`gc_ai::terrain::Water`, `Terrain::read_water`).
+
+- **What a mind reads.** Each tick, `Water::of(world)` says whether every ford is out (a flood or the melt has shut them, or the water is at least half way up to it, `FLOOD_RISE / 2`), whether the summer fords are open, and which river a flash flood is coming down or has shut (`Flash::threatened`, from the warning till its fords open). When that changes, the minds' ground changes with it: fords out of reach are blocked, open summer fords can be waded (as the simulation routes, `FORD`), cell by cell from the ground as the match began (a ford tile's deep cells stay deep, thicket still standing stays blocked), and the clearance round each tile that changed is measured again. That happens a few times a flood, not every tick. A rehearsal's minds keep the water as they found it, as its world keeps its fords.
+- **What follows.** A mind's battle line looks for fords on that ground, so it neither plans to cross at a ford the water is shutting nor waits behind one for the enemy. It finds summer fords like any other. A crossing already called is called off if the water shuts its ford (or a summer ford goes deep) before anyone has gone in (`Terrain::ford_shut_near`), with the journal line "The river is rising over that ford: waiting again". Regiments already wading carry on, and the simulation sweeps any the wave catches.
+- **Left out.** Crossing the ice stays the fortifications thread's. The minds don't time a crossing to a wave's passing, or lure an enemy into a ford ahead of one.
+- **Shared state.** None: the minds sit outside the simulation, so no golden moves and `SIM_VERSION` stays 55.
+
 ## Stages (each its own pull request)
 
 1. **Seasonal water.** Signed level (hashed exactly as `rise` is today while the level is at or above the line, so seasons-off matches hash the same), the map's depth layer for summer fords (replay format bump), the spring melt from a snowpack, summer low water with summer fords (`Change::Exposed`), messages and the top bar. The simulation only. Seasons-on matches only, so no golden moves. `SIM_VERSION` bump. A new golden: a Conquest year on the river map.

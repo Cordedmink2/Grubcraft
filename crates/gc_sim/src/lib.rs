@@ -2841,6 +2841,13 @@ impl World {
 
     /// The rivers' fords, and whether a flood has shut them (how far it
     /// has raised the water is [`Terrain::rise`]).
+    /// Whether this is a rehearsal's world (see [`World::fork_region`]):
+    /// it sets no flood or flash flood going, and keeps the fords as it
+    /// found them.
+    pub fn is_scratch(&self) -> bool {
+        self.scratch
+    }
+
     pub fn flood(&self) -> &flood::Flood {
         &self.flood
     }
