@@ -69,6 +69,7 @@ fn world_with(style: ClearStyle) -> World {
             cover: &cover,
             growth: &growth,
             footing: &[],
+            flow: &[],
         },
         champions: false,
         sky: gc_sim::Sky::STILL,

@@ -121,6 +121,7 @@ mod tests {
             cover: &[],
             growth: &[],
             footing: &[],
+            flow: &[],
         };
         let base = map_hash(&a, &ground(&heights, 2));
         assert_ne!(base, map_hash(&a, &ground(&raised, 2)));

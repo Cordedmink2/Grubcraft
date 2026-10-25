@@ -629,6 +629,7 @@ mod tests {
                 acc,
                 river,
                 lake,
+                flow: Vec::new(),
                 fords: Vec::new(),
             },
             keep,

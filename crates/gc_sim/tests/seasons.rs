@@ -105,6 +105,7 @@ fn world() -> World {
             cover: &[],
             growth: &[],
             footing: &[],
+            flow: &[],
         },
         champions: false,
         sky: Sky {

@@ -115,6 +115,7 @@ fn world(cover: &[u8]) -> World {
             cover,
             growth: &[],
             footing: &[],
+            flow: &[],
         },
         champions: false,
         sky: gc_sim::Sky::STILL,

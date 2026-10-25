@@ -240,6 +240,8 @@ pub(crate) struct Raster {
     pub(crate) land: Vec<u8>,
     /// One [`Habitat`] byte per tile.
     pub(crate) habitat: Vec<u8>,
+    /// One `gc_sim::Flow` byte per tile: the rivers' current.
+    pub(crate) flow: Vec<u8>,
     /// Where the starts stand, in lobby order.
     pub(crate) starts: [Pos; START_PLATEAUS],
     /// Whether the land is its own turned copy (so every change to it must
@@ -382,7 +384,7 @@ fn grow_uncached(n: usize, what: Grown) -> Raster {
         .map(|(&d, &r)| d <= mul(open_r * ONE, ONE * 3 / 4 + r / 2))
         .collect();
 
-    let d = if mirrored {
+    let (d, flow) = if mirrored {
         // The south half from the north: blend along a wandering seam, so
         // the water finds the same land on both sides.
         let seam = Seam::new(n, &mut seeds);
@@ -409,13 +411,14 @@ fn grow_uncached(n: usize, what: Grown) -> Raster {
         biome::drop_long_thicket(&mut d.thicket, n);
         seam.select(&mut d.land);
         seam.select(&mut d.habitat);
-        d
+        (d, wet.flow)
     } else {
         let wet = water::water(&mut h, &mut seeds, &dials, &keep);
         for v in &mut h.v {
             *v = soft_top(*v).max(0);
         }
-        biome::dress(&h, &wet, &mut seeds, &dials, &keep, &|g| g)
+        let d = biome::dress(&h, &wet, &mut seeds, &dials, &keep, &|g| g);
+        (d, wet.flow)
     };
     let mut raster = Raster {
         height: h,
@@ -423,6 +426,7 @@ fn grow_uncached(n: usize, what: Grown) -> Raster {
         thicket: d.thicket,
         land: d.land,
         habitat: d.habitat,
+        flow,
         starts,
         mirrored,
     };
@@ -1078,6 +1082,9 @@ mod load_time {
         let map = crate::Map::from_def(&def);
         assert_eq!(map.tiles, 257);
         assert_eq!(map.habitat.len(), 257 * 257);
+        // Its rivers run, and the simulation gets the current with it.
+        assert_eq!(map.flow.len(), 257 * 257);
+        assert!(!gc_sim::Flow::layer(map.ground().flow, 257).is_empty());
     }
 
     /// The doc 27 target: a 768 map is made in under 3 seconds (release,

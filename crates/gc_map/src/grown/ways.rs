@@ -573,6 +573,7 @@ mod tests {
             thicket: vec![false; n * n],
             land: vec![0; n * n],
             habitat: vec![0; n * n],
+            flow: Vec::new(),
             starts: crate::generate::plateaus(n as u32),
             mirrored: true,
         };

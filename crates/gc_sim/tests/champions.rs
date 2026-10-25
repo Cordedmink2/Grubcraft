@@ -34,6 +34,7 @@ fn world_in(seed: u64, champions: bool, cover: &[u8]) -> World {
             cover,
             growth: &[],
             footing: &[],
+            flow: &[],
         },
         champions,
         sky: gc_sim::Sky::STILL,

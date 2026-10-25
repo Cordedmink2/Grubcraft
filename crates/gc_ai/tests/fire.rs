@@ -35,6 +35,7 @@ fn a_mind_marches_its_troops_out_of_burning_woods() {
             cover: &cover,
             growth: &[],
             footing: &[],
+            flow: &[],
         },
         champions: false,
         sky: Sky::STILL,

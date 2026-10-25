@@ -65,6 +65,7 @@ fn ticking_never_allocates() {
             cover: &cover,
             growth: &[],
             footing: &[],
+            flow: &[],
         },
         champions: true,
         sky: gc_sim::Sky::STILL,
