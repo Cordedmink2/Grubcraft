@@ -340,14 +340,12 @@ impl Fires {
     /// hash of the match seed, the tick and the two tiles, so no random
     /// stream moves.
     fn roll(&self, tick: u32, x0: i32, y0: i32, x1: i32, y1: i32) -> u32 {
-        let mut z = self.seed
-            ^ u64::from(tick).rotate_left(17)
-            ^ (u64::from(x0 as u16) | u64::from(y0 as u16) << 16) << 32
-            ^ (u64::from(x1 as u16) | u64::from(y1 as u16) << 16);
-        // splitmix64's finish.
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        (z ^ (z >> 31)) as u32
+        splitmix(
+            self.seed
+                ^ u64::from(tick).rotate_left(17)
+                ^ (u64::from(x0 as u16) | u64::from(y0 as u16) << 16) << 32
+                ^ (u64::from(x1 as u16) | u64::from(y1 as u16) << 16),
+        ) as u32
     }
 
     /// Each regiment touching burning tiles takes [`BURN_HP`] for each (up
@@ -375,6 +373,14 @@ impl Fires {
             h.u8(b.growth as u8);
         }
     }
+}
+
+/// splitmix64's finish: a well-mixed hash of `z`, for rolls made from the
+/// match seed and the tick, so no random stream moves.
+pub(crate) fn splitmix(mut z: u64) -> u64 {
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 
 #[cfg(test)]

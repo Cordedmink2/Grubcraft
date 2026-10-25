@@ -41,7 +41,7 @@ Read in order the first time; afterwards each document stands alone.
 | 35 | [Ground marks](35-ground-marks.md) | Ground that remembers: turned earth where trees were felled and bare tracks where regiments march and fight, healing over minutes (idea 2 render side, idea 22 ground) |
 | 36 | [Habitat ground](36-habitat-ground.md) | Each habitat's own ground: bog pools, mud, flower drifts, heather, gravel, crust, bone ripples, leaf litter and moss, drawn by the terrain shader from a per-tile look (Living Land stage 4, ground half) |
 | 37 | [The commander on the field](37-commander.md) | Idea 12, built: each player's general rides with their best regiment, steadies the men near him, speaks before the lines meet, and when he falls his side panics |
-| 38 | [Living waterways](38-living-waterways.md) | Idea 23: rivers that vary with the seasons (stages 1 and 2 built: the spring melt shuts fords, summer low water opens new crossings, winter ice; rivers run one way and carry wading troops downstream), and flash floods that run down a river after a storm; four stages |
+| 38 | [Living waterways](38-living-waterways.md) | Idea 23: rivers that vary with the seasons (stages 1 to 3 built: the spring melt shuts fords, summer low water opens new crossings, winter ice; rivers run one way and carry wading troops downstream; flash floods run down a river after a storm and shut its fords); four stages |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |

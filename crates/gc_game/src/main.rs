@@ -6124,6 +6124,17 @@ impl Running {
                     "The rivers have gone down: the fords are open again"
                 }),
                 Event::Season { season } => news.push(season_news(season)),
+                Event::FlashFlood { stage } => news.push(match stage {
+                    gc_sim::flash::Stage::Coming => {
+                        "A flash flood is coming down the river: get off the fords"
+                    }
+                    gc_sim::flash::Stage::Here => {
+                        "The flash flood is here: that river's fords can't be crossed"
+                    }
+                    gc_sim::flash::Stage::Gone => {
+                        "The flash flood has passed: the fords are open again"
+                    }
+                }),
                 Event::Shallows { open } => news.push(if open {
                     "Low water: the shallows at the rivers' edges can be waded"
                 } else {

@@ -17,6 +17,7 @@ use alloc::vec::Vec;
 use gc_fixed::FxVec2;
 
 use crate::TICKS_PER_SECOND;
+use crate::flash::Flash;
 use crate::hash::StateHasher;
 use crate::morale;
 use crate::nav::Nav;
@@ -83,6 +84,9 @@ pub struct Flood {
     exposed: bool,
     /// The winter's snow, still to melt.
     snowpack: u32,
+    /// The rivers, and the flash flood running down one (see
+    /// [`crate::flash`]).
+    pub(crate) flash: Flash,
 }
 
 /// What one second of the rivers changed (see [`Flood::second`]).
@@ -95,7 +99,7 @@ pub(crate) struct Turn {
 }
 
 /// Runs along each row of the sorted `(y, x)` tiles.
-fn runs_of(tiles: &[(i32, i32)]) -> Vec<[i32; 4]> {
+pub(crate) fn runs_of(tiles: &[(i32, i32)]) -> Vec<[i32; 4]> {
     let mut runs: Vec<[i32; 4]> = Vec::new();
     for &(y, x) in tiles {
         match runs.last_mut() {
@@ -194,7 +198,7 @@ const NEIGHBOURS: [(i32, i32); 8] = [
 impl Flood {
     /// The fords of a map `map_tiles` a side with `terrain`, walked on
     /// the grid `nav`.
-    pub(crate) fn new(terrain: &Terrain, nav: &Nav, map_tiles: u32) -> Flood {
+    pub(crate) fn new(terrain: &Terrain, nav: &Nav, map_tiles: u32, seed: u64) -> Flood {
         let tiles = map_tiles as i32;
         let (mut fords, mut shallows) = (Vec::new(), Vec::new());
         for (y, x) in (0..tiles).flat_map(|y| (0..tiles).map(move |x| (y, x))) {
@@ -214,6 +218,7 @@ impl Flood {
             }
         }
         let shallows = crossings(&shallows, tiles, |x, y| nav.walkable_ground(x, y));
+        let flash = Flash::new(terrain, &fords, &shallows, map_tiles, seed);
         Flood {
             runs: runs_of(&fords).into(),
             fords: fords.into(),
@@ -222,6 +227,7 @@ impl Flood {
             shallows: shallows.into(),
             exposed: false,
             snowpack: 0,
+            flash,
         }
     }
 
@@ -270,11 +276,15 @@ impl Flood {
 
     /// Whether `p` is in a ford the flood has shut.
     pub fn sweeps(&self, p: FxVec2, terrain: &Terrain) -> bool {
-        self.closed
-            && !terrain.on_deck(p)
-            && (self.fords)
-                .binary_search(&(p.y.floor_int(), p.x.floor_int()))
-                .is_ok()
+        let (x, y) = (p.x.floor_int(), p.y.floor_int());
+        let shut =
+            (self.closed && self.fords.binary_search(&(y, x)).is_ok()) || self.flash.shuts(x, y);
+        shut && !terrain.on_deck(p)
+    }
+
+    /// The rivers, and the flash flood running down one, if any.
+    pub fn flash(&self) -> &Flash {
+        &self.flash
     }
 
     /// One second of the rivers, with the ground `wet`, `at` a point of the
@@ -366,7 +376,7 @@ impl Flood {
     /// the nearest bank (see `World::rivers`).
     pub(crate) fn sweep(&self, regs: &mut Regiments, terrain: &Terrain, out: &mut Vec<usize>) {
         out.clear();
-        if !self.closed {
+        if !self.closed && !self.flash.shut() {
             return;
         }
         for i in 0..regs.alive.len() {
