@@ -114,6 +114,16 @@ fn conquest_on(
     nodes: &[NodeSetup],
     gather_percent: u32,
 ) -> World {
+    conquest_under(gc_sim::Sky::STILL, rough, nodes, gather_percent)
+}
+
+/// The same, under `sky`.
+fn conquest_under(
+    sky: gc_sim::Sky<'static>,
+    rough: impl Fn(i32, i32) -> bool,
+    nodes: &[NodeSetup],
+    gather_percent: u32,
+) -> World {
     let side = TILES as usize * CELLS_PER_TILE as usize;
     let cells = CELLS_PER_TILE;
     let nav: Vec<u8> = (0..side * side)
@@ -135,7 +145,7 @@ fn conquest_on(
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
-        sky: gc_sim::Sky::STILL,
+        sky,
         generals: true,
     });
     let mut start = [(0, 0); gc_sim::MAX_PARTIES];
@@ -277,6 +287,31 @@ fn swift_tempo_gathers_faster() {
     assert!(
         swift > standard * 115 / 100,
         "swift {swift}, standard {standard}"
+    );
+}
+
+#[test]
+fn the_autumn_harvest_gathers_more_grub_and_the_winter_less() {
+    // Five-minute seasons: spring, summer, autumn from 10 minutes, winter
+    // from 15.
+    let sky = gc_sim::Sky {
+        year_ticks: 4 * 5 * MINUTE,
+        ..gc_sim::Sky::STILL
+    };
+    let mut w = conquest_under(sky, |_, _| false, &[grub(32, 22, 7500)], 100);
+    base_with_workers(&mut w, 5);
+    let spring = income_per_minute(&mut w, Resource::Grub);
+    let left = 10 * MINUTE - w.tick_count();
+    run(&mut w, left);
+    assert_eq!(w.season().unwrap().season, gc_sim::sky::Season::Autumn);
+    let autumn = income_per_minute(&mut w, Resource::Grub);
+    let left = 15 * MINUTE - w.tick_count();
+    run(&mut w, left);
+    let winter = income_per_minute(&mut w, Resource::Grub);
+    assert_eq!(w.season().unwrap().season, gc_sim::sky::Season::Winter);
+    assert!(
+        autumn > spring * 110 / 100 && winter < spring * 90 / 100,
+        "spring {spring}, autumn {autumn}, winter {winter}"
     );
 }
 

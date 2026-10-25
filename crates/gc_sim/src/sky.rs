@@ -95,6 +95,9 @@ pub struct Sky<'a> {
     /// The spells of weather, by their starting tick. The first one in
     /// force at tick 0 is the weather from the start, without easing in.
     pub spells: &'a [Spell],
+    /// Ticks in a year of four [`Season`]s, the match starting with the
+    /// spring; 0 for a match with no seasons.
+    pub year_ticks: u32,
 }
 
 impl Sky<'static> {
@@ -105,6 +108,7 @@ impl Sky<'static> {
         day_ticks: DAY_TICKS,
         runs: false,
         spells: &[],
+        year_ticks: 0,
     };
 }
 
@@ -114,30 +118,162 @@ impl Default for Sky<'static> {
     }
 }
 
-/// How the weather changes, for [`Sky::changing`].
+/// The seasons of a year (docs/32-changing-land.md, "Seasons"), in the
+/// order they come: a match with seasons starts in the spring.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Season {
+    Spring,
+    Summer,
+    Autumn,
+    Winter,
+}
+
+impl Season {
+    pub const ALL: [Season; 4] = [
+        Season::Spring,
+        Season::Summer,
+        Season::Autumn,
+        Season::Winter,
+    ];
+
+    /// Its name and what it does, in a word, for the top bar.
+    pub fn chip(self) -> &'static str {
+        match self {
+            Season::Spring => "Spring",
+            Season::Summer => "Summer: dry",
+            Season::Autumn => "Autumn: harvest",
+            Season::Winter => "Winter: frost",
+        }
+    }
+
+    /// The weather it brings, when the weather changes.
+    pub fn climate(self) -> Climate {
+        match self {
+            Season::Spring => Climate::Showery,
+            Season::Summer => Climate::Dry,
+            Season::Autumn => Climate::Misty,
+            Season::Winter => Climate::Cold,
+        }
+    }
+
+    /// Percent of the usual speed workers gather Grub at: the autumn's
+    /// harvest, the winter's lean months.
+    pub fn grub_percent(self) -> u32 {
+        match self {
+            Season::Autumn => 125,
+            Season::Winter => 75,
+            Season::Spring | Season::Summer => 100,
+        }
+    }
+
+    /// Percent of the usual chance fire spreads: dry summer woods catch
+    /// more easily, frozen winter ones less.
+    pub fn fire_percent(self) -> u32 {
+        match self {
+            Season::Summer => 150,
+            Season::Winter => 50,
+            Season::Spring | Season::Autumn => 100,
+        }
+    }
+
+    /// How many times as fast the ground dries out: twice in the summer.
+    pub fn drying(self) -> u16 {
+        match self {
+            Season::Summer => 2,
+            _ => 1,
+        }
+    }
+}
+
+/// Where the year stands at a tick: the season, how far into it, how
+/// long it lasts, and which year of the match (0 the first).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SeasonAt {
+    pub season: Season,
+    pub into: u32,
+    pub length: u32,
+    pub year: u32,
+}
+
+/// The season at `tick` of a year `year_ticks` long (`None` with no
+/// seasons).
+pub fn season_at(year_ticks: u32, tick: u32) -> Option<SeasonAt> {
+    let length = year_ticks / 4;
+    if length == 0 {
+        return None;
+    }
+    let quarter = tick / length;
+    Some(SeasonAt {
+        season: Season::ALL[(quarter % 4) as usize],
+        into: tick % length,
+        length,
+        year: quarter / 4,
+    })
+}
+
+/// How the weather changes, for [`changing`]: how often it is clear or
+/// foggy, and whether what falls is rain or snow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Climate {
     /// Rain, fog and clear spells.
     Wet,
     /// Snow, fog and clear spells.
     Cold,
+    /// The spring's: showers more often than not.
+    Showery,
+    /// The summer's: mostly clear, with the odd storm.
+    Dry,
+    /// The autumn's: fog and rain as often as clear sky.
+    Misty,
+}
+
+impl Climate {
+    /// Of 100 rolls, the first so many are clear and the next so many
+    /// foggy; the rest rain or snow.
+    fn mix(self) -> (u32, u32) {
+        match self {
+            Climate::Wet | Climate::Cold => (38, 20),
+            Climate::Showery => (30, 15),
+            Climate::Dry => (70, 5),
+            Climate::Misty => (30, 35),
+        }
+    }
 }
 
 /// Spells of changing weather for a match of up to `ticks`, drawn from
 /// `seed`: a new spell every three to six minutes, a little over a third
 /// of them clear. Every peer draws the same ones from the same seed.
-pub fn changing(seed: u64, season: Season, ticks: u32) -> Vec<Spell> {
+pub fn changing(seed: u64, climate: Climate, ticks: u32) -> Vec<Spell> {
+    draw_spells(seed, ticks, 0, |_| climate)
+}
+
+/// [`changing`] weather that follows a year of seasons `year_ticks` long:
+/// each spell has the climate of the season it begins in, and a new
+/// season always starts a new spell, so no season's weather runs into the
+/// next. With no seasons (`year_ticks` 0), the same as [`changing`] in a
+/// [`Climate::Wet`].
+pub fn seasonal(seed: u64, year_ticks: u32, ticks: u32) -> Vec<Spell> {
+    draw_spells(seed, ticks, year_ticks / 4, |at| {
+        season_at(year_ticks, at).map_or(Climate::Wet, |s| s.season.climate())
+    })
+}
+
+/// Spells for `ticks`, a new one at least every `season` ticks from the
+/// start when that isn't 0.
+fn draw_spells(seed: u64, ticks: u32, season: u32, climate: impl Fn(u32) -> Climate) -> Vec<Spell> {
     let mut rng = Pcg32::new(seed, crate::streams::SKY);
     let minute = 60 * TICKS_PER_SECOND;
     let mut spells = Vec::new();
     let mut at = 0u32;
     while at < ticks {
         let roll = rng.next_u32() % 100;
-        let kind = match (roll, season) {
-            (0..38, _) => WeatherKind::Clear,
-            (38..58, _) => WeatherKind::Fog,
-            (_, Season::Wet) => WeatherKind::Rain,
-            (_, Season::Cold) => WeatherKind::Snow,
+        let climate = climate(at);
+        let (clear, fog) = climate.mix();
+        let kind = match roll {
+            r if r < clear => WeatherKind::Clear,
+            r if r < clear + fog => WeatherKind::Fog,
+            _ if climate == Climate::Cold => WeatherKind::Snow,
+            _ => WeatherKind::Rain,
         };
         let strength = match kind {
             WeatherKind::Clear => 0,
@@ -160,7 +296,11 @@ pub fn changing(seed: u64, season: Season, ticks: u32) -> Vec<Spell> {
                 wind,
             },
         });
-        at = at.saturating_add(3 * minute + rng.next_u32() % (3 * minute));
+        let next = at.saturating_add(3 * minute + rng.next_u32() % (3 * minute));
+        at = match season {
+            0 => next,
+            _ => next.min((at / season + 1).saturating_mul(season)),
+        };
     }
     spells
 }
@@ -331,6 +471,7 @@ pub(crate) struct SkyState {
     day_ticks: u32,
     runs: bool,
     spells: Vec<Spell>,
+    year_ticks: u32,
     /// The next spell to begin.
     next: usize,
     now: Weather,
@@ -353,6 +494,7 @@ impl SkyState {
             day_ticks: sky.day_ticks.max(1),
             runs: sky.runs,
             spells,
+            year_ticks: sky.year_ticks,
             next: first,
             now,
             air: Air::CLEAR,
@@ -366,6 +508,11 @@ impl SkyState {
     /// Hashes as nothing, so such matches hash as they did before.
     fn is_still(&self) -> bool {
         !self.runs && self.spells.is_empty()
+    }
+
+    /// Where the year stands at `tick` (`None` with no seasons).
+    pub(crate) fn season(&self, tick: u32) -> Option<SeasonAt> {
+        season_at(self.year_ticks, tick)
     }
 
     pub(crate) fn weather(&self) -> Weather {
@@ -409,10 +556,11 @@ impl SkyState {
                 WeatherKind::Rain => u16::from(self.now.strength) / RAIN_WETS,
                 _ => 0,
             };
+            let drying = self.season(tick).map_or(1, |s| s.season.drying());
             self.wet = if wets > 0 {
                 (self.wet + wets).min(WET_FULL)
             } else {
-                self.wet.saturating_sub(DRIES)
+                self.wet.saturating_sub(DRIES * drying)
             };
         }
         let air = Air::of(self.now, self.daylight(tick).light());
@@ -611,9 +759,9 @@ mod tests {
 
     #[test]
     fn changing_weather_is_the_same_from_the_same_seed() {
-        let a = changing(7, Season::Wet, 60 * 60 * TICKS_PER_SECOND);
-        assert_eq!(a, changing(7, Season::Wet, 60 * 60 * TICKS_PER_SECOND));
-        assert_ne!(a, changing(8, Season::Wet, 60 * 60 * TICKS_PER_SECOND));
+        let a = changing(7, Climate::Wet, 60 * 60 * TICKS_PER_SECOND);
+        assert_eq!(a, changing(7, Climate::Wet, 60 * 60 * TICKS_PER_SECOND));
+        assert_ne!(a, changing(8, Climate::Wet, 60 * 60 * TICKS_PER_SECOND));
         assert!(a.len() >= 10 && a.len() <= 21, "{}", a.len());
         assert!(a.iter().all(|s| s.weather.kind != WeatherKind::Snow));
         assert_eq!(a[0].at, 0);

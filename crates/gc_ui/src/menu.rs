@@ -8,8 +8,8 @@ use crate::hud::{MinimapTerrain, draw_terrain};
 use crate::lobby::{
     AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAX_ARMY,
     MAX_PLAYERS, MapSize, MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile,
-    RosterUnit, SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, WeatherSetting, army_points,
-    field_map_tiles, fresh_map_seed, map_code, maps_for, parse_map_code, thousands,
+    RosterUnit, SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, WeatherSetting, YearSetting,
+    army_points, field_map_tiles, fresh_map_seed, map_code, maps_for, parse_map_code, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -799,7 +799,8 @@ impl<N: Network> Menu<N> {
         let y = panel.y + sp(64);
         let slot_rect = |i: i32| Rect::new(panel.x + 24 + i * (col_w + 12), y, col_w, sp(36));
         // Champions may duel before a battle with a computer player: in the
-        // footer, after Leave and Army.
+        // footer, after Leave and Army. A Conquest match has none, and how
+        // fast its seasons turn takes the place.
         let champions_r = Rect::new(panel.x + 24 + 148 + 140 + 12, panel.bottom() - 52, 320, 44);
         // Which victories count (Conquest) or how big the map is (Field
         // Battle) has no room in the four columns: it sits in the header,
@@ -877,7 +878,19 @@ impl<N: Network> Menu<N> {
                     changed = true;
                 }
             }
-            changed |= ui.toggle(champions_r, CHAMPIONS, &mut settings.champions);
+            if settings.mode == GameMode::Conquest {
+                let names = YearSetting::ALL.map(YearSetting::name);
+                let mut at = YearSetting::ALL
+                    .iter()
+                    .position(|&y| y == settings.seasons)
+                    .unwrap_or(0);
+                if ui.stepper(champions_r, "Seasons", &mut at, &names) {
+                    settings.seasons = YearSetting::ALL[at];
+                    changed = true;
+                }
+            } else {
+                changed |= ui.toggle(champions_r, CHAMPIONS, &mut settings.champions);
+            }
         } else {
             for (i, text) in [
                 format!("Map: {}", settings.map_name()),
@@ -900,13 +913,13 @@ impl<N: Network> Menu<N> {
                 format!("Size: {}", settings.map_size.name())
             };
             ui.label_centered(option_r, 1, theme::INK, &text);
-            let on = if settings.champions { "on" } else { "off" };
-            ui.label_centered(
-                champions_r,
-                1,
-                theme::INK_MUTED,
-                &format!("{CHAMPIONS}: {on}"),
-            );
+            let text = if settings.mode == GameMode::Conquest {
+                format!("Seasons: {}", settings.seasons.name())
+            } else {
+                let on = if settings.champions { "on" } else { "off" };
+                format!("{CHAMPIONS}: {on}")
+            };
+            ui.label_centered(champions_r, 1, theme::INK_MUTED, &text);
         }
 
         // The map: its picture (when there is room), its name and its code.

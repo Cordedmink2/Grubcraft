@@ -422,6 +422,7 @@ const GOLDENS: &[Golden] = &[
                     ..gc_sim::Weather::FAIR
                 },
             }],
+            year_ticks: 0,
         },
     },
     // Woods that burn (docs/32-changing-land.md): on the woods map in a

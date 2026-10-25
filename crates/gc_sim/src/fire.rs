@@ -230,13 +230,17 @@ impl Fires {
 
     /// One tick of the fires: each burns down (faster in rain or snow),
     /// and those that burn out go to [`Fires::burnt`]; once a second they
-    /// spread and burn the regiments touching them.
+    /// spread (at `season_percent` of the usual chance, see
+    /// [`crate::sky::Season::fire_percent`]) and burn the regiments
+    /// touching them.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn update(
         &mut self,
         tick: u32,
         terrain: &Terrain,
         weather: Weather,
         wet: u16,
+        season_percent: u32,
         regs: &mut Regiments,
         units: &[UnitStats],
     ) {
@@ -263,19 +267,29 @@ impl Fires {
             b.left > 0
         });
         if second {
-            self.spread(tick, terrain, weather.wind, falling, wet);
+            self.spread(tick, terrain, weather.wind, falling, wet, season_percent);
             self.burn_troops(regs, units);
         }
     }
 
     /// Fire next door may set each burnable tile alight.
-    fn spread(&mut self, tick: u32, terrain: &Terrain, wind: (i8, i8), falling: u32, wet: u16) {
+    fn spread(
+        &mut self,
+        tick: u32,
+        terrain: &Terrain,
+        wind: (i8, i8),
+        falling: u32,
+        wet: u16,
+        season_percent: u32,
+    ) {
         let room = MAX_FIRES.saturating_sub(self.burning.len());
         if wet >= DAMP_WET || room == 0 {
             return;
         }
         // Damp ground and rain or snow falling hold it back in step.
-        let dry = u32::from(DAMP_WET - wet) * (255 - falling.min(255)) / 255;
+        // So does the season (the summer's dry woods catch more).
+        let dry =
+            u32::from(DAMP_WET - wet) * (255 - falling.min(255)) * season_percent / (255 * 100);
         if dry == 0 {
             return;
         }

@@ -1556,6 +1556,7 @@ impl World {
         if self.tick.is_multiple_of(TICKS_PER_SECOND) {
             self.terrain.soak(self.sky.wet());
             self.rivers();
+            self.seasons();
         }
         // Time stands still while the armies deploy.
         if self.deploying() {
@@ -2588,6 +2589,9 @@ impl World {
             &self.terrain,
             self.sky.weather(),
             self.sky.wet(),
+            self.sky
+                .season(self.tick)
+                .map_or(100, |s| s.season.fire_percent()),
             &mut self.regiments,
             &self.units,
         );
@@ -2641,6 +2645,34 @@ impl World {
             }
         }
         self.stranded = stuck;
+    }
+
+    /// The season's rules (see [`sky::Season`]), worked out from the tick
+    /// each second: how fast Grub is gathered, and in a winter with no
+    /// flood, the water frozen over (fire asks the sky itself). Tells of
+    /// each new season after the first spring.
+    fn seasons(&mut self) {
+        let Some(at) = self.sky.season(self.tick) else {
+            return;
+        };
+        let season = at.season;
+        if at.into < TICKS_PER_SECOND
+            && (at.year, season) != (0, sky::Season::Spring)
+            && !self.scratch
+        {
+            self.events.season(season);
+        }
+        if let Some(c) = &mut self.conquest {
+            c.economy.set_season(season.grub_percent());
+        }
+        let frozen = season == sky::Season::Winter && self.terrain.rise() == 0;
+        self.terrain.set_frozen(frozen);
+    }
+
+    /// Where the year stands (`None` in a match with no seasons): the
+    /// season, how far into it, and which year.
+    pub fn season(&self) -> Option<sky::SeasonAt> {
+        self.sky.season(self.tick)
     }
 
     /// The rivers' fords, and whether a flood has shut them (how far it

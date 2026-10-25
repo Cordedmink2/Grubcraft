@@ -259,3 +259,28 @@ fn a_tile_burns_once_and_never_on_open_ground() {
     assert!(kindled.len() > 100, "{} tiles caught", kindled.len());
     assert!(kindled.values().all(|&n| n == 1));
 }
+
+#[test]
+fn summer_woods_burn_faster_and_winter_ones_slower() {
+    // One-minute seasons: summer from a minute in, winter from three.
+    let cover = woods(4, 60, 4, 60);
+    let spread = |year_ticks: u32, wait: u32| {
+        let mut w = world(
+            &cover,
+            Sky {
+                year_ticks,
+                ..Sky::STILL
+            },
+        );
+        let a = spawn(&mut w, 0, 32, 61, NORTH);
+        run(&mut w, wait * SECOND);
+        assert!(burn(&mut w, 0, a));
+        run(&mut w, 40 * SECOND);
+        w.fires().len() + burnt(&w, 4, 60, 4, 60)
+    };
+    const YEAR: u32 = 4 * 60 * SECOND;
+    let (summer, plain) = (spread(YEAR, 65), spread(0, 65));
+    assert!(summer > plain, "summer {summer}, no seasons {plain}");
+    let (winter, plain) = (spread(YEAR, 185), spread(0, 185));
+    assert!(winter < plain, "winter {winter}, no seasons {plain}");
+}

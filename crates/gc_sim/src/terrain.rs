@@ -269,6 +269,9 @@ pub struct Terrain {
     /// Height units a flood has raised the water above `water_level`
     /// (see [`crate::flood`]).
     rise: u16,
+    /// Whether the water is frozen (a winter with no flood, see
+    /// [`crate::sky::Season`]): troops cross it as dry ground.
+    frozen: bool,
     /// A running digest of every change made to the ground mid-match, for
     /// the state hash (the ground as the match started is the setup's).
     changes: u64,
@@ -332,6 +335,7 @@ impl Terrain {
             rubble_moves: 0,
             side: map_tiles as i32,
             rise: 0,
+            frozen: false,
             changes: 0,
         };
         let soak = terrain.soakable();
@@ -678,7 +682,19 @@ impl Terrain {
 
     /// Whether `p` is in water: under the water line, raised by any flood.
     pub fn wet(&self, p: FxVec2) -> bool {
-        self.tiles != 0 && self.height(p) < i32::from(self.water_level) + i32::from(self.rise)
+        self.tiles != 0
+            && !self.frozen
+            && self.height(p) < i32::from(self.water_level) + i32::from(self.rise)
+    }
+
+    /// Whether the water is frozen over: walked as dry ground.
+    pub fn frozen(&self) -> bool {
+        self.frozen
+    }
+
+    /// Freeze the water over, or thaw it.
+    pub(crate) fn set_frozen(&mut self, frozen: bool) {
+        self.frozen = frozen;
     }
 
     /// The map's water line, in height units (0 with no water), before

@@ -254,6 +254,9 @@ pub struct StatusStrip<'a> {
     /// What the weather or the dark does to the fight, e.g. "Fog: sight
     /// 40%"; empty in clear daylight.
     pub sky: &'a str,
+    /// The season of a Conquest match with seasons, e.g. "Autumn:
+    /// harvest"; empty without.
+    pub season: &'a str,
 }
 
 /// One key and what it does, for the Marshal's Scroll.
@@ -930,6 +933,9 @@ impl Hud {
                 &conquest::clock(secs),
                 theme::INK,
             );
+        }
+        if !st.season.is_empty() {
+            chip(draw, &mut right, Icon::None, st.season, theme::INK);
         }
         if !st.sky.is_empty() {
             chip(draw, &mut right, Icon::None, st.sky, theme::INK);

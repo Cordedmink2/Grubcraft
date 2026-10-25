@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 43: the sky's year of seasons (read as none);
 /// - 42: the drawn walls' faction twists (read as none);
 /// - 41: the burn command (tag 39; nothing to read in older files);
 /// - 40: ladders (the climb command, tag 38);
@@ -98,7 +99,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 42;
+pub const FORMAT: u16 = 43;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -475,6 +476,7 @@ pub struct SkyRecord {
     pub day_ticks: u32,
     pub runs: bool,
     pub spells: Vec<Spell>,
+    pub year_ticks: u32,
 }
 
 impl Default for SkyRecord {
@@ -497,6 +499,7 @@ impl SkyRecord {
                 spells.sort_by_key(|s| s.at);
                 spells
             },
+            year_ticks: sky.year_ticks,
         }
     }
 
@@ -506,6 +509,7 @@ impl SkyRecord {
             day_ticks: self.day_ticks,
             runs: self.runs,
             spells: &self.spells,
+            year_ticks: self.year_ticks,
         }
     }
 
@@ -530,9 +534,10 @@ impl SkyRecord {
             w.u8(wx.wind.0 as u8);
             w.u8(wx.wind.1 as u8);
         }
+        w.var(u64::from(self.year_ticks));
     }
 
-    fn read(r: &mut Reader) -> Option<SkyRecord> {
+    fn read(r: &mut Reader, format: u16) -> Option<SkyRecord> {
         let start = r.var_as()?;
         let day_ticks: u32 = r.var_as()?;
         if day_ticks == 0 {
@@ -558,11 +563,13 @@ impl SkyRecord {
                 },
             });
         }
+        let year_ticks = if format >= 43 { r.var_as()? } else { 0 };
         Some(SkyRecord {
             start,
             day_ticks,
             runs,
             spells,
+            year_ticks,
         })
     }
 }
@@ -1025,7 +1032,7 @@ impl Replay {
         let footing = layer(r, 33)?;
         let generals = format < 34 || r.bool()?;
         let sky = if format >= 35 {
-            SkyRecord::read(r)?
+            SkyRecord::read(r, format)?
         } else {
             SkyRecord::default()
         };
@@ -2062,7 +2069,8 @@ mod tests {
             start: gc_sim::sky::at_hour(22, 30),
             day_ticks: gc_sim::sky::DAY_TICKS,
             runs: true,
-            spells: gc_sim::sky::changing(9, gc_sim::sky::Season::Cold, 20_000),
+            spells: gc_sim::sky::changing(9, gc_sim::sky::Climate::Cold, 20_000),
+            year_ticks: 4 * 60 * gc_sim::TICKS_PER_SECOND,
         };
         assert!(replay.sky.spells.len() > 1);
         assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);

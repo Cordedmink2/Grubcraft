@@ -124,6 +124,9 @@ pub enum Event {
     /// The rivers rose over the fords and shut them (`closed`), or went
     /// down and opened them again (see [`crate::flood`]).
     Flooded { closed: bool },
+    /// A new season began (see [`crate::sky::Season`]); not told of the
+    /// match's first spring.
+    Season { season: crate::sky::Season },
 }
 
 /// Each regiment slot as it stood before the tick.
@@ -195,6 +198,11 @@ impl Events {
     /// Tell of the fords shutting in a flood, or opening again.
     pub(crate) fn flooded(&mut self, closed: bool) {
         self.list.push(Event::Flooded { closed });
+    }
+
+    /// Tell of a new season.
+    pub(crate) fn season(&mut self, season: crate::sky::Season) {
+        self.list.push(Event::Season { season });
     }
 
     /// Tell of the bells tolled, the blows struck on buildings, the walls'

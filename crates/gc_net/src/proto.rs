@@ -8,14 +8,14 @@
 use gc_sim::PlayerCommand;
 use gc_ui::lobby::{
     Budget, Faction, GameMode, LobbySettings, MAX_ARMY, MAX_PLAYERS, MapSize, OnDrop, Slot,
-    SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, WeatherSetting, maps_for,
+    SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, WeatherSetting, YearSetting, maps_for,
 };
 
 use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 35;
+pub const PROTOCOL: u8 = 36;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -248,6 +248,10 @@ fn write_settings(w: &mut Writer, s: &LobbySettings) {
         .iter()
         .position(|&t| t == s.weather)
         .unwrap_or(0) as u8);
+    w.u8(YearSetting::ALL
+        .iter()
+        .position(|&y| y == s.seasons)
+        .unwrap_or(0) as u8);
 }
 
 fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
@@ -263,6 +267,7 @@ fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
         map_size: *MapSize::ALL.get(r.u8()? as usize)?,
         time_of_day: *TimeOfDay::ALL.get(r.u8()? as usize)?,
         weather: *WeatherSetting::ALL.get(r.u8()? as usize)?,
+        seasons: *YearSetting::ALL.get(r.u8()? as usize)?,
     })
 }
 
@@ -729,7 +734,7 @@ mod tests {
             assert_eq!(read_settings(&mut r), Some(settings));
             assert!(r.is_empty());
             let mut bad = w.buf.clone();
-            let at = bad.len() - 4;
+            let at = bad.len() - 5;
             bad[at] = Victory::ALL.len() as u8;
             assert_eq!(read_settings(&mut Reader::new(&bad)), None);
         }
@@ -747,9 +752,10 @@ mod tests {
             let mut r = Reader::new(&w.buf);
             assert_eq!(read_settings(&mut r), Some(settings));
             assert!(r.is_empty());
-            // The light is the next to last byte; a stranger's is refused.
+            // The light is the third byte from the end; a stranger's is
+            // refused.
             let mut bad = w.buf.clone();
-            let at = bad.len() - 2;
+            let at = bad.len() - 3;
             bad[at] = TimeOfDay::ALL.len() as u8;
             assert_eq!(read_settings(&mut Reader::new(&bad)), None);
         }
@@ -767,9 +773,30 @@ mod tests {
             let mut r = Reader::new(&w.buf);
             assert_eq!(read_settings(&mut r), Some(settings));
             assert!(r.is_empty());
-            // The weather is the last byte; a stranger's is refused.
+            // The weather is the next to last byte; a stranger's is refused.
             let mut bad = w.buf.clone();
-            *bad.last_mut().unwrap() = WeatherSetting::ALL.len() as u8;
+            let at = bad.len() - 2;
+            bad[at] = WeatherSetting::ALL.len() as u8;
+            assert_eq!(read_settings(&mut Reader::new(&bad)), None);
+        }
+    }
+
+    #[test]
+    fn the_settings_carry_the_seasons() {
+        for seasons in YearSetting::ALL {
+            let settings = LobbySettings {
+                mode: GameMode::Conquest,
+                seasons,
+                ..LobbySettings::default()
+            };
+            let mut w = Writer::new();
+            write_settings(&mut w, &settings);
+            let mut r = Reader::new(&w.buf);
+            assert_eq!(read_settings(&mut r), Some(settings));
+            assert!(r.is_empty());
+            // The seasons are the last byte; a stranger's is refused.
+            let mut bad = w.buf.clone();
+            *bad.last_mut().unwrap() = YearSetting::ALL.len() as u8;
             assert_eq!(read_settings(&mut Reader::new(&bad)), None);
         }
     }

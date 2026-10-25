@@ -5888,6 +5888,7 @@ impl Running {
         // Buildings whose blows this tick were shown.
         let mut shown = Vec::new();
         let mut flooded = None;
+        let mut news = None;
         let (focus, distance) = self.view_focus();
         for e in self.world.events() {
             match *e {
@@ -6029,6 +6030,7 @@ impl Running {
                     }
                 }
                 Event::Flooded { closed } => flooded = Some(closed),
+                Event::Season { season } => news = Some(season_news(season)),
                 _ => {}
             }
         }
@@ -6036,6 +6038,9 @@ impl Running {
             Some(true) => self.say("The rivers are in flood: the fords can't be crossed".into()),
             Some(false) => self.say("The rivers have gone down: the fords are open again".into()),
             None => {}
+        }
+        if let Some(news) = news {
+            self.say(news.into());
         }
         for b in self.world.blows() {
             self.puppets.struck(b);
@@ -8139,6 +8144,18 @@ fn drawn_position(
     match prev_positions[r.handle.index as usize] {
         Some((h, prev, _)) if h == r.handle => prev.lerp(cur, alpha),
         _ => cur,
+    }
+}
+
+/// What a new season brings, for the message line
+/// (docs/32-changing-land.md, "Seasons").
+fn season_news(season: gc_sim::sky::Season) -> &'static str {
+    use gc_sim::sky::Season;
+    match season {
+        Season::Spring => "Spring: Grub comes in as usual again, and any ice thaws",
+        Season::Summer => "Summer: the woods are dry and catch fire easily",
+        Season::Autumn => "Autumn: the harvest is in, and Grub comes in faster",
+        Season::Winter => "Winter: Grub comes in slower, and the shallows freeze unless in flood",
     }
 }
 

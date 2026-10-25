@@ -244,6 +244,10 @@ impl Step {
 /// The match's nodes, each player's store and every worker's round.
 pub struct Economy {
     gather_percent: u32,
+    /// Percent of the usual speed Grub is gathered at in this season
+    /// (see [`crate::sky::Season::grub_percent`]); 100 with no seasons.
+    /// Follows the match's tick, so it isn't hashed.
+    season_percent: u32,
     /// How many of the node arrays' entries are the map's nodes; the
     /// [`MAX_PILES`] after them are the slots Grub piles take (one holds a
     /// pile while its `node_full` is above 0).
@@ -310,6 +314,7 @@ impl Economy {
         };
         Economy {
             gather_percent: setup.gather_percent.clamp(10, 1000),
+            season_percent: 100,
             real,
             posts: setup.posts.to_vec(),
             node_resource: (setup.nodes.iter().map(|n| n.resource))
@@ -508,6 +513,20 @@ impl Economy {
         }
     }
 
+    /// Gather Grub at `percent` of the usual speed, for the season.
+    pub(crate) fn set_season(&mut self, percent: u32) {
+        self.season_percent = percent.max(1);
+    }
+
+    /// `ticks` to gather a load of `kind` in the usual season, in this
+    /// one: Grub follows the seasons, Marrow doesn't.
+    fn in_season(&self, kind: Resource, ticks: u32) -> u32 {
+        match kind {
+            Resource::Grub => ticks * 100 / self.season_percent,
+            Resource::Marrow => ticks,
+        }
+    }
+
     /// `ticks` at Standard tempo, at this match's tempo.
     fn tempo(&self, ticks: u32) -> u32 {
         (ticks * 100 / self.gather_percent).max(1)
@@ -662,7 +681,7 @@ impl Economy {
         let left = self.node_left[n];
         self.taking[r] = kind.load().min(left) as u8;
         self.node_left[n] = left - u32::from(self.taking[r]);
-        let mut ticks = kind.fill_ticks();
+        let mut ticks = self.in_season(kind, kind.fill_ticks());
         if left == 0 {
             ticks = ticks * 100 / DREGS_PERCENT;
         }
@@ -829,7 +848,8 @@ impl Economy {
     /// Ticks between loads from tuned node `n`: slower once it runs dry,
     /// faster under a chord, and scaled by tempo.
     fn tune_period(&self, n: usize) -> u32 {
-        let mut ticks = self.node_resource[n].tune_ticks();
+        let kind = self.node_resource[n];
+        let mut ticks = self.in_season(kind, kind.tune_ticks());
         if self.node_left[n] == 0 {
             ticks = ticks * 100 / DREGS_PERCENT;
         }

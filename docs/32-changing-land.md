@@ -1,6 +1,6 @@
 # 32 · Changing land
 
-*Design note, 2026-10-24, restart plan thread T9 ([29](29-restart-plan.md)). Covers idea 22 (clearing land to expand bases) first, and the one way the simulation changes the ground mid-match, which burning woods (idea 2) and rubble reuse; floods (idea 6) change the water and the walkable grid beside it. Terrain tactics (idea 13) is built below; weather, night and seasons (ideas 1, 9, 7) get their own sections here as they are built.*
+*Design note, 2026-10-24, restart plan thread T9 ([29](29-restart-plan.md)). Covers idea 22 (clearing land to expand bases) first, and the one way the simulation changes the ground mid-match, which burning woods (idea 2) and rubble reuse; floods (idea 6) change the water and the walkable grid beside it. Terrain tactics (idea 13) is built below, and weather, night and seasons (ideas 1, 9, 7) have their own sections.*
 
 ## Clearing land (idea 22)
 
@@ -183,6 +183,35 @@ Stage 5 is the rain half of usable rivers: long, heavy rain swells them, so the 
 - `World::flood()` gives whether the fords are shut and the ford tiles, and `Terrain::rise` how far the water has risen; `World::swept` whether a regiment is caught in one. The flood is hashed with the ground only while the water is up, so a dry match hashes as before. The rise is `Terrain::rise`, so rehearsal worlds raise and lower the water as the match does; they keep the fords shut or open as they found them, since they share the match's walkable grid. No new command: `SIM_VERSION` 46 (45 went to the wall twists), replay format and net protocol unchanged.
 - **Goldens.** `field-flood-1v1` is a big battle in a downpour on the river map: the fords shut at 3:11. `field-night-rain-1v1`'s rain now raises the river too.
 - **Not yet:** the game's own sums of the ground (the cursor's aim, banners and standards, arrows lost in water) still use the old water line, so they sit up to three tenths of a tile under a flood; the computer players don't plan round shut fords (the routes do: a march across one stops at the bank), and snow melt, lakes overflowing and floods that leave mud behind come later.
+
+## Seasons (idea 7)
+
+Stage 6 turns the year in Conquest: spring, summer, autumn and winter come round in turn, the changing weather follows them, the harvest and the woods change with them, and the winter freezes the shallows over. Field Battles have no seasons.
+
+### The year
+
+- **How long.** The Conquest lobby's **Seasons** stepper (in the footer, where a Field Battle has its Champions toggle) is Off, Short (8 minutes a season, the default) or Long (15). `Sky::year_ticks` is four seasons' ticks (0 with no seasons) and is kept in the replay's sky (`FORMAT` 43) and sent in the lobby's settings (`PROTOCOL` 36). A match starts in the spring; after the winter comes the spring of the next year.
+- **Where it stands.** `gc_sim::sky::season_at(year_ticks, tick)` and `World::season()` give the season, the ticks into it, its length and which year. Nothing about the season is kept apart from the tick, so nothing new is hashed.
+
+### What each season does
+
+| Season | Weather, with Changing weather | Grub | Fire | Ground |
+|---|---|---|---|---|
+| Spring | Showery: rain most often (30% clear, 15% fog) | as usual | as usual | |
+| Summer | Dry: 70% clear, the odd storm | as usual | spreads 1.5 times as often | dries twice as fast |
+| Autumn | Misty: fog and rain as often as clear sky (30% clear, 35% fog) | gathered 1.25 times as fast: the harvest | as usual | |
+| Winter | Cold: snow, fog and clear (no rain) | gathered at three quarters the speed | spreads half as often | the shallows freeze |
+
+- **Weather.** With Changing weather the spells are drawn as before (`seasonal`, a new spell every three to six minutes from the match seed), each with its season's mix (`Climate`), and a new season always starts a new spell, so no season's rain or snow runs into the next. With fixed weather the seasons change everything else but not the sky. A match with no seasons draws exactly the old spells (`Climate::Wet`).
+- **Grub.** Workers fill a load of Grub, and Choir nodes tune one, at the season's speed (`Season::grub_percent`, applied with the tempo). Grub piles a destroyed caravan dropped are gathered at the season's speed too; Marrow, caravan deliveries and the Brood's corpse-eating don't follow the seasons.
+- **Fire.** Each spreading roll's chance is scaled by `Season::fire_percent`.
+- **Ice.** In the winter, while no flood is up, the water is frozen (`Terrain::frozen`): `Terrain::wet` is false, so troops in the shallows and fords march and fight as on dry ground. It thaws when the spring comes or the water rises; the walkable grid doesn't change, so deep water stays impassable.
+
+### Seeing it
+
+- The top bar has a season chip ("Spring", "Summer: dry", "Autumn: harvest", "Winter: frost"), and a message says what each new season brings (`Event::Season`, told of each season after the first spring). The lighting and ground threads can draw summer grass, autumn leaves, snow and ice from `World::season()` and `Terrain::frozen()`.
+- **Not yet:** routes still price frozen fords as wading ground (the walkable grid doesn't change), and the computer players' own reading of the ground still sees the ice as water, so they don't plan by the season (stocking up before winter, crossing the ice); the land's look doesn't change with it yet.
+- No golden changes: goldens have no seasons, so `SIM_VERSION` is unchanged.
 
 ## The one ground change
 

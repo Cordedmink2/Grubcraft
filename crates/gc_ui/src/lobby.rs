@@ -243,6 +243,40 @@ impl WeatherSetting {
     }
 }
 
+/// How the year turns in a Conquest match (docs/32-changing-land.md,
+/// "Seasons"), chosen by the host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum YearSetting {
+    /// Spring all match.
+    Off,
+    /// Eight minutes a season.
+    #[default]
+    Short,
+    /// Fifteen minutes a season.
+    Long,
+}
+
+impl YearSetting {
+    pub const ALL: [YearSetting; 3] = [YearSetting::Off, YearSetting::Short, YearSetting::Long];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            YearSetting::Off => "Off",
+            YearSetting::Short => "Short",
+            YearSetting::Long => "Long",
+        }
+    }
+
+    /// How long a season lasts, in minutes (`None` when they are off).
+    pub fn season_minutes(self) -> Option<u32> {
+        match self {
+            YearSetting::Off => None,
+            YearSetting::Short => Some(8),
+            YearSetting::Long => Some(15),
+        }
+    }
+}
+
 /// How many tiles a side a Field Battle map of `size` is for `players`.
 /// Foot marches about 3 tiles a second, so a Standard map is about three
 /// minutes across for two players and over four for six. Small is the
@@ -467,6 +501,8 @@ pub struct LobbySettings {
     pub time_of_day: TimeOfDay,
     /// What the weather does.
     pub weather: WeatherSetting,
+    /// Conquest only: how fast the seasons turn.
+    pub seasons: YearSetting,
 }
 
 impl Default for LobbySettings {
@@ -483,6 +519,7 @@ impl Default for LobbySettings {
             champions: true,
             time_of_day: TimeOfDay::GoldenHour,
             weather: WeatherSetting::Fair,
+            seasons: YearSetting::Short,
         }
     }
 }
