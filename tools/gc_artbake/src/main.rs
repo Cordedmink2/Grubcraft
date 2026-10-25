@@ -198,9 +198,14 @@ struct MoveConfig {
     pair: Option<String>,
     /// For the killer's half (`Kill`), how far apart the two men stand,
     /// origin to origin, in the glTF's units (as the model is before it is
-    /// sized); stored in tiles.
+    /// sized); the game sizes it by the killer.
     #[serde(default)]
     reach: Option<f32>,
+    /// For the killer's half, how big the victim was made, as a share of the
+    /// killer's size as the game draws each per glTF unit: left out, 1 (men
+    /// alike); 0.667 for a Brood insect, drawn 1.5 times the men's units.
+    #[serde(default)]
+    victim_size: Option<f32>,
 }
 
 fn any() -> String {
@@ -259,6 +264,16 @@ impl MoveConfig {
         if !reach_ok {
             return Err(format!(
                 "move {:?}: the killer's half, and only it, has a reach above 0",
+                self.anim
+            ));
+        }
+        let size_ok = match (act == Act::Kill, self.victim_size) {
+            (true, Some(s)) => s.is_finite() && s > 0.0,
+            (killer, size) => killer || size.is_none(),
+        };
+        if !size_ok {
+            return Err(format!(
+                "move {:?}: only the killer's half has a victim_size, above 0",
                 self.anim
             ));
         }
@@ -1695,6 +1710,7 @@ fn posed_move(
                 name: name.clone(),
                 reach: m.reach,
                 contact: share,
+                victim_size: m.victim_size.unwrap_or(1.0),
             })
         }
         _ => None,
@@ -1956,6 +1972,8 @@ mod tests {
         // untimed move on the same animation (stored once), and it meets
         // where its contact says.
         assert_eq!(p.reach, 2.0);
+        // Made for a man of the killer's size unless it says otherwise.
+        assert_eq!(p.victim_size, 1.0);
         let kill = anim.moves[p.kill as usize];
         let hit = anim.moves.iter().find(|m| m.act() == Act::Hit).unwrap();
         assert_eq!((kill.first_row, kill.frames), (hit.first_row, hit.frames));
@@ -1985,6 +2003,23 @@ mod tests {
         let unpaired =
             r#"[(anim: "Attack.000", act: "Kill", contact: Some(0.2), reach: Some(1.0))]"#;
         assert!(err(unpaired.into()).contains("names its pair"));
+        // A victim's size is the killer's half's to say, and above 0.
+        let small = half("Kill", ", reach: Some(2.0), victim_size: Some(0.5)");
+        let (bytes, _, _) = bake_bug_with(&format!("[{small}, {}]", half("Killed", "")));
+        let pack = gc_assets::Pack::parse(bytes.as_ref().unwrap()).unwrap();
+        let models = gc_assets::model::Models::from_pack(&pack).unwrap();
+        assert_eq!(models.anim.pairs[0].victim_size, 0.5);
+        for (kill, killed) in [
+            (", victim_size: Some(0.0)", ""),
+            ("", ", victim_size: Some(0.5)"),
+        ] {
+            let e = err(format!(
+                "[{}, {}]",
+                half("Kill", &format!(", reach: Some(2.0){kill}")),
+                half("Killed", killed)
+            ));
+            assert!(e.contains("victim_size"), "{e}");
+        }
     }
 
     #[test]

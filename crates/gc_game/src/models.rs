@@ -244,8 +244,8 @@ fn chest_at(anim: &Anim<'_>, model: usize, row: u32) -> Option<glam::Vec2> {
     Some(glam::Vec2::new(row(0), row(8)))
 }
 
-/// How far a victim's size may be from the killer's for a kill made for two
-/// men of one size to still meet.
+/// How far a victim's size may be from the one the kill was made for (as a
+/// share of the killer's, `PairRecord::victim_size`) for it to still meet.
 const KILL_SIZES: core::ops::RangeInclusive<f32> = 0.9..=1.1;
 
 /// How far in front of the killer's origin the finishers made for `weapon`
@@ -355,8 +355,13 @@ impl Clips {
                     }
                     for (v, victim) in body.iter().enumerate() {
                         let Some(victim) = *victim else { continue };
+                        let reach = p.reach * killer.size + killer.feet + victim.feet;
+                        // A rider and a spearman both drawn well behind their
+                        // positions would have the killer stand beyond the
+                        // victim, and the two turn to face the wrong way.
                         let fits = victim.skeleton == u32::from(killed.skeleton)
-                            && KILL_SIZES.contains(&(victim.size / killer.size));
+                            && KILL_SIZES.contains(&(victim.size / killer.size / p.victim_size))
+                            && reach > 0.0;
                         let (true, Ok(id)) = (fits, u16::try_from(pairs.len())) else {
                             continue;
                         };
@@ -368,7 +373,7 @@ impl Clips {
                         pairs.push(KillPair {
                             kill: MoveClip::of_move(kill),
                             killed: MoveClip::of_move(killed),
-                            reach: p.reach * killer.size + killer.feet + victim.feet,
+                            reach,
                             // The victim's left is the killer's right.
                             aside: killer.side + victim.side,
                             contact: p.contact,
@@ -1028,15 +1033,26 @@ mod tests {
         let clips = Clips::new(&models);
         for name in [
             "Chitin Guard",
+            "Broodmother Bulk",
             "Colossus Maw",
+            "The Devourer",
+            "The Whisperer",
+            "Gnawer",
+            "Skitterlings",
+            "Reclaimer",
+            "Spitters",
+            "Burrowers",
             "Mantid Reapers",
+            "Shellbacks",
             "Drone-Moths",
+            "Spawnlings",
+            "The Queen-in-Waiting",
             "Mounted Samurai",
             "The Daimyo",
-            "Glass Striders",
             "Yabusame Riders",
-            "Harmonic Walkers",
+            "Glass Striders",
             "Debt Collectors",
+            "Harmonic Walkers",
         ] {
             let m = models.by_name(name).unwrap();
             let own = &clips.by_model[m];
@@ -1049,8 +1065,65 @@ mod tests {
                     .0
                     .rows[0]
             };
-            assert!((0..=255).any(|look| reel(look) != reel(0)), "{name}");
+            // Each of the three comes up by the man's look.
+            let reels: std::collections::BTreeSet<_> = (0..=255).map(reel).collect();
+            assert_eq!(reels.len(), 3, "{name}");
         }
+    }
+
+    #[test]
+    fn the_brood_and_the_riders_kill_men_their_own_ways() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        let kill = |killer, victim| clips.kill_pair(by(killer), by(victim), 0);
+        let feet = |name| clips.body[by(name)].unwrap().feet;
+        // Each kill, made on the killer's own rig, meets an Ember man and
+        // any other man on foot: a Brood insect's though it is drawn half as
+        // big again, as it was made on a man two thirds its size.
+        let mut apart = Vec::new();
+        for killer in [
+            "Chitin Guard",
+            "Gnawer",
+            "Mantid Reapers",
+            "Mounted Samurai",
+            "The Daimyo",
+            "Glass Striders",
+        ] {
+            for victim in ["Katana Samurai", "The Ronin", "Tuner", "Grubfolk Militia"] {
+                let p = kill(killer, victim).unwrap_or_else(|| panic!("{killer} on {victim}"));
+                assert_eq!((p.kill.act, p.killed.act), (Act::Kill, Act::Killed));
+                assert_eq!(p.kill.frames, p.killed.frames);
+                assert!(
+                    p.contact > 0.1 && p.contact < 0.4,
+                    "{killer}: {}",
+                    p.contact
+                );
+            }
+            apart.push(
+                kill(killer, "Katana Samurai").unwrap().reach
+                    - feet(killer)
+                    - feet("Katana Samurai"),
+            );
+        }
+        // An insect or a mounted katana strikes from about a man's length
+        // (the horse's head and neck are long), a lance from further, feet
+        // to feet.
+        for a in &apart[..5] {
+            assert!((0.6..1.2).contains(a), "{apart:?}");
+        }
+        assert!(apart[5] > 1.2 * apart[3], "{apart:?}");
+        // A man is no insect, and the Oni-Bound, on the men's rig but half as
+        // big again, is too big for a kill made for a man.
+        assert_eq!(kill("Katana Samurai", "Chitin Guard"), None);
+        assert_eq!(kill("Chitin Guard", "Gnawer"), None);
+        assert_eq!(kill("Chitin Guard", "Oni-Bound"), None);
+        // The insects meet a yari man too, but the mounted cut, made at a
+        // man's length, would have the rider stand beyond a spearman drawn
+        // as far behind his position, so it is left out there.
+        assert!(kill("Chitin Guard", "Yari Ashigaru").is_some());
+        assert_eq!(kill("Mounted Samurai", "Bone Pikes"), None);
+        assert!(clips.pairs.iter().all(|p| p.reach > 0.0));
     }
 
     #[test]

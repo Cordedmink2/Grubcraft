@@ -219,6 +219,8 @@ pub(crate) struct PairHalf {
     pub reach: Option<f32>,
     /// How far through the move (0 to 1, by frames) the blow lands.
     pub contact: f32,
+    /// The killer's half's [`PairRecord::victim_size`] (1 for the victim's).
+    pub victim_size: f32,
 }
 
 /// Turn `frames` into changes from the first frame, as an additive move is
@@ -414,6 +416,7 @@ struct Half {
     index: u32,
     contact: f32,
     reach: Option<f32>,
+    victim_size: f32,
 }
 
 impl AnimBuilder {
@@ -524,6 +527,7 @@ impl AnimBuilder {
             index,
             contact: half.contact,
             reach: half.reach,
+            victim_size: half.victim_size,
         };
         let halves = self.pairs.entry(half.name.clone()).or_default();
         let same_side =
@@ -570,6 +574,7 @@ impl AnimBuilder {
                         killed: v.index,
                         reach: k.reach.unwrap_or_default(),
                         contact: k.contact,
+                        victim_size: k.victim_size,
                     });
                 }
             }
@@ -697,6 +702,7 @@ mod tests {
                             name: "Thrust".into(),
                             reach,
                             contact: 0.5,
+                            victim_size: 1.0,
                         }),
                     })
                     .collect(),

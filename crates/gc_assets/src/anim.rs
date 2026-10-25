@@ -22,7 +22,8 @@
 //!   difference), each the three rows of a 3 × 4 matrix.
 //! - `anim/pairs`, optional even beside the others: one [`PairRecord`] per
 //!   matched kill, the two halves of one move made for two men. A pack with
-//!   no kills leaves it out.
+//!   no kills leaves it out. Its records have their own schema,
+//!   [`PAIRS_SCHEMA`].
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -34,6 +35,8 @@ use crate::{Pack, TableError, read_table};
 
 /// Bumped whenever a record's layout or meaning changes.
 pub const ANIM_SCHEMA: u32 = 1;
+/// The same for `anim/pairs` alone (2: [`PairRecord::victim_size`]).
+pub const PAIRS_SCHEMA: u32 = 2;
 pub const SKELETONS_PATH: &str = "anim/skeletons";
 pub const JOINTS_PATH: &str = "anim/joints";
 pub const MOVES_PATH: &str = "anim/moves";
@@ -399,7 +402,7 @@ pub struct FitRecord {
 /// A matched kill: the killer's half (an [`Act::Kill`] move) and the
 /// victim's ([`Act::Killed`]), as long as each other, sampled alike and
 /// meeting at `contact`; the two may be on different skeletons. Unlike an
-/// attack a kill is not retimed, so it plays as made. 16 bytes.
+/// attack a kill is not retimed, so it plays as made. 20 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct PairRecord {
@@ -412,6 +415,11 @@ pub struct PairRecord {
     /// How far through both halves (0 to 1, as `MoveClip::at` counts) the
     /// blow lands.
     pub contact: f32,
+    /// The victim's size the kill was made for, as a share of the killer's
+    /// (sizes as each model's first fix gives them): 1 for two men drawn
+    /// alike, less for a killer drawn bigger for his skeleton's units (a
+    /// Brood insect against a man).
+    pub victim_size: f32,
 }
 
 impl FitRecord {
@@ -481,7 +489,7 @@ impl<'a> Anim<'a> {
             fits: table(pack, FITS_PATH)?,
             fixes: table(pack, FIXES_PATH)?,
             pairs: match pack.get_path(PAIRS_PATH) {
-                Some(entry) => read_table(ANIM_SCHEMA, entry.bytes)
+                Some(entry) => read_table(PAIRS_SCHEMA, entry.bytes)
                     .map_err(|e| AnimError::Table(PAIRS_PATH, e))?,
                 None => &[],
             },
@@ -561,6 +569,7 @@ impl<'a> Anim<'a> {
                 || kill.fps != killed.fps
                 || !(p.reach.is_finite() && p.reach > 0.0)
                 || !(p.contact > 0.0 && p.contact < 1.0)
+                || !(p.victim_size.is_finite() && p.victim_size > 0.0)
             {
                 return Err(AnimError::Bad("pair", k));
             }
@@ -692,7 +701,7 @@ impl AnimTables {
             pack.add(
                 PAIRS_PATH,
                 Kind::Table,
-                &table_bytes(ANIM_SCHEMA, &self.pairs),
+                &table_bytes(PAIRS_SCHEMA, &self.pairs),
             );
         }
     }
