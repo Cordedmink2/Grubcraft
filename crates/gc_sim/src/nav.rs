@@ -66,6 +66,9 @@ pub const CLEAR_CAP: u8 = 32;
 pub const BLOCKED: u8 = 0;
 /// Cost of a cell on a bridge's deck: open ground.
 pub const DECK: u8 = 1;
+/// Cost of deep water that low water has made wadeable (see
+/// [`crate::flood`], "summer fords"): as a ford.
+pub const SHALLOWS: u8 = FORD;
 /// The map's cost of a ford or shallows cell (see `gc_map`), and of open
 /// ground, which a frozen ford costs (see [`Nav::set_frozen`]).
 pub const FORD: u8 = 3;
@@ -163,6 +166,9 @@ struct Grid {
     /// Cells a flood has shut (see [`Nav::set_flooded_all`]): blocked
     /// whatever stands there. Empty until the first flood.
     flooded: Vec<bool>,
+    /// Deep-water cells low water has made wadeable (see
+    /// [`Nav::set_exposed_all`]). Empty until the first low water.
+    exposed: Vec<bool>,
     /// Finished bridge tiles on each cell (see [`Nav::set_bridged_all`]):
     /// open at [`DECK`] cost over deep water or a flood, unless a building
     /// stands there too. Empty until the first bridge.
@@ -218,6 +224,11 @@ impl Grid {
     /// Whether a flood has shut cell `c` (an index into the grid).
     fn is_flooded(&self, c: usize) -> bool {
         self.flooded.get(c).copied().unwrap_or(false)
+    }
+
+    /// Whether low water has made cell `c` wadeable.
+    fn is_exposed(&self, c: usize) -> bool {
+        self.exposed.get(c).copied().unwrap_or(false)
     }
 
     /// Whether a finished bridge spans cell `c` (an index into the grid).
@@ -1323,17 +1334,30 @@ impl Nav {
         Ok(())
     }
 
-    /// Whether any cell of the tile `(x, y)` is ground a regiment could
-    /// walk on, buildings and floods aside (never off the map, nor with no
-    /// map).
-    pub(crate) fn walkable_ground(&self, x: i32, y: i32) -> bool {
+    /// Whether any cell of the tile `(x, y)` is ground the map gave as
+    /// blocked (deep water, under the water line), whatever stands there
+    /// (never off the map, nor with no map).
+    pub(crate) fn deep_ground(&self, x: i32, y: i32) -> bool {
+        self.any_ground(x, y, |cost| cost == BLOCKED)
+    }
+
+    /// Whether the map's own cost of any cell of the tile `(x, y)` is one
+    /// `pick` takes (never off the map, nor with no map).
+    fn any_ground(&self, x: i32, y: i32, pick: impl Fn(u8) -> bool) -> bool {
         let Some(g) = self.base() else {
             return false;
         };
         let Some([x0, y0, x1, y1]) = g.cells([x, y, 1, 1]) else {
             return false;
         };
-        (y0..y1).any(|cy| (x0..x1).any(|cx| g.ground[g.idx(cx, cy) as usize] != BLOCKED))
+        (y0..y1).any(|cy| (x0..x1).any(|cx| pick(g.ground[g.idx(cx, cy) as usize])))
+    }
+
+    /// Whether any cell of the tile `(x, y)` is ground a regiment could
+    /// walk on, buildings and floods aside (never off the map, nor with no
+    /// map).
+    pub(crate) fn walkable_ground(&self, x: i32, y: i32) -> bool {
+        self.any_ground(x, y, |cost| cost != BLOCKED)
     }
 
     /// Portal nodes in the graph (for the dev overlay and tests).
@@ -1664,9 +1688,12 @@ fn find(
     let mut start = grid.cell_at(from);
     let mut lead = false;
     if !grid.open_cell(start) {
-        // Out of a flood, as far as a goal is looked for: a wide ford's
-        // middle is further from its banks than ground is from a wall.
-        let snap = if grid.is_flooded(start as usize) {
+        // Out of a flood, or deep water come back over a summer ford (on
+        // a grid that has had low water), as far as a goal is looked for:
+        // a wide ford's middle is further from its banks than ground is
+        // from a wall.
+        let deep = !grid.exposed.is_empty() && grid.ground[start as usize] == BLOCKED;
+        let snap = if grid.is_flooded(start as usize) || deep {
             SNAP_GOAL
         } else {
             SNAP_START
@@ -1990,6 +2017,7 @@ impl Grid {
             built: vec![0; n],
             opened: Vec::new(),
             flooded: Vec::new(),
+            exposed: Vec::new(),
             bridged: Vec::new(),
             frozen: false,
             clear: vec![0; n],

@@ -1837,6 +1837,8 @@ fn sky_word(world: &gc_sim::World) -> String {
         Some(("Fords flooded", "fords flooded"))
     } else if world.terrain().rise() > 0 {
         Some(("River high", "river high"))
+    } else if world.flood().exposed() {
+        Some(("Low water: summer fords", "low water"))
     } else {
         None
     };

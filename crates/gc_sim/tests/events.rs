@@ -135,6 +135,7 @@ fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
                 Event::Kindled { .. } => unreachable!("nobody sets fires here"),
                 Event::Flooded { .. } => unreachable!("no rain here"),
                 Event::Season { .. } => unreachable!("no seasons here"),
+                Event::Shallows { .. } => unreachable!("no seasons here"),
             }
         }
         // Soldiers shot down are among the losses told.
