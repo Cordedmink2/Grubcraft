@@ -537,7 +537,7 @@ mod tests {
             .map(|i| match (picked.as_bytes().get(i), players) {
                 (Some(c), _) => Faction::ALL[usize::from(c - b'0') % Faction::ALL.len()],
                 (None, 2) => [Faction::EmberClans, Faction::CarrionConcord][i],
-                (None, _) => Faction::ALL[i % 4],
+                (None, _) => Faction::ALL[i % Faction::ALL.len()],
             })
             .collect();
         let started = std::time::Instant::now();

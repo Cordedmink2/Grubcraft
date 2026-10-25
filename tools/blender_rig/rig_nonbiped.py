@@ -275,17 +275,34 @@ def clips(arm, template):
 
 def tint_materials(mesh, rgb):
     """Recolour variants of one base mesh: multiply every material's base
-    colour (no new texture, no new rig)."""
+    colour (no new texture, no new rig).
+
+    Textured materials take their colour from an image, so changing the
+    BSDF default does nothing.  Put a Multiply MixRGB (factor 1) between the
+    colour source and Base Color; the glTF exporter writes a constant
+    multiplier of a texture as the material's baseColorFactor.
+    """
     for slot in mesh.material_slots:
         m = slot.material
         if not m or not m.use_nodes:
             continue
-        for n in m.node_tree.nodes:
-            if n.type == "BSDF_PRINCIPLED":
-                c = n.inputs["Base Color"].default_value
-                n.inputs["Base Color"].default_value = (
-                    c[0] * rgb[0], c[1] * rgb[1], c[2] * rgb[2], c[3]
-                )
+        nt = m.node_tree
+        for n in list(nt.nodes):
+            if n.type != "BSDF_PRINCIPLED":
+                continue
+            sock = n.inputs["Base Color"]
+            mix = nt.nodes.new("ShaderNodeMix")
+            mix.data_type = "RGBA"
+            mix.blend_type = "MULTIPLY"
+            mix.inputs[0].default_value = 1.0
+            mix.inputs[7].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
+            if sock.links:
+                src = sock.links[0].from_socket
+                nt.links.new(src, mix.inputs[6])
+            else:
+                c = sock.default_value
+                mix.inputs[6].default_value = (c[0], c[1], c[2], c[3])
+            nt.links.new(mix.outputs[2], sock)
 
 
 def main():

@@ -27,10 +27,7 @@ Layers (so Mario can accept one without the others):
 | L2 Lore | New lore text; the Brood as a "swarm that learns" (kills are eaten and grafted into the next brood) | no |
 | L3 Roster | Overseer, Graft Stalkers, Gloomwings, Boilback, Graft Chamber, Carrion Larder (+ optional Graft meter) | yes, needs Mario |
 
-This PR carries L1 and L2 **as data and catalogue only**: the Brood roster, names and stats are unchanged, and
-the existing Brood model entries (`assets-src/buildings/brood.ron`, `assets-src/models.ron`) are marked
-`retheme-pending` in `assets-src/catalogue.csv` (B-01..B-40), so each re-themed asset later replaces a
-`source` line. **L3 is not in this PR**; it is a separate decision for Mario.
+This PR is **catalogue-only for the Brood**: no Brood text, roster, stats or models change here. L1 (look) and L2 (lore) are proposals only, pending Mario's agreement; the existing Brood model entries are merely annotated with their catalogue IDs (B-xx, `retheme-pending`) so a later asset swap is a file swap. The L2 lore text will follow in a separate PR.
 
 ## Art pipeline pieces
 
