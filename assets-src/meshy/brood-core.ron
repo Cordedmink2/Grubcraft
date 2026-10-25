@@ -1,0 +1,85 @@
+// Meshy core assets, brood (t_c53e4b62). Sources are `shared:` (generated GLBs and 2K albedo PNGs live in the
+// artefacts folder, not the repo: ~8 MB each). Team colour: a per-model mask from assets-src/meshy/masks (strict red-cloth
+// rule + median clean-up, see tools/gc_artbake/tests/meshy_masks.rs). Bake:
+//   gc_artbake --config assets-src/meshy/brood-core.ron --shared <meshy-core dir> --out <x>.pak
+(
+    models: [
+        (
+            name: "Skitterlings", // B-02
+            source: "shared:models/B-02-anim.glb",
+            height: 0.654,
+            clips: { "Idle": "Idle", "Attack": "Attack", "Attack2": "Attack", "Hit": "Hit_Reaction", "Die": "Dead" },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((albedo: "shared:textures/B-02/albedo.png", team: Some("repo:meshy/masks/B-02.png"))),
+        ),
+        (
+            name: "Chitin Guard", // B-03
+            source: "shared:models/B-03-anim.glb",
+            height: 1.358,
+            clips: { "Idle": "Idle", "Attack": "Attack", "Attack2": "Attack", "Hit": "Hit_Reaction", "Die": "Dead" },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((albedo: "shared:textures/B-03/albedo.png", team: Some("repo:meshy/masks/B-03.png"))),
+        ),
+        (
+            name: "Reclaimer", // B-04
+            source: "shared:models/B-04-anim.glb",
+            height: 0.798,
+            clips: { "Idle": "Idle", "Attack": "Attack", "Attack2": "Attack", "Hit": "Hit_Reaction", "Die": "Dead" },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((albedo: "shared:textures/B-04/albedo.png", team: Some("repo:meshy/masks/B-04.png"))),
+        ),
+        (
+            name: "The Queen-in-Waiting", // B-13
+            source: "shared:models/B-13-anim.glb",
+            height: 1.758,
+            clips: { "Idle": "Idle", "Attack": "Attack", "Attack2": "Attack", "Hit": "Hit_Reaction", "Die": "Dead" },
+            lod_triangles: (8400, 3000, 1000, 350),
+            textures: Some((albedo: "shared:textures/B-13/albedo.png", team: Some("repo:meshy/masks/B-13.png"))),
+        ),
+        (
+            name: "Hive", // B-20R
+            source: "shared:models/B-20R-textured.glb",
+            height: 5.6,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (18000, 6000, 2000, 700),
+            textures: Some((albedo: "shared:textures/B-20R/albedo.png", team: Some("repo:meshy/masks/B-20R.png"))),
+        ),
+        (
+            name: "Pustule", // B-23
+            source: "shared:models/B-23-textured.glb",
+            height: 3.2,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (10000, 3500, 1200, 400),
+            textures: Some((albedo: "shared:textures/B-23/albedo.png", team: Some("repo:meshy/masks/B-23.png"))),
+        ),
+        (
+            name: "Hatchery Pit", // B-24
+            source: "shared:models/B-24-textured.glb",
+            height: 3.0,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (10000, 3500, 1200, 400),
+            textures: Some((albedo: "shared:textures/B-24/albedo.png", team: Some("repo:meshy/masks/B-24.png"))),
+        ),
+        (
+            name: "Spine Mound", // B-28
+            source: "shared:models/B-28-textured.glb",
+            height: 4.2,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (10000, 3500, 1200, 400),
+            textures: Some((albedo: "shared:textures/B-28/albedo.png", team: Some("repo:meshy/masks/B-28.png"))),
+        ),
+        (
+            name: "Queen's Chamber", // B-29
+            source: "shared:models/B-29-textured.glb",
+            height: 4.4,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (10000, 3500, 1200, 400),
+            textures: Some((albedo: "shared:textures/B-29/albedo.png", team: Some("repo:meshy/masks/B-29.png"))),
+        ),
+    ],
+)
