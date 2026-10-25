@@ -76,6 +76,28 @@ const RESIN_COLOR: [u8; 3] = [196, 126, 40];
 const RESIN_HEIGHT: f32 = 1.0;
 const RESIN_THICK: f32 = 0.8;
 const RESIN_GLOW: u8 = 30;
+/// A bridge deck: a flat slab a full tile wide, this thick, floating this
+/// far above the ground the shader draws (the water's surface over a river),
+/// so men crossing it stand on `DECK_LIFT + BRIDGE_THICK`.
+pub const DECK_LIFT: f32 = 0.1;
+const BRIDGE_THICK: f32 = 0.18;
+/// How high a man crossing a bridge stands above the ground the shader
+/// draws there.
+pub const DECK_TOP: f32 = DECK_LIFT + BRIDGE_THICK;
+/// The railings of a finished bridge: a rail along each edge and a post at
+/// the middle of each tile, this high above the deck and this thin.
+const RAIL_HEIGHT: f32 = 0.42;
+const RAIL_THIN: f32 = 0.07;
+const POST_THIN: f32 = 0.12;
+/// An unfinished bridge tile shows two posts, this high at the start and
+/// taller as it goes up to the railing's height.
+const FRAME_LOW: f32 = 0.2;
+/// Deck colours: Ember timber, Concord bone, Choir glass, Brood chitin.
+const TIMBER_DECK: [u8; 3] = [150, 106, 62];
+const BONE_DECK: [u8; 3] = [226, 218, 194];
+const GLASS_DECK: [u8; 3] = [150, 226, 242];
+const GLASS_DECK_GLOW: u8 = 90;
+const CHITIN_DECK: [u8; 3] = [92, 62, 70];
 /// Each wall level past the first stands this much taller and thicker.
 const LEVEL_RISE: f32 = 0.45;
 const LEVEL_THICKEN: f32 = 0.1;
@@ -208,6 +230,7 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
             record::Role::Heroes => Role::Heroes,
             record::Role::Defence => Role::Defence,
             record::Role::Wall => Role::Wall,
+            record::Role::Bridge => Role::Bridge,
         },
         tier: b.tier,
         upgrades_from: (b.upgrades_from != record::NONE).then_some(b.upgrades_from),
@@ -310,6 +333,11 @@ impl Table {
             .is_some_and(|s| s.flags & gc_sim::structures::LINE != 0)
     }
 
+    /// Whether `building` is a bridge (a wall-like line over water).
+    pub fn is_bridge(&self, building: BuildingId) -> bool {
+        (self.stats.get(usize::from(building))).is_some_and(|s| s.role == Role::Bridge)
+    }
+
     /// Whether `building` is a gate or a gatehouse.
     pub fn is_gate(&self, building: BuildingId) -> bool {
         (self.stats.get(usize::from(building)))
@@ -353,6 +381,7 @@ impl Table {
     /// to everyone).
     pub fn wall_look(&self, building: BuildingId, open: bool) -> WallLook {
         match self.stats.get(usize::from(building)) {
+            Some(s) if s.role == Role::Bridge => bridge_look(self.faction(building)),
             Some(s) => wall_look(self.faction(building), s.flags, self.level(building), open),
             None => WallLook::PLAIN,
         }
@@ -365,7 +394,7 @@ impl Table {
 
     /// What a worker of `faction` lays from the build menu: every building
     /// of theirs but the main building and its upgrades.
-    pub fn buildable(&self, faction: Faction) -> impl Iterator<Item = BuildingId> + '_ {
+    pub fn buildable(&self, faction: Faction) -> impl Iterator<Item = BuildingId> + Clone + '_ {
         (self.stats.iter().zip(&self.factions).enumerate())
             // Upgrades (a wall's next level) go up on what they upgrade.
             .filter(move |(_, (s, f))| {
@@ -575,6 +604,7 @@ pub fn crew_spots(centre: Vec2, width: u8, depth: u8) -> [(Vec2, Vec2); UPGRADE_
 pub fn height_of(role: Role) -> f32 {
     match role {
         Role::Wall => WALL_HEIGHT,
+        Role::Bridge => DECK_TOP + RAIL_HEIGHT,
         Role::Main => MAIN_HEIGHT,
         _ => HEIGHT,
     }
@@ -741,6 +771,8 @@ pub struct WallLook {
     pub cap: Option<[u8; 3]>,
     /// Whether a battlement of merlons stands on the coping.
     pub merlons: bool,
+    /// How far its underside floats above the ground (a bridge's deck).
+    pub lift: f32,
 }
 
 impl WallLook {
@@ -752,7 +784,26 @@ impl WallLook {
         glow: 0,
         cap: None,
         merlons: false,
+        lift: 0.0,
     };
+}
+
+/// The look of a bridge deck of `faction`: a flat slab a tile wide.
+pub fn bridge_look(faction: Option<Faction>) -> WallLook {
+    let (colour, glow) = match faction {
+        Some(Faction::CarrionConcord) => (BONE_DECK, 0),
+        Some(Faction::Choir) => (GLASS_DECK, GLASS_DECK_GLOW),
+        Some(Faction::Brood) => (CHITIN_DECK, 0),
+        _ => (TIMBER_DECK, 0),
+    };
+    WallLook {
+        height: BRIDGE_THICK,
+        thick: 1.0,
+        colour: Some(colour),
+        glow,
+        lift: DECK_LIFT,
+        ..WallLook::PLAIN
+    }
 }
 
 /// The look of a drawn wall of `faction` with building `flags` at `level`
@@ -845,6 +896,58 @@ fn wall_block(
     BoxInstance {
         facing: piece.dir.to_array(),
         ..draped(slab, height, color, ground_range(ground, s))
+    }
+}
+
+/// One tile of a bridge: a flat deck slab along its line, a full tile wide
+/// and floating just above the ground the shader draws (the water over a
+/// river), with a rail along each edge and a post at the middle of each;
+/// while it goes up, only two posts that grow with the work done. `deck` is
+/// the deck's colour (with its glow), `team` the owner's, which tints the
+/// posts and rails.
+fn push_bridge_tile(s: &StructureView, deck: [u8; 4], team: [u8; 3], out: &mut Vec<BoxInstance>) {
+    let (centre, dir, len) = match s.line.and_then(|line| wall_piece(line, s.tile)) {
+        Some(p) => (p.centre, p.dir, p.len),
+        None => (centre_of(s.tile, s.width, s.depth), Vec2::X, 1.0),
+    };
+    let side = Vec2::new(-dir.y, dir.x);
+    let [r, g, b, _] = deck;
+    let [r, g, b] = tint([r, g, b].map(|c| (u32::from(c) * 3 / 4) as u8), team, 35);
+    let wood = [r, g, b, 0];
+    let top = DECK_TOP;
+    let edge = 0.5 - POST_THIN / 2.0;
+    let post = |height: f32, lift: f32, at: Vec2| BoxInstance {
+        pos: at.to_array(),
+        facing: dir.to_array(),
+        size: [POST_THIN, height, POST_THIN],
+        color: wood,
+        lift,
+    };
+    if !s.finished() {
+        let done = f32::from(s.built_percent) / 100.0;
+        let height = FRAME_LOW + (top + RAIL_HEIGHT - FRAME_LOW) * done;
+        for sign in [-1.0, 1.0] {
+            out.push(post(height, 0.0, centre + side * (sign * edge)));
+        }
+        return;
+    }
+    out.push(BoxInstance {
+        pos: centre.to_array(),
+        facing: dir.to_array(),
+        size: [1.0, BRIDGE_THICK, len],
+        color: deck,
+        lift: DECK_LIFT,
+    });
+    for sign in [-1.0, 1.0] {
+        let at = centre + side * (sign * edge);
+        out.push(post(RAIL_HEIGHT, top, at));
+        out.push(BoxInstance {
+            pos: at.to_array(),
+            facing: dir.to_array(),
+            size: [RAIL_THIN, RAIL_THIN, len],
+            color: wood,
+            lift: top + RAIL_HEIGHT - RAIL_THIN,
+        });
     }
 }
 
@@ -1029,22 +1132,27 @@ pub fn push(
             (None, None) => height_of(stats.role),
         };
         let [r, g, b] = shade(wall_colour(&look, team(s.owner)), s.hp, s.max_hp);
-        match (s.gate.is_some() && s.finished(), model) {
-            (true, _) => push_gate(
-                &s,
-                model.is_none().then_some([r, g, b]),
-                table.is_gatehouse(s.building),
-                &ground,
-                out,
-            ),
-            (false, None) => {
-                let body = wall_block(&s, height, look.thick, [r, g, b, look.glow], &ground);
-                out.push(body);
-                if s.line.is_some() {
-                    push_wall_top(&body, look, out);
+        if stats.role == Role::Bridge {
+            let team = shade(team(s.owner), s.hp, s.max_hp);
+            push_bridge_tile(&s, [r, g, b, look.glow], team, out);
+        } else {
+            match (s.gate.is_some() && s.finished(), model) {
+                (true, _) => push_gate(
+                    &s,
+                    model.is_none().then_some([r, g, b]),
+                    table.is_gatehouse(s.building),
+                    &ground,
+                    out,
+                ),
+                (false, None) => {
+                    let body = wall_block(&s, height, look.thick, [r, g, b, look.glow], &ground);
+                    out.push(body);
+                    if s.line.is_some() {
+                        push_wall_top(&body, look, out);
+                    }
                 }
+                (false, Some(_)) => {}
             }
-            (false, Some(_)) => {}
         }
         if s.hp >= s.max_hp {
             continue;
@@ -1768,7 +1876,9 @@ pub fn push_wall_ghost(
         let colour = ghost_colour(fit, colour);
         let mut view = footprint_view(tile, 1, 1, 0);
         view.line = Some(line);
-        out.push(wall_block(&view, look.height, look.thick, colour, &ground));
+        let mut slab = wall_block(&view, look.height, look.thick, colour, &ground);
+        slab.lift += look.lift;
+        out.push(slab);
     }
 }
 
@@ -1870,7 +1980,7 @@ pub fn tile_for(at: Vec2, width: u8, depth: u8) -> (i32, i32) {
 /// How high above the ground a man stands on a wall drawn with `look`:
 /// its top, and the coping on it if it has one.
 pub fn wall_stand_height(look: WallLook) -> f32 {
-    look.height + look.cap.map_or(0.0, |_| COPING_HEIGHT)
+    look.lift + look.height + look.cap.map_or(0.0, |_| COPING_HEIGHT)
 }
 
 /// Where men stand on the wall piece `s`: the middle of its footprint, how
@@ -1969,6 +2079,7 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::NoWalkway => {
             "Raise the wall a level (or a gate to a gatehouse) first: only a walkway can be manned."
         }
+        Refusal::Crooked => "A bridge must run straight across, not at a slant.",
     }
 }
 
@@ -2106,6 +2217,54 @@ mod tests {
         assert_eq!(role("Watchtower"), Role::Defence);
         assert_eq!(table.units.len(), data.units.len());
         assert!(table.describe(0).contains("Clan Hall"));
+    }
+
+    #[test]
+    fn each_faction_has_a_flat_bridge_that_is_in_its_build_menu() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let mut seen = Vec::new();
+        for b in 0..table.len() as BuildingId {
+            if !table.is_bridge(b) {
+                continue;
+            }
+            let faction = table.faction(b).expect("a bridge has a faction");
+            assert!(!seen.contains(&faction), "two bridges for {faction:?}");
+            seen.push(faction);
+            assert!(table.is_wall(b), "a bridge is drawn as a line");
+            assert!(table.buildable(faction).any(|x| x == b));
+            let look = table.wall_look(b, false);
+            // A flat deck a tile wide, not a wall slab, and men stand on it.
+            assert!(look.height < 0.3 && look.thick == 1.0 && look.lift > 0.0);
+            assert!(look.cap.is_none() && !look.merlons);
+            assert!((table.stand_height(b, false) - DECK_TOP).abs() < 1e-6);
+            assert!(table.stand_height(b, false) < WALL_HEIGHT);
+        }
+        assert_eq!(seen.len(), 4, "{seen:?}");
+    }
+
+    #[test]
+    fn a_bridge_tile_is_a_deck_with_rails_and_a_frame_while_it_goes_up() {
+        let mut view = footprint_view((10, 5), 1, 1, 0);
+        view.line = Some([10, 3, 10, 9]);
+        view.built_percent = 100;
+        let mut out = Vec::new();
+        push_bridge_tile(&view, [150, 106, 62, 0], [200, 40, 40], &mut out);
+        // Deck, two rails, two posts; nothing taller than the railing.
+        assert_eq!(out.len(), 5);
+        let top = out.iter().map(|b| b.lift + b.size[1]).fold(0.0, f32::max);
+        assert!((top - (DECK_TOP + RAIL_HEIGHT)).abs() < 1e-5, "{top}");
+        assert!(top < WALL_HEIGHT);
+        // The deck runs a tile wide along the line (y here).
+        assert_eq!((out[0].size[0], out[0].facing[0]), (1.0, 0.0));
+        view.built_percent = 20;
+        let mut frame = Vec::new();
+        push_bridge_tile(&view, [150, 106, 62, 0], [200, 40, 40], &mut frame);
+        assert_eq!(frame.len(), 2);
+        view.built_percent = 80;
+        let mut later = Vec::new();
+        push_bridge_tile(&view, [150, 106, 62, 0], [200, 40, 40], &mut later);
+        assert!(later[0].size[1] > frame[0].size[1]);
     }
 
     /// The extent of `slabs` along one axis (`x` or not), as (low, high).
@@ -2690,8 +2849,9 @@ mod tests {
         let table = Table::new(&data);
         for f in Faction::ALL {
             let menu: Vec<BuildingId> = table.buildable(f).collect();
+            // More than 12 take two pages, the last slot flipping them.
             assert!(
-                !menu.is_empty() && menu.len() <= 12,
+                !menu.is_empty() && menu.len() <= 2 * 11,
                 "{f:?}: {}",
                 menu.len()
             );

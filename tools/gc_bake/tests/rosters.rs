@@ -376,7 +376,14 @@ fn buildings_follow_the_design_rules() {
                 assert_eq!(b.cost.marrow, 0, "{at}: tier-1 buildings cost no Marrow");
             }
             let (across, deep) = b.footprint;
-            if b.role == Role::Wall {
+            if b.role == Role::Bridge {
+                assert_eq!(
+                    b.footprint,
+                    (1, 1),
+                    "{at}: a bridge is drawn a tile at a time"
+                );
+                assert_eq!(b.flags, [BuildingFlag::Line], "{at}: a bridge is drawn");
+            } else if b.role == Role::Wall {
                 assert!(
                     across.min(deep) == 1 && across.max(deep) <= 3,
                     "{at}: walls are 1 tile thick"
@@ -455,12 +462,13 @@ fn buildings_follow_the_design_rules() {
                     "{at}: Brood and Choir buildings are no drop-offs"
                 );
             }
-            // Every Choir building but those that power a field needs power;
-            // nobody else's does (docs/21).
+            // Every Choir building but those that power a field (and its
+            // bridge, out over the water) needs power; nobody else's does
+            // (docs/21).
             let powers = b.flags.contains(&BuildingFlag::PowersField);
             assert_eq!(
                 b.flags.contains(&BuildingFlag::NeedsPower),
-                choir && !powers,
+                choir && !powers && b.role != Role::Bridge,
                 "{at}: needs power"
             );
             assert_eq!(

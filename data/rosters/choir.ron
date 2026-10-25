@@ -257,6 +257,18 @@
             twist: Sings,
             effect: "Raises a Glass Wall stretch to a humming crystal wall: 4 times a Light Curtain's toughness. Needs tier 2. Your troops walk through it; it drops without power. Its song slows those who strike it: half as many blows, a slower walk.",
         ),
+        (
+            name: "Glass Span",
+            role: Bridge,
+            tier: 1,
+            cost: (grub: 12, marrow: 0),
+            build_time: 5.0,
+            hp: 300,
+            armour: Structure,
+            footprint: (1, 1),
+            flags: [Line],
+            effect: "A span of grown glass you draw straight across a river, built a tile at a time out from the bank. It needs no power. Anyone may cross it; shatter it and those on it drop into the water.",
+        ),
     ],
     units: [
         (

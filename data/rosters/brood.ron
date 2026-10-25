@@ -239,6 +239,18 @@
             flags: [Gate],
             effect: "Grows a Maw Gate into a plated arch with a ridge of chitin on top: half as tough again, and archers or foot can man the ridge. It grows on its own.",
         ),
+        (
+            name: "Chitin Span",
+            role: Bridge,
+            tier: 1,
+            cost: (grub: 12, marrow: 0),
+            build_time: 5.0,
+            hp: 300,
+            armour: Living,
+            footprint: (1, 1),
+            flags: [Line],
+            effect: "A chitin span your Gnawers build straight across a river, a plate at a time out from the bank. Anyone may cross it; break it and those on it drop into the water.",
+        ),
     ],
     units: [
         (

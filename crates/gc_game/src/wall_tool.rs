@@ -13,6 +13,11 @@
 //! of the closed loop (see `ring_tool` for the cutting). Your own planned
 //! tiles are drawn as faint blue slabs, and a right-click on one sends the
 //! selected workers to work the plans; Ctrl+right-click drops its line.
+//!
+//! A bridge (docs/26-fortifications.md, "Bridges") is drawn with the same
+//! tool, but only as a straight line from bank to bank: no blueprints, no
+//! ring, the far end is turned to the nearer axis, and it snaps to the ends
+//! of your own bridges rather than to walls, towers and gates.
 
 use gc_sim::blueprints::MAX_PLANS;
 use gc_sim::structures::{GATE, Role};
@@ -107,6 +112,16 @@ pub fn lock_angle(from: (i32, i32), to: (i32, i32)) -> (i32, i32) {
     )
 }
 
+/// `to` moved onto the axis the line from `from` runs nearer to, so a bridge
+/// is always straight (a tie goes along x).
+pub fn axis_lock(from: (i32, i32), to: (i32, i32)) -> (i32, i32) {
+    if (to.0 - from.0).abs() >= (to.1 - from.1).abs() {
+        (to.0, from.1)
+    } else {
+        (from.0, to.1)
+    }
+}
+
 /// `to` pulled in along the line from `from` so a wall between them covers
 /// at most [`MAX_WALL_TILES`] tiles.
 pub fn clamp_end(from: (i32, i32), to: (i32, i32)) -> (i32, i32) {
@@ -178,18 +193,28 @@ impl Running {
         }
     }
 
+    /// Whether the wall tool is armed with a bridge.
+    fn bridge_armed(&self) -> bool {
+        matches!(self.hud.armed, Some(Armed::Wall(b, _)) if self.buildings.is_bridge(b))
+    }
+
     /// The places a wall of yours likes to end on: the ends of your own
-    /// walls, your towers and your gates.
+    /// walls, your towers and your gates; for a bridge, the ends of your own
+    /// bridges.
     fn wall_anchors(&self) -> Vec<Anchor> {
         let Some(all) = self.world.structures() else {
             return Vec::new();
         };
         let side = self.sandbox.side;
+        let bridge = self.bridge_armed();
         let mut out = Vec::new();
         for s in all.iter().filter(|s| s.owner == side) {
             let Some(stats) = self.buildings.stats.get(usize::from(s.building)) else {
                 continue;
             };
+            if (stats.role == Role::Bridge) != bridge {
+                continue;
+            }
             let rect = [s.tile.0, s.tile.1, i32::from(s.width), i32::from(s.depth)];
             if let Some([x0, y0, x1, y1]) = s.line {
                 // Each end once, from the tile that is the end.
@@ -204,8 +229,8 @@ impl Running {
                 out.push(Anchor { rect, joins: false });
             }
         }
-        // The ends of your planned lines, too.
-        for p in self.world.plans().iter().filter(|p| p.owner == side) {
+        // The ends of your planned lines, too (blueprints are never bridges).
+        for p in (self.world.plans().iter()).filter(|p| p.owner == side && !bridge) {
             let [x0, y0, x1, y1] = p.line.map(i32::from);
             if p.tile == (x0, y0) || p.tile == (x1, y1) {
                 out.push(Anchor {
@@ -237,7 +262,10 @@ impl Running {
         let Some(from) = self.wall_from() else {
             return Some((tile, tile));
         };
-        let to = if self.input.shift {
+        let to = if self.bridge_armed() {
+            // Only straight lines cross water.
+            axis_lock(from, tile)
+        } else if self.input.shift {
             lock_angle(from, tile)
         } else {
             tile
@@ -395,6 +423,14 @@ impl Running {
         let Some(Armed::Wall(building, _)) = self.hud.armed else {
             return false;
         };
+        if self.buildings.is_bridge(building) && matches!(code, KeyCode::KeyB | KeyCode::KeyO) {
+            self.say(if code == KeyCode::KeyB {
+                "A bridge is built by workers at once: it has no blueprints.".into()
+            } else {
+                "A bridge is a straight line from bank to bank: no rings.".into()
+            });
+            return true;
+        }
         match code {
             KeyCode::KeyB => {
                 if self.buildings.is_grown(building) {
@@ -575,10 +611,10 @@ impl Running {
         let blueprint = self.hud.wall_mode.blueprint;
         let plan = match self.wall_check(building, blueprint, from, to) {
             Ok(plan) => plan,
-            Err(why) => return self.say(buildings::why(why).into()),
+            Err(why) => return self.say(self.why_now(building, why).into()),
         };
         if let Some(why) = plan.iter().find_map(|t| t.fits.err()) {
-            return self.say(buildings::why(why).into());
+            return self.say(self.why_now(building, why).into());
         }
         if plan.is_empty() {
             self.say(if blueprint {
@@ -706,6 +742,16 @@ impl Running {
         self.say(line);
     }
 
+    /// `why` in words, for a bridge when one is armed (the wall words for
+    /// rough ground and a crooked line don't fit it).
+    fn why_now(&self, building: BuildingId, why: Refusal) -> &'static str {
+        if self.buildings.is_bridge(building) {
+            bridge_why(why)
+        } else {
+            buildings::why(why)
+        }
+    }
+
     /// The line shown while drawing a wall: the start to choose, or the
     /// length and price of the wall (or why it can't go up).
     pub fn wall_hint(&self) -> Option<String> {
@@ -731,19 +777,24 @@ impl Running {
                 preview.closing,
             ));
         }
+        let bridge = self.buildings.is_bridge(id);
         if from.is_none() {
-            return Some(start_hint(blueprint));
+            return Some(if bridge {
+                bridge_start_hint()
+            } else {
+                start_hint(blueprint)
+            });
         }
         let stats = self.buildings.stats.get(usize::from(id))?;
         let Piece { plan, .. } = self.hud.wall_preview.as_ref()?;
         let plan = match plan {
             Ok(plan) => plan,
-            Err(why) => return Some(buildings::why(*why).into()),
+            Err(why) => return Some(self.why_now(id, *why).into()),
         };
         if let Some(why) = plan.iter().find_map(|t| t.fits.err())
             && why != Refusal::Overgrown
         {
-            return Some(buildings::why(why).into());
+            return Some(self.why_now(id, why).into());
         }
         let n = plan.len();
         let (grub, marrow) = wall_price(stats, n as u32);
@@ -799,6 +850,21 @@ fn ghost_tiles(piece: &Piece, open: Fit) -> Vec<(Tile, Fit)> {
                 .map(|t| (t, Fit::Refused))
                 .collect()
         }
+    }
+}
+
+/// The hint before a bridge has a start.
+fn bridge_start_hint() -> String {
+    "Draw a straight bridge from bank to bank: click the near bank - right-click or Esc to stop"
+        .into()
+}
+
+/// A refusal in a bridge's words.
+fn bridge_why(why: Refusal) -> &'static str {
+    match why {
+        Refusal::Rough => "A bridge needs dry land at both ends and some water between them.",
+        Refusal::Built => "Something is already built or bridged there.",
+        other => buildings::why(other),
     }
 }
 
@@ -912,6 +978,7 @@ mod tests {
         for line in [
             start_hint(false),
             start_hint(true),
+            bridge_start_hint(),
             ring_start_hint(true),
             hint_line(32, Some("320 Grub, 100 Marrow"), ", ground to clear", false),
             hint_line(32, None, ", ground to clear", false),
@@ -919,6 +986,21 @@ mod tests {
         ] {
             assert!(line.len() <= 150, "{} chars: {line}", line.len());
             assert!(line.is_ascii(), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_bridge_end_is_turned_onto_the_nearer_axis() {
+        let from = (10, 10);
+        assert_eq!(axis_lock(from, (20, 12)), (20, 10));
+        assert_eq!(axis_lock(from, (8, 3)), (10, 3));
+        assert_eq!(axis_lock(from, (14, 14)), (14, 10));
+        assert_eq!(axis_lock(from, from), from);
+        for dx in -9..=9 {
+            for dy in -9..=9 {
+                let (x, y) = axis_lock(from, (10 + dx, 10 + dy));
+                assert!(x == 10 || y == 10, "{dx},{dy}");
+            }
         }
     }
 

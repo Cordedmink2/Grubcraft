@@ -31,7 +31,7 @@ const OUTSIDE: f32 = 0.1;
 
 /// Whether a building of this role is lived or worked in.
 fn lived_in(role: Role) -> bool {
-    !matches!(role, Role::Wall | Role::Defence)
+    !matches!(role, Role::Wall | Role::Defence | Role::Bridge)
 }
 
 /// A number from 0 to 1 that stays the same for a building and a `salt`.

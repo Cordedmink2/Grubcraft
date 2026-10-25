@@ -216,7 +216,8 @@ impl Conquest {
     /// a regiment that mans walls, steady and not fighting. `i` if so.
     fn walkway_check(&self, i: usize, r: usize, regs: &Regiments) -> Result<usize, Refusal> {
         let s = &self.structures;
-        if !(s.is_line(i) || s.is_gate(i)) || !self.unit(regs.unit[r]).mans_walls {
+        let wall = (s.is_line(i) && !s.is_bridge(i)) || s.is_gate(i);
+        if !wall || !self.unit(regs.unit[r]).mans_walls {
             return Err(Refusal::Unknown);
         }
         if !s.walkway(i) {

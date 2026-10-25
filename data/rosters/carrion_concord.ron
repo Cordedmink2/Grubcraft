@@ -291,6 +291,18 @@
             flags: [Gate],
             effect: "Raises an Iron Gate to an arch of stacked bone and ledger-stones with a walk on top: half as tough again, and archers or foot can man it.",
         ),
+        (
+            name: "Bone Causeway",
+            role: Bridge,
+            tier: 1,
+            cost: (grub: 12, marrow: 0),
+            build_time: 5.0,
+            hp: 300,
+            armour: Structure,
+            footprint: (1, 1),
+            flags: [Line],
+            effect: "A causeway of bone piers and iron-bound boards you draw straight across a river, built a span at a time out from the bank. Anyone may cross it; break it and those on it drop into the water.",
+        ),
     ],
     units: [
         (

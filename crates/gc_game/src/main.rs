@@ -3341,6 +3341,16 @@ impl Running {
         // open gate is ground to them; a shut one is wall).
         let nav = self.world.nav();
         let firm = |owner| move |p: Vec2| nav.standable(owner, fx_vec(p));
+        // Soldiers on a finished bridge stand on its deck. Most maps have
+        // none, and then this is one test of an empty list.
+        let terrain = self.world.terrain();
+        let deck = |p: Vec2| {
+            if terrain.on_deck(fx_vec(p)) {
+                buildings::DECK_TOP
+            } else {
+                0.0
+            }
+        };
         // Footsteps and wear follow the effects clock: none behind the menu
         // or while it stands still.
         let fx_dt = if self.menu_open && self.online.is_none() {
@@ -3450,6 +3460,7 @@ impl Running {
                     r.owner,
                     game_dt.as_secs_f32(),
                     firm(r.owner),
+                    deck,
                     |_| {},
                 );
                 continue;
@@ -3562,6 +3573,7 @@ impl Running {
                     r.owner,
                     game_dt.as_secs_f32(),
                     firm(r.owner),
+                    deck,
                     |_| {},
                 );
                 continue;
@@ -3691,6 +3703,7 @@ impl Running {
                     r.owner,
                     game_dt.as_secs_f32(),
                     firm(r.owner),
+                    deck,
                     |s| {
                         let mut s = s;
                         // His head turns are from the way the puppets face him.
@@ -3825,8 +3838,13 @@ impl Running {
             ];
             let color = [cr, cg, cb, if selected { 70 } else { 0 }];
             let instances = &mut self.instances;
-            self.puppets
-                .update_on(&block, r.owner, game_dt.as_secs_f32(), firm(r.owner), |s| {
+            self.puppets.update_on(
+                &block,
+                r.owner,
+                game_dt.as_secs_f32(),
+                firm(r.owner),
+                deck,
+                |s| {
                     instances.push(BoxInstance {
                         pos: s.pos.to_array(),
                         facing: s.facing.to_array(),
@@ -3834,7 +3852,8 @@ impl Running {
                         color,
                         lift: s.lift,
                     });
-                });
+                },
+            );
         }
         self.keep_arrows_in_the_fallen();
         if !self.commander && !viewing {
@@ -7392,7 +7411,7 @@ impl Running {
                         )
                     )
                     && worker.is_some(),
-                visit: done && !matches!(role, Some(Role::Wall | Role::Defence)),
+                visit: done && !matches!(role, Some(Role::Wall | Role::Defence | Role::Bridge)),
                 worker: worker.unwrap_or(0),
                 centre,
                 half,

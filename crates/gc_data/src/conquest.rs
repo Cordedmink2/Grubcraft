@@ -18,7 +18,7 @@ pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Pack path of the faction powers table (the faction meters' abilities).
 pub const POWERS_PATH: &str = "data/powers";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 9;
+pub const BUILDING_SCHEMA: u32 = 10;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
 pub const CONQUEST_UNIT_SCHEMA: u32 = 5;
@@ -47,10 +47,12 @@ pub enum Role {
     Heroes = 6,
     Defence = 7,
     Wall = 8,
+    /// A drawn bridge over water (see `gc_sim::bridges`).
+    Bridge = 9,
 }
 
 impl Role {
-    pub const ALL: [Role; 9] = [
+    pub const ALL: [Role; 10] = [
         Role::Main,
         Role::Outpost,
         Role::Housing,
@@ -60,6 +62,7 @@ impl Role {
         Role::Heroes,
         Role::Defence,
         Role::Wall,
+        Role::Bridge,
     ];
 
     pub fn from_u8(v: u8) -> Option<Role> {
@@ -515,6 +518,11 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     }
     if b.flags & BUILDING_LINE != 0 && (b.width, b.depth) != (1, 1) {
         return Err("a wall drawn as a line has a one-tile footprint");
+    }
+    if b.role == Role::Bridge as u8
+        && (b.flags != BUILDING_LINE || b.twist != TWIST_NONE || b.upgrades_from != NONE)
+    {
+        return Err("a bridge is drawn as a line, and is nothing more");
     }
     if b.flags & (BUILDING_PASS | BUILDING_GROWN) != 0 && b.flags & BUILDING_LINE == 0 {
         return Err("only a wall drawn as a line is walked through or grown");

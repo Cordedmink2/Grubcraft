@@ -89,8 +89,9 @@ impl Flood {
     }
 
     /// Whether `p` is in a ford the flood has shut.
-    pub fn sweeps(&self, p: FxVec2) -> bool {
+    pub fn sweeps(&self, p: FxVec2, terrain: &Terrain) -> bool {
         self.closed
+            && !terrain.on_deck(p)
             && (self.fords)
                 .binary_search(&(p.y.floor_int(), p.x.floor_int()))
                 .is_ok()
@@ -129,13 +130,13 @@ impl Flood {
     /// left alive with nowhere to go but where they stand: no order, or
     /// a chase the shut ford cuts off, and not fighting. They struggle to
     /// the nearest bank (see `World::rivers`).
-    pub(crate) fn sweep(&self, regs: &mut Regiments, out: &mut Vec<usize>) {
+    pub(crate) fn sweep(&self, regs: &mut Regiments, terrain: &Terrain, out: &mut Vec<usize>) {
         out.clear();
         if !self.closed {
             return;
         }
         for i in 0..regs.alive.len() {
-            if !regs.alive[i] || regs.models[i] == 0 || !self.sweeps(regs.position[i]) {
+            if !regs.alive[i] || regs.models[i] == 0 || !self.sweeps(regs.position[i], terrain) {
                 continue;
             }
             regs.take_damage(i, SWEPT_HP);

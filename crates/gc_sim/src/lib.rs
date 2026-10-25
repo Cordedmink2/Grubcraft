@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 
 pub mod arrange;
 pub mod blueprints;
+pub mod bridges;
 pub mod champions;
 pub mod chords;
 pub mod clearing;
@@ -119,7 +120,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 48;
+pub const SIM_VERSION: u32 = 49;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1628,6 +1629,13 @@ impl World {
             for foot in conquest.structures.rubble.drain(..) {
                 self.terrain.spread_rubble(foot);
             }
+            bridges::settle_decks(
+                &mut conquest.structures.decks,
+                &mut self.nav,
+                &mut self.terrain,
+                &mut self.regiments,
+                &self.units,
+            );
             self.clear_land();
             if let Some(c) = &mut self.conquest {
                 c.tend_plans(&mut self.nav, &mut self.regiments, &self.terrain);
@@ -2626,7 +2634,8 @@ impl World {
     /// order would, leaving off any work.
     fn sweep_fords(&mut self) {
         let mut stuck = core::mem::take(&mut self.stranded);
-        self.flood.sweep(&mut self.regiments, &mut stuck);
+        self.flood
+            .sweep(&mut self.regiments, &self.terrain, &mut stuck);
         for &i in &stuck {
             let (h, here) = (self.regiments.handle(i), self.regiments.position[i]);
             let berth = self.regiments.berth(&self.units, i);
@@ -2683,7 +2692,8 @@ impl World {
 
     /// Whether regiment `h` is caught in a ford the flood has shut.
     pub fn swept(&self, h: RegimentHandle) -> bool {
-        (self.regiments.resolve(h)).is_some_and(|i| self.flood.sweeps(self.regiments.position[i]))
+        (self.regiments.resolve(h))
+            .is_some_and(|i| self.flood.sweeps(self.regiments.position[i], &self.terrain))
     }
 
     /// The ground's heights, water and cover, and what they do in a fight.

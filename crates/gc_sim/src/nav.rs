@@ -64,6 +64,8 @@ pub const CLEARANCE: u8 = 1;
 pub const CLEAR_CAP: u8 = 32;
 /// Cost of a cell no regiment can enter.
 pub const BLOCKED: u8 = 0;
+/// Cost of a cell on a bridge's deck: open ground.
+pub const DECK: u8 = 1;
 /// The widest berth (cells from a block's centre that routes keep clear of
 /// blocked ground) any regiment asks for: 8 tiles.
 pub const MAX_BERTH: u8 = 16;
@@ -157,6 +159,10 @@ struct Grid {
     /// Cells a flood has shut (see [`Nav::set_flooded_all`]): blocked
     /// whatever stands there. Empty until the first flood.
     flooded: Vec<bool>,
+    /// Finished bridge tiles on each cell (see [`Nav::set_bridged_all`]):
+    /// open at [`DECK`] cost over deep water or a flood, unless a building
+    /// stands there too. Empty until the first bridge.
+    bridged: Vec<u8>,
     /// Steps (8-way) to the nearest blocked cell or the map edge, capped at
     /// [`CLEAR_CAP`].
     clear: Vec<u8>,
@@ -205,6 +211,11 @@ impl Grid {
     /// Whether a flood has shut cell `c` (an index into the grid).
     fn is_flooded(&self, c: usize) -> bool {
         self.flooded.get(c).copied().unwrap_or(false)
+    }
+
+    /// Whether a finished bridge spans cell `c` (an index into the grid).
+    fn is_bridged(&self, c: usize) -> bool {
+        self.bridged.get(c).is_some_and(|&n| n > 0)
     }
 
     fn open_cell(&self, c: u32) -> bool {
@@ -1276,9 +1287,31 @@ impl Nav {
         if cells().any(|c| g.ground[at(c)] == BLOCKED || g.is_flooded(at(c))) {
             return Err(Refusal::Rough);
         }
+        // Nothing is built on a bridge.
+        if cells().any(|c| g.is_bridged(at(c))) {
+            return Err(Refusal::Built);
+        }
         let gone = |(cx, cy)| spare(cx / CELLS_PER_TILE, cy / CELLS_PER_TILE);
         if cells().any(|c| g.built[at(c)] > 0 && g.built[at(c)] > gone(c)) {
             return Err(Refusal::Built);
+        }
+        Ok(())
+    }
+
+    /// Whether a bridge could be laid on the tile `(x, y)`: on the map,
+    /// with nothing built or bridged there (always, with no map). Water is
+    /// what it spans; whether the tile is water or bank the caller checks.
+    pub(crate) fn deck_footing(&self, x: i32, y: i32) -> Result<(), Refusal> {
+        let Some(g) = self.base() else {
+            return Ok(());
+        };
+        let [x0, y0, x1, y1] = g.cells([x, y, 1, 1]).ok_or(Refusal::OffMap)?;
+        let cells = (y0..y1).flat_map(move |cy| (x0..x1).map(move |cx| (cx, cy)));
+        for (cx, cy) in cells {
+            let c = g.idx(cx, cy) as usize;
+            if g.built[c] > 0 || g.is_bridged(c) {
+                return Err(Refusal::Built);
+            }
         }
         Ok(())
     }
@@ -1950,6 +1983,7 @@ impl Grid {
             built: vec![0; n],
             opened: Vec::new(),
             flooded: Vec::new(),
+            bridged: Vec::new(),
             clear: vec![0; n],
             area: vec![0; n],
             areas: 0,

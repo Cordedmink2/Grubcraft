@@ -1960,7 +1960,7 @@ impl Puppets {
     /// regiment's player, to colour anyone who falls.
     #[cfg(test)]
     pub fn update(&mut self, block: &Block, owner: u8, dt: f32, out: impl FnMut(Soldier)) {
-        self.update_on(block, owner, dt, |_| true, out);
+        self.update_on(block, owner, dt, |_| true, |_| 0.0, out);
     }
 
     /// [`Puppets::update`] on a map where soldiers may stand only where
@@ -1968,12 +1968,15 @@ impl Puppets {
     /// the block falls off firm ground stands at the nearest firm ground on
     /// the way in toward the middle of his block instead, so a block
     /// brushing the bank crowds along it rather than wading off the edge.
+    /// `deck` is how high a soldier standing at a point is lifted off the
+    /// ground by a bridge under him (0 off any).
     pub fn update_on(
         &mut self,
         block: &Block,
         owner: u8,
         dt: f32,
         firm: impl Fn(Vec2) -> bool,
+        deck: impl Fn(Vec2) -> f32,
         mut out: impl FnMut(Soldier),
     ) {
         let r = block.handle.index as usize;
@@ -2050,13 +2053,6 @@ impl Puppets {
             // On a wall each man stands on his tile, and climbs to its top.
             let held =
                 (!self.wall[r].is_empty()).then(|| wall_stand(&self.wall[r], k, models, right));
-            let up = held.map_or(self.ladder[r], |(_, lift)| lift);
-            let climb = CLIMB_RATE * dt.max(0.0);
-            self.lift[i] = if fresh {
-                up
-            } else {
-                self.lift[i] + (up - self.lift[i]).clamp(-climb, climb)
-            };
             let mut local = slot_offset(
                 k as u16,
                 files,
@@ -2087,6 +2083,14 @@ impl Puppets {
             let slot = match held {
                 Some((spot, _)) => spot,
                 None => onto_ground(slot, block.centre, &firm),
+            };
+            // Up to the top of the wall or ladder, or onto a bridge's deck.
+            let up = held.map_or_else(|| self.ladder[r].max(deck(slot)), |(_, lift)| lift);
+            let climb = CLIMB_RATE * dt.max(0.0);
+            self.lift[i] = if fresh {
+                up
+            } else {
+                self.lift[i] + (up - self.lift[i]).clamp(-climb, climb)
             };
             // A champion out between the lines faces the other; a dueling
             // soldier in the front rank closes on his man, on a leash from

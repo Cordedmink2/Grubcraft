@@ -103,6 +103,7 @@ pub enum Role {
     Heroes,
     Defence,
     Wall,
+    Bridge,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]

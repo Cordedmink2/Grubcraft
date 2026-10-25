@@ -36,7 +36,8 @@ use alloc::sync::Arc;
 use gc_fixed::{Fx, FxVec2};
 
 use super::{
-    BLOCKED, CELLS_PER_TILE, CLEAR_CAP, CLEARANCE, GRAPH_BERTH, Grid, Nav, Route, SECTOR, Search,
+    BLOCKED, CELLS_PER_TILE, CLEAR_CAP, CLEARANCE, DECK, GRAPH_BERTH, Grid, Nav, Route, SECTOR,
+    Search,
 };
 use crate::PlayerId;
 use crate::regiments::Regiments;
@@ -64,6 +65,8 @@ enum Change {
     Opened(bool),
     /// Ground shut by a flood (`true`), or open again.
     Flooded(bool),
+    /// A bridge tile finished over it (`true`), or fallen.
+    Bridged(bool),
 }
 
 impl Nav {
@@ -84,6 +87,15 @@ impl Nav {
     pub(crate) fn set_flooded_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
         for v in 0..self.grids.len() {
             self.change(v, all, Change::Flooded(on), regs);
+        }
+    }
+
+    /// Open (`on`) each of `all`'s tiles as a finished bridge's deck, over
+    /// water or a flood, on every side's grid, or shut it again as the
+    /// bridge falls (see [`crate::bridges`]).
+    pub(crate) fn set_bridged_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
+        for v in 0..self.grids.len() {
+            self.change(v, all, Change::Bridged(on), regs);
         }
     }
 
@@ -139,6 +151,7 @@ impl Nav {
         self.search.work = work;
         let freed = match change {
             Change::Built(on) | Change::Flooded(on) => !on,
+            Change::Bridged(on) => on,
             Change::Opened(open) => open,
         };
         // Any route passing near a change is found again (walking the old
@@ -251,6 +264,9 @@ impl Grid {
         if matches!(change, Change::Flooded(_)) && self.flooded.is_empty() {
             self.flooded = vec![false; self.built.len()];
         }
+        if matches!(change, Change::Bridged(_)) && self.bridged.is_empty() {
+            self.bridged = vec![0; self.built.len()];
+        }
         for (g, feet) in &groups {
             for &[cx0, cy0, cx1, cy1] in feet {
                 for cy in cy0..cy1 {
@@ -267,9 +283,14 @@ impl Grid {
                             Change::Built(on) => bump(&mut self.built[i], on),
                             Change::Opened(open) => bump(&mut self.opened[i], open),
                             Change::Flooded(on) => self.flooded[i] = on,
+                            Change::Bridged(on) => bump(&mut self.bridged[i], on),
                         }
                         let opened = self.opened.get(i).copied().unwrap_or(0);
-                        self.cost[i] = if self.built[i] > opened || self.is_flooded(i) {
+                        self.cost[i] = if self.built[i] > opened {
+                            BLOCKED
+                        } else if self.is_bridged(i) {
+                            DECK
+                        } else if self.is_flooded(i) {
                             BLOCKED
                         } else {
                             self.ground[i]

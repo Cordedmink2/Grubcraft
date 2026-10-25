@@ -174,6 +174,9 @@ pub struct HudState {
     pub ring_preview: Option<crate::wall_tool::RingPreview>,
     /// Conquest: the workers' build menu is open on the grid.
     pub build_menu: bool,
+    /// Conquest: the build menu shows its second page (a faction with more
+    /// buildings than the grid has slots).
+    pub build_page: bool,
     /// Conquest: the selected building's tips are showing (its info button
     /// is on). Kept between selections and matches.
     tips_open: bool,
@@ -895,7 +898,11 @@ impl Running {
                     if let Some(Action::Lay(b)) = card.slots[i]
                         && self.buildings.is_wall(b)
                     {
-                        tip = wall_tip(self.buildings.stats[usize::from(b)].flags);
+                        tip = if self.buildings.is_bridge(b) {
+                            BRIDGE_TIP
+                        } else {
+                            wall_tip(self.buildings.stats[usize::from(b)].flags)
+                        };
                     }
                     if let Some(Action::Upgrade(b)) = card.slots[i]
                         && self.buildings.is_gate(b)
@@ -1887,6 +1894,9 @@ const WALL_TIP: &str = "Draw this wall: click its start, then click each end or 
 const WALL_TIP_PASS: &str = "Draw this wall: click its start, then each end or bend. Your own troops walk through it; it drops when power fails. Right-click ends it; Shift locks 15-degree steps. B plans a blueprint; O draws a ring.";
 const WALL_TIP_GROWN: &str = "Draw this wall: click its start, then each end or bend. It grows on its own along your root-veins, with no Gnawer. Right-click ends it; Shift locks 15-degree steps. O draws a ring.";
 
+/// The build-menu tooltip of a bridge.
+const BRIDGE_TIP: &str = "Draw a straight bridge across a river: click the near bank, then the far bank. A worker builds it out from the bank, a tile at a time, and anyone can cross it. Troops on a tile that falls drop into the river. Right-click ends it.";
+
 /// The build-menu tooltip for the wall `flags` describe.
 fn wall_tip(flags: u16) -> &'static str {
     use gc_sim::structures::{GROWN, PASS};
@@ -1906,6 +1916,10 @@ const GATEHOUSE_TIP: &str = "Raise the gate to a gatehouse: archers or foot can 
 fn card_look(action: Option<Action>) -> (Icon, &'static str) {
     match action {
         Some(Action::OpenBuild) => (Icon::Hammer, "Open the build menu for your workers."),
+        Some(Action::MoreBuildings) => (
+            Icon::Hammer,
+            "Show the rest of the buildings your workers can lay; press again to go back.",
+        ),
         Some(Action::Clear) => (
             Icon::Hammer,
             "Workers clear scrub, woods and thicket, each faction its own way (the worker's guide entry says how). Felled timber can pay a little Grub. Drag over the ground, or click one tile. Cleared ground no longer hides troops or slows them.",

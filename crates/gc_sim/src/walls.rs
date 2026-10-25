@@ -81,6 +81,7 @@ impl Structures {
     /// `area`.
     fn own_walls_in(&self, owner: PlayerId, area: [i32; 4]) -> Vec<[i32; 4]> {
         self.own_in(owner, LINE | GATE, area)
+            .filter(|&i| !self.is_bridge(i))
             .map(|i| self.footprint(i))
             .collect()
     }
@@ -151,17 +152,24 @@ impl Structures {
         !self.finished(j) || (self.upgrading(j) && self.by_hand(j))
     }
 
-    /// The next tile of `owner`'s walls to build after slot `i`: the
-    /// nearest with work left (see [`Structures::wall_work_left`]) within
-    /// [`CARRY_ON`] tiles of it, those drawn in the same line first, then
-    /// the lowest slot; failing that the nearest within [`MAX_WALL_TILES`],
-    /// so a builder at the end of one line goes back for the rest of the
-    /// wall.
+    /// The next tile of `owner`'s walls (or bridges, after a bridge tile)
+    /// to build after slot `i`: the nearest with work left (see
+    /// [`Structures::wall_work_left`]) within [`CARRY_ON`] tiles of it,
+    /// those drawn in the same line first, then the lowest slot; failing
+    /// that the nearest within [`MAX_WALL_TILES`], so a builder at the end
+    /// of one line goes back for the rest of the wall. A bridge tile out
+    /// over the water is next only once a builder can reach it.
     pub(crate) fn next_wall_tile(&self, owner: PlayerId, i: usize) -> Option<usize> {
         let [x, y, _, _] = self.footprint(i);
+        let bridge = self.is_bridge(i);
         self.standing()
             .filter(|&j| {
-                j != i && self.owner_of(j) == owner && self.is_line(j) && self.wall_work_left(j)
+                j != i
+                    && self.owner_of(j) == owner
+                    && self.is_line(j)
+                    && self.is_bridge(j) == bridge
+                    && self.wall_work_left(j)
+                    && (!bridge || self.reachable_deck(j))
             })
             .map(|j| {
                 let [jx, jy, _, _] = self.footprint(j);
@@ -275,7 +283,8 @@ impl Conquest {
         terrain: &Terrain,
     ) -> Result<Vec<WallTile>, Refusal> {
         let (b, mut plan) = self.wall_fits(player, building, from, to, nav, regs, terrain)?;
-        if b.flags & GROWN != 0 {
+        // Nor for a bridge, whose line is laid whole.
+        if b.flags & GROWN != 0 || b.is_bridge() {
             return Err(Refusal::Unknown);
         }
         plan.retain(|t| !self.blueprints.planned(player, t.tile));
@@ -332,6 +341,9 @@ impl Conquest {
             (to.0 - from.0).abs() + 1,
             (to.1 - from.1).abs() + 1,
         ];
+        if b.is_bridge() {
+            return Ok((b, self.bridge_line(player, &tiles, area, nav, terrain)?));
+        }
         let own = self.structures.own_walls_in(player, area);
         let plan: Vec<WallTile> = tiles
             .into_iter()
@@ -385,10 +397,16 @@ impl Conquest {
             return false;
         };
         // A grown wall takes no worker; any other a worker that isn't used
-        // up on the building it starts, which would leave the rest unbuilt.
+        // up on the building it starts, which would leave the rest unbuilt
+        // (nobody is used up on a bridge: see `Structures::update`).
         let worker = match (r, stats.flags & GROWN != 0) {
             (None, true) => None,
-            (Some(r), false) if self.is_builder(r, regs) => Some(r),
+            (Some(r), false)
+                if self.is_builder(r, regs)
+                    || (stats.is_bridge() && self.unit(regs.unit[r]).worker) =>
+            {
+                Some(r)
+            }
             _ => return false,
         };
         let Ok(plan) = self.wall_plan(player, building, from, to, nav, regs, terrain) else {

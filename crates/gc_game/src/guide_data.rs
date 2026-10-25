@@ -93,6 +93,7 @@ enum Role {
     Heroes,
     Defence,
     Wall,
+    Bridge,
     #[serde(other)]
     Other,
 }
@@ -329,7 +330,7 @@ fn tips_of(text: &BuildingText) -> Vec<(Icon, String)> {
 pub fn tip_book() -> TipBook {
     let mut book = TipBook::new();
     for src in EMBEDDED.guides {
-        let file: GuideFile = ron::from_str(src).unwrap_or_else(|e| panic!("data/guide: {e}"));
+        let file = parse_guide(src).unwrap_or_else(|e| panic!("data/guide: {e}"));
         for b in &file.buildings {
             book.insert(b.name.clone(), tips_of(b));
         }
@@ -367,6 +368,11 @@ pub struct Sources<'a> {
     pub rosters: [&'a str; 4],
     pub guides: [&'a str; 4],
     pub classes: &'a str,
+}
+
+/// Read a guide file.
+fn parse_guide(src: &str) -> Result<GuideFile, String> {
+    ron::from_str(src).map_err(|e| e.to_string())
 }
 
 /// The files compiled into the executable.
@@ -411,7 +417,7 @@ pub fn build(src: &Sources<'_>) -> Result<GuideData, String> {
     for (i, f) in Faction::ALL.into_iter().enumerate() {
         let roster: Roster = ron::from_str(src.rosters[i])
             .map_err(|e| format!("data/rosters/{}: {e}", faction_label(f)))?;
-        let text: GuideFile = ron::from_str(src.guides[i])
+        let text = parse_guide(src.guides[i])
             .map_err(|e| format!("data/guide/{}: {e}", faction_label(f)))?;
         if text.faction != f {
             return Err(format!(
@@ -503,6 +509,9 @@ fn building_flag_text(f: BuildingFlag, b: &RBuilding) -> Option<String> {
             "Gate: your side walks through, enemies don't; select it to set Auto, Locked or Open"
                 .into()
         }
+        BuildingFlag::Line if b.role == Role::Bridge => {
+            "Drawn straight across water, bank to bank; anyone can cross it, and troops on a tile that falls drop in the river".into()
+        }
         BuildingFlag::Line => {
             "Drawn wall: drag it out at any angle, paid and built a tile at a time".into()
         }
@@ -546,6 +555,7 @@ fn role_name(r: Role) -> &'static str {
         Role::Heroes => "Hero building",
         Role::Defence => "Defence",
         Role::Wall => "Wall",
+        Role::Bridge => "Bridge",
         Role::Other => "Building",
     }
 }
@@ -1260,7 +1270,7 @@ mod tests {
         EMBEDDED
             .guides
             .iter()
-            .map(|s| ron::from_str(s).expect("guide file parses"))
+            .map(|s| parse_guide(s).expect("guide file parses"))
             .collect()
     }
 

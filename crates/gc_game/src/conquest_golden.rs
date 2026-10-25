@@ -149,9 +149,11 @@ impl Kit {
             .map(|u| u as UnitId);
         let plain = ids(&|i| {
             let s = table.stats[i];
-            // Not walls or gates: drawn walls are laid by the line, and the
-            // host puts the gate up.
-            s.role != Role::Main && s.role != Role::Wall && s.upgrades_from.is_none() && s.tier <= 1
+            // Not walls, bridges or gates: walls and bridges are drawn as
+            // lines, and the host puts the gate up.
+            !matches!(s.role, Role::Main | Role::Wall | Role::Bridge)
+                && s.upgrades_from.is_none()
+                && s.tier <= 1
         });
         let barracks = *plain
             .iter()

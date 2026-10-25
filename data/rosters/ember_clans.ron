@@ -317,6 +317,18 @@
             flags: [Gate],
             effect: "Raises a Gate to a stone gatehouse with a timber yagura on top: half as tough again, and archers or foot can man the walkway over the door.",
         ),
+        (
+            name: "Timber Bridge",
+            role: Bridge,
+            tier: 1,
+            cost: (grub: 12, marrow: 0),
+            build_time: 5.0,
+            hp: 300,
+            armour: Structure,
+            footprint: (1, 1),
+            flags: [Line],
+            effect: "A timber bridge you draw straight across a river, built a plank-span at a time out from the bank. Anyone may cross it; break or burn it and those on it drop into the water.",
+        ),
     ],
     units: [
         (

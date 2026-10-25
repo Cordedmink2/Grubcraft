@@ -41,6 +41,9 @@ const POST_REACH: f32 = 3.0;
 pub enum Action {
     /// Open the workers' build menu.
     OpenBuild,
+    /// The build menu has more buildings than the grid: flip to the other
+    /// page.
+    MoreBuildings,
     /// Choose ground for the workers to clear.
     Clear,
     /// Set the selected workers to build the walls your side has planned.
@@ -105,9 +108,7 @@ impl Running {
                 whole: false,
             });
         }
-        for (slot, b) in slots.iter_mut().zip(self.buildings.buildable(faction)) {
-            *slot = Some(Action::Lay(b));
-        }
+        let slots = menu_page(self.buildings.buildable(faction), self.hud.build_page);
         Some(Card { slots, whole: true })
     }
 
@@ -193,6 +194,7 @@ impl Running {
             return;
         }
         self.hud.build_menu = open;
+        self.hud.build_page = false;
         if open || matches!(self.hud.armed, Some(Armed::Lay(_) | Armed::Wall(..))) {
             self.hud.armed = None;
         }
@@ -231,6 +233,7 @@ impl Running {
                 _ => None,
             },
             Action::OpenBuild
+            | Action::MoreBuildings
             | Action::Clear
             | Action::WorkPlans
             | Action::CallOff
@@ -270,11 +273,18 @@ impl Running {
                     label.push_str("Plans");
                     detail.push('A');
                 }
+                Action::MoreBuildings => {
+                    label.push_str(if self.hud.build_page { "Back" } else { "More" });
+                }
                 Action::Lay(b) => {
                     if let Some(s) = self.buildings.stats.get(usize::from(b)) {
                         price(detail, s.cost_grub, s.cost_marrow);
                     }
-                    label.push_str(short(self.buildings.name(b)));
+                    label.push_str(if self.buildings.is_bridge(b) {
+                        "Bridge"
+                    } else {
+                        short(self.buildings.name(b))
+                    });
                 }
                 Action::Upgrade(b) => {
                     if let Some(s) = self.buildings.stats.get(usize::from(b)) {
@@ -360,6 +370,10 @@ impl Running {
                 }
                 return true;
             }
+            Action::MoreBuildings => {
+                self.hud.build_page = !self.hud.build_page;
+                return true;
+            }
             Action::WorkPlans => {
                 self.work_plans();
                 return true;
@@ -370,10 +384,17 @@ impl Running {
                     self.hud.armed = None;
                 } else {
                     self.arm_wall(b);
-                    self.say(format!(
-                        "Click where the {} starts, then where it ends or bends",
-                        self.buildings.name(b)
-                    ));
+                    self.say(if self.buildings.is_bridge(b) {
+                        format!(
+                            "Click the near bank, then the far bank: a {} runs straight",
+                            self.buildings.name(b)
+                        )
+                    } else {
+                        format!(
+                            "Click where the {} starts, then where it ends or bends",
+                            self.buildings.name(b)
+                        )
+                    });
                 }
                 return true;
             }
@@ -965,6 +986,29 @@ fn building_slots(
     slots
 }
 
+/// The build menu on the grid: the buildings in order, one to a slot. With
+/// more than the grid has slots, the last slot flips between two pages
+/// (`second` says which is showing).
+fn menu_page(
+    menu: impl Iterator<Item = BuildingId> + Clone,
+    second: bool,
+) -> [Option<Action>; GRID_SLOTS] {
+    let mut slots = [None; GRID_SLOTS];
+    let more = menu.clone().count() > GRID_SLOTS;
+    let (per_page, skip) = match (more, second) {
+        (false, _) => (GRID_SLOTS, 0),
+        (true, false) => (SLOT_LAST, 0),
+        (true, true) => (SLOT_LAST, SLOT_LAST),
+    };
+    for (slot, b) in slots.iter_mut().zip(menu.skip(skip).take(per_page)) {
+        *slot = Some(Action::Lay(b));
+    }
+    if more {
+        slots[SLOT_LAST] = Some(Action::MoreBuildings);
+    }
+    slots
+}
+
 /// A name short enough for a grid slot: its first word.
 fn short(name: &str) -> &str {
     name.split(' ').next().unwrap_or(name)
@@ -1077,6 +1121,28 @@ mod tests {
             "a gate each for the Clans, the Concord and the Brood"
         );
         assert!(GateMode::ALL.len() < SLOT_LAST);
+    }
+
+    #[test]
+    fn a_long_build_menu_takes_two_pages_and_shows_every_building_once() {
+        let slots = |n: BuildingId, second| menu_page(0..n, second);
+        // Twelve fit; no page button.
+        let all = slots(12, false);
+        assert!(all.iter().all(|s| matches!(s, Some(Action::Lay(_)))));
+        // Thirteen: eleven, the button; then the other two, the button.
+        let (first, second) = (slots(13, false), slots(13, true));
+        assert_eq!(first[SLOT_LAST], Some(Action::MoreBuildings));
+        assert_eq!(second[SLOT_LAST], Some(Action::MoreBuildings));
+        let laid = |page: &[Option<Action>; GRID_SLOTS]| -> Vec<BuildingId> {
+            page.iter()
+                .filter_map(|s| match s {
+                    Some(Action::Lay(b)) => Some(*b),
+                    _ => None,
+                })
+                .collect()
+        };
+        let both: Vec<BuildingId> = [laid(&first), laid(&second)].concat();
+        assert_eq!(both, (0..13).collect::<Vec<_>>());
     }
 
     #[test]

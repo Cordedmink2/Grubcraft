@@ -57,6 +57,8 @@ pub enum Role {
     Heroes = 6,
     Defence = 7,
     Wall = 8,
+    /// A drawn bridge over water (see `gc_sim::bridges`).
+    Bridge = 9,
 }
 
 impl Role {
@@ -68,12 +70,12 @@ impl Role {
             Role::Main => 32,
             Role::Outpost => 28,
             Role::Defence => 36,
-            Role::Wall => 8,
+            Role::Wall | Role::Bridge => 8,
             _ => 20,
         })
     }
 
-    pub const ALL: [Role; 9] = [
+    pub const ALL: [Role; 10] = [
         Role::Main,
         Role::Outpost,
         Role::Housing,
@@ -83,6 +85,7 @@ impl Role {
         Role::Heroes,
         Role::Defence,
         Role::Wall,
+        Role::Bridge,
     ];
 
     pub fn from_u8(v: u8) -> Option<Role> {
@@ -217,6 +220,9 @@ pub enum Refusal {
     /// A wall of the first level, with no walkway to man (see
     /// [`crate::manning`]).
     NoWalkway,
+    /// A bridge drawn at a slant: it must run straight across (see
+    /// [`crate::bridges`]).
+    Crooked,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -323,6 +329,11 @@ pub fn front(turn: u8) -> (i32, i32) {
 }
 
 impl BuildingStats {
+    /// Whether it is a bridge (see [`crate::bridges`]).
+    pub fn is_bridge(&self) -> bool {
+        self.role == Role::Bridge
+    }
+
     /// Its footprint, `(width, depth)` in tiles, turned `turn` quarter
     /// turns: an odd turn swaps the sides.
     pub fn size(&self, turn: u8) -> (u8, u8) {
@@ -667,6 +678,9 @@ pub struct Structures {
     pub(crate) fallen: Vec<StructureHandle>,
     /// The ground those left, each as its footprint, for the rubble.
     pub(crate) rubble: Vec<[i32; 4]>,
+    /// Bridge tiles finished (`true`) or fallen since the ground last
+    /// heard, each as its footprint (see [`crate::bridges::settle_decks`]).
+    pub(crate) decks: Vec<([i32; 4], bool)>,
     /// Blows struck on buildings in the last tick, and by whom, for the
     /// events (one a regiment at most).
     pub(crate) struck: Vec<(StructureHandle, RegimentHandle)>,
@@ -776,6 +790,7 @@ impl Structures {
             siege_stalls: vec![0; regiments],
             fallen: Vec::with_capacity(n),
             rubble: Vec::with_capacity(8),
+            decks: Vec::with_capacity(n),
             struck: Vec::with_capacity(regiments),
             consumed: Vec::with_capacity(regiments),
             climbed: Vec::with_capacity(regiments),
@@ -1220,6 +1235,9 @@ impl Structures {
     ) -> Option<StructureHandle> {
         let i = self.take_slot(owner, building, tile, turn)?;
         nav.set_built(self.footprint(i), true, regs);
+        if self.is_bridge(i) {
+            self.deck_up(i);
+        }
         Some(self.handle(i))
     }
 
@@ -1276,9 +1294,10 @@ impl Structures {
         nav: &mut Nav,
         regs: &Regiments,
     ) -> Option<StructureHandle> {
-        let h = self.spawn(owner, building, tile, turn, nav, regs)?;
-        self.lay_foundation(h.index as usize);
-        Some(h)
+        let i = self.take_slot(owner, building, tile, turn)?;
+        self.lay_foundation(i);
+        nav.set_built(self.footprint(i), true, regs);
+        Some(self.handle(i))
     }
 
     /// Turn building slot `i`, just taken, into a foundation to build.
@@ -1390,12 +1409,20 @@ impl Structures {
         for &i in slots {
             self.shut_door(i, nav, regs);
         }
-        let feet: Vec<[i32; 4]> = slots.iter().map(|&i| self.footprint(i)).collect();
+        // A finished bridge stands on nothing on the walkable grid but its
+        // deck (see `crate::bridges::settle_decks`).
+        let feet: Vec<[i32; 4]> = (slots.iter())
+            .filter(|&&i| !(self.is_bridge(i) && self.finished(i)))
+            .map(|&i| self.footprint(i))
+            .collect();
         // One by one, so a builder handed on to another of them is handed
         // on again.
         for &i in slots {
             if hand_on {
                 self.hand_on_wall(i, regs);
+            }
+            if self.is_bridge(i) {
+                self.deck_down(i);
             }
             self.free_slot(i);
         }
@@ -1406,7 +1433,11 @@ impl Structures {
     pub(crate) fn remove(&mut self, i: usize, nav: &mut Nav, regs: &Regiments) {
         self.hand_on_wall(i, regs);
         self.shut_door(i, nav, regs);
-        nav.set_built(self.footprint(i), false, regs);
+        if self.is_bridge(i) && self.finished(i) {
+            self.deck_down(i);
+        } else {
+            nav.set_built(self.footprint(i), false, regs);
+        }
         self.free_slot(i);
     }
 
@@ -1565,8 +1596,10 @@ impl Structures {
                 && kinds
                     .get(usize::from(regs.unit[r]))
                     .is_some_and(|k| k.consumed)
+                && !self.is_bridge(s)
             {
-                // Used up to start it growing, if nothing has yet.
+                // Used up to start it growing, if nothing has yet (a bridge
+                // is built by hand, so a Gnawer can carry one across).
                 if !self.finished(s) && !self.growing(s) {
                     self.growing[s] = true;
                     let worker = regs.handle(r);
@@ -1657,6 +1690,9 @@ impl Structures {
         let before = risen(self.work_left[s]);
         self.work_left[s] = self.work_left[s].saturating_sub(hand * steps);
         self.hp[s] = (self.hp[s] + risen(self.work_left[s]) - before).min(max);
+        if self.work_left[s] == 0 && self.is_bridge(s) {
+            self.deck_up(s);
+        }
         true
     }
 

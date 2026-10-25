@@ -203,6 +203,16 @@
                 (icon: Move, text: "A raised wall touching it joins its walkway, so one regiment can hold both."),
             ],
         ),
+        (
+            name: "Timber Bridge",
+            summary: "A bridge you draw straight across a river: click the near bank, then the far bank. Hands build it out from the bank a plank-span at a time, and anyone can cross it. Break or burn a tile and the troops on it fall into the river, hurt and in disorder, and wash up on the nearest bank.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Draw it straight along x or y, with dry land at both ends and water between."),
+                (icon: Move, text: "A Hand builds it from the bank and carries on across the river a tile at a time."),
+                (icon: Alarm, text: "Enemies can cross it too, so guard it. A tile that falls drops troops into the river."),
+            ],
+        ),
     ],
     units: [
         (

@@ -141,6 +141,16 @@
                 (icon: Flag, text: "Right-click it with foot or archers to man it: they shoot further and take half from arrows."),
             ],
         ),
+        (
+            name: "Glass Span",
+            summary: "A span of grown glass you draw straight across a river: click the near bank, then the far bank. It needs no power. Workers build it out from the bank a tile at a time, and anyone can cross it. Shatter a tile and the troops on it fall into the river, hurt and in disorder, and wash up on the nearest bank.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Draw it straight along x or y, with dry land at both ends and water between."),
+                (icon: Move, text: "A worker builds it from the bank and carries on across the river a tile at a time."),
+                (icon: Alarm, text: "Enemies can cross it too, so guard it. A tile that falls drops troops into the river."),
+            ],
+        ),
     ],
     units: [
         (

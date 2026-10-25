@@ -260,6 +260,8 @@ pub struct Terrain {
     /// The rubble of buildings brought down: tile index and ticks left,
     /// sorted by index. Soft ground until it settles.
     rubble: Vec<(u32, u16)>,
+    /// Tiles a finished bridge spans, by index, sorted: nobody wades there.
+    decks: Vec<u32>,
     /// How many times a tile has come to be rubble or stopped being, so
     /// readers of the soft ground know when to look again.
     rubble_moves: u32,
@@ -332,6 +334,7 @@ impl Terrain {
             soak_need: Arc::from([]),
             soaked: 0,
             rubble: Vec::with_capacity(64),
+            decks: Vec::new(),
             rubble_moves: 0,
             side: map_tiles as i32,
             rise: 0,
@@ -680,11 +683,13 @@ impl Terrain {
         (u32::from(bonus) * percent / 100).min(255) as u8
     }
 
-    /// Whether `p` is in water: under the water line, raised by any flood.
+    /// Whether `p` is in water: under the water line, raised by any flood,
+    /// and not on a bridge.
     pub fn wet(&self, p: FxVec2) -> bool {
         self.tiles != 0
             && !self.frozen
             && self.height(p) < i32::from(self.water_level) + i32::from(self.rise)
+            && !self.on_deck(p)
     }
 
     /// Whether the water is frozen over: walked as dry ground.
@@ -695,6 +700,27 @@ impl Terrain {
     /// Freeze the water over, or thaw it.
     pub(crate) fn set_frozen(&mut self, frozen: bool) {
         self.frozen = frozen;
+    }
+
+    /// Whether `p` is on a finished bridge's tile.
+    pub fn on_deck(&self, p: FxVec2) -> bool {
+        !self.decks.is_empty()
+            && index_in(self.side, p.x.floor_int(), p.y.floor_int())
+                .is_some_and(|i| self.decks.binary_search(&(i as u32)).is_ok())
+    }
+
+    /// A bridge tile at `(x, y)` was finished (`on`) or fell.
+    pub(crate) fn set_deck(&mut self, x: i32, y: i32, on: bool) {
+        let Some(i) = index_in(self.side, x, y) else {
+            return;
+        };
+        match (self.decks.binary_search(&(i as u32)), on) {
+            (Err(at), true) => self.decks.insert(at, i as u32),
+            (Ok(at), false) => {
+                self.decks.remove(at);
+            }
+            _ => {}
+        }
     }
 
     /// The map's water line, in height units (0 with no water), before
