@@ -2486,7 +2486,7 @@ mod tests {
             assert!(look.cap.is_none() && !look.merlons && look.lift == 0.0);
             assert_eq!(height_of(role), look.height);
         }
-        assert_eq!((stakes, barricades), (4, 4));
+        assert_eq!((stakes, barricades), (5, 5));
     }
 
     #[test]

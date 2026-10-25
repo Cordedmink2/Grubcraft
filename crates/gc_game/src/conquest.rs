@@ -1041,7 +1041,9 @@ mod tests {
         assert!(start.players.len() <= start.settings.max_players());
         let mut factions = factions(&start);
         factions.sort_by_key(|&f| f as u8);
-        assert_eq!(factions, Faction::ALL);
+        // The four-player map seats the first four factions; the fifth
+        // (Oathbound) joins when the lobby slot picks it.
+        assert_eq!(factions, Faction::ALL[..4]);
     }
 
     #[test]

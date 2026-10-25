@@ -105,7 +105,14 @@ mod tests {
         );
         assert_eq!(
             left,
-            ["Hands", "Gnawer", "Tuner", "Ledger Clerk", "Caravan"],
+            [
+                "Hands",
+                "Gnawer",
+                "Tuner",
+                "Ledger Clerk",
+                "Caravan",
+                "Seedtender"
+            ],
             "left out: the workers and the caravan"
         );
     }
@@ -239,7 +246,7 @@ mod tests {
                     .map(move |i| (i, f))
             })
             .collect();
-        assert_eq!(all.len(), 38);
+        assert_eq!(all.len(), 49);
         for (n, &(unit, faction)) in all.iter().enumerate() {
             // The foe: the next listed troop of another faction.
             let foe = all

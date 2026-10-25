@@ -175,7 +175,9 @@
         (
             name: "Thornwall",
             summary: "Level 1 of the Oathbound wall: a hedge of thorned stakes you draw like a wall, at any angle, for 10 Grub a tile. It blocks movement and burns, so fire is its enemy. Raise it to a Stonebough Wall for more toughness.",
-            notes: [],
+            notes: [
+                ("Stonebough Wall", "Sandstone bound with living boughs: 2.5 times as tough. A worker raises it a tile at a time and it stays up meanwhile."),
+            ],
             tips: [
                 (icon: Hammer, text: "Draw it like a wall, at any angle. It costs little and goes up fast."),
                 (icon: Alarm, text: "Fire burns it, so keep archers behind it ready to answer a torch."),
@@ -185,7 +187,9 @@
         (
             name: "Stonebough Wall",
             summary: "Level 2 of the wall: sandstone bound with living boughs, 2.5 times as tough as a Thornwall. Select a Thornwall and press U to raise its stretch. A worker raises it a tile at a time and it stays up meanwhile.",
-            notes: [],
+            notes: [
+                ("Crown Wall", "A crowned wall with loopholes, 4 times a Thornwall. Needs a Highhall. Stones fall on those who strike it."),
+            ],
             tips: [
                 (icon: Hammer, text: "Select a Thornwall and press U to raise its stretch."),
                 (icon: Grub, text: "Each tile costs 15 Grub, paid for the whole stretch up front."),
@@ -205,11 +209,23 @@
         (
             name: "Oathgate",
             summary: "A wall segment your side walks through and enemies do not. Select it to set Auto (opens as your regiments march up, shuts 2 s after), Locked (shut to everyone) or Open (anyone can pass). Enemies break it down like any wall.",
-            notes: [],
+            notes: [
+                ("Warden's Gatehouse", "Half as tough again, with a walkway over the door for archers or foot. It goes up on its own, with no worker."),
+            ],
             tips: [
                 (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it under attack."),
                 (icon: Hammer, text: "Place it on your own Thornwall and it replaces that stretch."),
                 (icon: Alarm, text: "It is the weak point of a wall, so keep a tower beside it."),
+            ],
+        ),
+        (
+            name: "Warden's Gatehouse",
+            summary: "Level 2 of the Oathgate: a stone gatehouse with a timber walkway on top, half as tough again. Select an Oathgate and press V: it goes up on its own, with no worker, and the door keeps working. Archers or foot can man the walkway over the door.",
+            notes: [],
+            tips: [
+                (icon: Flag, text: "Alt+right-click it with foot or archers to man it: they shoot further, take half from arrows."),
+                (icon: Alarm, text: "Enemies can climb it on ladders; spears stop climbers. Lock the door under attack."),
+                (icon: Move, text: "A raised wall touching it joins its walkway, so one regiment can hold both."),
             ],
         ),
         (
