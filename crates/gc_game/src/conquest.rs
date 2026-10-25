@@ -186,7 +186,7 @@ pub fn clear_style(f: Faction) -> ClearStyle {
             burns: false,
         },
         // Timber people: they fell and haul like the Clans, and the
-        // sawn timber pays a little better (first pass, docs/38).
+        // sawn timber pays a little better (first pass, docs/39).
         Faction::Oathbound => ClearStyle {
             pays: [0, 5, 8],
             ..ClearStyle::STANDARD

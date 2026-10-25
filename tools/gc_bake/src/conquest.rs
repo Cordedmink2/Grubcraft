@@ -198,7 +198,7 @@ fn power_record(
                 .ok_or_else(|| bad(&format!("{n} is not a summoned unit")))?,
         ),
     };
-    // The Oathbound's Oaths are paid from the Honor machinery (docs/38): the
+    // The Oathbound's Oaths are paid from the Honor machinery (docs/39): the
     // roster says "Oaths", the simulation's meter is Honor.
     let meter = if meter == OATHS_METER { "Honor" } else { meter };
     let meter = match cq::METER_NAMES.iter().position(|&n| n == meter) {

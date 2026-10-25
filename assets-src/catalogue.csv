@@ -1,0 +1,81 @@
+# Art catalogue IDs (research design pack 04) mapped to the model entry each one drops into.
+# model = the `name` in the baker config of pack (empty: no model entry yet, draws as a placeholder box/none).
+# status: placeholder (stand-in model wired, Meshy asset swaps its `source`), retheme-pending (existing model entry; Meshy re-theme swaps its `source`), unmodelled / new-unmodelled (no entry yet; add one when generated).
+# Check: gc_artbake --catalogue assets-src/catalogue.csv
+id,faction,name,kind,phase,model,pack,status
+V-01,Oathbound,Seedtender,soldier,1,Seedtender,oathbound.ron,placeholder
+V-02,Oathbound,Wardens,soldier,1,Wardens,oathbound.ron,placeholder
+V-03,Oathbound,Boughbows,soldier,1,Boughbows,oathbound.ron,placeholder
+V-04,Oathbound,Wayfarers,soldier,2,Wayfarers,oathbound.ron,placeholder
+V-05,Oathbound,Dawnblades,soldier,2,Dawnblades,oathbound.ron,placeholder
+V-06,Oathbound,Ramriders,bigbeast,2,Ramriders,oathbound.ron,placeholder
+V-07,Oathbound,Gale Sails,beast,2,Gale Sails,oathbound.ron,placeholder
+V-08,Oathbound,Loomwrights,soldier,2,Loomwrights,oathbound.ron,placeholder
+V-09,Oathbound,Heartwood Ram,beast,2,Heartwood Ram,oathbound.ron,placeholder
+V-10,Oathbound,Thornthrower,beast,3,Thornthrower,oathbound.ron,placeholder
+V-11,Oathbound,Ribwarden,monster,2,Ribwarden,oathbound.ron,placeholder
+V-12,Oathbound,Briar Hounds,beast,3,Briar Hounds,oathbound.ron,placeholder
+V-13,Oathbound,The Regent-Marshal,hero,1,The Regent-Marshal,oathbound.ron,placeholder
+V-14,Oathbound,The Oakmantle Huntress,hero,2,The Oakmantle Huntress,oathbound.ron,placeholder
+V-15,Oathbound,The Loomkeeper,hero,3,The Loomkeeper,oathbound.ron,placeholder
+V-16,Oathbound,Rootwatch Hall,mainbuilding,1,Rootwatch Hall,oathbound.ron,placeholder
+V-17,Oathbound,Highhall,mainbuilding,2,,,unmodelled
+V-18,Oathbound,Crownhold,mainbuilding,3,,,unmodelled
+V-19,Oathbound,Hearthhouse,building,1,,,unmodelled
+V-20,Oathbound,Grove,building,1,,,unmodelled
+V-21,Oathbound,Muster Hall,building,1,,,unmodelled
+V-22,Oathbound,Ram Yard,building,2,,,unmodelled
+V-23,Oathbound,Gale Dock,building,2,,,unmodelled
+V-24,Oathbound,Wrightyard,building,2,,,unmodelled
+V-25,Oathbound,Loomhall,building,2,,,unmodelled
+V-26,Oathbound,Court of Oaths,building,1,,,unmodelled
+V-27,Oathbound,Runeforge,building,3,,,unmodelled
+V-28,Oathbound,Signal Tower,building,1,,,unmodelled
+V-29,Oathbound,Thornwall,wall,3,,,unmodelled
+V-30,Oathbound,Oathgate,gate,2,Oathgate,oathbound.ron,placeholder
+V-31,Oathbound,Stonebough Wall,wall,3,,,unmodelled
+V-32,Oathbound,Crown Wall,wall,3,,,unmodelled
+V-33,Oathbound,Spear-Thrower Tower,building,3,,,unmodelled
+V-34,Oathbound,Stone-Hurler Tower,building,3,,,unmodelled
+V-35,Oathbound,Stake Line,prop,3,,,unmodelled
+V-36,Oathbound,Barricade,prop,3,,,unmodelled
+B-01,Brood,Gnawer,soldier,1,Gnawer,models.ron,retheme-pending
+B-02,Brood,Skitterlings,soldier,1,Skitterlings,models.ron,retheme-pending
+B-03,Brood,Chitin Guard,soldier,1,Chitin Guard,models.ron,retheme-pending
+B-04,Brood,Reclaimer,soldier,1,Reclaimer,models.ron,retheme-pending
+B-05,Brood,Spitters,soldier,2,Spitters,models.ron,retheme-pending
+B-06,Brood,Burrowers,soldier,2,Burrowers,models.ron,retheme-pending
+B-07,Brood,Mantid Reapers,soldier,2,Mantid Reapers,models.ron,retheme-pending
+B-08,Brood,Shellbacks,beast,2,Shellbacks,models.ron,retheme-pending
+B-09,Brood,Drone-Moths,beast,2,Drone-Moths,models.ron,retheme-pending
+B-10,Brood,Spawnlings,summon,2,Spawnlings,models.ron,retheme-pending
+B-11,Brood,Broodmother Bulk,bigbeast,3,Broodmother Bulk,models.ron,retheme-pending
+B-12,Brood,Colossus Maw,bigbeast,3,Colossus Maw,models.ron,retheme-pending
+B-13,Brood,The Queen-in-Waiting,hero,1,The Queen-in-Waiting,models.ron,retheme-pending
+B-14,Brood,The Devourer,hero,2,The Devourer,models.ron,retheme-pending
+B-15,Brood,The Whisperer,hero,2,The Whisperer,models.ron,retheme-pending
+B-16,Brood,Overseer,soldier,3,,,new-unmodelled
+B-17,Brood,Graft Stalkers,beast,3,,,new-unmodelled
+B-18,Brood,Gloomwings,beast,3,,,new-unmodelled
+B-19,Brood,Boilback,beast,3,,,new-unmodelled
+B-20,Brood,Hive,mainbuilding,1,Hive,brood.ron,retheme-pending
+B-21,Brood,Great Hive,mainbuilding,2,Great Hive,brood.ron,retheme-pending
+B-22,Brood,Throne Hive,mainbuilding,3,Throne Hive,brood.ron,retheme-pending
+B-23,Brood,Pustule,building,1,Pustule,brood.ron,retheme-pending
+B-24,Brood,Hatchery Pit,building,1,Hatchery Pit,brood.ron,retheme-pending
+B-25,Brood,Chrysalis Chamber,building,2,Chrysalis Chamber,brood.ron,retheme-pending
+B-26,Brood,Moth Roost,building,2,Moth Roost,brood.ron,retheme-pending
+B-27,Brood,Gorge,building,2,Gorge,brood.ron,retheme-pending
+B-28,Brood,Spine Mound,building,1,Spine Mound,brood.ron,retheme-pending
+B-29,Brood,Queen's Chamber,building,1,Queen's Chamber,brood.ron,retheme-pending
+B-30,Brood,Graft Chamber,building,3,,,new-unmodelled
+B-31,Brood,Carrion Larder,building,3,,,new-unmodelled
+B-32,Brood,Harpoon Maw,building,3,,,new-unmodelled
+B-33,Brood,Acid Bloater,building,3,,,new-unmodelled
+B-34,Brood,Chitin Wall,wall,3,,,new-unmodelled
+B-35,Brood,Thorn Bulwark,wall,3,,,new-unmodelled
+B-36,Brood,Maw Gate,gate,2,Maw Gate,fortifications.ron,retheme-pending
+B-37,Brood,Egg Clutch,prop,3,,,new-unmodelled
+B-38,Brood,Cocoon Cluster,prop,3,,,new-unmodelled
+B-39,Brood,Husk Totem,prop,3,,,new-unmodelled
+B-40,Brood,Gut Garden,prop,3,,,new-unmodelled

@@ -1,7 +1,7 @@
 // Oathbound roster (the fifth faction, a human kingdom of the Reach that keeps faith
 // with the dead Titan): every building, unit, summon, hero and Oaths Pledge, with
 // first-pass numbers copied from the nearest existing regiment. Format and fields:
-// the header of data/rosters/ember_clans.ron. Design: docs/38-oathbound.md.
+// the header of data/rosters/ember_clans.ron. Design: docs/39-oathbound.md.
 //
 // Data-only first pass (no change to the simulation, SIM_VERSION or the wire format):
 //  - The Oaths meter bakes as the Honor meter's machinery (the Court of Oaths earns

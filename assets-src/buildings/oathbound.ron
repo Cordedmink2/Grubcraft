@@ -2,10 +2,10 @@
 // (`cargo run -p gc_artbake --release -- --config assets-src/buildings/oathbound.ron --out assets/buildings/oathbound.pak`).
 // Every source is a `repo:` file (Kenney Castle Kit and CDmir's Alien Bug, both CC0) following
 // docs/16-art-sourcing.md, so the pack bakes on any host. Each entry is a stand-in: when the Meshy asset
-// with the catalogue ID in the comment is made, only the `source` line changes (docs/38-oathbound.md,
+// with the catalogue ID in the comment is made, only the `source` line changes (docs/39-oathbound.md,
 // research catalogue 04). Names are exactly as in data/rosters/oathbound.ron; a building has `#1`..`#3`
 // construction stages and the finished model under its own name, a gatehouse only `#3` and the finished one.
-// Placeholders still to model (they draw as boxes or reuse nothing): see docs/38.
+// Placeholders still to model (they draw as boxes or reuse nothing): see docs/39.
 (
     models: [
         (
@@ -92,6 +92,148 @@
             name: "Seedtender",
             source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
             height: 0.7,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-09 (engine template)
+        (
+            name: "Heartwood Ram",
+            source: "repo:rig-test/siege-ram-engine.glb",
+            height: 1.0,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-12 (quadruped template)
+        (
+            name: "Briar Hounds",
+            source: "repo:rig-test/siege-ballista-quadruped.glb",
+            height: 0.8,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-07 (flyer template)
+        (
+            name: "Gale Sails",
+            source: "repo:rig-test/flag-pennant-flyer.glb",
+            height: 1.2,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // variant of V-09: same rig and clips, recoloured mesh
+        (
+            name: "Heartwood Ram Variant",
+            source: "repo:rig-test/siege-ram-engine-tint.glb",
+            height: 1.0,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Attack", "Attack2": "Attack2", "Hit": "Hit", "Die": "Die", "Cheer": "Cheer" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-02: stand-in (CDmir's CC0 bug) until the Meshy model replaces `source`.
+        (
+            name: "Wardens",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 0.9,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-03: stand-in (CDmir's CC0 bug) until the Meshy model replaces `source`.
+        (
+            name: "Boughbows",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 0.9,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-04: stand-in (CDmir's CC0 bug) until the Meshy model replaces `source`.
+        (
+            name: "Wayfarers",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 0.8,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-05: stand-in (CDmir's CC0 bug) until the Meshy model replaces `source`.
+        (
+            name: "Dawnblades",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 1.0,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-06: stand-in (CDmir's CC0 bug) until the Meshy model replaces `source`.
+        (
+            name: "Ramriders",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 1.1,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-08: stand-in (CDmir's CC0 bug) until the Meshy model replaces `source`.
+        (
+            name: "Loomwrights",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 0.9,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-10: stand-in (CDmir's CC0 bug) until the Meshy model replaces `source`.
+        (
+            name: "Thornthrower",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 1.0,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-11: stand-in (CDmir's CC0 bug) until the Meshy model replaces `source`.
+        (
+            name: "Ribwarden",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 1.8,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-13: stand-in (CDmir's CC0 bug) until the Meshy model replaces `source`.
+        (
+            name: "The Regent-Marshal",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 1.1,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-14: stand-in (CDmir's CC0 bug) until the Meshy model replaces `source`.
+        (
+            name: "The Oakmantle Huntress",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 1.1,
+            team: [],
+            team_hue: Some((0.0, 30.0, 0.5)),
+            clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },
+            lod_triangles: (1200, 500, 220, 90),
+        ),
+        // V-15: stand-in (CDmir's CC0 bug) until the Meshy model replaces `source`.
+        (
+            name: "The Loomkeeper",
+            source: "repo:cc0/alien-bug-cdmir/alien-bug.glb",
+            height: 1.1,
             team: [],
             team_hue: Some((0.0, 30.0, 0.5)),
             clips: { "Idle": "Idle", "Walk": "Run", "Run": "Run", "Attack": "Attack.000", "Attack2": "Attack.001" },

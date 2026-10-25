@@ -32,6 +32,7 @@
 //! `--report` prints each model's most common colours, for choosing team colours.
 //! `--check` bakes nothing: it checks `--out` and its manifest.
 
+mod catalogue;
 mod detail;
 mod manifest;
 mod rig;
@@ -344,6 +345,15 @@ fn main() {
             "--detail" => {
                 opts.detail = true;
                 continue;
+            }
+            "--catalogue" => {
+                let Some(file) = args.next() else { usage() };
+                let src = root.join("assets-src");
+                if let Err(e) = catalogue::check(Path::new(&file), &src) {
+                    eprintln!("gc_artbake: {e}");
+                    std::process::exit(1);
+                }
+                return;
             }
             _ => {}
         }
