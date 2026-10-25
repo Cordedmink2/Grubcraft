@@ -89,12 +89,16 @@ fn the_core_configs_use_exactly_the_committed_masks() {
 fn every_mask_marks_a_visible_team_region() {
     // The regression this guards: V-13 shipped with a 0.00% mask (no team colour at all) and four more
     // were under 0.5% (speckle). Units and heroes need >= 1.5% of the map; buildings >= 0.75%.
-    // Documented weak masks (retexture or hand-paint is a follow-up): V-19 hearth hut (red door banner
-    // only) and B-23 pustule (a few orange veins) -- they pass the floor but read thin on the model.
+    // V-19 hearth hut and B-23 pustule had thin masks (1.35% / 1.94%: a door banner, a few veins). They were
+    // widened by hand over the matching hue family (docs/39), so they now carry a higher floor (3.0%) and a
+    // too-thin mask fails.
     const UNITS: [&str; 7] = ["V-01", "V-03", "V-13", "B-02", "B-03", "B-04", "B-13"];
+    const THIN_FIXED: [&str; 2] = ["V-19", "B-23"];
     for (name, _, _, px) in masks() {
         let pct = px.iter().filter(|v| **v == 255).count() as f32 * 100.0 / px.len() as f32;
-        let floor = if UNITS.contains(&name.as_str()) {
+        let floor = if THIN_FIXED.contains(&name.as_str()) {
+            3.0
+        } else if UNITS.contains(&name.as_str()) {
             1.5
         } else {
             0.75
